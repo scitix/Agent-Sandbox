@@ -44,3 +44,4 @@ docs/website/tsconfig.tsbuildinfo
 **/cover.out
 bin/
 !bin/.keep
+!installer/dockerfile/bin/**

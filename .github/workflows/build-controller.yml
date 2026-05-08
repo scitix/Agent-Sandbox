@@ -42,15 +42,15 @@ jobs:
 
       - name: Cross-compile binaries
         run: |
-          mkdir -p bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/sandbox-amd64 ./cmd/sandbox
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/sandbox-arm64 ./cmd/sandbox
+          mkdir -p installer/dockerfile/bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/sandbox-amd64 ./cmd/sandbox
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/sandbox-arm64 ./cmd/sandbox
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: controller-binaries
-          path: bin/
+          path: installer/dockerfile/bin/
           retention-days: 1
 
   build-image:
@@ -67,7 +67,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: controller-binaries
-          path: bin/
+          path: installer/dockerfile/bin/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

@@ -42,15 +42,15 @@ jobs:
 
       - name: Cross-compile binaries
         run: |
-          mkdir -p bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/envoyextproc-amd64 ./cmd/envoyextproc
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/envoyextproc-arm64 ./cmd/envoyextproc
+          mkdir -p installer/dockerfile/bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/envoyextproc-amd64 ./cmd/envoyextproc
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/envoyextproc-arm64 ./cmd/envoyextproc
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: extproc-binaries
-          path: bin/
+          path: installer/dockerfile/bin/
           retention-days: 1
 
   build-image:
@@ -67,7 +67,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: extproc-binaries
-          path: bin/
+          path: installer/dockerfile/bin/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

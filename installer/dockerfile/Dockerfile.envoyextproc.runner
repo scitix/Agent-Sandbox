@@ -4,6 +4,6 @@ FROM alpine:3.23
 RUN apk add --no-cache ca-certificates
 WORKDIR /
 ARG TARGETARCH
-COPY bin/envoyextproc-${TARGETARCH} /envoyextproc
+COPY installer/dockerfile/bin/envoyextproc-${TARGETARCH} /envoyextproc
 USER 65532:65532
 ENTRYPOINT ["/envoyextproc"]

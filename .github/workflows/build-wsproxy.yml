@@ -42,15 +42,15 @@ jobs:
 
       - name: Cross-compile binaries
         run: |
-          mkdir -p bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/wsproxy-amd64 ./cmd/wsproxy
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/wsproxy-arm64 ./cmd/wsproxy
+          mkdir -p installer/dockerfile/bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/wsproxy-amd64 ./cmd/wsproxy
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/wsproxy-arm64 ./cmd/wsproxy
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: wsproxy-binaries
-          path: bin/
+          path: installer/dockerfile/bin/
           retention-days: 1
 
   build-image:
@@ -67,7 +67,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wsproxy-binaries
-          path: bin/
+          path: installer/dockerfile/bin/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
