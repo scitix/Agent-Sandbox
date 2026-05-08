@@ -28,7 +28,7 @@ type LineSpec = {
 };
 
 const E2B_LINES: LineSpec[] = [
-  { delay: 0, type: 'comment', text: '# Route E2B SDK to AgentBox' },
+  { delay: 0, type: 'comment', text: '# Route E2B SDK to Agent Sandbox' },
   { delay: 600, type: 'cmd', text: 'from agentbox.patch_e2b import patch_e2b; patch_e2b()' },
   { delay: 1300, type: 'cmd', text: 'from e2b import Sandbox' },
   { delay: 1900, type: 'blank', text: '' },
@@ -216,14 +216,14 @@ function AllocationDiagram() {
         </div>
       </div>
 
-      {/* AgentBox API */}
+      {/* Agent Sandbox API */}
       <div className="flex justify-center mb-1">
         <div className={`relative flex items-center gap-2 px-4 py-2 rounded-lg border-2 font-mono text-xs font-semibold transition-all duration-300 ${apiActive
           ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 shadow-md shadow-emerald-400/20'
           : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
           }`}>
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3" /></svg>
-          AgentBox API
+          Agent Sandbox API
         </div>
       </div>
 
@@ -508,7 +508,7 @@ const HOW_SECTIONS = [
   {
     tag: 'INSTANT ALLOCATION',
     headline: <>No Pod Creation.<br />Just Assignment.</>,
-    body: 'Traditional Kubernetes creates a new Pod for every request — paying scheduler negotiation, image pull, and init overhead every time. AgentBox skips all of that. Sandboxes are assigned from a pre-warmed pool in a single label-swap, enabling <100ms allocation with zero cold-start penalty.',
+    body: 'Traditional Kubernetes creates a new Pod for every request — paying scheduler negotiation, image pull, and init overhead every time. Agent Sandbox skips all of that. Sandboxes are assigned from a pre-warmed pool in a single label-swap, enabling <100ms allocation with zero cold-start penalty.',
     bullets: [
       { icon: '⚡', text: 'Sub-100ms allocation from pool' },
       { icon: '🚫', text: 'Zero Pod creation overhead' },
@@ -532,7 +532,7 @@ const HOW_SECTIONS = [
   {
     tag: 'CROSS-CLUSTER',
     headline: <>One API.<br />Every Region.</>,
-    body: 'Prefix your pool name with a cluster ID — e.g. us-east::gpu-pool — and AgentBox routes the request through its global gateway to the right cluster transparently. No custom ingress, no per-region SDK config. Your training loop stays cluster-agnostic while workloads land where capacity exists.',
+    body: 'Prefix your pool name with a cluster ID — e.g. us-east::gpu-pool — and Agent Sandbox routes the request through its global gateway to the right cluster transparently. No custom ingress, no per-region SDK config. Your training loop stays cluster-agnostic while workloads land where capacity exists.',
     bullets: [
       { icon: '🌐', text: 'Single endpoint across all clusters' },
       { icon: '🔀', text: 'Transparent cross-region routing' },
@@ -688,7 +688,7 @@ export default function HomePage() {
                 <h2 className="text-3xl md:text-4xl font-bold font-mono text-slate-900 dark:text-white mb-6 leading-tight">Built for RL.<br />Beyond plain Kubernetes.</h2>
                 <div className="space-y-4 text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
                   <p>Traditional Kubernetes creates a new Pod for every sandbox request — paying scheduling, image-pull, and init overhead each time. At RL scale with thousands of parallel episodes, this compounds into minutes of lost compute per rollout.</p>
-                  <p>AgentBox maintains a pre-warmed pool. Allocation is a label swap, not a pod creation. Supports stateless functions, standard containers, and MicroVMs in the same cluster.</p>
+                  <p>Agent Sandbox maintains a pre-warmed pool. Allocation is a label swap, not a pod creation. Supports stateless functions, standard containers, and MicroVMs in the same cluster.</p>
                   <p>Cross-region aggregation via Envoy ExtProc means your training loop sees a single endpoint — no manual ingress for each cluster.</p>
                 </div>
                 <div className="mt-8">
@@ -702,7 +702,7 @@ export default function HomePage() {
                 <div className="grid grid-cols-3 text-xs border-b border-slate-100 dark:border-slate-800">
                   <div className="px-4 py-3 text-slate-400" />
                   <div className="px-4 py-3 text-slate-500">Traditional K8s</div>
-                  <div className="px-4 py-3 text-emerald-600 dark:text-emerald-400">AgentBox</div>
+                  <div className="px-4 py-3 text-emerald-600 dark:text-emerald-400">Agent Sandbox</div>
                 </div>
                 {PERF_ROWS.map((row, i) => (
                   <div key={i} className={`grid grid-cols-3 border-b border-slate-100 dark:border-slate-800/60 last:border-b-0 ${row.highlight ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : ''}`}>
@@ -724,7 +724,7 @@ export default function HomePage() {
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
             <div className="absolute inset-0 opacity-[0.04] pointer-events-none" style={{ backgroundImage: `linear-gradient(to right,currentColor 1px,transparent 1px),linear-gradient(to bottom,currentColor 1px,transparent 1px)`, backgroundSize: '24px 24px' }} />
             <h2 className="relative text-3xl md:text-4xl font-bold font-mono text-slate-900 dark:text-white mb-4">Ready to deploy?</h2>
-            <p className="relative text-slate-600 dark:text-slate-400 mb-8 leading-relaxed">Deploy AgentBox to your Kubernetes cluster in minutes.<br />Single-YAML installer, zero external dependencies.</p>
+            <p className="relative text-slate-600 dark:text-slate-400 mb-8 leading-relaxed">Deploy Agent Sandbox to your Kubernetes cluster in minutes.<br />Single-YAML installer, zero external dependencies.</p>
             <Link href="/docs" className="relative inline-flex items-center gap-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white font-medium px-6 py-3 transition-all duration-200 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 hover:-translate-y-0.5 font-mono">
               View Installation Guide →
             </Link>
@@ -735,7 +735,7 @@ export default function HomePage() {
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <footer className="px-6 py-8 border-t border-slate-100 dark:border-slate-900">
         <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-4 text-xs text-slate-400 dark:text-slate-600 font-mono">
-          <span>AgentBox — Kubernetes Operator for AI Agent Sandboxes</span>
+          <span>Agent Sandbox — Kubernetes Operator for AI Agent Sandboxes</span>
           <div className="flex gap-4">
             <Link href="/docs" className="hover:text-slate-600 dark:hover:text-slate-400 transition-colors">Docs</Link>
             <a href="https://github.com/scitix/agent-sandbox" target="_blank" rel="noopener noreferrer" className="hover:text-slate-600 dark:hover:text-slate-400 transition-colors">GitHub</a>
