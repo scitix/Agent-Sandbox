@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+@source '../app/**/*.{tsx,ts}';
+@source '../components/**/*.{tsx,ts}';
+@source '../lib/**/*.{tsx,ts}';
+@source '../content/**/*.mdx';
+@import 'fumadocs-ui/css/solar.css';
+@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-openapi/css/preset.css';
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+:root {
+  --fd-layout-width: 1600px;
+}
+
+.font-mono {
+  font-family: var(--font-mono-display), ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+}

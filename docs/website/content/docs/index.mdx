@@ -1,0 +1,28 @@
+---
+title: AgentBox API
+description: AgentBox API documentation — Sandbox lifecycle management and tenant API key provisioning.
+---
+
+## Overview
+
+AgentBox provides Sandbox lifecycle management and tenant API key provisioning.
+
+### Admin Impersonation
+
+Admin callers can act on behalf of any user by adding the following optional headers to **any regular (non-admin) endpoint**:
+
+```
+X-Impersonate-Team: <team>
+X-Impersonate-User: <user>
+```
+
+When both headers are present and the caller has admin role, the server resolves the target user's Kubernetes namespace via IAM and executes the request as if that user made the call. Non-admin callers that supply these headers have them silently ignored.
+
+## API Sections
+
+- **Auth** — Caller identity and authentication
+- **Sandboxes** — Sandbox lifecycle management
+- **Pools** — SandboxPool management
+- **Templates** — SandboxTemplate read-only access
+- **Quotas** — Quota information
+- **Instance Types** — Available compute configurations

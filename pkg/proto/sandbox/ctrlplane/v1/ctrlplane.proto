@@ -1,0 +1,63 @@
+// Copyright 2026 ScitiX
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package sandbox.ctrlplane.v1;
+
+option go_package = "github.com/scitix/agent-sandbox/pkg/proto/sandbox/ctrlplane/v1;ctrlplanev1";
+
+// ControlPlaneService is the private RPC channel between the Controller and
+// the ExtProc gateway. It is NOT exposed to end users; the server binds to an
+// in-cluster port and authenticates callers with the shared admin key.
+service ControlPlaneService {
+  // PushRoute registers a sandbox_id -> (namespace, pod_name) mapping in the
+  // ExtProc in-memory cache so router queries can bypass the informer's
+  // sandbox-id index. The mapping carries NO phase and NO PodIP: those are
+  // read live from the Pod informer on each request, so the cache never goes
+  // stale across Pod lifecycle transitions (Starting -> Running -> Stopping).
+  rpc PushRoute(PushRouteRequest) returns (PushRouteResponse);
+
+  // EvictRoute removes a sandbox_id from the ExtProc cache. Called by the
+  // Controller when a Pod completes Stopping -> Idle, so subsequent router
+  // queries for the released sandbox_id fall through to "not found" instead
+  // of briefly hitting a stale cache entry.
+  rpc EvictRoute(EvictRouteRequest) returns (EvictRouteResponse);
+
+  // GetLastActive returns the per-sandbox last-activity timestamps tracked
+  // by ExtProc. Used by the Controller's IdleTimeoutReconciler.
+  rpc GetLastActive(GetLastActiveRequest) returns (GetLastActiveResponse);
+}
+
+message PushRouteRequest {
+  // Raw sandbox UUID (no cluster prefix).
+  string sandbox_id = 1;
+  string namespace  = 2;
+  string pod_name   = 3;
+}
+
+message PushRouteResponse {}
+
+message EvictRouteRequest {
+  string sandbox_id = 1;
+}
+
+message EvictRouteResponse {}
+
+message GetLastActiveRequest {}
+
+message GetLastActiveResponse {
+  // sandbox_id -> RFC3339 timestamp
+  map<string, string> last_active = 1;
+}

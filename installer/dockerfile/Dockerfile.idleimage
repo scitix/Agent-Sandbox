@@ -1,0 +1,10 @@
+# The idle image is the minimal image that pre-warmed sandbox pods run while
+# sitting in the pool. It must respond to `exec` and run indefinitely so the
+# operator can in-place upgrade it to a runtime image when a sandbox is claimed.
+FROM alpine:3.23
+
+ENV AGENTBOX_IS_IDLE_IMAGE=true
+RUN touch /etc/agentbox_is_idle_image \
+    && apk add --no-cache bash coreutils
+
+CMD ["sleep", "infinity"]

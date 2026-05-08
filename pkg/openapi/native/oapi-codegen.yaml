@@ -1,0 +1,11 @@
+# oapi-codegen configuration for native AgentBox API
+package: gen
+output: pkg/apiserver/gen/agentbox.gen.go
+generate:
+  gin-server: true
+  strict-server: true
+  models: true
+  embedded-spec: true
+  client: true
+output-options:
+  skip-prune: false

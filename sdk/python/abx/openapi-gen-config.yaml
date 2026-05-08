@@ -1,0 +1,5 @@
+project_name_override: "agentbox_sdk._generated"
+package_name_override: "agentbox_sdk._generated"
+use_path_prefixes_for_title_model_names: true
+field_prefix: ""
+post_hooks: []

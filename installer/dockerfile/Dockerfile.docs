@@ -1,0 +1,53 @@
+# Stage 1: Install deps
+FROM node:24-alpine AS deps
+WORKDIR /app
+COPY docs/website/package.json docs/website/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+
+# Stage 2: Build
+#
+# The docs app loads `pkg/openapi/native/openapi.yaml` via the relative path
+# `../../pkg/openapi/native/openapi.yaml` (see lib/openapi.ts), so we preserve
+# the repo layout inside /app rather than flattening it.
+FROM node:24-alpine AS builder
+WORKDIR /app
+RUN mkdir -p /app/docs/website /app/pkg/openapi/native
+COPY --from=deps /app/node_modules /app/docs/website/node_modules
+COPY docs/website/ /app/docs/website/
+COPY pkg/openapi/native/openapi.yaml /app/pkg/openapi/native/openapi.yaml
+
+# basePath is baked in at build time — rebuild to change it.
+# The default ("/agentbox-docs") matches the production deployment path.
+ARG NEXT_BASE_PATH="/agentbox-docs"
+ENV NEXT_BASE_PATH=${NEXT_BASE_PATH}
+
+WORKDIR /app/docs/website
+RUN corepack enable && NODE_ENV=production pnpm build
+
+# Stage 3: Runtime
+# next.config.ts sets `output: 'export'`, which emits a static site under `out/`.
+# We serve it with nginx — no Node runtime needed.
+FROM nginx:1.27-alpine AS runner
+
+# Respect the build-time basePath: nginx should serve assets at /${NEXT_BASE_PATH}
+# so links generated during `next build` resolve correctly.
+ARG NEXT_BASE_PATH="/agentbox-docs"
+ENV NEXT_BASE_PATH=${NEXT_BASE_PATH}
+
+# Render an nginx config that mounts the static output at the expected prefix.
+# Default config is stripped so our single server block is the only route.
+RUN rm -f /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/docs/website/out /usr/share/nginx/html${NEXT_BASE_PATH}
+
+RUN printf 'server {\n\
+    listen 3000;\n\
+    server_name _;\n\
+    root /usr/share/nginx/html;\n\
+    index index.html;\n\
+    # Serve both the base path and the root (for health checks).\n\
+    location / {\n\
+        try_files $uri $uri/ $uri.html =404;\n\
+    }\n\
+}\n' > /etc/nginx/conf.d/docs.conf
+
+EXPOSE 3000

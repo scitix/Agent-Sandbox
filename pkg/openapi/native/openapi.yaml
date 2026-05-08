@@ -1,0 +1,3268 @@
+openapi: 3.0.3
+info:
+  title: AgentBox API
+  version: "0.0.0"
+  description: |
+    AgentBox provides Sandbox lifecycle management and tenant API key provisioning.
+
+    ## Authentication
+
+    All API requests must include an API key in the `AGENTBOX-API-KEY` header:
+
+    ```
+    AGENTBOX-API-KEY: <your-api-key>
+    ```
+
+    ## Admin Impersonation
+
+    Admin callers can act on behalf of any user by adding the following optional headers
+    to **any regular (non-admin) endpoint**:
+
+    ```
+    X-Impersonate-Team: <team>
+    X-Impersonate-User: <user>
+    ```
+
+    When both headers are present and the caller has admin role, the server resolves the
+    target user's Kubernetes namespace via IAM and executes the request as if that user
+    made the call. Non-admin callers that supply these headers have them silently ignored.
+  contact:
+    name: AgentBox Support
+tags:
+  - name: auth
+    x-displayName: Auth
+    description: >
+      Caller identity and authentication. Use `GET /auth/whoami` to verify your
+      API key and discover your role (tenant / admin).
+  - name: sandboxes
+    x-displayName: Sandboxes
+    description: >
+      Sandbox lifecycle management — create, inspect, delete, and interact with
+      individual sandbox instances. Non-admin callers operate within their own
+      namespace; admin callers may additionally supply `X-Impersonate-Team` /
+      `X-Impersonate-User` headers to act on behalf of another user.
+  - name: pools
+    x-displayName: Pools
+    description: >
+      SandboxPool management — create and manage pre-warmed pod pools.
+      Each pool holds a configurable number of idle sandboxes ready for
+      instant allocation. Admin callers may impersonate via
+      `X-Impersonate-Team` / `X-Impersonate-User`.
+  - name: sandbox-templates
+    x-displayName: Templates
+    description: >
+      Read-only access to SandboxTemplate cluster resources. Templates define
+      the pod spec, idle image, runtime port mappings, and reservation config
+      shared across pools.
+  - name: quotas
+    x-displayName: Quotas
+    description: >
+      SI Scheduler quota information for the authenticated user. Returns
+      resource allocations, usage, and free capacity per quota entry.
+  - name: clusters
+    x-displayName: Clusters
+    description: >
+      Cluster catalog visible to the current gateway. Use this to discover valid
+      `clusterID` prefixes for cross-cluster sandbox and pool identifiers
+      (`{clusterID}.{uuid}` for sandboxes, `{clusterID}::{poolName}` for pools).
+      The `local: true` entry marks the cluster actually serving this request.
+  - name: statistics
+    x-displayName: Statistics
+    description: >
+      Aggregated sandbox and pool statistics. Tenant-scoped statistics are
+      available to all authenticated users; cluster-wide statistics require
+      admin role.
+  - name: apikeys
+    x-displayName: API Keys
+    description: >
+      Self-service API key management for tenants. Each key is scoped to the
+      caller's namespace and cannot access resources in other namespaces.
+  - name: feature-gates
+    x-displayName: Feature Gates
+    description: >
+      Optional features enabled on this cluster. Clients use this to discover
+      which feature-specific endpoints and UI elements are available.
+  - name: admin
+    x-displayName: Admin
+    description: >
+      Admin-only operations: cross-namespace sandbox/pool inspection, API key
+      provisioning, template management, and organization queries. All endpoints
+      require an admin-role API key (`AGENTBOX-API-KEY` header).
+
+servers:
+  - url: "{protocol}://{path}"
+    description: Responds with your request data
+    variables:
+      protocol:
+        enum:
+          - https
+          - http
+        default: https
+      path:
+        default: ""
+
+security:
+  - ApiKeyAuth: []
+
+components:
+  parameters:
+    QueryLimit:
+      name: limit
+      in: query
+      required: false
+      description: "Maximum number of items to return per page."
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 1000
+    QueryOffset:
+      name: offset
+      in: query
+      required: false
+      description: "Number of items to skip before returning results (zero-based)."
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+
+    # ----- Path parameters -----
+    PathSandboxId:
+      name: sandboxId
+      in: path
+      required: true
+      description: |
+        Sandbox identifier.
+
+        * Single-cluster: a bare UUID v7 such as `5de15c92-8fb5-440f-a9ea-7f62f734f1b9`.
+        * Cross-cluster: a `{clusterID}.{uuid}` composite such as
+          `cluster1.5de15c92-8fb5-440f-a9ea-7f62f734f1b9` (dot-separated). The `clusterID`
+          prefix tells the gateway which Worker cluster owns this sandbox; the server
+          parses it out transparently. Discover valid cluster IDs via `GET /clusters`.
+
+        Because of the composite form, this field is NOT a strict RFC 4122 UUID —
+        clients must treat it as an opaque string. Parsing reference: `pkg/utils/cluster/sandbox_id.go::SplitSandboxID`.
+      schema:
+        type: string
+        example: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+    PathPoolName:
+      name: name
+      in: path
+      required: true
+      description: |
+        SandboxPool name.
+
+        * Single-cluster: a DNS-1123 label such as `my-pool`.
+        * Cross-cluster: a `{clusterID}::{poolName}` composite such as `cluster1::my-pool`
+          (double-colon separator). Discover valid cluster IDs via `GET /clusters`.
+          Parsing reference: `pkg/utils/cluster/parse.go::ParsePoolRef`.
+
+        Note: the E2B-compatible API further extends this to
+        `{clusterID}::{poolName}//{imageOverride}` for template strings; that form is
+        only accepted on the E2B port, not on this native API.
+      schema:
+        type: string
+        example: "my-pool"
+    PathTemplateName:
+      name: name
+      in: path
+      required: true
+      description: "Global SandboxTemplate name (cluster-scoped resource)."
+      schema:
+        type: string
+        example: "default-template"
+    PathAPIKeyName:
+      name: name
+      in: path
+      required: true
+      description: |
+        API key identifier in `{namespace}/{shortName}` format, or just `{shortName}`
+        when the caller's namespace is implied. Admin endpoints accept the fully-qualified form.
+      schema:
+        type: string
+        example: "t-team-user/my-key"
+    PathTeam:
+      name: team
+      in: path
+      required: true
+      description: "Team name."
+      schema:
+        type: string
+        example: "my-team"
+
+    # ----- Common query filters -----
+    QueryTeam:
+      name: team
+      in: query
+      required: false
+      description: "Filter by team name. Admin callers may also use X-Impersonate-Team."
+      schema:
+        type: string
+    QueryUser:
+      name: user
+      in: query
+      required: false
+      description: "Filter by user name. Admin callers may also use X-Impersonate-User."
+      schema:
+        type: string
+    QueryNamespace:
+      name: namespace
+      in: query
+      required: false
+      description: "Filter by Kubernetes namespace (admin only)."
+      schema:
+        type: string
+    QueryPoolName:
+      name: poolName
+      in: query
+      required: false
+      description: "Filter by sandbox pool name."
+      schema:
+        type: string
+    QuerySandboxStatus:
+      name: status
+      in: query
+      required: false
+      description: "Filter by sandbox phase. One of: Idle, Starting, Running, Stopping, Failed."
+      schema:
+        type: string
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: AGENTBOX-API-KEY
+    AdminKeyAuth:
+      type: apiKey
+      in: header
+      name: AGENTBOX-API-KEY
+      description: "Admin-level API key. Same header as ApiKeyAuth but requires admin role."
+
+  schemas:
+    # =========================================================
+    # Sandbox
+    # =========================================================
+    SandboxStatusDetail:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: "Machine-readable reason code for the current status (mirrors Kubernetes condition reason)."
+        message:
+          type: string
+          description: "Human-readable message explaining the current status."
+        lastUpdatedTime:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp of when this status detail was last updated."
+      additionalProperties: false
+
+    SandboxEndpoint:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: "Fully-qualified URL to reach this runtime endpoint (e.g. https://sandbox.example.com/api)."
+        logDir:
+          type: string
+          description: "Path to the runtime log file inside the container, if configured"
+      additionalProperties: false
+
+    SandboxReadinessResult:
+      type: object
+      required: [sandboxId, ready]
+      properties:
+        sandboxId:
+          type: string
+          description: |
+            Sandbox identifier. Single-cluster: bare UUID v7 (e.g. `5de15c92-8fb5-440f-a9ea-7f62f734f1b9`).
+            Cross-cluster: `{clusterID}.{uuid}` composite (e.g. `cluster1.5de15c92-...`, dot-separated). NOT a strict RFC 4122 UUID — treat as opaque.
+          example: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+        ready:
+          type: boolean
+          description: "True when all configured readiness probes have passed."
+        endpoints:
+          type: object
+          description: "Per-runtime readiness status, keyed by runtime name."
+          additionalProperties:
+            type: object
+            properties:
+              ready:
+                type: boolean
+                description: "Whether this runtime endpoint's readiness probe passed."
+              message:
+                type: string
+                description: "Diagnostic message when the probe failed."
+            additionalProperties: false
+
+    Sandbox:
+      type: object
+      required: [sandboxId, namespace, poolName, podName, status, claimedAt]
+      properties:
+        sandboxId:
+          type: string
+          description: |
+            Sandbox identifier. Single-cluster: bare UUID v7 (e.g. `5de15c92-8fb5-440f-a9ea-7f62f734f1b9`).
+            Cross-cluster: `{clusterID}.{uuid}` composite (e.g. `cluster1.5de15c92-...`, dot-separated). NOT a strict RFC 4122 UUID — treat as opaque.
+          example: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+        namespace:
+          type: string
+          description: "Kubernetes namespace where the sandbox pod is running."
+        poolName:
+          type: string
+          description: "Name of the SandboxPool this sandbox was allocated from."
+        podName:
+          type: string
+          description: "Name of the Kubernetes Pod backing this sandbox."
+        status:
+          type: string
+          enum: [Pending, Starting, Running, Stopping, Failed, Completed, Canceled, Released]
+          description: "Current lifecycle phase of the sandbox."
+        claimedAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the sandbox was claimed by a user."
+        startedAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the sandbox transitioned to Running."
+        containerImages:
+          type: object
+          description: "Map of container name to image URI for each container in the sandbox pod."
+          additionalProperties:
+            type: string
+        metadata:
+          type: object
+          description: "User-defined key-value pairs attached to the sandbox for filtering and annotation."
+          additionalProperties:
+            type: string
+        endpoints:
+          type: object
+          description: "Map of runtime name to its endpoint URL, populated once the sandbox is Running."
+          additionalProperties:
+            $ref: '#/components/schemas/SandboxEndpoint'
+        cpu:
+          type: string
+          description: "CPU resource allocated to the sandbox (Kubernetes resource quantity, e.g. \"1\", \"100m\")."
+        memory:
+          type: string
+          description: "Memory resource allocated to the sandbox (Kubernetes resource quantity, e.g. \"16Gi\", \"512Mi\")."
+        terminatedAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the sandbox workload terminated (exit or stop signal)."
+        recycledAt:
+          type: string
+          format: date-time
+          description: "Timestamp when the sandbox completed recycling (Stopping → Idle in-place upgrade) and the record was written to the store. Also set for evicted/externally-deleted sandboxes to record when the Failed record was persisted."
+        durationSeconds:
+          type: integer
+          format: int64
+          description: "Wall-clock duration of the sandbox in seconds. Set for Running (startedAt to query time), Completed, Failed, and Released states (startedAt to terminatedAt). Omitted for Starting and Canceled states."
+        failureReason:
+          type: string
+          description: "Machine-readable reason code when status is Failed."
+        exitCode:
+          type: integer
+          format: int32
+          description: "Exit code of the main container when the sandbox terminated."
+        failureMessage:
+          type: string
+          description: "Human-readable message describing the failure cause."
+        statusDetail:
+          $ref: '#/components/schemas/SandboxStatusDetail'
+        team:
+          type: string
+          description: "Team label of the sandbox owner (from pod label)"
+        user:
+          type: string
+          description: "User label of the sandbox owner (from pod label)"
+        nodeName:
+          type: string
+          description: "Kubernetes node the sandbox Pod was scheduled onto."
+        containerId:
+          type: string
+          description: "Runtime container ID (e.g. \"docker://abc123\") of the primary container, captured when the sandbox entered Running state."
+      example:
+        sandboxId: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+        namespace: "t-team-user"
+        poolName: "poolname"
+        podName: "poolname-wxtfc"
+        status: "Completed"
+        claimedAt: "2026-04-07T14:37:54Z"
+        startedAt: "2026-04-07T14:37:55Z"
+        terminatedAt: "2026-04-07T14:38:10Z"
+        recycledAt: "2026-04-07T14:38:11Z"
+        durationSeconds: 15
+        cpu: "1"
+        memory: "16Gi"
+        team: "team"
+        user: "user"
+        containerImages:
+          sandbox: "docker.io/project/name:tag"
+
+    SandboxEnvelope:
+      type: object
+      required: [sandbox]
+      properties:
+        sandbox:
+          $ref: '#/components/schemas/Sandbox'
+
+    # =========================================================
+    # Sandbox Logs
+    # =========================================================
+    SandboxLogEntry:
+      type: object
+      required: [container, log]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp of the log line."
+        container:
+          type: string
+          description: "Name of the container that produced this log line."
+        log:
+          type: string
+          description: "Raw log line content."
+
+    SandboxLogsResult:
+      type: object
+      required: [sandboxId, namespace, entries, truncated, source]
+      properties:
+        sandboxId:
+          type: string
+          description: |
+            Sandbox identifier. Single-cluster: bare UUID v7; cross-cluster: `{clusterID}.{uuid}` composite (dot-separated).
+            NOT a strict RFC 4122 UUID — treat as opaque.
+          example: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+        namespace:
+          type: string
+          description: "Kubernetes namespace of the sandbox."
+        podName:
+          type: string
+          description: "Name of the Kubernetes Pod backing the sandbox."
+        capturedAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the log snapshot was captured."
+        entries:
+          type: array
+          description: "Ordered list of log lines (oldest first)."
+          items:
+            $ref: '#/components/schemas/SandboxLogEntry'
+        truncated:
+          type: boolean
+          description: "True when the response was truncated due to the `lines` limit or internal size cap."
+        totalBytes:
+          type: integer
+          format: int64
+          description: "Total byte size of all log entries before any truncation."
+        source:
+          type: string
+          enum: [live, cached, runtime]
+        runtimeName:
+          type: string
+          description: "When source=runtime, the runtime name whose log file was read"
+
+    SetSandboxTimeoutRequest:
+      type: object
+      required: [timeout]
+      properties:
+        timeout:
+          type: string
+          description: "New idle timeout duration. Duration string, e.g. '30m', '2h'. Use '0' to disable the timeout."
+          example: "30m"
+
+    ExecTokenResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Single-use exec token, valid for 30 seconds
+
+    ExecCommandRequest:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          description: "Shell command to execute inside the sandbox (e.g. 'ls -la /tmp')"
+          example: "echo hello"
+        timeoutSeconds:
+          type: integer
+          description: "Execution timeout in seconds. Default: 30, Max: 300."
+          minimum: 1
+          maximum: 300
+          example: 30
+
+    ExecCommandResult:
+      type: object
+      required: [exitCode, stdout, stderr]
+      properties:
+        exitCode:
+          type: integer
+          description: "Exit code of the command (0 = success)"
+        stdout:
+          type: string
+          description: "Standard output of the command"
+        stderr:
+          type: string
+          description: "Standard error of the command"
+
+    DeleteSandboxResult:
+      type: object
+      required: [sandboxId, namespace, poolName, podName, status]
+      properties:
+        sandboxId:
+          type: string
+          description: |
+            Sandbox identifier. Single-cluster: bare UUID v7; cross-cluster: `{clusterID}.{uuid}` composite (dot-separated).
+            NOT a strict RFC 4122 UUID — treat as opaque.
+          example: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+        namespace:
+          type: string
+          description: "Kubernetes namespace the sandbox belonged to."
+        poolName:
+          type: string
+          description: "Name of the SandboxPool the sandbox was allocated from."
+        podName:
+          type: string
+          description: "Name of the Kubernetes Pod that backed the sandbox."
+        status:
+          type: string
+          description: "Final status of the delete operation (e.g. Stopping)."
+
+    CreateSandboxRequest:
+      type: object
+      required: [poolName]
+      properties:
+        poolName:
+          type: string
+          description: "Name of the SandboxPool to allocate the sandbox from."
+          example: "my-pool"
+        image:
+          type: string
+          description: "Override the main container image for this sandbox. Replaces the pool's default image."
+          example: "docker.io/myorg/myimage:latest"
+        containerImages:
+          type: object
+          description: "Per-container image overrides keyed by container name. Takes precedence over `image`."
+          additionalProperties:
+            type: string
+        labels:
+          type: object
+          description: "Kubernetes labels to apply to the sandbox pod."
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          description: "Kubernetes annotations to apply to the sandbox pod."
+          additionalProperties:
+            type: string
+        metadata:
+          type: object
+          description: "User-defined key-value metadata for filtering and annotation. Available on the sandbox object after creation."
+          additionalProperties:
+            type: string
+        startupTimeout:
+          type: string
+          description: "Maximum duration to wait for the sandbox to reach Running status before marking it as Failed. Duration string, e.g. '30s', '2m'."
+          example: "2m"
+        idleTimeout:
+          type: string
+          description: "Duration of inactivity after which the sandbox is automatically stopped. Duration string, e.g. '5m', '1h'. Use '0' to disable."
+          example: "30m"
+
+    ListSandboxesResult:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          description: "Page of sandbox objects matching the query."
+          items:
+            $ref: '#/components/schemas/Sandbox'
+        total:
+          type: integer
+          description: "Total number of sandboxes matching the query (before pagination)."
+        limit:
+          type: integer
+          description: "Maximum number of items requested per page."
+        offset:
+          type: integer
+          description: "Number of items skipped before this page."
+
+    # =========================================================
+    # SandboxPool
+    # =========================================================
+    PoolScaleUpPolicy:
+      type: object
+      description: "Controls scale-up behavior for a SandboxPool."
+      properties:
+        mode:
+          type: string
+          enum: [Conservative, Default, Aggressive]
+          default: Default
+          description: "Conservative: +1/decision; Default: +max(1,ceil(n/2))/decision; Aggressive: double up to maxReplicas/decision."
+        cooldownSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          default: 30
+          description: "Minimum seconds between two consecutive scale-up events."
+        idleThresholdSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          default: 30
+          description: "Trigger proactive scale-up when idleReplicas==0 persists for this many seconds. Set 0 to disable."
+
+    PoolScaleDownPolicy:
+      type: object
+      description: "Controls scale-down behavior for a SandboxPool."
+      properties:
+        idleTimeoutSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          default: 300
+          description: "Minimum seconds a pod must remain Idle before it becomes a scale-down candidate."
+        stabilizationSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          default: 60
+          description: "Minimum seconds between two consecutive scale-down events."
+        protectionWindowSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          default: 10
+          description: "Seconds after a pod is marked for scale-down during which a new Claim can still cancel the intent."
+
+    PoolAutoscalingSpec:
+      type: object
+      description: "Autoscaling configuration for a SandboxPool. When nil or enabled=false, spec.replicas is the only source of truth."
+      properties:
+        enabled:
+          type: boolean
+          default: false
+          description: "When false (default), the pool is managed manually via spec.replicas. MinReplicas/MaxReplicas are ignored."
+        scaleUpPolicy:
+          $ref: '#/components/schemas/PoolScaleUpPolicy'
+        scaleDownPolicy:
+          $ref: '#/components/schemas/PoolScaleDownPolicy'
+
+    SandboxPoolSpec:
+      type: object
+      required: [replicas]
+      properties:
+        replicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Desired number of pre-warmed idle pods in the pool."
+        minReplicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Minimum number of replicas when auto-scaling is enabled."
+        maxReplicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Maximum number of replicas when auto-scaling is enabled."
+        templateName:
+          type: string
+          description: "Name of the SandboxTemplate cluster resource to use as the pod spec source."
+        autoscaling:
+          $ref: '#/components/schemas/PoolAutoscalingSpec'
+          description: "Optional autoscaling configuration. When nil or enabled=false, pool is managed manually via spec.replicas."
+        podCreationImagePolicy:
+          type: string
+          enum: [PoolDefaultImage, IdleImage]
+          default: IdleImage
+          description: "Controls which image newly created Pods start with. IdleImage (default) uses spec.idleImage; PoolDefaultImage uses the template container image."
+        defaultStartupTimeout:
+          type: string
+          description: "Default startup timeout for sandbox create requests in this pool when the request does not specify startupTimeout. Also serves as the upper bound for the Starting phase: the controller deletes pods stuck in Starting for longer than this value. If not set, the internal default (2m) is used for create requests; no cleanup is enforced by default. Duration string, e.g. '5m'."
+        defaultIdleTimeout:
+          type: string
+          description: "Default idle timeout for sandboxes created in this pool. Applied when a CreateSandbox request does not specify idleTimeout. If not set, sandboxes have no idle timeout by default. Duration string, e.g. '30m'."
+
+    SandboxPoolStatus:
+      type: object
+      properties:
+        phase:
+          type: string
+          enum: [Pending, Ready, ScalingUp, ScalingDown, Degraded, Terminating]
+          description: "High-level pool health summary. Pending=no pods; Ready=all healthy idle pods present; ScalingUp/ScalingDown=replica count changing; Degraded=has unavailable idle or failed pods; Terminating=pool is being deleted."
+        idleReplicas:
+          type: integer
+          format: int32
+          description: "Number of pods in Idle phase (ready to be claimed)."
+        unavailableIdleReplicas:
+          type: integer
+          format: int32
+          description: "Number of Idle pods whose PodReady condition is False (e.g. Pending, CrashLoopBackOff). These are counted in idleReplicas but cannot accept requests. Non-zero value triggers Degraded phase."
+        runningReplicas:
+          type: integer
+          format: int32
+          description: "Number of pods actively serving a sandbox workload."
+        startingReplicas:
+          type: integer
+          format: int32
+          description: "Number of pods currently starting up."
+        stoppingReplicas:
+          type: integer
+          format: int32
+          description: "Number of pods transitioning from Running to Idle (in-place upgrade in progress)."
+        failedReplicas:
+          type: integer
+          format: int32
+          description: "Number of pods in a Failed state."
+
+    PoolTemplateOverrides:
+      type: object
+      description: "Persisted pool-level overrides applied on top of the referenced template and re-applied during template sync."
+      properties:
+        image:
+          type: string
+          description: "Override the main container (containers[0]) image"
+        resourceMultiplier:
+          type: integer
+          format: int32
+          minimum: 1
+          description: "Uniform scale factor for all container CPU/Memory requests+limits (>= 1). Also multiplies reservation.replicaQuota values."
+      additionalProperties: false
+
+    SandboxPool:
+      type: object
+      required: [name, namespace, spec, status]
+      properties:
+        name:
+          type: string
+          description: "Name of the SandboxPool (RFC 1123 DNS label)."
+        namespace:
+          type: string
+          description: "Kubernetes namespace the pool is deployed in."
+        spec:
+          $ref: '#/components/schemas/SandboxPoolSpec'
+        status:
+          $ref: '#/components/schemas/SandboxPoolStatus'
+        cpu:
+          type: string
+          description: "CPU resource per pod in the pool (Kubernetes resource quantity, e.g. \"1\", \"100m\")."
+        memory:
+          type: string
+          description: "Memory resource per pod in the pool (Kubernetes resource quantity, e.g. \"16Gi\", \"512Mi\")."
+        team:
+          type: string
+          description: "Team label of the pool owner (from CRD label)"
+        user:
+          type: string
+          description: "User label of the pool owner (from CRD label)"
+        templateVersion:
+          type: string
+          description: "Version of the source SandboxTemplate at last sync (from annotation)"
+        overrides:
+          $ref: '#/components/schemas/PoolTemplateOverrides'
+        specYaml:
+          type: string
+          description: "Full EmbeddedSandboxTemplate (idleImage, runtimes, reservation, template) serialized as YAML for diff comparison."
+        createdAt:
+          type: string
+          format: date-time
+          description: "Creation time of the pool (from metadata.creationTimestamp)"
+        poolDocs:
+          type: string
+          description: "Markdown usage docs for this pool, sourced from the linked SandboxTemplate's agentbox.navix.sh/docs annotation. The variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are substituted by the server before returning; ${AGBX_API_KEY} is resolved to the first non-legacy API key of the acting user. If the template references ${AGBX_API_KEY} but the user has no key with a recoverable plaintext token, GetSandboxPool returns 422 with errorCode API_KEY_REQUIRED."
+      example:
+        name: "poolname"
+        namespace: "t-team-user"
+        cpu: "1"
+        memory: "16Gi"
+        team: "team"
+        user: "user"
+        spec:
+          replicas: 2
+        status:
+          phase: "Ready"
+          idleReplicas: 1
+          unavailableIdleReplicas: 0
+          runningReplicas: 1
+          startingReplicas: 0
+          stoppingReplicas: 0
+          failedReplicas: 0
+
+    SandboxPoolEnvelope:
+      type: object
+      required: [template]
+      properties:
+        template:
+          $ref: '#/components/schemas/SandboxPool'
+
+    CreateSandboxPoolRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[a-z]([a-z0-9-]*[a-z0-9])?$'
+          description: "RFC 1123 DNS label (letter-start): lowercase letters, digits, hyphens; start with a letter, end with alphanumeric"
+        templateName:
+          type: string
+        replicas:
+          type: integer
+          format: int32
+        minReplicas:
+          type: integer
+          format: int32
+        maxReplicas:
+          type: integer
+          format: int32
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/SandboxPoolSpec'
+        quotaUrl:
+          type: string
+          deprecated: true
+          description: "Deprecated: pass quota URL via labels[\"quota.scitix.ai/url\"] instead."
+        overrides:
+          $ref: '#/components/schemas/PoolTemplateOverrides'
+        imagePullSecret:
+          $ref: '#/components/schemas/ImagePullSecretInput'
+          description: |
+            Optional registry credentials to attach to this pool. When provided, the server creates a Kubernetes
+            `kubernetes.io/dockerconfigjson` Secret named `ips-{poolName}` in the pool's namespace with an
+            OwnerReference to the pool (auto-deleted when the pool is deleted), and wires its name into
+            `spec.template.spec.imagePullSecrets`. Credentials are stored server-side only and are not retrievable
+            via the API.
+
+    ImagePullSecretInput:
+      type: object
+      required: [registries]
+      properties:
+        registries:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RegistryCredential'
+
+    RegistryCredential:
+      type: object
+      required: [registry, username, password]
+      properties:
+        registry:
+          type: string
+          description: "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    UpdateSandboxPoolRequest:
+      type: object
+      properties:
+        replicas:
+          type: integer
+          format: int32
+        minReplicas:
+          type: integer
+          format: int32
+          description: "New minimum replicas bound for the autoscaler. Omit to leave unchanged."
+        maxReplicas:
+          type: integer
+          format: int32
+          description: "New maximum replicas bound for the autoscaler. Omit to leave unchanged."
+        podCreationImagePolicy:
+          type: string
+          enum: [PoolDefaultImage, IdleImage]
+          description: "Update the pod creation image policy. Omit to leave unchanged."
+        overrides:
+          type: object
+          description: "Partial overrides to update. Only image can be updated after pool creation."
+          properties:
+            image:
+              type: string
+              description: "Override the main container (containers[0]) image"
+          additionalProperties: false
+        autoscaling:
+          $ref: '#/components/schemas/PoolAutoscalingSpec'
+          description: "Update autoscaling configuration for this pool."
+
+    DeleteSandboxPoolResult:
+      type: object
+      required: [name, namespace, status]
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        status:
+          type: string
+
+    ListSandboxPoolsResult:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          description: "Page of SandboxPool objects."
+          items:
+            $ref: '#/components/schemas/SandboxPool'
+        total:
+          type: integer
+          description: "Total number of pools matching the query (before pagination)."
+        limit:
+          type: integer
+          description: "Maximum number of items requested per page."
+        offset:
+          type: integer
+          description: "Number of items skipped before this page."
+
+    # =========================================================
+    # SandboxTemplate
+    # =========================================================
+    RuntimeReadinessProbe:
+      type: object
+      description: "Lightweight readiness probe — only httpGet is supported. Advanced fields (initialDelaySeconds, periodSeconds, etc.) use Kubernetes defaults."
+      properties:
+        httpGet:
+          type: object
+          required: [port]
+          properties:
+            port:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 65535
+              description: "Port to probe"
+            path:
+              type: string
+              description: "HTTP path to probe (e.g. /healthz), defaults to /"
+          additionalProperties: false
+      additionalProperties: false
+
+    Runtime:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        port:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+        protocol:
+          type: string
+        description:
+          type: string
+          description: "Human-readable description of this runtime"
+        logDir:
+          type: string
+          description: "Path to the runtime log file inside the container (e.g. /tmp/envd.log)"
+        readinessProbe:
+          $ref: '#/components/schemas/RuntimeReadinessProbe'
+          description: "Optional readiness probe for this runtime endpoint"
+      additionalProperties: false
+
+    VisibilityRule:
+      type: object
+      properties:
+        team:
+          type: string
+          description: "Team name that this rule applies to."
+        users:
+          type: array
+          description: "Specific users within the team that this rule applies to. Empty means all users in the team."
+          items:
+            type: string
+      additionalProperties: false
+
+    VisibilityConfig:
+      type: object
+      properties:
+        rules:
+          type: array
+          description: "List of visibility rules controlling which teams and users can see this template."
+          items:
+            $ref: '#/components/schemas/VisibilityRule'
+      additionalProperties: false
+
+    SandboxTemplateSpec:
+      type: object
+      properties:
+        version:
+          type: string
+          description: "User-defined version string for the template (e.g. \"v1.2.3\")."
+        description:
+          type: string
+          description: "Human-readable description of the template and its intended use."
+        idleImage:
+          type: string
+          description: "Container image used when the pod is in Idle phase (lightweight placeholder image)."
+        template:
+          type: string
+          description: "Kubernetes PodTemplateSpec serialized as YAML/JSON string, passed through as-is"
+        runtimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Runtime'
+          description: "Runtime port mappings for the sandbox"
+        visibility:
+          $ref: '#/components/schemas/VisibilityConfig'
+          description: "Access visibility rules"
+
+    SandboxTemplateStatus:
+      type: object
+      properties:
+        ready:
+          type: boolean
+          description: "True when the template has been validated and is ready for use."
+        message:
+          type: string
+          description: "Human-readable status message, populated when ready is false."
+
+    SandboxTemplateSummary:
+      type: object
+      description: "Lightweight summary returned by the List endpoint — omits spec, specYaml, labels, annotations, status, and full docs to reduce payload size."
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Name of the SandboxTemplate cluster resource (RFC 1123 DNS label)."
+        version:
+          type: string
+          description: "User-defined version of this template (from spec.version)."
+        description:
+          type: string
+          description: "Human-readable description of the template (from spec.description)."
+        createdAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the template was created."
+        cpu:
+          type: string
+          description: "CPU resource quantity derived from the template's pod spec (e.g. \"1\", \"100m\")."
+        memory:
+          type: string
+          description: "Memory resource quantity derived from the template's pod spec (e.g. \"16Gi\", \"512Mi\")."
+        syncSource:
+          type: string
+          description: "Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on worker)."
+        runtimeNames:
+          type: array
+          description: "List of runtime endpoint names defined in this template (lightweight alternative to the full Runtime objects)."
+          items:
+            type: string
+        hasDocs:
+          type: boolean
+          description: "True when the template has documentation in the agentbox.navix.sh/docs annotation."
+
+    SandboxTemplate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Name of the SandboxTemplate cluster resource (RFC 1123 DNS label)."
+        version:
+          type: string
+          description: "User-defined version of this template (from spec.version)."
+        description:
+          type: string
+          description: "Human-readable description of the template (from spec.description)."
+        createdAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the template was created."
+        cpu:
+          type: string
+          description: "CPU resource quantity derived from the template's pod spec (e.g. \"1\", \"100m\")."
+        memory:
+          type: string
+          description: "Memory resource quantity derived from the template's pod spec (e.g. \"16Gi\", \"512Mi\")."
+        syncSource:
+          type: string
+          description: "Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on worker). Empty for legacy resources."
+        docs:
+          type: string
+          description: "Markdown documentation for the template, stored in the agentbox.navix.sh/docs annotation. Supports variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} for pool-specific rendering. On Template Get the server substitutes them with human-readable hints (YOUR_POOL_NAME, real cluster ID, YOUR_API_KEY); on Pool Get they are substituted with real values."
+        crdYaml:
+          type: string
+          description: "Complete raw SandboxTemplate CRD YAML (without managedFields). Includes resourceVersion and uid for optimistic locking on PUT."
+
+    SandboxTemplateEnvelope:
+      type: object
+      required: [template]
+      properties:
+        template:
+          $ref: '#/components/schemas/SandboxTemplate'
+
+    UpsertSandboxTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[a-z]([a-z0-9-]*[a-z0-9])?$'
+          description: "RFC 1123 DNS label (letter-start): lowercase letters, digits, hyphens; start with a letter, end with alphanumeric"
+        spec:
+          $ref: '#/components/schemas/SandboxTemplateSpec'
+        crdYaml:
+          type: string
+          description: "Complete SandboxTemplate CRD YAML string. When provided, name/spec/labels/annotations are extracted from the YAML and the individual fields above are ignored."
+
+    DeleteSandboxTemplateResult:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+
+    SyncTemplatePreviewResult:
+      type: object
+      required: [specYaml, version]
+      properties:
+        specYaml:
+          type: string
+          description: "EmbeddedSandboxTemplate YAML after applying all overrides. Suitable for diff comparison against pool.specYaml."
+        version:
+          type: string
+          description: "Version of the source template."
+
+    ListSandboxTemplatesResult:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          description: "Page of SandboxTemplateSummary objects (lightweight — use GET /sandbox-templates/{name} for full details)."
+          items:
+            $ref: '#/components/schemas/SandboxTemplateSummary'
+        total:
+          type: integer
+          description: "Total number of templates (before pagination)."
+        limit:
+          type: integer
+          description: "Maximum number of items requested per page."
+        offset:
+          type: integer
+          description: "Number of items skipped before this page."
+
+    # =========================================================
+    # APIKey
+    # =========================================================
+    SelfCreateAPIKeyRequest:
+      type: object
+      description: Request body for tenant self-service API key creation. Namespace/user/team are taken from the caller's auth context.
+      properties:
+        description:
+          type: string
+          description: "Optional human-readable description for this key (e.g. its intended use)."
+        expiresAt:
+          type: string
+          format: date-time
+          description: "Optional RFC 3339 expiry timestamp. Omit for a non-expiring key."
+
+    CreateAPIKeyRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+          description: "Kubernetes namespace to associate the key with."
+        user:
+          type: string
+          description: "Username to associate the key with."
+        team:
+          type: string
+          description: "Team name to associate the key with."
+        description:
+          type: string
+          description: "Optional human-readable description for this key."
+        expiresAt:
+          type: string
+          format: date-time
+          description: "Optional RFC 3339 expiry timestamp. Omit for a non-expiring key."
+        tokenHash:
+          type: string
+          description: >
+            Full SHA-256 hex hash of the raw token (64 hex chars). When
+            provided together with hashPrefix, the key is imported using the
+            given hash instead of generating a new random token. The
+            operation is idempotent — if a key with the same hash already
+            exists it is silently accepted. Admin-only.
+        hashPrefix:
+          type: string
+          description: >
+            First 16 hex characters of the tokenHash. Required when
+            tokenHash is provided.
+        issuedAt:
+          type: string
+          format: date-time
+          description: >
+            Original issue timestamp (import mode). Used to preserve the
+            original creation time. Ignored when tokenHash is not provided.
+        quotaURL:
+          type: string
+          description: Quota URL associated with the key (import mode).
+
+    CreateAPIKeyResult:
+      type: object
+      required: [apiKey, keyId, role, issuedAt]
+      properties:
+        apiKey:
+          type: string
+          description: "The raw API key value (only returned once at creation time; store it securely)."
+        keyId:
+          type: string
+          description: "Unique identifier for this API key (used to look up or delete the key)."
+        user:
+          type: string
+          description: "Username associated with the key."
+        team:
+          type: string
+          description: "Team associated with the key."
+        role:
+          type: string
+          description: "Role granted by this key (e.g. tenant, admin)."
+        description:
+          type: string
+          description: "Human-readable description of the key."
+        issuedAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the key was created."
+        expiresAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 expiry timestamp, or absent if the key never expires."
+
+    APIKeyItem:
+      type: object
+      required: [keyId, role, issuedAt]
+      properties:
+        keyId:
+          type: string
+          description: "Unique identifier for this API key."
+        user:
+          type: string
+          description: "Username associated with the key."
+        team:
+          type: string
+          description: "Team associated with the key."
+        role:
+          type: string
+          description: "Role granted by this key (e.g. tenant, admin)."
+        quotaURL:
+          type: string
+          description: "Quota URL associated with the key (populated in import mode)."
+        description:
+          type: string
+          description: "Human-readable description of the key."
+        issuedAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the key was created."
+        expiresAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 expiry timestamp, or absent if the key never expires."
+        syncSource:
+          type: string
+          description: "Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on worker). Empty for legacy resources."
+        rawToken:
+          type: string
+          description: >
+            The full raw API key value (agbx_...), present only for keys created after plaintext
+            storage was introduced. Absent for legacy keys. Displayed masked in UI; the full value
+            is returned here for recovery by authorised callers.
+
+    PromoteAPIKeyResult:
+      type: object
+      required: [keyId, status]
+      properties:
+        keyId:
+          type: string
+          description: "Unique identifier of the promoted API key."
+        status:
+          type: string
+          description: "Result of the promote operation (e.g. Promoted)."
+
+    DeleteAPIKeyResult:
+      type: object
+      required: [keyId, status]
+      properties:
+        keyId:
+          type: string
+          description: "Unique identifier of the deleted API key."
+        status:
+          type: string
+          description: "Result of the delete operation (e.g. Deleted)."
+
+    ListAPIKeysResult:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          description: "Page of API key objects."
+          items:
+            $ref: '#/components/schemas/APIKeyItem'
+        total:
+          type: integer
+          description: "Total number of API keys matching the query (before pagination)."
+        limit:
+          type: integer
+          description: "Maximum number of items requested per page."
+        offset:
+          type: integer
+          description: "Number of items skipped before this page."
+
+    # =========================================================
+    # Quota
+    # =========================================================
+    Quota:
+      type: object
+      required: [name, quotaUrl, queue, label]
+      properties:
+        name:
+          type: string
+          description: "Name of the quota entry."
+        quotaUrl:
+          type: string
+          description: "URL of the SI Scheduler quota resource."
+        queue:
+          type: string
+          description: "SI Scheduler queue name associated with this quota."
+        poolName:
+          type: string
+          description: "Name of the SandboxPool bound to this quota, if any."
+        label:
+          type: string
+          description: "Display label for this quota entry."
+        team:
+          type: string
+          description: "Team that owns this quota."
+        user:
+          type: string
+          description: "User that owns this quota."
+        resources:
+          type: object
+          description: "Total resource capacity for this quota, keyed by resource name (e.g. cpu, memory, nvidia.com/gpu)."
+          additionalProperties:
+            type: string
+        used:
+          type: object
+          description: "Currently consumed resources, keyed by resource name."
+          additionalProperties:
+            type: string
+        reserved:
+          type: object
+          description: "Resources reserved but not yet actively used, keyed by resource name."
+          additionalProperties:
+            type: string
+        free:
+          type: object
+          description: "Available (unreserved) resources, keyed by resource name."
+          additionalProperties:
+            type: string
+
+    ListQuotasResult:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          description: "Page of quota objects."
+          items:
+            $ref: '#/components/schemas/Quota'
+        total:
+          type: integer
+          description: "Total number of quota entries (before pagination)."
+        limit:
+          type: integer
+          description: "Maximum number of items requested per page."
+        offset:
+          type: integer
+          description: "Number of items skipped before this page."
+
+    # =========================================================
+    # WhoAmI
+    # =========================================================
+    WhoAmIResult:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          description: "Role assigned to the caller's API key (e.g. tenant, admin)."
+        user:
+          type: string
+          description: "Username extracted from the caller's auth context."
+        team:
+          type: string
+          description: "Team extracted from the caller's auth context."
+
+    # =========================================================
+    # FeatureGates
+    # =========================================================
+    FeatureGates:
+      type: object
+      required: [quota]
+      description: >-
+        Boolean switches that tell clients which optional features are wired
+        into the current deployment. Dashboards gate feature UI on these
+        values; SDKs can short-circuit feature-specific calls when a gate is
+        false.
+      properties:
+        quota:
+          type: boolean
+          description: >-
+            True when a non-noop quota provider is active (quota selection on
+            pool creation, quota listing endpoint). False on deployments with
+            no quota backend wired in.
+          example: true
+
+    # =========================================================
+    # Organization
+    # =========================================================
+    TeamsResult:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          description: "List of team names."
+          items:
+            type: string
+        total:
+          type: integer
+          description: "Total number of teams."
+
+    UsersResult:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          description: "List of usernames in the team."
+          items:
+            type: string
+        total:
+          type: integer
+          description: "Total number of users in the team."
+
+    NamespacesResult:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          description: "List of Kubernetes namespace names."
+          items:
+            type: string
+        total:
+          type: integer
+          description: "Total number of namespaces."
+
+    # =========================================================
+    # Statistics
+    # =========================================================
+    SandboxStatistics:
+      type: object
+      required: [total, byStatus, byNamespace]
+      properties:
+        total:
+          type: integer
+          description: "Total number of sandboxes across all namespaces."
+        byStatus:
+          type: object
+          description: "Sandbox count broken down by status (e.g. Running, Failed)."
+          additionalProperties:
+            type: integer
+        byNamespace:
+          type: object
+          description: "Sandbox count broken down by Kubernetes namespace."
+          additionalProperties:
+            type: integer
+
+    SandboxStatisticsEnvelope:
+      type: object
+      required: [statistics]
+      properties:
+        statistics:
+          $ref: '#/components/schemas/SandboxStatistics'
+
+    SandboxPoolStatistics:
+      type: object
+      required: [total, totalReplicas, totalIdleReplicas, totalRunningReplicas, totalFailedReplicas, byNamespace]
+      properties:
+        total:
+          type: integer
+          description: "Total number of SandboxPools across all namespaces."
+        totalReplicas:
+          type: integer
+          description: "Total pod replica count across all pools."
+        totalIdleReplicas:
+          type: integer
+          description: "Total number of idle pod replicas across all pools."
+        totalRunningReplicas:
+          type: integer
+          description: "Total number of running (sandbox-serving) pod replicas across all pools."
+        totalFailedReplicas:
+          type: integer
+          description: "Total number of failed pod replicas across all pools."
+        byNamespace:
+          type: object
+          description: "Pool count broken down by Kubernetes namespace."
+          additionalProperties:
+            type: integer
+
+    SandboxPoolStatisticsEnvelope:
+      type: object
+      required: [statistics]
+      properties:
+        statistics:
+          $ref: '#/components/schemas/SandboxPoolStatistics'
+
+    UserSandboxStatistics:
+      type: object
+      required: [namespace, total, byStatus]
+      properties:
+        namespace:
+          type: string
+          description: "Kubernetes namespace these statistics are scoped to."
+        total:
+          type: integer
+          description: "Total number of sandboxes in the user's namespace."
+        byStatus:
+          type: object
+          description: "Sandbox count broken down by status (e.g. Running, Failed)."
+          additionalProperties:
+            type: integer
+
+    UserSandboxStatisticsEnvelope:
+      type: object
+      required: [statistics]
+      properties:
+        statistics:
+          $ref: '#/components/schemas/UserSandboxStatistics'
+
+    # =========================================================
+    # Errors
+    # =========================================================
+    ClusterSummary:
+      type: object
+      required: [id, local]
+      description: "One cluster entry visible through the gateway's routing table."
+      properties:
+        id:
+          type: string
+          description: |
+            Cluster identifier. Use this value as the prefix when addressing
+            cross-cluster resources: `{id}.{uuid}` for sandboxes,
+            `{id}::{poolName}` for pools.
+          example: "cluster1"
+        name:
+          type: string
+          description: "Human-readable display name (may equal id)."
+          example: "cluster1"
+        local:
+          type: boolean
+          description: |
+            True when this entry is the cluster serving the current request —
+            i.e. sandbox/pool identifiers without any cross-cluster prefix refer
+            to this cluster.
+          example: true
+
+    ListClustersResult:
+      type: object
+      required: [clusters]
+      description: "Response envelope for `GET /clusters`."
+      properties:
+        clusters:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClusterSummary'
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      description: |
+        Standard error envelope. Individual endpoints override the `example` per response
+        code so the shape of `detail` is accurate for that specific failure mode.
+      properties:
+        error:
+          type: string
+          description: "Human-readable error message."
+        errorCode:
+          type: string
+          description: |
+            Machine-readable business error code. Only present for specific business errors
+            that require special handling (e.g. `API_KEY_REQUIRED` prompts the client to
+            call `POST /api-keys` before retrying). Generic HTTP errors (400, 500, etc.) do
+            NOT carry this field.
+          example: "API_KEY_REQUIRED"
+        detail:
+          description: |
+            Structured context for the error. Shape depends on the failure mode. Common
+            variants:
+              * Plain string — simple context ("pool not found: my-pool")
+              * `PoolStatusDetail` — returned on 409/429 from CreateSandbox to describe
+                pool replica breakdown and retry hints
+              * `{availablePools: [...]}` — returned on 404 from CreateSandbox / 400 from
+                CreateSandboxPool when the referenced resource does not exist
+              * `{availableTemplates: [...]}` — returned on 400 from CreateSandboxPool
+              * `{availableQuotaURLs: [...]}` — returned on 400 when spec.reservation is
+                set but quotaURL is missing
+
+paths:
+  # =========================================================
+  # Auth
+  # =========================================================
+  /auth/whoami:
+    get:
+      operationId: GetWhoAmI
+      summary: Get caller identity
+      tags: [auth]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhoAmIResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Sandboxes
+  # =========================================================
+  /sandboxes:
+    post:
+      operationId: CreateSandbox
+      summary: Create a sandbox
+      tags: [sandboxes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSandboxRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxEnvelope'
+              example:
+                sandbox:
+                  sandboxId: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+                  namespace: "t-team1-user1"
+                  poolName: "my-pool"
+                  podName: "my-pool-xy7k2"
+                  status: "Running"
+                  claimedAt: "2026-04-21T10:15:30Z"
+                  team: "team1"
+                  user: "user1"
+        "400":
+          description: Bad Request — validation failure (e.g. missing `poolName`, invalid `idleTimeout`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "poolName is required"
+        "401":
+          description: Unauthorized — API key missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid API key"
+        "404":
+          description: |
+            Not Found — the requested `poolName` does not exist in the caller's namespace.
+            The `detail` field carries an `availablePools` array so the client can pick a
+            valid pool without a second round-trip to `ListSandboxPools`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "sandbox pool t-team1-user1/missing-pool not found"
+                detail:
+                  availablePools:
+                    - name: "my-pool"
+                      namespace: "t-team1-user1"
+                      idle: 2
+                      running: 1
+                      starting: 0
+                    - name: "gpu-pool"
+                      namespace: "t-team1-user1"
+                      idle: 0
+                      running: 0
+                      starting: 1
+                  hint: "Pool not found. Pick a name from availablePools, or call POST /v1/sandboxpools first."
+        "409":
+          description: |
+            Conflict — the target pool has no idle pods. `detail` is a `PoolStatusDetail`
+            exposing the live replica counts and a human-readable hint so the client can
+            either retry after `retryAfter` or scale the pool up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "no idle pods available in pool my-pool"
+                detail:
+                  idle: 0
+                  running: 3
+                  starting: 0
+                  stopping: 0
+                  failed: 0
+                  hint: "pool at capacity; wait for a running sandbox to be released or scale up"
+        "429":
+          description: |
+            Too Many Requests — SI Scheduler rejected the reservation attempt.
+            `detail` mirrors the scheduler's submit response (`errCode`, optional `retryAfter`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "scale failed: QUOTA_EXCEEDED"
+                detail:
+                  errCode: "QUOTA_EXCEEDED"
+                  message: "user quota reached its hard cap"
+                  retryAfter: 30
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "failed to generate sandbox UUID"
+    get:
+      operationId: ListSandboxes
+      summary: List sandboxes
+      tags: [sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/QueryPoolName'
+        - $ref: '#/components/parameters/QuerySandboxStatus'
+        - $ref: '#/components/parameters/QueryLimit'
+        - $ref: '#/components/parameters/QueryOffset'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSandboxesResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxes/{sandboxId}:
+    get:
+      operationId: GetSandbox
+      summary: Get a sandbox
+      tags: [sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/PathSandboxId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxEnvelope'
+              example:
+                sandbox:
+                  sandboxId: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+                  namespace: "t-team1-user1"
+                  poolName: "my-pool"
+                  podName: "my-pool-xy7k2"
+                  status: "Running"
+                  claimedAt: "2026-04-21T10:15:30Z"
+                  team: "team1"
+                  user: "user1"
+                  endpoints:
+                    default: "https://agentbox.example.com/v1/sandboxes/5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid API key"
+        "404":
+          description: Not Found — the sandbox does not exist or has already been terminated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "sandbox t-team1-user1/5de15c92-8fb5-440f-a9ea-7f62f734f1b9 not found or already terminated"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: DeleteSandbox
+      summary: Delete a sandbox
+      tags: [sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/PathSandboxId'
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteSandboxResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxes/{sandboxId}/timeout:
+    put:
+      summary: Update sandbox idle timeout
+      operationId: SetSandboxTimeout
+      tags: [sandboxes]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathSandboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSandboxTimeoutRequest'
+      responses:
+        '204':
+          description: Timeout updated
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxes/{sandboxId}/logs:
+    get:
+      operationId: GetSandboxLogs
+      summary: Get sandbox logs
+      tags: [sandboxes]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PathSandboxId'
+        - name: container
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "Filter by container name. When omitted, logs from all containers are returned."
+        - name: lines
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+          description: "Return only the last N lines. 0 or absent means return all lines."
+        - name: source
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Log source selector.
+            - Omit or "stdout": return container stdout/stderr (default behavior)
+            - "<runtime_name>": read the runtime's log file (logDir) via exec inside the container.
+              Only available for Running sandboxes with a matching runtime that has logDir set.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxLogsResult'
+        "400":
+          description: Bad Request (e.g. runtime not found, logDir not configured, sandbox not Running)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxes/{sandboxId}/exec-token:
+    post:
+      operationId: CreateSandboxExecToken
+      summary: Create a short-lived exec token for WebSocket terminal
+      description: |
+        Returns a single-use token (TTL 30s) for establishing a WebSocket terminal.
+        WS endpoint: wss://<host>/ws/clusters/{clusterID}/sandboxes/{sandboxId}/terminal?token=<token>
+        The sandbox must be in Running phase.
+      tags: [sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/PathSandboxId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecTokenResponse'
+        "400":
+          description: Bad Request (sandbox not Running)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxes/{sandboxId}/is_ready:
+    get:
+      operationId: IsSandboxReady
+      summary: Check if all runtime endpoints of a sandbox are ready
+      deprecated: true
+      description: |
+        **DEPRECATED** — will be removed in a future version.
+
+        Prefer `GET /sandboxes/{sandboxId}` and inspect the returned `sandbox.status`
+        (`Running`) plus `sandbox.endpoints` (non-empty, correct scheme/port) instead.
+
+        Executes the configured ReadinessProbe for each runtime endpoint and returns
+        the aggregated result. Returns 200 when all probes pass, 503 when one or more
+        probes fail. If a runtime has no ReadinessProbe configured, it is considered ready.
+      tags: [sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/PathSandboxId'
+      responses:
+        "200":
+          description: All configured readiness probes passed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxReadinessResult'
+        "503":
+          description: One or more endpoints are not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxReadinessResult'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxes/{sandboxId}/exec:
+    post:
+      operationId: ExecSandboxCommand
+      summary: Execute a command inside a sandbox
+      deprecated: true
+      description: |
+        **DEPRECATED** — will be removed in a future version.
+
+        Prefer opening an interactive exec session with the WebSocket endpoint
+        (see `POST /sandboxes/{sandboxId}/exec-token` + `wss://.../terminal`) for
+        any non-trivial command execution. This REST call is limited to 300 seconds
+        and does not stream output incrementally.
+
+        Executes a shell command inside the sandbox and returns stdout, stderr, and exit code.
+        The sandbox must be in Running phase. The command runs in a non-interactive shell (no TTY).
+      tags: [sandboxes]
+      parameters:
+        - $ref: '#/components/parameters/PathSandboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecCommandRequest'
+      responses:
+        "200":
+          description: Command executed (check exitCode for success/failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecCommandResult'
+        "400":
+          description: Bad Request (sandbox not Running or invalid request)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # SandboxPools
+  # =========================================================
+  /sandboxpools:
+    post:
+      operationId: CreateSandboxPool
+      summary: Create a sandbox pool
+      tags: [pools]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSandboxPoolRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxPoolEnvelope'
+              example:
+                template:
+                  name: "my-pool"
+                  namespace: "t-team1-user1"
+                  team: "team1"
+                  user: "user1"
+                  cpu: "2000m"
+                  memory: "4Gi"
+                  templateVersion: "v1"
+                  createdAt: "2026-04-21T10:00:00Z"
+        "400":
+          description: |
+            Bad Request. Common causes:
+
+            * Validation failure (missing `name`, invalid image override, etc.)
+            * Referenced `templateName` does not exist — in this case `detail` carries
+              `availableTemplates` so the client can pick one and retry.
+            * `spec.reservation` is set but the pool lacks a `quota.scitix.ai/url` label —
+              `detail.availableQuotaURLs` surfaces quotas visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingTemplate:
+                  summary: Template not found
+                  value:
+                    error: 'sandbox template "default-template" not found'
+                    detail:
+                      availableTemplates:
+                        - name: "gpu-runtime"
+                          description: "GPU-accelerated runtime with CUDA 12"
+                          syncSource: "global"
+                        - name: "nodejs20"
+                          description: "Node.js 20 baseline runtime"
+                      hint: "Template not found. Pick a name from availableTemplates, or omit templateName to define the pool inline."
+                missingQuotaURL:
+                  summary: Reservation requires quotaURL
+                  value:
+                    error: "template requires a quota URL (spec.reservation is set)"
+                    detail:
+                      availableQuotaURLs:
+                        - url: "alice.bob.carol.ted"
+                          queue: "ted"
+                          free: "cpu=32"
+                        - url: "alice.bob.carol.det"
+                          queue: "det"
+                          free: "cpu=0"
+                      hint: "spec.reservation is set but the pool is missing the quota.scitix.ai/url label. Pick one of availableQuotaURLs and set it as a label on the pool before retrying."
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid API key"
+        "409":
+          description: Conflict — a pool with this name already exists in the caller's namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: 'pool "my-pool" already exists'
+        "429":
+          description: Too Many Requests — SI Scheduler rejected the reservation submission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "scale failed: QUOTA_EXCEEDED"
+                detail:
+                  errCode: "QUOTA_EXCEEDED"
+        "422":
+          description: |
+            Unprocessable Entity — caller has no API Key; `errorCode=API_KEY_REQUIRED` tells
+            the frontend to redirect to API-key creation rather than show a generic error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "API key required for this operation"
+                errorCode: "API_KEY_REQUIRED"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      operationId: ListSandboxPools
+      summary: List sandbox pools
+      tags: [pools]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSandboxPoolsResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxpools/{name}:
+    get:
+      operationId: GetSandboxPool
+      summary: Get a sandbox pool
+      tags: [pools]
+      parameters:
+        - $ref: '#/components/parameters/PathPoolName'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxPoolEnvelope'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: |
+            Unprocessable Entity. Returned with errorCode `API_KEY_REQUIRED`
+            when the pool's `poolDocs` template references `${AGBX_API_KEY}` and the
+            current user has no API key with a recoverable plaintext token
+            (e.g. only legacy hash-only keys exist). The frontend should guide
+            the user to the API Keys page to create a new key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: UpdateSandboxPool
+      summary: Update a sandbox pool
+      tags: [pools]
+      parameters:
+        - $ref: '#/components/parameters/PathPoolName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSandboxPoolRequest'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxPoolEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: Too Many Requests – resource quota exceeded on scale-out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: DeleteSandboxPool
+      summary: Delete a sandbox pool
+      tags: [pools]
+      parameters:
+        - $ref: '#/components/parameters/PathPoolName'
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteSandboxPoolResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxpools/{name}/sync-template:
+    post:
+      operationId: SyncSandboxPoolTemplate
+      summary: Sync a sandbox pool's spec from its source template
+      deprecated: true
+      description: |
+        **DEPRECATED** — will be removed in a future version.
+
+        Prefer `PUT /sandboxpools/{name}` with the specific fields you want to update
+        (e.g. `overrides.image`, `replicas`) rather than re-reading the source template
+        implicitly. Admin template updates via `PUT /admin/sandbox-templates/{name}` now
+        propagate to pools automatically.
+
+        Re-reads the pool's source SandboxTemplate (from templateName annotation) and
+        patches the pool's EmbeddedSandboxTemplate fields. Does not change replicas.
+      tags: [pools]
+      parameters:
+        - $ref: '#/components/parameters/PathPoolName'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxPoolEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandboxpools/{name}/sync-template/preview:
+    post:
+      operationId: PreviewSyncSandboxPoolTemplate
+      summary: Preview the result of syncing pool to current template (dry-run, no write)
+      tags: [pools]
+      parameters:
+        - $ref: '#/components/parameters/PathPoolName'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncTemplatePreviewResult'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # SandboxTemplates
+  # =========================================================
+  /sandbox-templates:
+    get:
+      operationId: ListSandboxTemplates
+      summary: List sandbox templates
+      tags: [sandbox-templates]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSandboxTemplatesResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sandbox-templates/{name}:
+    get:
+      operationId: GetSandboxTemplate
+      summary: Get a sandbox template
+      tags: [sandbox-templates]
+      parameters:
+        - $ref: '#/components/parameters/PathTemplateName'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Clusters
+  # =========================================================
+  /clusters:
+    get:
+      operationId: ListClusters
+      summary: List clusters visible to the gateway
+      description: |
+        Returns the cluster catalog visible to the gateway serving this request.
+
+        The entry with `local: true` is the cluster that owns native-local
+        resources (a sandbox created here without any `{clusterID}.` prefix lives
+        in that cluster). Other entries are reachable via cross-cluster
+        forwarding: prefix sandbox IDs with `{clusterID}.` (dot) and pool names
+        with `{clusterID}::` (double colon) to route to them.
+
+        This endpoint requires only a regular API key — it does not leak
+        gateway URLs, headers, or any write-capability.
+      tags: [clusters]
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListClustersResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # FeatureGates
+  # =========================================================
+  /feature-gates:
+    get:
+      operationId: GetFeatureGates
+      summary: Report optional features enabled on this cluster
+      description: >-
+        Returns boolean switches for each optional feature wired into the
+        current deployment. Clients (dashboard, SDK) use this to decide
+        whether to render feature-specific UI (quota selector on pool create,
+        etc.) and whether the corresponding endpoints are available.
+      tags: [feature-gates]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureGates'
+              example:
+                quota: true
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Quotas
+  # =========================================================
+  /quotas:
+    get:
+      operationId: ListQuotas
+      summary: List quotas for current user
+      tags: [quotas]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListQuotasResult'
+              example:
+                items:
+                  - name: "team1-user1-ondemand"
+                    quotaURL: "alice.bob.carol.ted"
+                    queue: "ted"
+                    team: "carol"
+                    user: "alice"
+                    poolId: "bob"
+                    resources:
+                      cpu: "64"
+                      memory: "256Gi"
+                    used:
+                      cpu: "24"
+                      memory: "96Gi"
+                    reserved:
+                      cpu: "16"
+                      memory: "64Gi"
+                    free:
+                      cpu: "24"
+                      memory: "96Gi"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Statistics
+  # =========================================================
+  /statistics/sandboxes:
+    get:
+      operationId: GetUserSandboxStatistics
+      summary: Get user-scoped sandbox statistics
+      tags: [statistics]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSandboxStatisticsEnvelope'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Self-service API Keys (tenant — namespace locked to caller's namespace)
+  # =========================================================
+  /api-keys:
+    post:
+      operationId: SelfCreateAPIKey
+      summary: Create an API key for yourself (tenant)
+      tags: [apikeys]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelfCreateAPIKeyRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResult'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      operationId: SelfListAPIKeys
+      summary: List your own API keys (tenant)
+      tags: [apikeys]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAPIKeysResult'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api-keys/{name}:
+    delete:
+      operationId: SelfDeleteAPIKey
+      summary: Delete one of your own API keys (tenant)
+      tags: [apikeys]
+      parameters:
+        - $ref: '#/components/parameters/PathAPIKeyName'
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteAPIKeyResult'
+        "403":
+          description: Forbidden (not your key)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Admin: API Keys
+  # =========================================================
+  /admin/api-keys:
+    post:
+      operationId: CreateAPIKey
+      summary: Create an API key (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResult'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      operationId: ListAPIKeys
+      summary: List API keys (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/QueryNamespace'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAPIKeysResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api-keys/{name}:
+    delete:
+      operationId: DeleteAPIKey
+      summary: Delete an API key (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/PathAPIKeyName'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteAPIKeyResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api-keys/{name}/promote:
+    post:
+      operationId: PromoteAPIKey
+      summary: Promote a local API key to global (admin)
+      description: >
+        Elevates a locally-created API key to a global key by syncing it through the
+        ws-proxy manager to all connected Worker clusters. The key must not already be
+        global. Requires an active ws-proxy connection.
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/PathAPIKeyName'
+      responses:
+        "200":
+          description: Promoted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoteAPIKeyResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Conflict (key is already global)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable (ws-proxy not connected)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Admin: SandboxTemplate write operations
+  # =========================================================
+  /admin/sandbox-templates:
+    post:
+      operationId: AdminCreateSandboxTemplate
+      summary: Create a sandbox template (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertSandboxTemplateRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/sandbox-templates/{name}:
+    put:
+      operationId: AdminUpdateSandboxTemplate
+      summary: Update a sandbox template (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/PathTemplateName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertSandboxTemplateRequest'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Conflict (resourceVersion mismatch — refresh and retry)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: AdminDeleteSandboxTemplate
+      summary: Delete a sandbox template (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/PathTemplateName'
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteSandboxTemplateResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Admin: Organization
+  # =========================================================
+  /admin/teams:
+    get:
+      operationId: ListTeams
+      summary: List all teams (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamsResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/teams/{team}/users:
+    get:
+      operationId: ListUsersByTeam
+      summary: List users in a team (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/PathTeam'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersResult'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/namespaces:
+    get:
+      operationId: ListNamespaces
+      summary: List all namespaces (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespacesResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # Admin: Statistics
+  # =========================================================
+  /admin/statistics/sandboxes:
+    get:
+      operationId: AdminGetSandboxStatistics
+      summary: Get cluster-wide sandbox statistics (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxStatisticsEnvelope'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/statistics/sandboxpools:
+    get:
+      operationId: AdminGetSandboxPoolStatistics
+      summary: Get cluster-wide sandbox pool statistics (admin)
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxPoolStatisticsEnvelope'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

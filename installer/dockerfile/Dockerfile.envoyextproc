@@ -1,0 +1,22 @@
+# Build the envoyextproc (Envoy External Processor) binary.
+FROM golang:1.25-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o envoyextproc ./cmd/envoyextproc
+
+FROM alpine:3.23
+RUN apk add --no-cache ca-certificates
+WORKDIR /
+COPY --from=builder /workspace/envoyextproc /envoyextproc
+USER 65532:65532
+
+ENTRYPOINT ["/envoyextproc"]

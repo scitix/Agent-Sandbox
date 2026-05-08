@@ -1,0 +1,46 @@
+# See: https://docs.docker.com/engine/reference/builder/#dockerignore-file
+#
+# Default-deny + selective allow. Each image build needs a different slice
+# of the repo (Go vs. Node), so we un-ignore broadly and then re-trim noise.
+**
+
+# --- Go build context (used by Dockerfile.controller / .envoyextproc / .wsproxy) ---
+!go.mod
+!go.sum
+!VERSION
+!cmd/**
+!api/**
+!pkg/**
+!internal/**
+!hack/boilerplate.go.txt
+
+# Tests are not needed in the image.
+**/*_test.go
+
+# --- Dashboard (Next.js) build context (used by Dockerfile.dashboard) ---
+!dashboard/**
+dashboard/node_modules/
+dashboard/.next/
+dashboard/tsconfig.tsbuildinfo
+dashboard/coverage/
+
+# --- Docs (fumadocs Next.js) build context (used by Dockerfile.docs) ---
+!docs/website/**
+docs/website/node_modules/
+docs/website/.next/
+docs/website/.source/
+docs/website/tsconfig.tsbuildinfo
+
+# OpenAPI spec is copied by Dockerfile.docs at a specific path.
+!pkg/openapi/native/openapi.yaml
+
+# --- Generic noise that should never land in any image layer ---
+**/.git
+**/.github
+**/.vscode
+**/.idea
+**/.DS_Store
+**/*.log
+**/cover.out
+bin/
+!bin/.keep

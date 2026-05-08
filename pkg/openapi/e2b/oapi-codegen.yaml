@@ -1,0 +1,10 @@
+# oapi-codegen configuration for E2B-compatible API
+package: e2bgen
+output: pkg/e2bcompat/gen/e2b.gen.go
+generate:
+  gin-server: true
+  strict-server: true
+  models: true
+  embedded-spec: false
+output-options:
+  skip-prune: false
