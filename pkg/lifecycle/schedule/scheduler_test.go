@@ -135,7 +135,7 @@ func mkReq() (*ClaimRequest, chan ClaimResult) {
 }
 
 // startScheduler returns a running scheduler + stop func.
-func startScheduler(t *testing.T, c client.Client, ns, name string) (*PoolScheduler, func()) {
+func startScheduler(t *testing.T, c client.Client, ns, name string) (*PoolScheduler, func()) { //nolint:unparam
 	t.Helper()
 	s := NewPoolScheduler(ns, name, "", "", c)
 	go s.Run(context.Background())

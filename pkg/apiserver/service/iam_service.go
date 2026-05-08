@@ -67,6 +67,8 @@ func NewIAMService(c client.Client) IAMService {
 
 var nonAlphanumDash = regexp.MustCompile(`[^a-z0-9-]`)
 
+const defaultTeam = "default"
+
 // sanitizeNamePart lowercases a string and replaces disallowed characters with '-'.
 func sanitizeNamePart(s string) string {
 	s = strings.ToLower(s)
@@ -82,7 +84,7 @@ func sanitizeNamePart(s string) string {
 // buildNamespace computes the Kubernetes namespace from team and username.
 func buildNamespace(team, username string) string {
 	if team == "" {
-		team = "default"
+		team = defaultTeam
 	}
 	return fmt.Sprintf("t-%s-%s", sanitizeNamePart(team), sanitizeNamePart(username))
 }
@@ -116,10 +118,10 @@ func (s *k8sIAMService) resolveNamespaceFromK8s(ctx context.Context, ns string) 
 	obj := &corev1.Namespace{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: ns}, obj); err != nil {
 		if k8serrors.IsNotFound(err) {
-			return "default"
+			return defaultTeam
 		}
 		// On unexpected error be conservative and return default to avoid 404s.
-		return "default"
+		return defaultTeam
 	}
 	return ns
 }

@@ -103,7 +103,7 @@ func (t *ActivityTracker) gc(ctx context.Context) {
 	if err := t.client.List(ctx, podList,
 		client.MatchingFields{indexer.IndexFieldSandboxPhase: agentsv1alpha1.SandboxPhaseRunning},
 	); err != nil {
-		klog.Errorf("ActivityTracker GC: failed to list Running pods: %v", err)
+		klog.ErrorS(err, "ActivityTracker GC: failed to list Running pods")
 		return
 	}
 
@@ -118,11 +118,11 @@ func (t *ActivityTracker) gc(ctx context.Context) {
 	for sandboxID := range snap {
 		if !runningSet[sandboxID] {
 			t.Remove(sandboxID)
-			klog.V(4).Infof("ActivityTracker GC: removed stale entry for sandbox %q", sandboxID)
+			klog.V(4).InfoS("ActivityTracker GC: removed stale entry for sandbox", "sandboxID", sandboxID)
 			removed++
 		}
 	}
-	klog.V(4).Infof("ActivityTracker GC done: checked %d, removed %d", len(snap), removed)
+	klog.V(4).InfoS("ActivityTracker GC done", "checked", len(snap), "removed", removed)
 }
 
 // InitFromAnnotations seeds the in-memory map with a timestamp from a pod

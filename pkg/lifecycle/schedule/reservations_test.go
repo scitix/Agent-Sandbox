@@ -227,9 +227,7 @@ func TestReservations_ConcurrentHighLoad(t *testing.T) {
 	}
 
 	for range sweepers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -239,7 +237,7 @@ func TestReservations_ConcurrentHighLoad(t *testing.T) {
 				r.sweep()
 				sweeps.Add(1)
 			}
-		}()
+		})
 	}
 
 	time.Sleep(duration)
@@ -289,9 +287,7 @@ func TestReservations_SweepConcurrentWithReserve(t *testing.T) {
 	}
 
 	// Sweeper advances the fake clock and sweeps, racing with writers.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -301,7 +297,7 @@ func TestReservations_SweepConcurrentWithReserve(t *testing.T) {
 			clk.Advance(10 * time.Millisecond)
 			r.sweep()
 		}
-	}()
+	})
 
 	time.Sleep(200 * time.Millisecond)
 	close(stop)

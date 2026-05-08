@@ -23,7 +23,7 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 )
 
-func makeStartingPod(name string, containerStatuses []corev1.ContainerStatus, podPhase corev1.PodPhase) *corev1.Pod {
+func makeStartingPod(name string, containerStatuses []corev1.ContainerStatus, podPhase corev1.PodPhase) *corev1.Pod { //nolint:unparam
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,

@@ -1400,7 +1400,7 @@ func (s *k8sSandboxService) checkHTTPProbe(ctx context.Context, probeURL string)
 	if err != nil {
 		return false, fmt.Sprintf("probe request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		return true, ""
 	}
@@ -1505,7 +1505,7 @@ func endpointReady(ctx context.Context, httpClient *http.Client, url string) boo
 	if err != nil {
 		return true
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusNotFound {
 		return true
 	}

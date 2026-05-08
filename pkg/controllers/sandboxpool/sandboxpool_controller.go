@@ -240,7 +240,7 @@ func (r *SandboxPoolReconciler) handleDeletion(ctx context.Context, sandboxPool 
 }
 
 // reconcilePods reconciles the Pod replicas to match the desired count and updates status
-func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *agentsv1alpha1.SandboxPool) (ctrl.Result, error) {
+func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *agentsv1alpha1.SandboxPool) (ctrl.Result, error) { //nolint:gocyclo
 	poolKey := types.NamespacedName{Namespace: sandboxPool.Namespace, Name: sandboxPool.Name}
 
 	// List all Pods belonging to this SandboxPool

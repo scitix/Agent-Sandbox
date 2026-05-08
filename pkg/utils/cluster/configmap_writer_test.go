@@ -23,7 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -55,10 +54,6 @@ var testEntries = []ClusterEntry{
 	},
 }
 
-func objectKey(ns, name string) client.ObjectKey {
-	return types.NamespacedName{Namespace: ns, Name: name}
-}
-
 func TestWriteClusterConfig_EmptyEntriesIsNoOp(t *testing.T) {
 	c := newFakeClient().Build()
 	ctx := context.Background()
@@ -69,7 +64,7 @@ func TestWriteClusterConfig_EmptyEntriesIsNoOp(t *testing.T) {
 
 	// ConfigMap must NOT have been created.
 	cm := &corev1.ConfigMap{}
-	err := c.Get(ctx, objectKey("agentbox-system", "clusters-config"), cm)
+	err := c.Get(ctx, types.NamespacedName{Namespace: "agentbox-system", Name: "clusters-config"}, cm)
 	if err == nil {
 		t.Fatal("expected ConfigMap to be absent, but it exists")
 	}
@@ -84,7 +79,7 @@ func TestWriteClusterConfig_CreatesConfigMap(t *testing.T) {
 	}
 
 	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, objectKey("agentbox-system", "clusters-config"), cm); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "agentbox-system", Name: "clusters-config"}, cm); err != nil {
 		t.Fatalf("expected ConfigMap to exist: %v", err)
 	}
 
@@ -128,7 +123,7 @@ func TestWriteClusterConfig_UpdatesExistingConfigMap(t *testing.T) {
 	}
 
 	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, objectKey("agentbox-system", "clusters-config"), cm); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "agentbox-system", Name: "clusters-config"}, cm); err != nil {
 		t.Fatalf("get ConfigMap: %v", err)
 	}
 
@@ -156,7 +151,7 @@ func TestConfigMapWriter_EmptyEntriesIsNoOp(t *testing.T) {
 	}
 
 	cm := &corev1.ConfigMap{}
-	err := c.Get(context.Background(), objectKey("agentbox-system", "clusters-config"), cm)
+	err := c.Get(context.Background(), types.NamespacedName{Namespace: "agentbox-system", Name: "clusters-config"}, cm)
 	if err == nil {
 		t.Fatal("expected ConfigMap to be absent, but it exists")
 	}
@@ -172,7 +167,7 @@ func TestConfigMapWriter_WritesGatewayFields(t *testing.T) {
 	}
 
 	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, objectKey("agentbox-system", "clusters-config"), cm); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "agentbox-system", Name: "clusters-config"}, cm); err != nil {
 		t.Fatalf("get: %v", err)
 	}
 
@@ -213,7 +208,7 @@ func TestConfigMapWriter_PersistsHostAliases(t *testing.T) {
 	}
 
 	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, objectKey("agentbox-system", "clusters-config"), cm); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "agentbox-system", Name: "clusters-config"}, cm); err != nil {
 		t.Fatalf("get: %v", err)
 	}
 

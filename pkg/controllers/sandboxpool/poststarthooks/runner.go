@@ -194,7 +194,7 @@ func (r *Runner) httpPostHook(ctx context.Context, sandboxID string, action *api
 	if err != nil {
 		return fmt.Errorf("http-post hook: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)

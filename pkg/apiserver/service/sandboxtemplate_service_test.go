@@ -29,6 +29,8 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
+const testTemplateVersion = "1.0.1"
+
 func newTestSandboxTemplateService(t *testing.T, objs ...any) SandboxTemplateService {
 	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
@@ -541,7 +543,7 @@ func TestUpdate_VersionHigherThanCurrent_Success(t *testing.T) {
 			Name: "tmpl-a",
 		},
 		Spec: agentsv1alpha1.SandboxTemplateSpec{
-			Version:     "1.0.1",
+			Version:     testTemplateVersion,
 			Description: "Updated",
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "busybox:1.37",
@@ -551,8 +553,8 @@ func TestUpdate_VersionHigherThanCurrent_Success(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.Version != "1.0.1" {
-		t.Fatalf("expected version 1.0.1, got %s", result.Version)
+	if result.Version != testTemplateVersion {
+		t.Fatalf("expected version %s, got %s", testTemplateVersion, result.Version)
 	}
 }
 
@@ -676,7 +678,7 @@ func TestUpdate_OptimisticLock_HappyPath(t *testing.T) {
 			ResourceVersion: rv,
 		},
 		Spec: agentsv1alpha1.SandboxTemplateSpec{
-			Version:     "1.0.1",
+			Version:     testTemplateVersion,
 			Description: "updated via optimistic lock",
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "busybox:1.37",
@@ -686,8 +688,8 @@ func TestUpdate_OptimisticLock_HappyPath(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("Update with resourceVersion: %v", appErr)
 	}
-	if result.Version != "1.0.1" {
-		t.Fatalf("expected version 1.0.1, got %s", result.Version)
+	if result.Version != testTemplateVersion {
+		t.Fatalf("expected version %s, got %s", testTemplateVersion, result.Version)
 	}
 	if result.Description != "updated via optimistic lock" {
 		t.Fatalf("expected updated description, got %s", result.Description)

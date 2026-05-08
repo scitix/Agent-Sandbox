@@ -26,7 +26,7 @@ import (
 
 // makeEmbeddedTmpl builds an EmbeddedSandboxTemplate with a single container
 // having the given image, CPU request and memory request. Pass "" to omit a resource.
-func makeEmbeddedTmpl(image, cpuReq, memReq string) agentsv1alpha1.EmbeddedSandboxTemplate {
+func makeEmbeddedTmpl(image, cpuReq, memReq string) agentsv1alpha1.EmbeddedSandboxTemplate { //nolint:unparam
 	c := corev1.Container{Name: "sandbox", Image: image}
 	if cpuReq != "" || memReq != "" {
 		c.Resources.Requests = corev1.ResourceList{}

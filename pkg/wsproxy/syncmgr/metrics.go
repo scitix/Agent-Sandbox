@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -69,8 +70,8 @@ var metricsRegistry = prometheus.NewRegistry()
 
 func init() {
 	// Register Go runtime and process collectors.
-	metricsRegistry.MustRegister(prometheus.NewGoCollector())
-	metricsRegistry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	metricsRegistry.MustRegister(collectors.NewGoCollector())
+	metricsRegistry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	// Register wsproxy metrics.
 	metricsRegistry.MustRegister(

@@ -130,8 +130,9 @@ func proxyHandler(store *cluster.Store) http.HandlerFunc {
 		entry, ok := store.Get(clusterID)
 		if !ok {
 			allIDs := func() []string {
-				ids := make([]string, 0)
-				for _, e := range store.All() {
+				all := store.All()
+				ids := make([]string, 0, len(all))
+				for _, e := range all {
 					ids = append(ids, e.ID)
 				}
 				return ids

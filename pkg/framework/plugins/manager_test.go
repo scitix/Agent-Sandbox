@@ -24,6 +24,8 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 )
 
+const testLabelRan = "true"
+
 // mutatingPlugin injects a label into the pod to prove it ran.
 type mutatingPlugin struct {
 	BasePlugin
@@ -36,7 +38,7 @@ func (p *mutatingPlugin) PreCreatePod(_ context.Context, pod *corev1.Pod, _ *age
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
-	pod.Labels["test/ran-"+p.label] = "true"
+	pod.Labels["test/ran-"+p.label] = testLabelRan
 	return nil
 }
 
@@ -68,7 +70,7 @@ func TestPreCreatePodHooks_SinglePlugin_MutatesPod(t *testing.T) {
 	if err := m.PreCreatePodHooks(context.Background(), pod, pool); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pod.Labels["test/ran-a"] != "true" {
+	if pod.Labels["test/ran-a"] != testLabelRan {
 		t.Fatal("plugin did not mutate pod")
 	}
 }
@@ -92,10 +94,10 @@ func TestPreCreatePodHooks_MultiPlugin_ShortCircuitOnError(t *testing.T) {
 		t.Fatal("expected error from failingPlugin")
 	}
 	// "before" ran, "after" must NOT have run
-	if pod.Labels["test/ran-before"] != "true" {
+	if pod.Labels["test/ran-before"] != testLabelRan {
 		t.Fatal("first plugin should have run before the error")
 	}
-	if pod.Labels["test/ran-after"] == "true" {
+	if pod.Labels["test/ran-after"] == testLabelRan {
 		t.Fatal("third plugin must not run after error (short-circuit)")
 	}
 	_ = called

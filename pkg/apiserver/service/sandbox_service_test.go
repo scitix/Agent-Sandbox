@@ -97,7 +97,7 @@ func makePool(name, namespace string) *agentsv1alpha1.SandboxPool {
 	}
 }
 
-func makeIdlePod(name, namespace, poolName string) *corev1.Pod {
+func makeIdlePod(name, namespace, poolName string) *corev1.Pod { //nolint:unparam
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -113,7 +113,7 @@ func makeIdlePod(name, namespace, poolName string) *corev1.Pod {
 	}
 }
 
-func makeRunningPod(name, namespace, poolName, sandboxID string) *corev1.Pod {
+func makeRunningPod(name, namespace, poolName, sandboxID string) *corev1.Pod { //nolint:unparam
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -202,7 +202,7 @@ func TestResolveCreateStartupTimeout(t *testing.T) {
 	}
 
 	fiveMinutes := 5 * time.Minute
-	thirtySeconds := 30 * time.Second
+	thirtySeconds := 30 * time.Second //nolint:staticcheck
 
 	tests := []struct {
 		name      string
@@ -673,7 +673,7 @@ func TestSandboxService_Delete_SetsStopAnnotations(t *testing.T) {
 // StatusDetail tests
 // ---------------------------------------------------------------------------
 
-func makeStartingPodWithContainerStatus(name, namespace, poolName, sandboxID string, waitingReason, waitingMessage string) *corev1.Pod {
+func makeStartingPodWithContainerStatus(name, namespace, poolName, sandboxID string, waitingReason, waitingMessage string) *corev1.Pod { //nolint:unparam
 	annotations := map[string]string{
 		agentsv1alpha1.SandboxIDAnnotationKey:        sandboxID,
 		agentsv1alpha1.SandboxClaimedAtAnnotationKey: time.Now().UTC().Format(time.RFC3339),

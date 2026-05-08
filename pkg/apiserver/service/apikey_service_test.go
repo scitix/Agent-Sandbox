@@ -69,7 +69,7 @@ func TestAPIKeyService_Create_StoreNil(t *testing.T) {
 	svc := service.NewAPIKeyService(nil)
 	_, appErr := svc.Create(context.Background(), domain.CreateAPIKeyInput{})
 	if appErr == nil {
-		t.Error("Create() expected appErr, got nil")
+		t.Fatal("Create() expected appErr, got nil")
 	}
 	if appErr.Code != domain.ErrCodeServiceUnavailable {
 		t.Errorf("Code = %v, want ErrCodeServiceUnavailable", appErr.Code)
@@ -187,7 +187,7 @@ func TestAPIKeyService_Get_NotFound(t *testing.T) {
 
 	_, appErr := svc.Get(context.Background(), "agentbox-apikey-nosuchkey")
 	if appErr == nil {
-		t.Error("Get() expected appErr, got nil")
+		t.Fatal("Get() expected appErr, got nil")
 	}
 	if appErr.Code != domain.ErrCodeNotFound {
 		t.Errorf("Code = %v, want ErrCodeNotFound", appErr.Code)
@@ -211,7 +211,7 @@ func TestAPIKeyService_Delete(t *testing.T) {
 
 	_, appErr = svc.Get(ctx, created.KeyID)
 	if appErr == nil {
-		t.Error("Get() after Delete expected appErr, got nil")
+		t.Fatal("Get() after Delete expected appErr, got nil")
 	}
 	if appErr.Code != domain.ErrCodeNotFound {
 		t.Errorf("Code = %v, want ErrCodeNotFound", appErr.Code)
@@ -224,7 +224,7 @@ func TestAPIKeyService_Delete_NotFound(t *testing.T) {
 
 	appErr := svc.Delete(context.Background(), domain.DeleteAPIKeyInput{KeyID: "agentbox-apikey-nosuch"})
 	if appErr == nil {
-		t.Error("Delete() expected appErr, got nil")
+		t.Fatal("Delete() expected appErr, got nil")
 	}
 	if appErr.Code != domain.ErrCodeNotFound {
 		t.Errorf("Code = %v, want ErrCodeNotFound", appErr.Code)

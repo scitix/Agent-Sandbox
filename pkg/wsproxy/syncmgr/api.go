@@ -381,7 +381,7 @@ func (m *SyncManager) handleInternalTemplateCreate(c *gin.Context) {
 	if tmpl.Labels == nil {
 		tmpl.Labels = make(map[string]string)
 	}
-	tmpl.Labels["agentbox.io/sync-source"] = "global"
+	tmpl.Labels["agentbox.io/sync-source"] = agentsv1alpha1.LabelSyncSourceGlobal
 
 	ctx := c.Request.Context()
 	result, appErr := m.deps.TemplateService.Create(ctx, tmpl)

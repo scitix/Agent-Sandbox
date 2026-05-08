@@ -113,7 +113,7 @@ func (m *SyncManager) handleTemplateUpdate(ctx context.Context, sc *clusterSyncC
 	if updated.Labels == nil {
 		updated.Labels = make(map[string]string)
 	}
-	updated.Labels["agentbox.io/sync-source"] = "global"
+	updated.Labels["agentbox.io/sync-source"] = agentsv1alpha1.LabelSyncSourceGlobal
 
 	if patchErr := m.deps.TemplateClient.Update(ctx, updated); patchErr != nil {
 		log.Printf("syncManager: update template %s error: %v", desired.Name, patchErr)
@@ -204,6 +204,6 @@ func frameToSandboxTemplate(frame protocol.Frame) (*agentsv1alpha1.SandboxTempla
 	if tmpl.Labels == nil {
 		tmpl.Labels = make(map[string]string)
 	}
-	tmpl.Labels["agentbox.io/sync-source"] = "global"
+	tmpl.Labels["agentbox.io/sync-source"] = agentsv1alpha1.LabelSyncSourceGlobal
 	return tmpl, nil
 }

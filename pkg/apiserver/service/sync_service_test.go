@@ -702,7 +702,7 @@ func TestRequestTemplateCreate_ForwardsToWsProxy(t *testing.T) {
 
 	// Simulate ws-proxy: listen on a WS server, echo a template_create_resp.
 	serverConn, clientConn := syncPair(t, svc)
-	defer clientConn.Close()
+	defer clientConn.Close() //nolint:errcheck
 
 	// Start a HandleIncoming loop so response frames are routed to pending channels.
 	go func() {
@@ -747,7 +747,7 @@ func TestRequestTemplateDelete_ForwardsToWsProxy(t *testing.T) {
 	svc := service.NewSyncServiceWithTemplate(ks, tmplSvc)
 
 	serverConn, clientConn := syncPair(t, svc)
-	defer clientConn.Close()
+	defer clientConn.Close() //nolint:errcheck
 
 	// Start a HandleIncoming loop so response frames are routed to pending channels.
 	go func() {

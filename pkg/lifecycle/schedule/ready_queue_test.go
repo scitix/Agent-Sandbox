@@ -389,9 +389,7 @@ func TestReadyQueue_ProducerConsumer(t *testing.T) {
 	}
 
 	for range consumers {
-		wgCons.Add(1)
-		go func() {
-			defer wgCons.Done()
+		wgCons.Go(func() {
 			for {
 				p, ok, _ := pop(q, c, r)
 				if !ok {
@@ -415,7 +413,7 @@ func TestReadyQueue_ProducerConsumer(t *testing.T) {
 				poppedCount.Add(1)
 				r.release(p.Name)
 			}
-		}()
+		})
 	}
 
 	wgProd.Wait()
@@ -463,9 +461,7 @@ func TestReadyQueue_HeavyDedup(t *testing.T) {
 	const batches = 10
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range batches {
 				batch := make([]corev1.Pod, unique)
 				for i := range batch {
@@ -473,7 +469,7 @@ func TestReadyQueue_HeavyDedup(t *testing.T) {
 				}
 				q.appendFiltered(batch, r)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := q.len(); got != unique {

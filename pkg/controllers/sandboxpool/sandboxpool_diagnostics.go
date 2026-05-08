@@ -28,6 +28,11 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 )
 
+const (
+	diagnosticReasonPulling   = "Pulling"
+	diagnosticReasonPodFailed = "PodFailed"
+)
+
 // PodDiagnosticEvent is a single Warning event associated with a Pod.
 type PodDiagnosticEvent struct {
 	// Reason is the event reason, e.g. "Failed", "BackOff", "ErrImagePull".
@@ -112,7 +117,7 @@ func buildStartingDetailFromPod(pod *corev1.Pod) *agentsv1alpha1.SandboxStatusDe
 	message := ""
 
 	if len(pod.Status.ContainerStatuses) == 0 {
-		reason = "Pulling"
+		reason = diagnosticReasonPulling
 		message = fmt.Sprintf("Pulling image: %s", targetImage)
 	} else {
 		for _, cs := range pod.Status.ContainerStatuses {
@@ -124,14 +129,14 @@ func buildStartingDetailFromPod(pod *corev1.Pod) *agentsv1alpha1.SandboxStatusDe
 		}
 		if reason == "" {
 			// Container statuses exist but no waiting state — still initialising
-			reason = "Pulling"
+			reason = diagnosticReasonPulling
 			message = fmt.Sprintf("Pulling image: %s", targetImage)
 		}
 	}
 
 	// Pod-level failure overrides container-level
 	if pod.Status.Phase == corev1.PodFailed {
-		reason = "PodFailed"
+		reason = diagnosticReasonPodFailed
 		message = pod.Status.Message
 	}
 
@@ -178,7 +183,7 @@ func buildFailedDetailFromPod(pod *corev1.Pod) *agentsv1alpha1.SandboxStatusDeta
 	}
 
 	if pod.Status.Phase == corev1.PodFailed && reason == "" {
-		reason = "PodFailed"
+		reason = diagnosticReasonPodFailed
 		message = pod.Status.Message
 	}
 

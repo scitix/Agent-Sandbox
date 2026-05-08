@@ -26,6 +26,11 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
+const (
+	testReasonImagePullBackOff = "ImagePullBackOff"
+	testReasonOOMKilled        = "OOMKilled"
+)
+
 func newTestSandboxPoolService(t *testing.T, objs ...any) SandboxPoolService {
 	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
@@ -88,7 +93,7 @@ func makeStartingPodForPool(name, poolName, namespace string) *corev1.Pod {
 			Image: "myrepo/myimage:v1",
 			State: corev1.ContainerState{
 				Waiting: &corev1.ContainerStateWaiting{
-					Reason:  "ImagePullBackOff",
+					Reason:  testReasonImagePullBackOff,
 					Message: "back-off pulling image",
 				},
 			},
@@ -102,7 +107,7 @@ func makeFailedPodForPool(name, poolName, namespace string) *corev1.Pod {
 	pod := makePodForPool(name, poolName, agentsv1alpha1.SandboxPhaseFailed, namespace)
 	pod.Status = corev1.PodStatus{
 		Phase:  corev1.PodFailed,
-		Reason: "OOMKilled",
+		Reason: testReasonOOMKilled,
 		ContainerStatuses: []corev1.ContainerStatus{
 			{
 				Name: "sandbox",
@@ -392,8 +397,8 @@ func TestSandboxPoolService_List_DiagnosticsForStartingPod(t *testing.T) {
 	if d.Phase != agentsv1alpha1.SandboxPhaseStarting {
 		t.Errorf("Phase = %q, want %q", d.Phase, agentsv1alpha1.SandboxPhaseStarting)
 	}
-	if d.Reason != "ImagePullBackOff" {
-		t.Errorf("Reason = %q, want %q", d.Reason, "ImagePullBackOff")
+	if d.Reason != testReasonImagePullBackOff {
+		t.Errorf("Reason = %q, want %q", d.Reason, testReasonImagePullBackOff)
 	}
 	if d.Message == "" {
 		t.Error("expected non-empty Message")
@@ -420,8 +425,8 @@ func TestSandboxPoolService_List_DiagnosticsForFailedPod(t *testing.T) {
 	if d.Phase != agentsv1alpha1.SandboxPhaseFailed {
 		t.Errorf("Phase = %q, want %q", d.Phase, agentsv1alpha1.SandboxPhaseFailed)
 	}
-	if d.Reason != "OOMKilled" {
-		t.Errorf("Reason = %q, want %q", d.Reason, "OOMKilled")
+	if d.Reason != testReasonOOMKilled {
+		t.Errorf("Reason = %q, want %q", d.Reason, testReasonOOMKilled)
 	}
 }
 
@@ -471,8 +476,8 @@ func TestSandboxPoolService_Get_DiagnosticsFromPodYAML(t *testing.T) {
 	if d.PodName != "pod-starting" {
 		t.Errorf("PodName = %q, want %q", d.PodName, "pod-starting")
 	}
-	if d.Reason != "ImagePullBackOff" {
-		t.Errorf("Reason = %q, want %q", d.Reason, "ImagePullBackOff")
+	if d.Reason != testReasonImagePullBackOff {
+		t.Errorf("Reason = %q, want %q", d.Reason, testReasonImagePullBackOff)
 	}
 }
 
@@ -505,8 +510,8 @@ func TestSandboxPoolService_Get_EventsEmptyWithoutClientset(t *testing.T) {
 		t.Fatalf("expected 1 diagnostic, got %d", len(result.PodDiagnostics))
 	}
 	d := result.PodDiagnostics[0]
-	if d.Reason != "OOMKilled" {
-		t.Errorf("Reason = %q, want %q", d.Reason, "OOMKilled")
+	if d.Reason != testReasonOOMKilled {
+		t.Errorf("Reason = %q, want %q", d.Reason, testReasonOOMKilled)
 	}
 	// Without a clientset, Events should be empty
 	if len(d.Events) != 0 {

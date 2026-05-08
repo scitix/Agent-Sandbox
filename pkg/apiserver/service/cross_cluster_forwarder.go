@@ -179,7 +179,7 @@ func (f *CrossClusterForwarder) Forward(gc *gin.Context, targetClusterID string,
 		gc.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("forward request to %s: %v", targetClusterID, err)})
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	// Copy response headers, then status, then body — order matters.
 	for k, vs := range resp.Header {

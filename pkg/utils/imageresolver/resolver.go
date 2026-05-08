@@ -299,7 +299,7 @@ func (r *Resolver) putConfig(key, digest string) {
 // and wraps it in a configFileKeychain. Credential lookup is fully delegated to
 // docker/cli, which handles Docker Hub's legacy key, credential helpers, and all
 // private registries without any hand-rolled matching logic.
-func (r *Resolver) buildKeychain(ctx context.Context, namespace string, pullSecrets []corev1.LocalObjectReference) (authn.Keychain, error) {
+func (r *Resolver) buildKeychain(ctx context.Context, namespace string, pullSecrets []corev1.LocalObjectReference) (authn.Keychain, error) { //nolint:unparam
 	if r.client == nil || len(pullSecrets) == 0 {
 		return authn.DefaultKeychain, nil
 	}

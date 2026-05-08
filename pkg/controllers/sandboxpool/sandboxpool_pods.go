@@ -97,7 +97,7 @@ func SyncLabelsFromTemplate(dst, tmplLabels map[string]string) {
 // live from the Template at query time, so storing copies on the Pool would be redundant.
 var annotationsToExcludeFromTemplateSync = map[string]struct{}{
 	agentsv1alpha1.SandboxTemplateDocsAnnotationKey:     {},
-	agentsv1alpha1.SandboxTemplatePoolDocsAnnotationKey: {},
+	agentsv1alpha1.SandboxTemplatePoolDocsAnnotationKey: {}, //nolint:staticcheck
 }
 
 // SyncAnnotationsFromTemplate merges Template Annotations into Pool Annotations,

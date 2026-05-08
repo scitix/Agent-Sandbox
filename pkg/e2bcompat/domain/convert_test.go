@@ -25,7 +25,7 @@ import (
 	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 )
 
-func makeTestPool(name, namespace string, cpuMillis, memoryMiB int64) *agentsv1alpha1.SandboxPool {
+func makeTestPool(name, namespace string, cpuMillis, memoryMiB int64) *agentsv1alpha1.SandboxPool { //nolint:unparam
 	cpuQ := resource.NewMilliQuantity(cpuMillis, resource.DecimalSI)
 	memQ := resource.NewQuantity(memoryMiB*1024*1024, resource.BinarySI)
 	pool := &agentsv1alpha1.SandboxPool{
@@ -158,7 +158,7 @@ func TestToE2BSandbox_EnvdVersion(t *testing.T) {
 	}
 
 	result := ToE2BSandbox(sb, pool, "example.com")
-	if string(result.EnvdVersion) != EnvdVersion {
+	if result.EnvdVersion != EnvdVersion {
 		t.Errorf("envdVersion = %q, want %q", result.EnvdVersion, EnvdVersion)
 	}
 }
@@ -239,7 +239,7 @@ func TestToE2BListedSandbox(t *testing.T) {
 	if string(result.State) != "running" {
 		t.Errorf("state = %q, want running", result.State)
 	}
-	if string(result.EnvdVersion) == "" {
+	if result.EnvdVersion == "" {
 		t.Fatal("expected non-empty envdVersion")
 	}
 	if result.CpuCount != 2 {

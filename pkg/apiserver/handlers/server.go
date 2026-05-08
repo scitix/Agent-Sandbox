@@ -48,6 +48,9 @@ import (
 // templateLog is the structured logger for admin template handlers.
 var templateLog = ctrl.Log.WithName("template-handler")
 
+// adminUser is the built-in admin username used for pure admin auth checks.
+const adminUser = "admin"
+
 // Services bundles all service interfaces needed by the handler Server.
 type Services struct {
 	Sandbox         service.SandboxService
@@ -424,7 +427,7 @@ func domainTemplateSpecToGen(spec agentsv1alpha1.SandboxTemplateSpec) gen.Sandbo
 			}
 			if r.ReadinessProbe != nil && r.ReadinessProbe.HTTPGet != nil {
 				hg := r.ReadinessProbe.HTTPGet
-				portVal := int32(hg.Port.IntVal)
+				portVal := hg.Port.IntVal
 				probePath := hg.Path
 				gr.ReadinessProbe = &gen.RuntimeReadinessProbe{
 					HttpGet: &struct {
@@ -581,7 +584,7 @@ func parseCRDYaml(yamlStr string) (parsedCRD, error) {
 
 // toCreatePoolInput converts a gen.CreateSandboxPoolRequest to a domain.CreateSandboxPoolInput.
 // Returns an error if any duration field contains an invalid value.
-func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (domain.CreateSandboxPoolInput, error) {
+func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (domain.CreateSandboxPoolInput, error) { //nolint:gocyclo
 	spec := agentsv1alpha1.SandboxPoolSpec{}
 	if req.Spec != nil {
 		spec = agentsv1alpha1.SandboxPoolSpec{
@@ -1001,7 +1004,7 @@ func (s *Server) CreateSandboxPool(ctx context.Context, req gen.CreateSandboxPoo
 	// Skip only when the caller is a pure admin (User="admin"), not when impersonating:
 	// impersonation replaces auth.User with the target user, so the check naturally
 	// applies to the impersonated identity — enforcing data consistency across the board.
-	if auth.Role != apikey.RoleAdmin || auth.User != "admin" {
+	if auth.Role != apikey.RoleAdmin || auth.User != adminUser {
 		keys, apiKeyErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
 		if apiKeyErr != nil {
 			return gen.CreateSandboxPool500JSONResponse(errResp(ctx, apiKeyErr)), nil
@@ -1494,7 +1497,7 @@ func (s *Server) ListQuotas(ctx context.Context, _ gen.ListQuotasRequestObject) 
 	// User="admin" / Team="admin", which is not a real tenant identity.
 	// They must use X-Impersonate-Team and X-Impersonate-User headers to
 	// query quotas on behalf of a specific user.
-	if auth.User == "" || auth.Team == "" || (auth.User == "admin" && auth.Team == "admin") {
+	if auth.User == "" || auth.Team == "" || (auth.User == adminUser && auth.Team == adminUser) {
 		return gen.ListQuotas403JSONResponse{Error: "quota lookup requires user and team context; admins must provide X-Impersonate-Team and X-Impersonate-User headers"}, nil
 	}
 	quotas, appErr := s.quota.ListForUser(ctx, auth.User, auth.Team)

@@ -32,6 +32,10 @@ import (
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
+// e2bStateRunning is the E2B state string for running/starting/stopping/failed sandboxes.
+// E2B only has "running" and "paused" — we map everything active to "running".
+const e2bStateRunning = string(e2bgen.Running)
+
 const (
 	// EnvdVersion is the fixed envd version reported in E2B API responses.
 	// E2B SDK validates that this field is present and non-empty.
@@ -111,7 +115,7 @@ func ToE2BSandboxDetail(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool,
 		ClientID:    sb.Namespace,
 		StartedAt:   startedAt,
 		EndAt:       endAt,
-		CpuCount:    e2bgen.CPUCount(cpuCount),
+		CpuCount:    cpuCount,
 		MemoryMB:    e2bgen.MemoryMB(memoryMB),
 		DiskSizeMB:  0,
 		Metadata:    metadata,
@@ -164,7 +168,7 @@ func ToE2BListedSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool)
 		ClientID:    sb.Namespace,
 		StartedAt:   startedAt,
 		EndAt:       endAt,
-		CpuCount:    e2bgen.CPUCount(cpuCount),
+		CpuCount:    cpuCount,
 		MemoryMB:    e2bgen.MemoryMB(memoryMB),
 		DiskSizeMB:  0,
 		Metadata:    metadata,
@@ -190,7 +194,7 @@ func ToE2BTemplate(pool *agentsv1alpha1.SandboxPool) e2bgen.Template {
 	return e2bgen.Template{
 		TemplateID:  pool.Name,
 		BuildID:     string(pool.UID),
-		CpuCount:    e2bgen.CPUCount(cpuCount),
+		CpuCount:    cpuCount,
 		MemoryMB:    e2bgen.MemoryMB(memoryMB),
 		DiskSizeMB:  0,
 		Public:      true, // default to public; can be refined via visibility rules
@@ -214,9 +218,9 @@ func ToE2BTemplate(pool *agentsv1alpha1.SandboxPool) e2bgen.Template {
 func SandboxStateFromStatus(status string) string {
 	switch strings.ToLower(status) {
 	case "running", "starting":
-		return "running"
+		return e2bStateRunning
 	default:
-		return "running" // E2B doesn't have a concept for stopping/failed – default to running
+		return e2bStateRunning // E2B doesn't have a concept for stopping/failed – default to running
 	}
 }
 

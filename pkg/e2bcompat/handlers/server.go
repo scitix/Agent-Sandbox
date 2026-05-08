@@ -302,7 +302,7 @@ func (s *Server) GetSandboxes(ctx context.Context, _ e2bgen.GetSandboxesRequestO
 
 func (s *Server) GetSandboxesSandboxID(ctx context.Context, req e2bgen.GetSandboxesSandboxIDRequestObject) (e2bgen.GetSandboxesSandboxIDResponseObject, error) {
 	auth := authFrom(ctx)
-	sandboxID := string(req.SandboxID)
+	sandboxID := req.SandboxID
 	if clusterID, _ := cluster.SplitSandboxID(sandboxID); s.isCrossCluster(clusterID) {
 		s.forwarder.Forward(httpctx.GinFromCtx(ctx), clusterID, service.URLKindE2B, nil)
 		return nil, nil
@@ -321,7 +321,7 @@ func (s *Server) GetSandboxesSandboxID(ctx context.Context, req e2bgen.GetSandbo
 
 func (s *Server) DeleteSandboxesSandboxID(ctx context.Context, req e2bgen.DeleteSandboxesSandboxIDRequestObject) (e2bgen.DeleteSandboxesSandboxIDResponseObject, error) {
 	auth := authFrom(ctx)
-	sandboxID := string(req.SandboxID)
+	sandboxID := req.SandboxID
 	if clusterID, _ := cluster.SplitSandboxID(sandboxID); s.isCrossCluster(clusterID) {
 		s.forwarder.Forward(httpctx.GinFromCtx(ctx), clusterID, service.URLKindE2B, nil)
 		return nil, nil
@@ -342,7 +342,7 @@ func (s *Server) PostSandboxesSandboxIDTimeout(ctx context.Context, req e2bgen.P
 	}
 
 	auth := authFrom(ctx)
-	sandboxID := string(req.SandboxID)
+	sandboxID := req.SandboxID
 	timeout := time.Duration(req.Body.Timeout) * time.Second
 	if clusterID, _ := cluster.SplitSandboxID(sandboxID); s.isCrossCluster(clusterID) {
 		s.forwarder.Forward(httpctx.GinFromCtx(ctx), clusterID, service.URLKindE2B, jsonBody(req.Body))
@@ -361,7 +361,7 @@ func (s *Server) PostSandboxesSandboxIDRefreshes(ctx context.Context, req e2bgen
 	// Refreshes = extend idle timeout to keep the sandbox alive.
 	if req.Body != nil && req.Body.Duration != nil && *req.Body.Duration > 0 {
 		auth := authFrom(ctx)
-		sandboxID := string(req.SandboxID)
+		sandboxID := req.SandboxID
 		timeout := time.Duration(*req.Body.Duration) * time.Second
 		if clusterID, _ := cluster.SplitSandboxID(sandboxID); s.isCrossCluster(clusterID) {
 			s.forwarder.Forward(httpctx.GinFromCtx(ctx), clusterID, service.URLKindE2B, jsonBody(req.Body))
@@ -436,7 +436,7 @@ func (s *Server) GetTemplatesTemplateID(ctx context.Context, req e2bgen.GetTempl
 
 	auth := authFrom(ctx)
 	pool := &agentsv1alpha1.SandboxPool{}
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: auth.Namespace, Name: string(req.TemplateID)}, pool); err != nil {
+	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: auth.Namespace, Name: req.TemplateID}, pool); err != nil {
 		if errors.IsNotFound(err) {
 			return e2bgen.GetTemplatesTemplateID401JSONResponse{N401JSONResponse: e2bgen.N401JSONResponse(errRespCode(404, "template not found"))}, nil
 		}
@@ -519,7 +519,7 @@ func (s *Server) PostApiKeys(ctx context.Context, req e2bgen.PostApiKeysRequestO
 }
 
 func (s *Server) DeleteApiKeysApiKeyID(ctx context.Context, req e2bgen.DeleteApiKeysApiKeyIDRequestObject) (e2bgen.DeleteApiKeysApiKeyIDResponseObject, error) {
-	appErr := s.apikey.Delete(ctx, apidomain.DeleteAPIKeyInput{KeyID: string(req.ApiKeyID)})
+	appErr := s.apikey.Delete(ctx, apidomain.DeleteAPIKeyInput{KeyID: req.ApiKeyID})
 	if appErr != nil {
 		if appErr.Code == apidomain.ErrCodeNotFound {
 			return e2bgen.DeleteApiKeysApiKeyID404JSONResponse{N404JSONResponse: e2bgen.N404JSONResponse(errRespCode(404, appErr.Message))}, nil

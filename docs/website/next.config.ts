@@ -25,8 +25,8 @@ const config: NextConfig = {
   ...(isProd
     ? {
       output: 'export',
-      basePath: '/agentbox-docs',
-      assetPrefix: '/agentbox-docs/',
+      basePath: '/Agent-Sandbox',
+      assetPrefix: '/Agent-Sandbox/',
     }
     : {}),
   trailingSlash: true,

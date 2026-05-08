@@ -571,7 +571,7 @@ func TestSyncInplaceUpdatePhases_StoppingToIdle_WritesStoreRecord(t *testing.T) 
 				// stop metadata written by ReleaseSandboxPod.
 				agentsv1alpha1.SandboxIDAnnotationKey:            sandboxID,
 				agentsv1alpha1.SandboxClaimedAtAnnotationKey:     claimedAt,
-				agentsv1alpha1.SandboxStopReasonAnnotationKey:    "Completed",
+				agentsv1alpha1.SandboxStopReasonAnnotationKey:    string(agentsv1alpha1.SandboxStopReasonCompleted),
 				agentsv1alpha1.SandboxTerminatedAtAnnotationKey:  terminatedAt,
 				agentsv1alpha1.SandboxRunningImagesAnnotationKey: runningImagesJSON,
 				agentsv1alpha1.SandboxContainerIDAnnotationKey:   "containerd://stopping-pod-cid",
@@ -634,7 +634,7 @@ func TestSyncInplaceUpdatePhases_StoppingToIdle_WritesStoreRecord(t *testing.T) 
 	if record == nil {
 		t.Fatal("expected Completed record in store after Stopping→Idle")
 	}
-	if record.Status != "Completed" {
+	if record.Status != string(agentsv1alpha1.SandboxStopReasonCompleted) {
 		t.Fatalf("expected status Completed, got %s", record.Status)
 	}
 	if record.TerminatedAt != terminatedAt {
@@ -952,7 +952,7 @@ func TestSyncRestartedRunningPods_ChangedContainerID_Recycled(t *testing.T) {
 		t.Fatalf("expected sandbox-id label to be kept during Stopping, got %#v", stored.Labels)
 	}
 	// stop-reason annotation must be set.
-	if stored.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey] != "Failed" {
+	if stored.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey] != string(agentsv1alpha1.SandboxStopReasonFailed) {
 		t.Fatalf("expected stop-reason=Failed annotation, got %q", stored.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey])
 	}
 	// failure-reason annotation must be set.
@@ -1046,7 +1046,7 @@ func TestSyncRestartedRunningPods_TerminatingPod_StoreWrittenNoRecycle(t *testin
 	if record == nil {
 		t.Fatal("expected Failed record in store for terminating pod")
 	}
-	if record.Status != "Failed" {
+	if record.Status != string(agentsv1alpha1.SandboxStopReasonFailed) {
 		t.Fatalf("expected status Failed, got %s", record.Status)
 	}
 
@@ -1207,7 +1207,7 @@ func TestSyncFailedPods_EvictedStoppingPod_Deleted(t *testing.T) {
 	if record == nil {
 		t.Fatal("expected Failed record in store for evicted pod")
 	}
-	if record.Status != "Failed" {
+	if record.Status != string(agentsv1alpha1.SandboxStopReasonFailed) {
 		t.Fatalf("expected status Failed, got %s", record.Status)
 	}
 	if record.FailureReason != "Evicted" {
@@ -1593,7 +1593,7 @@ func setupScheme(t *testing.T) *runtime.Scheme {
 
 // makePoolForGuard returns a minimal SandboxPool with the given namespace/name
 // and desired replica count, suitable for scale-guard reconcile tests.
-func makePoolForGuard(ns, name string, replicas int32) *agentsv1alpha1.SandboxPool {
+func makePoolForGuard(ns, name string, replicas int32) *agentsv1alpha1.SandboxPool { //nolint:unparam
 	return &agentsv1alpha1.SandboxPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       name,
@@ -1614,7 +1614,7 @@ func makePoolForGuard(ns, name string, replicas int32) *agentsv1alpha1.SandboxPo
 }
 
 // makeIdlePodForPool creates an idle pod that belongs to the given pool.
-func makeIdlePodForPool(name, ns, poolName string) *corev1.Pod {
+func makeIdlePodForPool(name, ns, poolName string) *corev1.Pod { //nolint:unparam
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,

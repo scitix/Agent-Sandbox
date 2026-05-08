@@ -112,8 +112,8 @@ func LogAppError(c *gin.Context, appErr *domain.AppError) {
 	}
 	// 4xx: only log at high verbosity to aid debugging. These are caller
 	// errors and we don't want them to dominate normal operator logs.
-	if klog.V(4).Enabled() {
-		klog.V(4).InfoS("client error response", append(fields, "message", appErr.Message)...)
+	if klogV := klog.V(4); klogV.Enabled() {
+		klogV.InfoS("client error response", append(fields, "message", appErr.Message)...)
 	}
 }
 

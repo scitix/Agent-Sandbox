@@ -29,7 +29,7 @@ import (
 
 // makePod builds a Pod with the given phase label, sandbox-id label, and IP.
 // Passing phase == "" leaves the phase label unset.
-func makePod(name, sandboxID, phase, podIP string) *corev1.Pod {
+func makePod(name, sandboxID, phase, podIP string) *corev1.Pod { //nolint:unparam
 	labels := map[string]string{}
 	if sandboxID != "" {
 		labels[agentsv1alpha1.SandboxIDLabelKey] = sandboxID

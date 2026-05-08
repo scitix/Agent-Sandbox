@@ -93,7 +93,7 @@ func (r *SandboxPoolReconciler) syncDeletingPods(ctx context.Context, pods []cor
 					}
 				}
 
-				emitSandboxStopMetrics(pod, "Failed",
+				emitSandboxStopMetrics(pod, string(agentsv1alpha1.SandboxStopReasonFailed),
 					pod.Annotations[agentsv1alpha1.SandboxClaimedAtAnnotationKey],
 					pod.Annotations[agentsv1alpha1.SandboxStartedAtAnnotationKey], terminatedAt)
 			}
@@ -173,11 +173,11 @@ func (r *SandboxPoolReconciler) syncFailedPods(ctx context.Context, pods []corev
 			// Stopping when evicted), otherwise default to "Failed".
 			stopReason := pod.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey]
 			if stopReason == "" {
-				stopReason = "Failed"
+				stopReason = string(agentsv1alpha1.SandboxStopReasonFailed)
 			}
 
 			if r.SandboxStore != nil {
-				record := sandboxRecordFromPod(pod, "Failed", terminatedAt, failureReason, nil, pod.Status.Message)
+				record := sandboxRecordFromPod(pod, string(agentsv1alpha1.SandboxStopReasonFailed), terminatedAt, failureReason, nil, pod.Status.Message)
 				record.RecycledAt = time.Now().UTC().Format(time.RFC3339)
 				if err := r.SandboxStore.Save(record); err != nil {
 					klog.ErrorS(err, "Failed to write store record for failed pod",
@@ -370,7 +370,7 @@ func (r *SandboxPoolReconciler) syncRestartedRunningPods(
 	ctx context.Context,
 	sandboxPool *agentsv1alpha1.SandboxPool,
 	pods []corev1.Pod,
-) ([]corev1.Pod, error) {
+) ([]corev1.Pod, error) { //nolint:unparam
 	for i := range pods {
 		pod := &pods[i]
 		if pod.DeletionTimestamp != nil {

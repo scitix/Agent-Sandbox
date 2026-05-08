@@ -99,7 +99,7 @@ func TestReleaseSandboxPod(t *testing.T) {
 		t.Fatalf("expected custom-annotation removed, got %#v", updated.Annotations)
 	}
 	// stop-reason annotation must be set.
-	if updated.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey] != "Completed" {
+	if updated.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey] != string(agentsv1alpha1.SandboxStopReasonCompleted) {
 		t.Fatalf("expected stop-reason=Completed, got %q", updated.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey])
 	}
 	// running-images annotation must be set.

@@ -26,6 +26,8 @@ import (
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
 
+const testTeamA = "teamA"
+
 // ptrStr is a test helper.
 func ptrStr(s string) *string { return &s }
 
@@ -84,7 +86,7 @@ func TestGenSpecToK8sSpec_Runtimes(t *testing.T) {
 }
 
 func TestGenSpecToK8sSpec_Visibility(t *testing.T) {
-	team := "teamA"
+	team := testTeamA
 	users := []string{"alice", "bob"}
 	rules := []gen.VisibilityRule{{Team: &team, Users: &users}}
 	spec := gen.SandboxTemplateSpec{
@@ -102,7 +104,7 @@ func TestGenSpecToK8sSpec_Visibility(t *testing.T) {
 		t.Fatalf("want 1 rule, got %d", len(result.Visibility.Rules))
 	}
 	rule := result.Visibility.Rules[0]
-	if rule.Team != "teamA" {
+	if rule.Team != testTeamA {
 		t.Errorf("Team: want teamA, got %s", rule.Team)
 	}
 	if len(rule.Users) != 2 || rule.Users[0] != "alice" {
@@ -214,7 +216,7 @@ func TestDomainTemplateSpecToGen_VisibilityRoundTrip(t *testing.T) {
 		},
 		Visibility: &agentsv1alpha1.TemplateVisibility{
 			Rules: []agentsv1alpha1.TemplateVisibilityRule{
-				{Team: "teamA", Users: []string{"alice"}},
+				{Team: testTeamA, Users: []string{"alice"}},
 			},
 		},
 	}
@@ -226,7 +228,7 @@ func TestDomainTemplateSpecToGen_VisibilityRoundTrip(t *testing.T) {
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
-	if rules[0].Team == nil || *rules[0].Team != "teamA" {
+	if rules[0].Team == nil || *rules[0].Team != testTeamA {
 		t.Errorf("Team: want teamA, got %v", rules[0].Team)
 	}
 	if rules[0].Users == nil || (*rules[0].Users)[0] != "alice" {
