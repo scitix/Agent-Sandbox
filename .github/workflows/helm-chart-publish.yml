@@ -53,24 +53,26 @@ jobs:
 
       - name: Lint charts before publishing
         run: |
-          helm lint installer/helm/agent-sandbox --strict
-          helm lint installer/helm/dashboard --strict
+          helm lint installer/helm/agent-sandbox-worker --strict
+          helm lint installer/helm/agent-sandbox-hub --strict
 
-      - name: Publish agent-sandbox chart
+      - name: Publish agent-sandbox-worker chart
         run: |
-          helm package installer/helm/agent-sandbox
-          CHART_VERSION=$(helm show chart installer/helm/agent-sandbox | grep '^version:' | awk '{print $2}')
-          echo "Publishing agent-sandbox:${CHART_VERSION}"
-          helm push agent-sandbox-${CHART_VERSION}.tgz oci://${{ env.REGISTRY }}/${{ env.REPOSITORY }}
-          echo "Published agent-sandbox:${CHART_VERSION} to ${{ env.REGISTRY }}/${{ env.REPOSITORY }}"
+          helm package installer/helm/agent-sandbox-worker
+          CHART_VERSION=$(helm show chart installer/helm/agent-sandbox-worker | grep '^version:' | awk '{print $2}')
+          CHART_NAME=$(helm show chart installer/helm/agent-sandbox-worker | grep '^name:' | awk '{print $2}')
+          echo "Publishing ${CHART_NAME}:${CHART_VERSION}"
+          helm push ${CHART_NAME}-${CHART_VERSION}.tgz oci://${{ env.REGISTRY }}/${{ env.REPOSITORY }}
+          echo "Published ${CHART_NAME}:${CHART_VERSION} to ${{ env.REGISTRY }}/${{ env.REPOSITORY }}"
 
-      - name: Publish agent-sandbox-dashboard chart
+      - name: Publish agent-sandbox-hub chart
         run: |
-          helm package installer/helm/dashboard
-          CHART_VERSION=$(helm show chart installer/helm/dashboard | grep '^version:' | awk '{print $2}')
-          echo "Publishing agent-sandbox-dashboard:${CHART_VERSION}"
-          helm push agent-sandbox-dashboard-${CHART_VERSION}.tgz oci://${{ env.REGISTRY }}/${{ env.REPOSITORY }}
-          echo "Published agent-sandbox-dashboard:${CHART_VERSION} to ${{ env.REGISTRY }}/${{ env.REPOSITORY }}"
+          helm package installer/helm/agent-sandbox-hub
+          CHART_VERSION=$(helm show chart installer/helm/agent-sandbox-hub | grep '^version:' | awk '{print $2}')
+          CHART_NAME=$(helm show chart installer/helm/agent-sandbox-hub | grep '^name:' | awk '{print $2}')
+          echo "Publishing ${CHART_NAME}:${CHART_VERSION}"
+          helm push ${CHART_NAME}-${CHART_VERSION}.tgz oci://${{ env.REGISTRY }}/${{ env.REPOSITORY }}
+          echo "Published ${CHART_NAME}:${CHART_VERSION} to ${{ env.REGISTRY }}/${{ env.REPOSITORY }}"
 
   cleanup-old-versions:
     runs-on: ubuntu-latest
@@ -80,25 +82,25 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Clean up old agent-sandbox chart versions
+      - name: Clean up old agent-sandbox-worker chart versions
         uses: quartx-analytics/ghcr-cleaner@v1
         with:
           owner-type: org
           token: ${{ secrets.PAT_TOKEN }}
           repository-owner: ${{ github.repository_owner }}
-          package-name: agent-sandbox
+          package-name: agent-sandbox-worker
           delete-untagged: true
           keep-at-most: 10
           skip-tags: latest
         continue-on-error: true
 
-      - name: Clean up old agent-sandbox-dashboard chart versions
+      - name: Clean up old agent-sandbox-hub chart versions
         uses: quartx-analytics/ghcr-cleaner@v1
         with:
           owner-type: org
           token: ${{ secrets.PAT_TOKEN }}
           repository-owner: ${{ github.repository_owner }}
-          package-name: agent-sandbox-dashboard
+          package-name: agent-sandbox-hub
           delete-untagged: true
           keep-at-most: 10
           skip-tags: latest

@@ -38,40 +38,40 @@ jobs:
         with:
           version: "v3.14.0"
 
-      - name: Lint agent-sandbox chart
-        run: helm lint installer/helm/agent-sandbox --strict
+      - name: Lint agent-sandbox-worker chart
+        run: helm lint installer/helm/agent-sandbox-worker --strict
 
-      - name: Lint agent-sandbox-dashboard chart
-        run: helm lint installer/helm/dashboard --strict
+      - name: Lint agent-sandbox-hub chart
+        run: helm lint installer/helm/agent-sandbox-hub --strict
 
-      - name: Template agent-sandbox chart (default values)
+      - name: Template agent-sandbox-worker chart (default values)
         run: |
-          helm template test-release installer/helm/agent-sandbox \
+          helm template test-release installer/helm/agent-sandbox-worker \
             --namespace agentbox-system \
             --set controller.secrets.adminKey=test-admin-key \
             --set controller.secrets.syncToken=test-sync-token \
             --set controller.secrets.jwtSecret=test-jwt-secret \
             > /dev/null
 
-      - name: Template agent-sandbox-dashboard chart (default values)
+      - name: Template agent-sandbox-hub chart (default values)
         run: |
-          helm template test-release installer/helm/dashboard \
+          helm template test-release installer/helm/agent-sandbox-hub \
             --namespace agentbox-system \
             --set env.jwtSecret=test-jwt-secret \
             > /dev/null
 
-      - name: Template agent-sandbox-dashboard chart (globalApiKey enabled)
+      - name: Template agent-sandbox-hub chart (globalApiKey enabled)
         run: |
-          helm template test-release installer/helm/dashboard \
+          helm template test-release installer/helm/agent-sandbox-hub \
             --namespace agentbox-system \
             --set env.jwtSecret=test-jwt-secret \
             --set globalApiKey.enabled=true \
             --set globalApiKey.token=test-token \
             > /dev/null
 
-      - name: Template agent-sandbox-dashboard chart (dex enabled)
+      - name: Template agent-sandbox-hub chart (dex enabled)
         run: |
-          helm template test-release installer/helm/dashboard \
+          helm template test-release installer/helm/agent-sandbox-hub \
             --namespace agentbox-system \
             --set env.jwtSecret=test-jwt-secret \
             --set dex.enabled=true \
@@ -82,9 +82,9 @@ jobs:
             --set dex.userInfoUri=https://example.com/userinfo \
             > /dev/null
 
-      - name: Template agent-sandbox chart (metrics enabled)
+      - name: Template agent-sandbox-worker chart (metrics enabled)
         run: |
-          helm template test-release installer/helm/agent-sandbox \
+          helm template test-release installer/helm/agent-sandbox-worker \
             --namespace agentbox-system \
             --set controller.secrets.adminKey=test \
             --set controller.secrets.syncToken=test \
@@ -95,7 +95,7 @@ jobs:
       - name: Verify chart versions are consistent
         run: |
           echo "Checking Chart.yaml versions..."
-          for chart in installer/helm/agent-sandbox installer/helm/dashboard; do
+          for chart in installer/helm/agent-sandbox-worker installer/helm/agent-sandbox-hub; do
             name=$(grep '^name:' "$chart/Chart.yaml" | awk '{print $2}')
             version=$(grep '^version:' "$chart/Chart.yaml" | awk '{print $2}')
             echo "  $name: $version"
