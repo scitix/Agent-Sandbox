@@ -7,11 +7,13 @@ on:
     paths:
       - "dashboard/**"
       - "installer/dockerfile/Dockerfile.dashboard"
+      - "installer/dockerfile/Dockerfile.dashboard.runner"
       - ".github/workflows/build-dashboard.yml"
   pull_request:
     paths:
       - "dashboard/**"
       - "installer/dockerfile/Dockerfile.dashboard"
+      - "installer/dockerfile/Dockerfile.dashboard.runner"
       - ".github/workflows/build-dashboard.yml"
 
 env:
@@ -19,8 +21,55 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/agent-sandbox-dashboard
 
 jobs:
-  build:
+  build-assets:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Read VERSION
+        id: version
+        run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: dashboard
+        env:
+          NEXT_PUBLIC_APP_VERSION: ${{ steps.version.outputs.value }}
+        run: pnpm build
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dashboard/build
+          cp -r dashboard/.next/standalone dashboard/build/standalone
+          cp -r dashboard/.next/static      dashboard/build/static
+          cp -r dashboard/public            dashboard/build/public
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-build
+          path: dashboard/build/
+          retention-days: 1
+
+  build-image:
+    runs-on: ubuntu-latest
+    needs: build-assets
     permissions:
       contents: read
       packages: write
@@ -28,11 +77,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Read VERSION
-        id: version
-        # NEXT_PUBLIC_APP_VERSION feeds the dashboard's changelog dialog; keep it
-        # in sync with the repo's VERSION file.
-        run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dashboard-build
+          path: dashboard/build/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -65,13 +114,11 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: installer/dockerfile/Dockerfile.dashboard
+          context: dashboard
+          file: installer/dockerfile/Dockerfile.dashboard.runner
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            NEXT_PUBLIC_APP_VERSION=${{ steps.version.outputs.value }}
-          cache-from: type=gha,scope=dashboard
-          cache-to: type=gha,scope=dashboard,mode=max
+          cache-from: type=gha,scope=dashboard-runner
+          cache-to: type=gha,scope=dashboard-runner,mode=max
