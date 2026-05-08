@@ -1,0 +1,9 @@
+# CI-only: receives pre-built binary from build-binaries job.
+# For local full builds use Dockerfile.wsproxy instead.
+FROM alpine:3.23
+RUN apk add --no-cache ca-certificates
+WORKDIR /
+ARG TARGETARCH
+COPY bin/wsproxy-${TARGETARCH} /wsproxy
+USER 65532:65532
+ENTRYPOINT ["/wsproxy"]

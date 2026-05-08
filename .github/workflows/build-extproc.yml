@@ -11,6 +11,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "installer/dockerfile/Dockerfile.envoyextproc"
+      - "installer/dockerfile/Dockerfile.envoyextproc.runner"
       - ".github/workflows/build-extproc.yml"
   pull_request:
     paths:
@@ -20,6 +21,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "installer/dockerfile/Dockerfile.envoyextproc"
+      - "installer/dockerfile/Dockerfile.envoyextproc.runner"
       - ".github/workflows/build-extproc.yml"
 
 env:
@@ -27,14 +29,45 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/agent-sandbox-envoyextproc
 
 jobs:
-  build:
+  build-binaries:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Cross-compile binaries
+        run: |
+          mkdir -p bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/envoyextproc-amd64 ./cmd/envoyextproc
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/envoyextproc-arm64 ./cmd/envoyextproc
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: extproc-binaries
+          path: bin/
+          retention-days: 1
+
+  build-image:
+    runs-on: ubuntu-latest
+    needs: build-binaries
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: extproc-binaries
+          path: bin/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -68,10 +101,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: installer/dockerfile/Dockerfile.envoyextproc
+          file: installer/dockerfile/Dockerfile.envoyextproc.runner
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=extproc
-          cache-to: type=gha,scope=extproc,mode=max
+          cache-from: type=gha,scope=extproc-runner
+          cache-to: type=gha,scope=extproc-runner,mode=max

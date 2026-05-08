@@ -11,6 +11,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "installer/dockerfile/Dockerfile.controller"
+      - "installer/dockerfile/Dockerfile.controller.runner"
       - ".github/workflows/build-controller.yml"
   pull_request:
     paths:
@@ -20,6 +21,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "installer/dockerfile/Dockerfile.controller"
+      - "installer/dockerfile/Dockerfile.controller.runner"
       - ".github/workflows/build-controller.yml"
 
 env:
@@ -27,15 +29,45 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/agent-sandbox-controller
 
 jobs:
-  build:
+  build-binaries:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Cross-compile binaries
+        run: |
+          mkdir -p bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/sandbox-amd64 ./cmd/sandbox
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/sandbox-arm64 ./cmd/sandbox
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-binaries
+          path: bin/
+          retention-days: 1
+
+  build-image:
+    runs-on: ubuntu-latest
+    needs: build-binaries
     permissions:
       contents: read
-      # Required for pushing to GHCR. PR builds don't push so this is safely no-op for forks.
       packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: controller-binaries
+          path: bin/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -43,9 +75,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Authenticate only for push events / tag pushes on the canonical repo.
-      # Pull requests from forks have no packages:write permission, so the
-      # login step would fail — skip it and build without pushing.
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -59,10 +88,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # Tag strategy:
-          #   branch push           → ${branch} (e.g. main, develop)
-          #   v1.2.3 tag push       → 1.2.3 / 1.2 / 1 / latest
-          #   any push              → sha-<short>
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -76,10 +101,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: installer/dockerfile/Dockerfile.controller
+          file: installer/dockerfile/Dockerfile.controller.runner
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=controller
-          cache-to: type=gha,scope=controller,mode=max
+          cache-from: type=gha,scope=controller-runner
+          cache-to: type=gha,scope=controller-runner,mode=max
