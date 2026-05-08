@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-extproc-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "agent-sandbox-worker.name" . }}-extproc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: manager
+          image: "{{ .Values.extproc.image.repository }}:{{ .Values.extproc.image.tag }}"
+          imagePullPolicy: {{ .Values.extproc.image.pullPolicy }}
+          command:
+            - /envoyextproc
+          args:
+            - --health-probe-bind-address=:8081
+            - --extproc-bind-address=:9002
+            - --internal-api-bind-address=:9003
+          env:
+            - name: LOCAL_CLUSTER_ID
+              value: {{ .Values.controller.localClusterId | quote }}
+          ports:
+            - containerPort: 9002
+              name: extproc-grpc
+              protocol: TCP
+            - containerPort: 9003
+              name: internal-api
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.extproc.resources.manager | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts: []
+
+        - name: envoy
+          image: "{{ .Values.extproc.envoy.image.repository }}:{{ .Values.extproc.envoy.image.tag }}"
+          imagePullPolicy: {{ .Values.extproc.envoy.image.pullPolicy }}
+          command:
+            - envoy
+          args:
+            - -c
+            - /etc/envoy/envoy.yaml
+            - --log-level
+            - warn
+          ports:
+            - containerPort: 8092
+              name: data-plane
+              protocol: TCP
+            - containerPort: 9901
+              name: envoy-admin
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /server_info
+              port: 9901
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.extproc.resources.envoy | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 101
+          volumeMounts:
+            - mountPath: /etc/envoy
+              name: envoy-config
+              readOnly: true
+
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: {{ include "agent-sandbox-worker.fullname" . }}-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: {{ include "agent-sandbox-worker.fullname" . }}-envoy-config
+      {{- with .Values.extproc.nodeAffinity }}
+      affinity:
+        nodeAffinity:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      {{- with .Values.extproc.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

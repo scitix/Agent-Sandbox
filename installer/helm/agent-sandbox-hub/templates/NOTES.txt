@@ -1,0 +1,18 @@
+Dashboard has been deployed to namespace {{ .Release.Namespace }}.
+
+ACCESS:
+{{- if .Values.ingress.enabled }}
+  Dashboard:   https://{{ .Values.ingress.host }}{{ .Values.basePath | default "/" }}
+  WS Proxy:    wss://{{ .Values.ingress.host }}{{ .Values.basePath | default "" }}/ws
+{{- else }}
+  Run: kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "agent-sandbox-hub.fullname" . }} 3000:3000
+  Open: http://localhost:3000{{ .Values.basePath | default "/" }}
+{{- end }}
+
+NEXT STEPS:
+  1. Add your worker cluster(s) to values.yaml → clusters[]
+  2. Set env.jwtSecret to a strong secret value
+  3. Point env.apiUrl to your worker cluster's controller API service
+
+  For global API key management, enable globalApiKey.enabled and
+  set globalApiKey.token to match the AGENTBOX_SYNC_TOKEN on every worker.

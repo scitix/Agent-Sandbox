@@ -1,0 +1,41 @@
+{{- if .Values.extproc.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-gateway-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.extproc.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: {{ .Values.extproc.ingress.className }}
+  rules:
+    - host: {{ .Values.extproc.ingress.host }}
+      http:
+        paths:
+          - path: /agentbox/api/native(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "agent-sandbox-worker.fullname" . }}-control-plane
+                port:
+                  number: 80
+          - path: /agentbox/api/data(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "agent-sandbox-worker.fullname" . }}-data-plane
+                port:
+                  number: 80
+          - path: /agentbox/api/e2b(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "agent-sandbox-worker.fullname" . }}-e2b-api
+                port:
+                  number: 80
+{{- end }}

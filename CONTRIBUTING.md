@@ -120,7 +120,7 @@ git remote add upstream https://github.com/scitix/agent-sandbox.git
 
 ```bash
 make build          # Build all binaries
-make build-installer  # Regenerate installer/k8s/install.yaml
+make sync-crds-to-helm  # Regenerate installer/k8s/install.yaml
 ```
 
 ### Run unit tests
@@ -162,7 +162,7 @@ make test-e2e
    ```bash
    make manifests generate   # after changing api/v1alpha1/
    make gen-all-api          # after changing pkg/openapi/native/openapi.yaml
-   make build-installer      # always regenerate before opening a PR
+   make sync-crds-to-helm      # always regenerate before opening a PR
    ```
 
 5. **Run tests and lint** before pushing:
@@ -246,7 +246,7 @@ WIP: half-done feature             ← do not commit WIP to a PR
 - [ ] All commits include `Signed-off-by`
 - [ ] `make test` passes
 - [ ] `make lint-fix` passes (no new lint errors)
-- [ ] Generated files are up to date (`make manifests generate gen-all-api build-installer` as applicable)
+- [ ] Generated files are up to date (`make manifests generate gen-all-api sync-crds-to-helm` as applicable)
 - [ ] New functionality is covered by tests
 - [ ] Documentation is updated if behavior changes
 

@@ -77,7 +77,7 @@ Metric Lifecycle:
 - Port: `http-metrics` (TCP 8082, corresponding to `config/default/metrics_service.yaml`)
 - Protocol: HTTP (no TLS), scrape interval 30s
 
-**How to enable**: Uncomment `# - ../prometheus` in `config/default/kustomization.yaml`, then run `make build-installer`.
+**How to enable**: Uncomment `# - ../prometheus` in `config/default/kustomization.yaml`, then run `make sync-crds-to-helm`.
 
 **Local validation**:
 ```bash

@@ -1,0 +1,103 @@
+{{- if .Values.globalApiKey.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+---
+# Role grants Secret CRUD (API keys) and ConfigMap CRUD (images catalog)
+# in the agentbox-system namespace on the master cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-apikey-manager
+  namespace: agentbox-system
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, create, delete]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [agentbox-images-catalog]
+    verbs: [get, create, update]
+---
+# Separate rule to allow creating the ConfigMap when it doesn't exist yet
+# (resourceNames cannot be used with create on non-existent objects).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-images-catalog-creator
+  namespace: agentbox-system
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-apikey-manager
+  namespace: agentbox-system
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-apikey-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-images-catalog-creator
+  namespace: agentbox-system
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-images-catalog-creator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# ClusterRole grants SandboxTemplate CRUD at cluster scope.
+# ws-proxy uses the in-cluster ServiceAccount to list/sync SandboxTemplates
+# across worker clusters via the template sync channel.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-template-manager
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [agents.navix.sh]
+    resources: [sandboxtemplates]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-template-manager
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-template-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

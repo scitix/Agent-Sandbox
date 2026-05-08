@@ -105,7 +105,6 @@ type SandboxPoolReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch;get;list
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;delete
-// +kubebuilder:rbac:groups=quota.scitix.ai,resources=scitixquotas,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=namespaces,verbs=list;watch
 

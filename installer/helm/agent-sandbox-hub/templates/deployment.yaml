@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-sandbox-hub.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agent-sandbox-hub.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agent-sandbox-hub.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.globalApiKey.enabled }}
+      serviceAccountName: {{ include "agent-sandbox-hub.proxyFullname" . }}
+      {{- end }}
+      containers:
+        - name: dashboard
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: MULTI_CLUSTER_MODE
+              value: {{ .Values.env.multiClusterMode | quote }}
+            - name: NEXT_PUBLIC_API_URL
+              value: {{ .Values.env.apiUrl | quote }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: JWT_SECRET
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: NODE_ENV
+              value: "production"
+            {{- if .Values.dex.enabled }}
+            - name: DEX_ISSUER_URL
+              value: {{ .Values.dex.issuerUrl | default "/dex" | quote }}
+            - name: DEX_CLIENT_ID
+              value: {{ .Values.dex.clientId | quote }}
+            - name: DEX_REDIRECT_URI
+              value: {{ .Values.dex.redirectUri | quote }}
+            - name: DEX_USERINFO_URI
+              value: {{ .Values.dex.userInfoUri | quote }}
+            - name: DEX_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.dex.existingSecret }}
+                  name: {{ .Values.dex.existingSecret | quote }}
+                  {{- else }}
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  {{- end }}
+                  key: DEX_CLIENT_SECRET
+            - name: DEX_OIDC_ADMINS
+              value: {{ .Values.dex.oidcAdmins | quote }}
+            {{- end }}
+            {{- if .Values.globalApiKey.enabled }}
+            - name: WSPROXY_INTERNAL_URL
+              value: "http://{{ include "agent-sandbox-hub.proxyFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:9004"
+            - name: AGENTBOX_MANAGER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: AGENTBOX_MANAGER_TOKEN
+            {{- end }}
+            {{- if .Values.prometheus.url }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.prometheus.url | quote }}
+            {{- if .Values.prometheus.token }}
+            - name: PROMETHEUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: PROMETHEUS_TOKEN
+            {{- end }}
+            {{- end }}
+            {{- if .Values.logs.downloadUrl }}
+            - name: LOG_DOWNLOAD_URL
+              value: {{ .Values.logs.downloadUrl | quote }}
+            - name: LOG_APP_ID
+              value: {{ .Values.logs.appId | quote }}
+            - name: LOG_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: LOG_TOKEN
+            {{- end }}
+          volumeMounts:
+            - name: cluster-config
+              mountPath: /etc/agentbox
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.basePath | default "" }}/api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.basePath | default "" }}/api/health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: cluster-config
+          configMap:
+            name: {{ include "agent-sandbox-hub.fullname" . }}-cluster-config
+      {{- with .Values.nodeAffinity }}
+      affinity:
+        nodeAffinity:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

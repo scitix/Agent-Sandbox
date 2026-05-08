@@ -35,7 +35,7 @@ than re-implement the bootstrap.
 make manifests          # Regenerate CRD YAML + RBAC (required after modifying api/v1alpha1/)
 make generate           # Regenerate DeepCopy methods
 make gen-all-api        # openapi.yaml → Go + TS (dashboard) + Python SDK (all in one)
-make build-installer    # Generate installer/k8s/install.yaml (sole source of truth for deployment)
+make sync-crds-to-helm  # Sync CRDs + manager ClusterRole into Helm charts (run after make manifests)
 
 # Build
 make build              # Build all binaries (VERSION injected via -ldflags automatically)
@@ -59,13 +59,11 @@ go test -tags=e2e ./test/e2e/ -v -ginkgo.v --ginkgo.focus="xxx"  # Run a single 
 
 ## Change Checklist
 
-1. Changed `config/manager/manager.yaml` startup args → check patch files under `config/default/` for sync
-2. Changed a default port in code → update the corresponding Service definition
-3. Changed `api/v1alpha1/` CRD types → `make manifests generate`
-4. Changed `pkg/openapi/native/openapi.yaml` → `make gen-all-api` (syncs Go + TS + Python SDK)
-5. **Added/modified an API response field** → follow the full "API Field Addition SOP" below
-6. Any of the above → `make build-installer`
-7. Releasing a new version → see the "Version Management" section below
+1. Changed a default port in code → update the corresponding Service definition in Helm charts
+2. Changed `api/v1alpha1/` CRD types → `make manifests generate` then `make sync-crds-to-helm`
+3. Changed `pkg/openapi/native/openapi.yaml` → `make gen-all-api` (syncs Go + TS + Python SDK)
+4. **Added/modified an API response field** → follow the full "API Field Addition SOP" below
+5. Releasing a new version → see the "Version Management" section below
 
 ### API Field Addition SOP
 
@@ -171,6 +169,9 @@ make build
 | `api/v1alpha1/zz_generated.deepcopy.go` | `make generate` |
 | `config/crd/bases/*.yaml` | `make manifests` |
 | `config/rbac/role.yaml` | `make manifests` |
+| `installer/helm/agent-sandbox-worker/crds/*.yaml` | `make sync-crds-to-helm` (via `hack/scripts/generate-helm.py`) |
+| `installer/helm/agent-sandbox-hub/crds/*.yaml` | `make sync-crds-to-helm` (SandboxTemplate only) |
+| `installer/helm/agent-sandbox-worker/templates/rbac-manager-role.yaml` | `make sync-crds-to-helm` (converts `config/rbac/role.yaml`) |
 | `docs/openapi/swagger.{json,yaml}` | `make openapi` |
 | `pkg/apiserver/gen/agentbox.gen.go` | `make gen-all-api` |
 | `pkg/proto/sandbox/internal/v1/*.pb.go` | `make gen-internal-proto` (chained into `gen-all-api`) |

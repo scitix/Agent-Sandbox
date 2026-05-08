@@ -1,0 +1,172 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-leader-election-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-metrics-auth-role
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [authentication.k8s.io]
+  resources: [tokenreviews]
+  verbs: [create]
+- apiGroups: [authorization.k8s.io]
+  resources: [subjectaccessreviews]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-metrics-reader
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- nonResourceURLs: [/metrics]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-sandboxpool-admin-role
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxpools]
+  verbs: ['*']
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxpools/status]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-sandboxpool-editor-role
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxpools]
+  verbs: [create, delete, get, list, patch, update, watch]
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxpools/status]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-sandboxpool-viewer-role
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxpools]
+  verbs: [get, list, watch]
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxpools/status]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-sandboxtemplate-admin-role
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxtemplates]
+  verbs: ['*']
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxtemplates/status]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-sandboxtemplate-editor-role
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxtemplates]
+  verbs: [create, delete, get, list, patch, update, watch]
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxtemplates/status]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-sandboxtemplate-viewer-role
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+rules:
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxtemplates]
+  verbs: [get, list, watch]
+- apiGroups: [agents.navix.sh]
+  resources: [sandboxtemplates/status]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-leader-election-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agent-sandbox-worker.fullname" . }}-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "agent-sandbox-worker.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agent-sandbox-worker.fullname" . }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "agent-sandbox-worker.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-metrics-auth-rolebinding
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agent-sandbox-worker.fullname" . }}-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "agent-sandbox-worker.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}

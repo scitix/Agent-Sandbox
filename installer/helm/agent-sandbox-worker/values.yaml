@@ -1,0 +1,144 @@
+# Copyright 2026 ScitiX
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ---------------------------------------------------------------------------
+# Controller (sandbox operator + API server)
+# ---------------------------------------------------------------------------
+controller:
+  image:
+    repository: ghcr.io/scitix/agent-sandbox-controller
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # LOCAL_CLUSTER_ID uniquely identifies this worker cluster in a multi-cluster
+  # setup. Must match the cluster id configured in the dashboard's clusters.yaml.
+  localClusterId: ""
+
+  # extprocInternalApiUrl is the gRPC endpoint of the data-plane extproc manager.
+  # Defaults to the in-cluster service created by this chart.
+  extprocInternalApiUrl: ""
+
+  # envoyGatewayBaseUrl is the HTTP base URL of the data-plane Envoy proxy.
+  # Defaults to the in-cluster service created by this chart.
+  envoyGatewayBaseUrl: ""
+
+  # e2bDomain is the hostname used for E2B-compatible API responses.
+  # Defaults to the in-cluster data-plane service hostname.
+  e2bDomain: ""
+
+  # Secrets for the controller
+  secrets:
+    # adminKey is used to authenticate admin-level API operations.
+    adminKey: ""
+    # syncToken is the shared secret used for ws-proxy sync authentication.
+    syncToken: ""
+    # jwtSecret is the secret used to sign JWT tokens issued by the API server.
+    jwtSecret: ""
+    # existingSecret references a pre-existing Secret with keys:
+    #   AGENTBOX_ADMIN_KEY, AGENTBOX_SYNC_TOKEN, JWT_SECRET
+    # When set, the chart does NOT create a new Secret.
+    existingSecret: ""
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 2Gi
+
+  nodeAffinity: {}
+  tolerations: []
+
+  # Ingress for the controller API server (optional).
+  # This exposes /v1/... (native REST API) directly from the control-plane service.
+  # For production, the data-plane ingress below is the recommended entry point.
+  ingress:
+    enabled: false
+    className: nginx
+    host: agent-sandbox.example.com
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+# ---------------------------------------------------------------------------
+# ExtProc (Envoy External Processor + data-plane manager)
+# ---------------------------------------------------------------------------
+extproc:
+  image:
+    repository: ghcr.io/scitix/agent-sandbox-envoyextproc
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  envoy:
+    image:
+      repository: envoyproxy/envoy
+      tag: v1.37.0
+      pullPolicy: IfNotPresent
+
+  resources:
+    manager:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+    envoy:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  nodeAffinity: {}
+  tolerations: []
+
+  # Ingress for the data-plane (recommended external entry point).
+  # Exposes three sub-paths:
+  #   /agentbox/api/native  → controller API server (port 80)
+  #   /agentbox/api/data    → extproc data-plane (port 80)
+  #   /agentbox/api/e2b     → E2B-compatible API (port 80)
+  ingress:
+    enabled: true
+    className: nginx
+    host: agent-sandbox-gateway.example.com
+    annotations:
+      nginx.ingress.kubernetes.io/cors-allow-credentials: "false"
+      nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, X-AgentBox-Client-Version, AGENTBOX-API-KEY"
+      nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+      nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: 1024m
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+# ---------------------------------------------------------------------------
+# Metrics / Prometheus (optional)
+# ---------------------------------------------------------------------------
+metrics:
+  # enabled controls whether ServiceMonitor resources are created.
+  # Requires the Prometheus Operator (kube-prometheus-stack) to be installed.
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# CRD installation
+# ---------------------------------------------------------------------------
+crds:
+  # install controls whether CRDs are created/updated during helm install/upgrade.
+  # Set to false if you manage CRDs separately.
+  install: true

@@ -1,0 +1,144 @@
+# Copyright 2026 ScitiX
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+image:
+  repository: ghcr.io/scitix/agent-sandbox-dashboard
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Sub-path deployment configuration.
+# basePath must match the value of NEXT_BASE_PATH used at Docker build time.
+# "" (default) → root-path deployment  (xxx.com/)
+# "/agentbox"  → sub-path deployment   (xxx.com/agentbox)
+# Note: this value is informational for the Helm chart (used in Ingress path
+# and health-probe paths). The actual basePath is baked into the image at
+# build time via the NEXT_BASE_PATH Docker ARG.
+basePath: ""
+
+# Environment variables
+env:
+  # JWT signing secret (required)
+  jwtSecret: "YOUR_DASHBOARD_JWT_SECRET"
+  # Agent Sandbox controller API base URL (reachable from inside the dashboard pod)
+  apiUrl: "http://localhost:8080"
+  # Enable multi-cluster mode
+  multiClusterMode: "true"
+
+# Dex OIDC SSO configuration (optional).
+# When dex.enabled is true, the four variables below are injected into the
+# dashboard container so the BFF can perform OIDC Authorization Code Flow.
+# Leave enabled: false (default) to keep the API-Key-only login experience.
+dex:
+  enabled: false
+  # issuerUrl: Dex OIDC Discovery base URL.
+  # Example: "https://console.example.com/dex"
+  issuerUrl: ""
+  # clientId: Dex staticClient id, e.g. "agent-sandbox"
+  clientId: ""
+  # redirectUri: must exactly match one entry in the Dex staticClient redirectURIs list.
+  # Example: "https://console.example.com/agentbox/api/auth/oidc/callback"
+  redirectUri: ""
+  # userInfoUri: Console UserInfo endpoint URL
+  userInfoUri: ""
+  # clientSecret is sensitive — store it in a pre-existing Secret and reference it
+  # via existingSecret, or set clientSecret directly (stored in a generated Secret).
+  # Option A: reference an existing Secret that has a key named DEX_CLIENT_SECRET
+  existingSecret: ""
+  # Option B: set the secret inline (will be stored in the chart-managed Secret)
+  clientSecret: ""
+  # oidcAdmins: optional whitelist of OIDC admins.
+  # Format: "org1:user1,user2;org2" (semicolon-separated entries,
+  # colon separates org from users, comma separates users).
+  # Omitting users (e.g. "org1" or "org1:") grants admin to the entire org.
+  # Matching is case-insensitive.
+  oidcAdmins: ""
+
+# Cluster list for multi-cluster mode.
+# Each entry describes a worker cluster that this dashboard manages.
+# clusters:
+#   - id: c92zj2qv5qco7yp7
+#     name: "Worker Cluster 1"
+#     url: http://10.0.0.1:30080
+#     # selector is a full PromQL label-matcher expression, e.g.:
+#     #   selector: 'cluster="cluster1"'
+#     # When omitted, the default is `cluster="<id>"`.
+#     selector: 'cluster="cluster1"'
+#     headers:
+#       Host: agent-sandbox.example.com
+#     logs:
+#       filters:
+#         region: us-east-1
+#         cluster: my-cluster
+clusters: []
+
+# In-process host-alias overrides propagated to every Worker cluster via the
+# sync channel. Mirrors Kubernetes corev1.HostAlias semantics but is consumed
+# by Go/gRPC components (ExtProc DNS cache + CrossClusterForwarder HTTP client).
+# hostAliases:
+#   - ip: "10.0.0.1"
+#     hostnames:
+#       - "loadbalancer-cluster1.example.com"
+hostAliases: []
+
+ingress:
+  enabled: true
+  className: nginx
+  host: agent-sandbox-dashboard.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+
+nodeAffinity: {}
+tolerations: []
+
+# ws-proxy sidecar: WebSocket reverse proxy that bridges browser WS connections
+# to the Agent Sandbox API worker WebSocket terminal endpoint.
+wsProxy:
+  image:
+    repository: ghcr.io/scitix/agent-sandbox-wsproxy
+    tag: latest
+    pullPolicy: IfNotPresent
+
+# Prometheus integration (optional).
+# When prometheusUrl is set, the dashboard BFF will query Prometheus for metrics.
+prometheus:
+  url: ""
+  token: ""
+
+# External log service integration (optional).
+logs:
+  downloadUrl: ""
+  appId: ""
+  token: ""
+
+# Global API Key management via ws-proxy.
+# When enabled:
+#   - ws-proxy gains a Kubernetes ServiceAccount with Secret CRUD in agentbox-system.
+#   - ws-proxy dials every Worker cluster's /v1/ws/sync endpoint.
+#   - Dashboard BFF exposes /api/global-api-keys which delegates to ws-proxy.
+#
+# Required values when enabled:
+#   syncToken    — shared secret between ws-proxy and Worker; must also be set as
+#                  AGENTBOX_SYNC_TOKEN on every Worker's agent-sandbox deployment.
+#   managerToken — shared secret between Dashboard BFF and ws-proxy internal API.
+globalApiKey:
+  enabled: false
+  token: ""
+  maxKeysPerUser: 0
+
+# Images Catalog configuration.
+# When enabled, the catalog ConfigMap is managed by ws-proxy at runtime.
+# Requires globalApiKey.enabled: true.
+imagesCatalog:
+  enabled: true

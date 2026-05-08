@@ -53,7 +53,7 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition objects from kubebuilder markers.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
@@ -123,11 +123,13 @@ run: manifests generate generate-api fmt vet ## Run a controller from your host.
 	go run ./cmd/sandbox/main.go --metrics-bind-address=0 --health-probe-bind-address=:0 --leader-elect=false
 
 .PHONY: sync-version
-sync-version: ## Sync VERSION file content to OpenAPI spec, Python SDK, and dashboard.
+sync-version: ## Sync VERSION file content to OpenAPI spec, Python SDK, and Helm charts.
 	@echo "Syncing version $(VERSION) to all components..."
 	@$(SED_INPLACE) 's/^  version: .*/  version: "$(VERSION)"/' pkg/openapi/native/openapi.yaml
 	@$(SED_INPLACE) 's/^version = .*/version = "$(VERSION)"/' sdk/python/abx/pyproject.toml
 	@$(SED_INPLACE) 's/^__version__ = .*/__version__ = "$(VERSION)"/' sdk/python/abx/agentbox_sdk/__init__.py
+	@$(SED_INPLACE) 's/^appVersion:.*/appVersion: "$(VERSION)"/' installer/helm/agent-sandbox-worker/Chart.yaml
+	@$(SED_INPLACE) 's/^appVersion:.*/appVersion: "$(VERSION)"/' installer/helm/agent-sandbox-hub/Chart.yaml
 	@echo "Done. Run 'make generate-api' to regenerate Go code from the updated spec."
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
@@ -184,50 +186,9 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm agentbox-builder
 	rm Dockerfile.cross
 
-.PHONY: build-installer
-build-installer: manifests generate kustomize ## Generate installer/k8s/install.yaml, install-extproc.yaml and install-dashboard.yaml.
-	mkdir -p installer/k8s
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	cd config/extproc && "$(KUSTOMIZE)" edit set image extproc-controller=${IMG_EXTPROC}
-	"$(KUSTOMIZE)" build config/default > installer/k8s/install.yaml
-	"$(KUSTOMIZE)" build config/extproc-standalone > installer/k8s/install-extproc.yaml
-	bash hack/prepend-generated-banner.sh installer/k8s/install.yaml config/default
-	bash hack/prepend-generated-banner.sh installer/k8s/install-extproc.yaml config/extproc-standalone
-	$(SED_INPLACE) 's/YOUR_AGENTBOX_ADMIN_KEY/{{.YOUR_AGENTBOX_ADMIN_KEY}}/g' installer/k8s/install.yaml
-	$(SED_INPLACE) 's/YOUR_AGENTBOX_JWT_SECRET/{{.YOUR_AGENTBOX_JWT_SECRET}}/g' installer/k8s/install.yaml
-	$(SED_INPLACE) 's/YOUR_AGENTBOX_SYNC_TOKEN/{{.YOUR_AGENTBOX_SYNC_TOKEN}}/g' installer/k8s/install.yaml
-	$(SED_INPLACE) 's/YOUR_LOCAL_CLUSTER_ID/{{.YOUR_LOCAL_CLUSTER_ID}}/g' installer/k8s/install.yaml
-	$(SED_INPLACE) 's/YOUR_GATEWAY_HOSTNAME/{{.YOUR_GATEWAY_HOSTNAME}}/g' installer/k8s/install-extproc.yaml
-	$(SED_INPLACE) 's/YOUR_LOCAL_CLUSTER_ID/{{.YOUR_LOCAL_CLUSTER_ID}}/g' installer/k8s/install-extproc.yaml
-	bash hack/copy-crds-to-helm.sh installer/helm/dashboard
-	bash hack/build-dashboard-installer.sh $(HELM) $(IMG_DASHBOARD) $(IMG_WSPROXY)
-	bash hack/build-docs-installer.sh $(HELM) $(IMG_DOCS)
-
-##@ Deployment
-
-ifndef ignore-not-found
-  ignore-not-found = false
-endif
-
-.PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" apply -f -; else echo "No CRDs to install; skipping."; fi
-
-.PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
-
-.PHONY: deploy
-deploy: manifests kustomize ## Deploy controller and extproc to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	cd config/extproc && "$(KUSTOMIZE)" edit set image extproc-controller=${IMG_EXTPROC}
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
-
-.PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+.PHONY: sync-crds-to-helm
+sync-crds-to-helm: manifests ## Sync generated CRDs and manager ClusterRole into Helm chart directories.
+	python3 hack/scripts/generate-helm.py
 
 ##@ Dependencies
 
@@ -239,7 +200,6 @@ $(LOCALBIN):
 ## Tool Binaries
 KUBECTL ?= kubectl
 KIND ?= kind
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
@@ -248,7 +208,6 @@ OAPI_CODEGEN ?= $(LOCALBIN)/oapi-codegen
 ADDLICENSE ?= $(LOCALBIN)/addlicense
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.8.1
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
 OAPI_CODEGEN_VERSION ?= v2.6.0
 ADDLICENSE_VERSION ?= v1.2.0
@@ -265,10 +224,6 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.8.0
-.PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
-$(KUSTOMIZE): $(LOCALBIN)
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
@@ -393,16 +348,18 @@ define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
 
-##@ Helm Deployment
+##@ Helm
 
-## Helm binary to use for deploying the chart
+## Helm binary to use
 HELM ?= helm
-## Namespace to deploy the Helm release
+## Namespace for Helm releases
 HELM_NAMESPACE ?= agentbox-system
-## Name of the Helm release
-HELM_RELEASE ?= agentbox
-## Path to the Helm chart directory
-HELM_CHART_DIR ?= installer/helm/chart
+## Release name prefix
+HELM_RELEASE ?= agent-sandbox
+## Worker chart directory (controller + extproc)
+HELM_WORKER_CHART_DIR ?= installer/helm/agent-sandbox-worker
+## Hub chart directory (dashboard + ws-proxy)
+HELM_HUB_CHART_DIR ?= installer/helm/agent-sandbox-hub
 ## Additional arguments to pass to helm commands
 HELM_EXTRA_ARGS ?=
 
@@ -413,29 +370,46 @@ install-helm: ## Install the latest version of Helm.
 		curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash; \
 	}
 
-.PHONY: helm-deploy
-helm-deploy: install-helm ## Deploy manager to the K8s cluster via Helm. Specify an image with IMG.
-	$(HELM) upgrade --install $(HELM_RELEASE) $(HELM_CHART_DIR) \
+.PHONY: helm-lint
+helm-lint: install-helm ## Lint all Helm charts.
+	$(HELM) lint $(HELM_WORKER_CHART_DIR) --strict
+	$(HELM) lint $(HELM_HUB_CHART_DIR) --strict
+
+.PHONY: helm-deploy-worker
+helm-deploy-worker: install-helm ## Deploy agent-sandbox-worker to the K8s cluster via Helm.
+	$(HELM) upgrade --install $(HELM_RELEASE)-worker $(HELM_WORKER_CHART_DIR) \
 		--namespace $(HELM_NAMESPACE) \
 		--create-namespace \
-		--set manager.image.repository=$${IMG%:*} \
-		--set manager.image.tag=$${IMG##*:} \
+		--set controller.image.repository=$${IMG%:*} \
+		--set controller.image.tag=$${IMG##*:} \
+		--set extproc.image.repository=$${IMG_EXTPROC%:*} \
+		--set extproc.image.tag=$${IMG_EXTPROC##*:} \
 		--wait \
 		--timeout 5m \
 		$(HELM_EXTRA_ARGS)
 
-.PHONY: helm-uninstall
-helm-uninstall: ## Uninstall the Helm release from the K8s cluster.
-	$(HELM) uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+.PHONY: helm-deploy-hub
+helm-deploy-hub: install-helm ## Deploy agent-sandbox-hub (dashboard) to the K8s cluster via Helm.
+	$(HELM) upgrade --install $(HELM_RELEASE)-hub $(HELM_HUB_CHART_DIR) \
+		--namespace $(HELM_NAMESPACE) \
+		--create-namespace \
+		--set image.repository=$${IMG_DASHBOARD%:*} \
+		--set image.tag=$${IMG_DASHBOARD##*:} \
+		--set wsProxy.image.repository=$${IMG_WSPROXY%:*} \
+		--set wsProxy.image.tag=$${IMG_WSPROXY##*:} \
+		--wait \
+		--timeout 5m \
+		$(HELM_EXTRA_ARGS)
+
+.PHONY: helm-uninstall-worker
+helm-uninstall-worker: ## Uninstall the worker Helm release.
+	$(HELM) uninstall $(HELM_RELEASE)-worker --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-uninstall-hub
+helm-uninstall-hub: ## Uninstall the hub Helm release.
+	$(HELM) uninstall $(HELM_RELEASE)-hub --namespace $(HELM_NAMESPACE)
 
 .PHONY: helm-status
-helm-status: ## Show Helm release status.
-	$(HELM) status $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
-
-.PHONY: helm-history
-helm-history: ## Show Helm release history.
-	$(HELM) history $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
-
-.PHONY: helm-rollback
-helm-rollback: ## Rollback to previous Helm release.
-	$(HELM) rollback $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+helm-status: ## Show status of both Helm releases.
+	$(HELM) status $(HELM_RELEASE)-worker --namespace $(HELM_NAMESPACE) 2>/dev/null || true
+	$(HELM) status $(HELM_RELEASE)-hub --namespace $(HELM_NAMESPACE) 2>/dev/null || true

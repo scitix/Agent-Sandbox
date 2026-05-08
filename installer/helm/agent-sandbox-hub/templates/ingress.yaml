@@ -1,0 +1,46 @@
+{{- if .Values.ingress.enabled }}
+{{- /*
+  Ingress path is derived from .Values.basePath:
+    ""          → "/"            (root-path deployment: xxx.com/)
+    "/agentbox" → "/agentbox"   (sub-path deployment: xxx.com/agentbox)
+
+  WebSocket path: <basePath>/ws → port 9003 (ws-proxy sidecar)
+  Dashboard path: <basePath>    → port 3000 (Next.js)
+  The /ws path must be listed first so nginx's Prefix matching picks it up.
+*/}}
+{{- $ingressPath := .Values.basePath | default "/" }}
+{{- $wsPath := printf "%s/ws" ($ingressPath | trimSuffix "/") }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agent-sandbox-hub.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: {{ $wsPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+                port:
+                  number: 9003
+          - path: {{ $ingressPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "agent-sandbox-hub.fullname" . }}
+                port:
+                  number: 3000
+{{- end }}

@@ -119,7 +119,7 @@ make build-wsproxy      # websocket proxy
 make manifests          # Regenerate CRD YAML + RBAC
 make generate           # Regenerate DeepCopy methods
 make gen-all-api        # openapi.yaml → Go + TypeScript + Python SDK
-make build-installer    # Regenerate installer/k8s/install.yaml
+make sync-crds-to-helm  # Sync CRDs + manager ClusterRole into Helm charts
 ```
 
 ### Test

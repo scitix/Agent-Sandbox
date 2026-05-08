@@ -1,0 +1,145 @@
+# Copyright 2026 ScitiX
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Build envd and tini Images
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "installer/runtimes/envd/**"
+  workflow_dispatch:
+    inputs:
+      infra_ref:
+        description: "e2b-infra git ref to checkout (branch, tag, or commit SHA)"
+        required: false
+        default: "main"
+      tini_version:
+        description: "tini version to package (e.g. v0.19.0)"
+        required: false
+        default: "v0.19.0"
+
+env:
+  REGISTRY: ghcr.io
+  REPOSITORY: scitix
+
+jobs:
+  build-envd:
+    name: Build envd from e2b-infra
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      envd_version: ${{ steps.build.outputs.envd_version }}
+
+    steps:
+      - name: Checkout agent-sandbox
+        uses: actions/checkout@v4
+
+      - name: Checkout e2b-infra
+        uses: actions/checkout@v4
+        with:
+          repository: e2b-dev/infra
+          ref: ${{ github.event.inputs.infra_ref || 'main' }}
+          path: e2b-infra
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: e2b-infra/packages/envd/go.mod
+          cache: true
+          cache-dependency-path: e2b-infra/packages/envd/go.sum
+
+      - name: Build envd binary
+        id: build
+        working-directory: e2b-infra/packages/envd
+        run: |
+          make build
+          if [ ! -f bin/envd ]; then
+            echo "Error: bin/envd not found after make build"
+            exit 1
+          fi
+          ENVD_VERSION=$(./bin/envd --version | awk '{print $NF}')
+          echo "envd_version=${ENVD_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Detected envd version: ${ENVD_VERSION}"
+          cp bin/envd ${{ github.workspace }}/installer/runtimes/envd/envd
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push envd image
+        uses: docker/build-push-action@v6
+        with:
+          context: installer/runtimes/envd
+          file: installer/runtimes/envd/Dockerfile.envd
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            ENVD_VERSION=${{ steps.build.outputs.envd_version }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/agent-sandbox-envd:${{ steps.build.outputs.envd_version }}
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/agent-sandbox-envd:latest
+          cache-from: type=gha,scope=envd
+          cache-to: type=gha,mode=max,scope=envd
+
+  build-tini:
+    name: Build tini image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout agent-sandbox
+        uses: actions/checkout@v4
+
+      - name: Resolve tini version
+        id: tini
+        run: |
+          TINI_VERSION="${{ github.event.inputs.tini_version || 'v0.19.0' }}"
+          echo "tini_version=${TINI_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push tini image
+        uses: docker/build-push-action@v6
+        with:
+          context: installer/runtimes/envd
+          file: installer/runtimes/envd/Dockerfile.tini
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            TINI_VERSION=${{ steps.tini.outputs.tini_version }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/agent-sandbox-tini:${{ steps.tini.outputs.tini_version }}
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/agent-sandbox-tini:latest
+          cache-from: type=gha,scope=tini
+          cache-to: type=gha,mode=max,scope=tini

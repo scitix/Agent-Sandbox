@@ -1,0 +1,42 @@
+{{- if .Values.metrics.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-controller-metrics-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+spec:
+  endpoints:
+    - interval: 15s
+      path: /metrics
+      port: http-metrics
+      scheme: http
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "agent-sandbox-worker.controllerSelectorLabels" . | nindent 6 }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-extproc-metrics-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+spec:
+  endpoints:
+    - interval: 5s
+      path: /stats/prometheus
+      port: envoy-admin
+      scheme: http
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 6 }}
+{{- end }}

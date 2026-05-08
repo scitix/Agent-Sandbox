@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-data-plane
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "agent-sandbox-worker.name" . }}-extproc
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: data-plane
+      port: 80
+      protocol: TCP
+      targetPort: data-plane
+    - name: envoy-admin
+      port: 9901
+      protocol: TCP
+      targetPort: envoy-admin
+    - name: internal-api
+      port: 9003
+      protocol: TCP
+      targetPort: internal-api

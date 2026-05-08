@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agent-sandbox-hub.proxySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agent-sandbox-hub.proxySelectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.globalApiKey.enabled }}
+      serviceAccountName: {{ include "agent-sandbox-hub.proxyFullname" . }}
+      {{- end }}
+      containers:
+        - name: ws-proxy
+          image: "{{ .Values.wsProxy.image.repository }}:{{ .Values.wsProxy.image.tag }}"
+          imagePullPolicy: {{ .Values.wsProxy.image.pullPolicy }}
+          ports:
+            - containerPort: 9003
+              protocol: TCP
+            {{- if .Values.globalApiKey.enabled }}
+            - containerPort: 9004
+              protocol: TCP
+            {{- end }}
+          {{- if .Values.globalApiKey.enabled }}
+          env:
+            - name: AGENTBOX_SYNC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: AGENTBOX_SYNC_TOKEN
+            - name: AGENTBOX_MANAGER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: AGENTBOX_MANAGER_TOKEN
+            - name: WSPROXY_INTERNAL_ADDR
+              value: ":9004"
+            - name: AGENTBOX_MAX_KEYS_PER_USER
+              value: {{ .Values.globalApiKey.maxKeysPerUser | quote }}
+            - name: AGENTBOX_APIKEY_NAMESPACE
+              value: "agentbox-system"
+          {{- end }}
+          volumeMounts:
+            - name: cluster-config
+              mountPath: /etc/agentbox
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      volumes:
+        - name: cluster-config
+          configMap:
+            name: {{ include "agent-sandbox-hub.fullname" . }}-cluster-config
+      {{- with .Values.nodeAffinity }}
+      affinity:
+        nodeAffinity:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

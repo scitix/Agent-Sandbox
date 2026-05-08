@@ -1,0 +1,26 @@
+{{- if .Values.controller.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agent-sandbox-worker.fullname" . }}-apiserver-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.controller.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.controller.ingress.className }}
+  rules:
+    - host: {{ .Values.controller.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "agent-sandbox-worker.fullname" . }}-control-plane
+                port:
+                  number: 80
+{{- end }}
