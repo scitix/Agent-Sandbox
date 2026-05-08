@@ -1,0 +1,22 @@
+name: DCO
+
+on:
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  dco:
+    name: DCO Sign-off Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by on all commits
+        uses: tisonkun/actions-dco@v1
+        with:
+          # Fail if any commit in the PR is missing a Signed-off-by line.
+          # Contributors can fix this with: git rebase --signoff HEAD~N
+          fail_on_missing: true
