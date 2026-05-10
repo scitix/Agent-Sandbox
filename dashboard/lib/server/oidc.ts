@@ -38,26 +38,6 @@ export function isOIDCEnabled(): boolean {
   return Boolean(process.env.DEX_ISSUER_URL)
 }
 
-function firstHeaderValue(value: string | null): string | null {
-  if (!value) return null
-  return value.split(",")[0]?.trim() || null
-}
-
-/**
- * Best-effort public origin resolver for reverse-proxy deployments.
- * Prefers forwarded headers set by ingress, then falls back to request.url.
- */
-function resolvePublicOrigin(request: RequestLike): string {
-  const forwardedProto = firstHeaderValue(request.headers.get("x-forwarded-proto"))
-  const forwardedHost = firstHeaderValue(request.headers.get("x-forwarded-host"))
-
-  if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`
-  }
-
-  return new URL(request.url).origin
-}
-
 // ─── Relative-path helpers ────────────────────────────────────────────────────
 
 /**
@@ -100,7 +80,7 @@ const _configCache = new Map<string, oidcClient.Configuration>()
  * @param requestUrl - The URL of the incoming Next.js API route request,
  *   used to resolve relative DEX_ISSUER_URL values.
  */
-export async function getOIDCClient(request: RequestLike): Promise<oidcClient.Configuration> {
+export async function getOIDCClient(_request: RequestLike): Promise<oidcClient.Configuration> {
   const issuer = resolveIssuerUrl()
 
   const cached = _configCache.get(issuer)

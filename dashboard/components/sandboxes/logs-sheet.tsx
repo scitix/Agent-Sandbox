@@ -349,7 +349,6 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
       let buffer = ""
       let count = 0
 
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -404,7 +403,7 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
         setIsStreaming(false)
       }
     }
-  }, [abortRef, lines, clusterID, sandboxId, isTerminated, isExternalLogsConfigured])
+  }, [abortRef, lines, clusterID, sandboxId, isTerminated, isExternalLogsConfigured, sandbox])
 
   function formatEntry(e: NdjsonEntry): string {
     const parts: string[] = []
@@ -485,7 +484,11 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
-                e.shiftKey ? doSearch("prev") : doSearch("next")
+                if (e.shiftKey) {
+                  doSearch("prev")
+                } else {
+                  doSearch("next")
+                }
               }
               if (e.key === "Escape") {
                 setSearchQuery("")

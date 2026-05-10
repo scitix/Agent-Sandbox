@@ -18,7 +18,7 @@
 
 import { useQueryClient } from "@tanstack/react-query"
 import { AgentSandbox, currentApiClient, currentFetchClient } from "@/lib/api/client"
-import { delayedInvalidate, impersonationHeaders } from "./utils"
+import { delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
 

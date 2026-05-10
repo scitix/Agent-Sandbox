@@ -140,7 +140,6 @@ export function buildAutoscalingSpec(
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export interface AutoscalingFormSectionProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   control: Control<any>

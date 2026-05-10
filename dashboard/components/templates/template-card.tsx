@@ -16,7 +16,7 @@
 
 "use client"
 
-import { Pencil, Trash2, Layers, FileText, Cpu, MemoryStick } from "lucide-react"
+import { Pencil, Trash2, Layers, Cpu, MemoryStick } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import type { AgentSandboxTemplateSummary } from "@/lib/api/client"

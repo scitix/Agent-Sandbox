@@ -44,7 +44,7 @@ export default function DashboardHomePage() {
     } else {
       router.replace(clusterPath(clusterID, "overview", locale))
     }
-  }, [hydrated, auth, router, isAdmin])
+  }, [hydrated, auth, router, isAdmin, locale])
 
   return (
     <div className="bg-background flex min-h-screen items-center justify-center">

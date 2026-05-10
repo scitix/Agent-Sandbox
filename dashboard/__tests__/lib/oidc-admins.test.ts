@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, afterEach } from "vitest"
 import { isOIDCAdmin } from "@/lib/server/oidc-admins"
 
 describe("isOIDCAdmin", () => {
