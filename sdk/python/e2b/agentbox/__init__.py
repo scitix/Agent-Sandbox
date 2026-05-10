@@ -17,3 +17,5 @@ AgentBox __init__.py
 
 AgentBox E2B SDK patch package.
 """
+
+__version__ = "0.0.0"

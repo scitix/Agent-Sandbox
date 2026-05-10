@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentbox-e2b"
-version = "0.1.3"
-description = "AgentBox E2B SDK patch — one-line switch to use AgentBox via the E2B Python SDK"
+name = "agent-sandbox-e2b"
+dynamic = ["version"]
+description = "agent-sandbox E2B SDK patch — one-line switch to use AgentBox via the E2B Python SDK"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -14,6 +14,9 @@ dependencies = []  # e2b is an optional peer dependency
 [project.optional-dependencies]
 e2b = ["e2b>=2.0.0,<3.0.0"]
 dev = ["e2b==2.19.0", "ruff>=0.4.0", "httpx>=0.27.0"]
+
+[tool.setuptools.dynamic]
+version = {attr = "agentbox.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]

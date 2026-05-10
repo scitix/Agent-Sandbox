@@ -1,0 +1,39 @@
+{
+  "name": "agent-sandbox-e2b",
+  "version": "0.0.0",
+  "description": "agent-sandbox E2B SDK patch — one-line switch to use AgentBox via the E2B JS SDK",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./patch_e2b.js",
+  "exports": {
+    ".": {
+      "import": "./patch_e2b.js",
+      "require": "./patch_e2b.js"
+    }
+  },
+  "files": [
+    "patch_e2b.js",
+    "README.md"
+  ],
+  "keywords": [
+    "e2b",
+    "agent-sandbox",
+    "agentbox",
+    "kubernetes",
+    "sandbox"
+  ],
+  "homepage": "https://github.com/scitix/agent-sandbox",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scitix/agent-sandbox.git",
+    "directory": "sdk/typescript/e2b"
+  },
+  "peerDependencies": {
+    "e2b": ">=2.0.0 <3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "e2b": {
+      "optional": true
+    }
+  }
+}
