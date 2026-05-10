@@ -28,8 +28,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	apimiddleware "github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/metrics"
