@@ -577,6 +577,11 @@
   "general.languageDesc": "Choose your preferred display language for the dashboard.",
   "general.languageCurrent": "Current: {{language}}",
 
+  "general.about": "About",
+  "general.aboutDesc": "Dashboard and server version information.",
+  "general.dashboardVersion": "Dashboard Version",
+  "general.serverVersion": "Server Version",
+
   "admin.title": "Admin Statistics",
   "admin.accessRequired": "Admin access required",
   "admin.onlyAdmins": "Only admins can manage API keys.",

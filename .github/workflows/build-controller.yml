@@ -40,11 +40,24 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Resolve build version
+        id: build-version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VER="${{ github.ref_name }}"
+            VER="${VER#v}"
+          else
+            SHORT="${{ github.sha }}"
+            VER="$(cat VERSION)+dev.${SHORT:0:7}"
+          fi
+          echo "value=${VER}" >> $GITHUB_OUTPUT
+
       - name: Cross-compile binaries
         run: |
           mkdir -p installer/dockerfile/bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/sandbox-amd64 ./cmd/sandbox
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o installer/dockerfile/bin/sandbox-arm64 ./cmd/sandbox
+          LDFLAGS="-s -w -X github.com/scitix/agent-sandbox/pkg/version.Version=${{ steps.build-version.outputs.value }}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="${LDFLAGS}" -o installer/dockerfile/bin/sandbox-amd64 ./cmd/sandbox
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="${LDFLAGS}" -o installer/dockerfile/bin/sandbox-arm64 ./cmd/sandbox
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4

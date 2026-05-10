@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	apimiddleware "github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/metrics"
@@ -46,6 +47,8 @@ type Config struct {
 	// connection URLs. Can be a hostname (e.g. "my.gateway.com") or host:port.
 	// When empty, the domain field in API responses will be null.
 	Domain string
+	// ServerVersion is stamped on every response via X-AgentBox-Server-Version.
+	ServerVersion string
 }
 
 // Server is the E2B-compatible HTTP API server.
@@ -73,6 +76,7 @@ func New(cfg Config, k8sClient client.Client,
 		SkipPaths: []string{"/health"},
 	}))
 	r.Use(metrics.GinPrometheusMiddleware("e2b"))
+	r.Use(apimiddleware.NewServerVersionMiddleware(cfg.ServerVersion))
 
 	svcs := router.Services{
 		Sandbox:   sandboxSvc,

@@ -44,6 +44,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/imageresolver"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
+	"github.com/scitix/agent-sandbox/pkg/version"
 
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -363,6 +364,7 @@ func Run(opts Options) {
 		ClusterStore:      clusterStore,
 		LocalClusterID:    localClusterID,
 		QuotaProvider:     quotaPluginProvider,
+		ServerVersion:     version.Version,
 	}, mgr.GetClient(), clientset, sandboxStore, pluginManager, envoyGatewayBaseURL, sandboxSvc)
 
 	numProcesses := 2
@@ -379,8 +381,9 @@ func Run(opts Options) {
 
 	if e2bBindAddress != "" {
 		e2bServer := e2bcompat.New(e2bcompat.Config{
-			BindAddress: e2bBindAddress,
-			Domain:      e2bDomain,
+			BindAddress:   e2bBindAddress,
+			Domain:        e2bDomain,
+			ServerVersion: version.Version,
 		}, mgr.GetClient(), keyStore, adminKeyMgr, iamSvc, sandboxSvc, ccForwarder)
 		go func() { errCh <- e2bServer.Start(ctx) }()
 	}

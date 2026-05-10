@@ -556,6 +556,11 @@
   "general.languageDesc": "選擇儀表板的顯示語言。",
   "general.languageCurrent": "目前：{{language}}",
 
+  "general.about": "關於",
+  "general.aboutDesc": "儀表板與伺服器版本資訊。",
+  "general.dashboardVersion": "儀表板版本",
+  "general.serverVersion": "伺服器版本",
+
   "admin.title": "管理統計",
   "admin.accessRequired": "需要管理員權限",
   "admin.onlyAdmins": "只有管理員可以管理 API 金鑰。",

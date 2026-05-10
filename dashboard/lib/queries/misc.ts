@@ -22,6 +22,17 @@ import { impersonationHeaders } from "./utils"
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ""
 
+export const serverVersionQueryOptions = (clusterID: string) =>
+  queryOptions({
+    queryKey: ["serverVersion", clusterID],
+    queryFn: () =>
+      fetch(`${basePath}/api/clusters/${clusterID}/ping`).then((res) =>
+        res.json() as Promise<{ serverVersion: string }>,
+      ),
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+  })
+
 /**
  * Returns quota items for the current user (or an impersonated user).
  *

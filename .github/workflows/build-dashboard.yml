@@ -27,9 +27,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Read VERSION
+      - name: Resolve build version
         id: version
-        run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VER="${{ github.ref_name }}"
+            VER="${VER#v}"
+          else
+            SHORT="${{ github.sha }}"
+            VER="$(cat VERSION)+dev.${SHORT:0:7}"
+          fi
+          echo "value=${VER}" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

@@ -559,6 +559,11 @@
   "general.languageDesc": "选择仪表盘的显示语言。",
   "general.languageCurrent": "当前：{{language}}",
 
+  "general.about": "关于",
+  "general.aboutDesc": "仪表盘与服务端版本信息。",
+  "general.dashboardVersion": "仪表盘版本",
+  "general.serverVersion": "服务端版本",
+
   "admin.title": "管理统计",
   "admin.accessRequired": "需要管理员权限",
   "admin.onlyAdmins": "只有管理员才能管理 API 密钥。",

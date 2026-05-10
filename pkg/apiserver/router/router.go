@@ -55,12 +55,17 @@ type Services struct {
 	// QuotaProvider drives the /v1/feature-gates endpoint.
 	// Nil is accepted and treated as Noop downstream.
 	QuotaProvider quotaplugin.Provider
+	// ServerVersion is stamped onto every response via X-AgentBox-Server-Version.
+	// Comes from pkg/version.Version (injected at build time via -ldflags).
+	ServerVersion string
 }
 
 // Setup registers all routes on the provided gin.Engine.
 // authMiddleware is the authenticate middleware; it also enforces admin access
 // for routes that have AdminKeyAuth security (via oapi-codegen per-route c.Set).
 func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
+	// Stamp every response (including /ping) with the running server version.
+	r.Use(middleware.NewServerVersionMiddleware(svcs.ServerVersion))
 	srv := handlers.NewServer(handlers.Services{
 		Sandbox:         svcs.Sandbox,
 		SandboxPool:     svcs.SandboxPool,

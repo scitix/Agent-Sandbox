@@ -83,6 +83,9 @@ type Config struct {
 	// inspected by the /v1/feature-gates endpoint. When nil, a Noop provider
 	// is used (feature disabled).
 	QuotaProvider quotaplugin.Provider
+	// ServerVersion is the build-time version string stamped on every response
+	// via X-AgentBox-Server-Version. Set from pkg/version.Version in app.go.
+	ServerVersion string
 }
 
 // Server is the HTTP API server.
@@ -149,6 +152,7 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		Forwarder:       cfg.Forwarder,
 		Cluster:         service.NewClusterService(cfg.ClusterStore, cfg.LocalClusterID),
 		QuotaProvider:   quotaProv,
+		ServerVersion:   cfg.ServerVersion,
 	}
 
 	authMw := middleware.NewAuthenticateMiddleware(cfg.AdminKeyManager, cfg.KeyStore, cfg.JWTSecret, svcs.IAM)

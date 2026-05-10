@@ -7,6 +7,7 @@ on:
       - "go.mod"
       - "go.sum"
       - ".golangci.yml"
+      - "pkg/openapi/native/openapi.yaml"
       - ".github/workflows/lint.yml"
   pull_request:
     paths:
@@ -14,6 +15,7 @@ on:
       - "go.mod"
       - "go.sum"
       - ".golangci.yml"
+      - "pkg/openapi/native/openapi.yaml"
       - ".github/workflows/lint.yml"
 
 jobs:
@@ -33,3 +35,40 @@ jobs:
         run: make lint-config
       - name: Run linter
         run: make lint
+
+  compat-check:
+    name: OpenAPI Compatibility Check
+    runs-on: ubuntu-latest
+    # Only run when openapi.yaml is modified
+    if: >-
+      contains(github.event.head_commit.modified, 'pkg/openapi/native/openapi.yaml') ||
+      github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so git show can read the base ref
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Determine base ref
+        id: base
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "ref=origin/${{ github.base_ref }}" >> $GITHUB_OUTPUT
+          else
+            # For push events, compare against the previous commit
+            echo "ref=HEAD~1" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run compatibility check
+        run: |
+          python3 hack/scripts/check-openapi-compat.py \
+            --diff-base "${{ steps.base.outputs.ref }}"

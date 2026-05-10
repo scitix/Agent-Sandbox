@@ -1,23 +1,8 @@
-/**
- * Copyright 2026 ScitiX
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 "use client"
 
 import { useRouter } from "next/navigation"
 import { useAtomValue } from "jotai"
+import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -29,14 +14,21 @@ import { useTranslation } from "@/lib/i18n"
 import { LocaleSwitcher } from "@/components/locale-switcher"
 import { loginPath } from "@/lib/cluster-path"
 import { useLocale } from "@/hooks/use-locale"
+import { useClusterID } from "@/hooks/use-cluster-id"
+import { serverVersionQueryOptions } from "@/lib/queries"
 
 export default function GeneralPage() {
   const router = useRouter()
   const { t } = useTranslation()
   const locale = useLocale()
+  const clusterID = useClusterID()
   const auth = useAtomValue(authAtom)
   const isAdmin = useAtomValue(isAdminAtom)
   const impersonation = useAtomValue(impersonationAtom)
+
+  const { data: pingData } = useQuery(serverVersionQueryOptions(clusterID))
+  const dashboardVersion = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0"
+  const serverVersion = pingData?.serverVersion ?? "—"
 
   const user = useMemo(() => {
     if (auth?.role === "admin") {
@@ -102,6 +94,34 @@ export default function GeneralPage() {
 
           {/* Language */}
           <LocaleSwitcher />
+
+          <Separator />
+
+          {/* About */}
+          <div>
+            <h3 className="text-foreground mb-1 font-mono text-sm font-bold tracking-wide uppercase">
+              {t("general.about")}
+            </h3>
+            <p className="text-muted-foreground mb-3 text-xs">{t("general.aboutDesc")}</p>
+            <div className="border-border bg-secondary flex flex-col gap-0 divide-y divide-border border">
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-muted-foreground font-mono text-xs">
+                  {t("general.dashboardVersion")}
+                </span>
+                <span className="text-foreground font-mono text-xs font-semibold">
+                  {dashboardVersion}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-muted-foreground font-mono text-xs">
+                  {t("general.serverVersion")}
+                </span>
+                <span className="text-foreground font-mono text-xs font-semibold">
+                  {serverVersion}
+                </span>
+              </div>
+            </div>
+          </div>
 
           <Separator />
 
