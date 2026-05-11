@@ -1,0 +1,74 @@
+.accent {
+  color: var(--brand);
+}
+
+.accent::after {
+  content: '';
+  position: absolute;
+  left: 0.04em;
+  right: 0.04em;
+  bottom: 0.02em;
+  height: 0.1em;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--brand), var(--brand-hover), transparent);
+  opacity: 0.58;
+}
+
+.reel::before,
+.reel::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  height: 110px;
+  pointer-events: none;
+}
+
+.reel::before {
+  top: 0;
+  background: linear-gradient(to bottom, var(--color-fd-background), transparent);
+}
+
+.reel::after {
+  bottom: 0;
+  background: linear-gradient(to top, var(--color-fd-background), transparent);
+}
+
+.reelUp,
+.reelDown {
+  will-change: transform;
+}
+
+.reelUp {
+  animation: reel-up linear infinite;
+}
+
+.reelDown {
+  animation: reel-down linear infinite;
+}
+
+@keyframes reel-up {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+@keyframes reel-down {
+  from {
+    transform: translateY(-50%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reelUp,
+  .reelDown {
+    animation: none;
+  }
+}

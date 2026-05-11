@@ -18,8 +18,18 @@ html > body[data-scroll-locked] {
 
 :root {
   --fd-layout-width: 1600px;
+  --brand: #ff7a3c;
+  --brand-hover: #ff8f57;
+  --brand-light: #d95f1a;
 }
 
 .font-mono {
   font-family: var(--font-mono-display), ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+}
+
+.home-display {
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-feature-settings: 'ss01' 1, 'cv03' 1, 'cv11' 1;
+  font-optical-sizing: auto;
+  font-synthesis-weight: none;
 }

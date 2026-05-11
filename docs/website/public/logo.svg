@@ -1,0 +1,27 @@
+<svg width="1080" height="1080" xmlns="http://www.w3.org/2000/svg">
+ <defs>
+  <linearGradient id="_sandbox_22" data-name="sandbox 22" x1="1.21555" y1="0.16542" x2="0.39243" y2="0.65339">
+   <stop offset="0" stop-color="#ff994d"/>
+   <stop offset="1" stop-color="#d8355b"/>
+  </linearGradient>
+  <linearGradient id="_sandbox_13" data-name="sandbox 13" x1="0.78219" y1="0.17971" x2="0.2765" y2="0.50121">
+   <stop offset="0" stop-color="#ff994d"/>
+   <stop offset="1" stop-color="#ff735c"/>
+  </linearGradient>
+  <linearGradient id="_sandbox_24" data-name="sandbox 24" x1="0.28156" y1="0.91285" x2="0.88165" y2="0.13055">
+   <stop offset="0" stop-color="#ff994d"/>
+   <stop offset="1" stop-color="#d8355b"/>
+  </linearGradient>
+  <linearGradient id="_sandbox_25" data-name="sandbox 25" x1="0.01716" y1="1.04336" x2="0.94704" y2="0.14753">
+   <stop offset="0" stop-color="#ff994d"/>
+   <stop offset="1" stop-color="#b82446"/>
+  </linearGradient>
+ </defs>
+ <g>
+  <title>Layer 1</title>
+  <polygon class="cls-3" points="1038.8925476074219,340.9705228805542 1040.2925720214844,882.6204862594604 839.0425720214844,992.8305082321167 636.0625915527344,568.020510673523 1038.8925476074219,340.9705228805542 " fill="url(#_sandbox_22)" id="svg_1"/>
+  <polygon class="cls-2" points="569.0925598144531,66.8305082321167 1038.8925476074219,340.9705228805542 636.0625915527344,568.020510673523 426.4425354003906,135.19050884246826 569.0925598144531,66.8305082321167 " fill="url(#_sandbox_13)" id="svg_2"/>
+  <path class="cls-1" d="m522.86256,334.28051l-113.29,256.89c-91.2,51.82 -170.65,99.83 -242.86,176.96l-26.48,28.25l286.22,-661.19l96.41,199.09z" fill="url(#_sandbox_24)" id="svg_3"/>
+  <path class="cls-4" d="m711.72256,725.93051l-172.5,80.77c-97.14,45.49 -183.56,108.25 -256.87,186.54l-8.44,9.01l-239.74,0l120.43,-128.62c88.59,-94.61 193.03,-170.45 310.41,-225.41l171.28,-80.2l75.43,157.91z" fill="url(#_sandbox_25)" id="svg_4"/>
+ </g>
+</svg>

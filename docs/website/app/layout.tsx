@@ -15,32 +15,51 @@
  */
 
 import { RootProvider } from 'fumadocs-ui/provider/next';
-import { IBM_Plex_Mono, DM_Sans } from 'next/font/google';
 import './global.css';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import type { Metadata } from 'next';
+import { IBM_Plex_Mono, Manrope, Sora } from 'next/font/google';
+import { publicAsset } from '@/lib/public-assets';
 
-const ibmPlexMono = IBM_Plex_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-mono-display',
-});
+export const metadata: Metadata = {
+  title: 'Agent Sandbox',
+  description: 'Kubernetes Sandbox Engine for AI Agents. Any Docker image, <100ms allocation.',
+  icons: { icon: publicAsset('/logo.svg') },
+};
 
-const dmSans = DM_Sans({
+const sansFont = Manrope({
   subsets: ['latin'],
   variable: '--font-sans',
+  display: 'swap',
+  weight: ['400', '500', '600', '700'],
 });
+
+const displayFont = Sora({
+  subsets: ['latin'],
+  variable: '--font-display',
+  display: 'swap',
+  weight: ['400', '500', '600', '700', '800'],
+});
+
+const monoFont = IBM_Plex_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono-display',
+  display: 'swap',
+  weight: ['400', '500', '600'],
+});
+
+const bodyFontStyle = {
+  fontFamily: 'var(--font-sans)',
+} as CSSProperties;
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${ibmPlexMono.variable} ${dmSans.variable}`}>
-      <body className="flex flex-col min-h-screen font-sans" style={{ fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
-        <RootProvider
-          search={{
-            options: {
-              type: 'static',
-            },
-          }}
-        >
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${sansFont.variable} ${displayFont.variable} ${monoFont.variable} flex min-h-screen flex-col`}
+        style={bodyFontStyle}
+      >
+        <RootProvider search={{ options: { type: 'static' } }}>
           {children}
         </RootProvider>
       </body>

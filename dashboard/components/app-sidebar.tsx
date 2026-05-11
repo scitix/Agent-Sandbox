@@ -269,7 +269,7 @@ export function AppSidebar({ }: AppSidebarProps) {
             <SidebarMenuButton
               render={
                 <a
-                  href="https://scitix.github.io/agent-sandbox/en/"
+                  href="https://scitix.github.io/Agent-Sandbox/docs/"
                   target="_blank"
                   rel="noopener noreferrer"
                 />

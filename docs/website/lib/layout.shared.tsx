@@ -15,11 +15,19 @@
  */
 
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
+import Image from 'next/image';
+import { publicAsset } from './public-assets';
 
 export function baseOptions(): BaseLayoutProps {
   return {
+    githubUrl: 'https://github.com/scitix/Agent-Sandbox',
     nav: {
-      title: 'Scitix AgentBox',
+      title: (
+        <span className="flex items-center gap-2.5">
+          <Image src={publicAsset('/logo.svg')} alt="Agent Sandbox" width={24} height={24} className="shrink-0" />
+          <span className="home-display font-bold text-sm tracking-tight">Agent Sandbox</span>
+        </span>
+      ),
     },
   };
 }

@@ -19,14 +19,18 @@ import { createMDX } from 'fumadocs-mdx/next';
 
 const withMDX = createMDX();
 const isProd = process.env.NODE_ENV === 'production';
+const basePath = isProd ? '/Agent-Sandbox' : '';
 
 const config: NextConfig = {
   reactStrictMode: true,
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
+  },
   ...(isProd
     ? {
       output: 'export',
-      basePath: '/Agent-Sandbox',
-      assetPrefix: '/Agent-Sandbox/',
+      basePath,
+      assetPrefix: `${basePath}/`,
     }
     : {}),
   trailingSlash: true,
