@@ -261,8 +261,12 @@ export function HeroSection() {
   const [showReel, setShowReel] = useState(false);
 
   useEffect(() => {
-    const id = requestIdleCallback(() => setShowReel(true));
-    return () => cancelIdleCallback(id);
+    if (typeof requestIdleCallback !== 'undefined') {
+      const id = requestIdleCallback(() => setShowReel(true));
+      return () => cancelIdleCallback(id);
+    }
+    const id = setTimeout(() => setShowReel(true), 200);
+    return () => clearTimeout(id);
   }, []);
 
   return (
