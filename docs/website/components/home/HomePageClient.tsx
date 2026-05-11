@@ -524,10 +524,11 @@ function WorldConnectionMap() {
       <div className="relative aspect-[180/68] overflow-hidden rounded-[1.5rem]">
         <div
           className="absolute inset-0 text-fd-muted-foreground opacity-50 [&_svg]:h-full [&_svg]:w-full"
+          aria-hidden="true"
           dangerouslySetInnerHTML={{ __html: svgMap }}
         />
 
-        <svg viewBox="0 0 180 68" className="absolute inset-0 h-full w-full" role="img" aria-label="Cross-cloud sandbox routing map">
+        <svg viewBox="0 0 180 68" className="absolute inset-0 h-full w-full" aria-hidden="true">
           <defs>
             <linearGradient id="world-route-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.2" />
@@ -595,7 +596,7 @@ function TerminalDemo() {
   } as const;
 
   return (
-    <div className={`${styles.terminal} overflow-hidden rounded-[2rem] border border-white/10 shadow-2xl`}>
+    <div className={`${styles.terminal} overflow-hidden rounded-[2rem] border border-white/10 shadow-2xl`} aria-hidden="true">
       <div className={`${styles.terminalChrome} flex items-center justify-between border-b border-white/10 px-5 py-3`}>
         <div className="flex items-center gap-2">
           <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />

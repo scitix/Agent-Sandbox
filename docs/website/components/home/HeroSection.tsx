@@ -1,5 +1,7 @@
-import Link from 'next/link';
-import { ArrowRight } from 'lucide-react';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { motion } from 'motion/react';
 import type { ComponentType } from 'react';
 import cplusplusIcon from 'devicon/icons/cplusplus/cplusplus-original.svg';
 import goIcon from 'devicon/icons/go/go-original.svg';
@@ -19,7 +21,6 @@ import {
   Dify,
   Fireworks,
   Gemini,
-  Github,
   Groq,
   HermesAgent,
   HuggingFace,
@@ -36,6 +37,7 @@ import {
   Replicate,
   Tavily,
 } from '@lobehub/icons/es/icons';
+import { HeroContent } from './HeroContent';
 import styles from './HeroSection.module.css';
 
 type IconAsset = string | { src: string };
@@ -71,8 +73,8 @@ function iconAssetSrc(asset: IconAsset) {
   return typeof asset === 'string' ? asset : asset.src;
 }
 
-function createDeviconIcon(asset: IconAsset, fallbackTitle: string, options: DeviconOptions = {}): ReelIconType {
-  function DeviconIcon({ className, size = 30, title = fallbackTitle }: ReelIconProps) {
+function createDeviconIcon(asset: IconAsset, _fallbackTitle: string, options: DeviconOptions = {}): ReelIconType {
+  function DeviconIcon({ className, size = 30 }: ReelIconProps) {
     const src = iconAssetSrc(asset);
 
     if (options.darkMonochrome) {
@@ -87,14 +89,13 @@ function createDeviconIcon(asset: IconAsset, fallbackTitle: string, options: Dev
         <>
           <img
             src={src}
-            alt={title}
+            alt=""
             width={size}
             height={size}
             className={className ? `${className} dark:hidden` : 'object-contain dark:hidden'}
           />
           <span
-            role="img"
-            aria-label={title}
+            role="presentation"
             className={className ? `${className} hidden bg-white dark:block` : 'hidden bg-white dark:block'}
             style={maskStyle}
           />
@@ -105,7 +106,7 @@ function createDeviconIcon(asset: IconAsset, fallbackTitle: string, options: Dev
     return (
       <img
         src={src}
-        alt={title}
+        alt=""
         width={size}
         height={size}
         className={className ?? 'object-contain'}
@@ -170,15 +171,9 @@ const HERO_REEL_COLUMNS: readonly (readonly ReelItem[])[] = [
   ],
 ] as const;
 
-const toolColors: Record<ToolGlyphName, string> = {
-  file: '#475569',
-  search: '#0f766e',
-  terminal: '#4d6babff',
-};
-
 function ToolGlyph({ glyph }: { glyph: ToolGlyphName }) {
   return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6 text-white" fill="none" stroke="currentColor" strokeWidth={1.8}>
+    <svg viewBox="0 0 24 24" className="h-6 w-6 text-white" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
       {glyph === 'search' ? (
         <>
           <circle cx="10.5" cy="10.5" r="5.5" />
@@ -224,11 +219,17 @@ function ReelTile({ item }: { item: ReelItem }) {
   );
 }
 
+const toolColors: Record<ToolGlyphName, string> = {
+  file: '#475569',
+  search: '#0f766e',
+  terminal: '#4d6babff',
+};
+
 function HeroReel() {
   const columns = [...HERO_REEL_COLUMNS, ...HERO_REEL_COLUMNS];
 
   return (
-    <div className={`${styles.reel} pointer-events-none relative h-full overflow-hidden`} aria-label="Supported model, cloud, agent, and tool ecosystem">
+    <div className={`${styles.reel} pointer-events-none relative h-full overflow-hidden`} aria-hidden="true">
       <div className="absolute left-1/2 top-1/2 w-[3200px] -translate-x-1/2 -translate-y-1/2 [perspective:2000px]">
         <div className="grid h-[1160px] grid-cols-12 gap-6 [transform:rotateX(45deg)_rotateZ(-30deg)_rotateY(10deg)_scale(1.6)] [transform-style:preserve-3d]">
           {columns.map((items, columnIndex) => (
@@ -242,7 +243,7 @@ function HeroReel() {
                     <ReelTile key={`a-${item.label}`} item={item} />
                   ))}
                 </div>
-                <div className="flex flex-col gap-6" aria-hidden="true">
+                <div className="flex flex-col gap-6">
                   {items.map((item) => (
                     <ReelTile key={`b-${item.label}`} item={item} />
                   ))}
@@ -257,47 +258,27 @@ function HeroReel() {
 }
 
 export function HeroSection() {
+  const [showReel, setShowReel] = useState(false);
+
+  useEffect(() => {
+    const id = requestIdleCallback(() => setShowReel(true));
+    return () => cancelIdleCallback(id);
+  }, []);
+
   return (
     <section className="relative min-h-[calc(100svh-var(--fd-nav-height,4rem))] overflow-hidden border-b border-fd-border">
-      <div className="absolute inset-0 opacity-75 blur-[2px]">
-        <HeroReel />
-      </div>
-      <div className="absolute inset-0 bg-fd-background/34" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.54)_0%,transparent_54%,var(--color-fd-background)_92%)] dark:bg-[radial-gradient(circle_at_center,rgba(6,17,29,0.36)_0%,transparent_55%,var(--color-fd-background)_94%)]" />
-      <div className="relative z-10 mx-auto w-full max-w-(--fd-layout-width) px-4">
-        <div className="flex min-h-[calc(100svh-var(--fd-nav-height,4rem))] items-center justify-center py-20 md:py-28">
-          <div className="mx-auto max-w-5xl text-center">
-            <p className="inline-flex rounded-full border border-fd-border bg-fd-background/70 px-4 py-2 text-xs font-semibold tracking-[0.18em] text-fd-muted-foreground shadow-sm">
-              Open-Source Kubernetes Sandbox Engine
-            </p>
-            <h1 className="home-display mt-5 text-5xl font-semibold tracking-[-0.065em] text-fd-foreground md:text-7xl lg:text-8xl">
-              Fast, Multi-Cloud<br /><span className={`${styles.accent} relative inline-block`}>Sandboxes</span> for<br />AI
-              Agents.
-            </h1>
-            <p className="mx-auto mt-6 max-w-3xl text-lg leading-8 text-fd-muted-foreground md:text-xl">
-              Agent Sandbox enables AI agents to interact with real-world APIs and tools in a safe, isolated environment.
-            </p>
-            <div className="mt-8 flex flex-wrap justify-center gap-3">
-              <Link
-                href="/docs"
-                className="inline-flex items-center gap-2 rounded-full bg-fd-foreground px-5 py-3 text-sm font-semibold text-fd-background"
-              >
-                Read the docs
-                <ArrowRight className="h-4 w-4" strokeWidth={2} />
-              </Link>
-              <a
-                href="https://github.com/scitix/agent-sandbox"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-background/70 px-5 py-3 text-sm font-semibold text-fd-foreground"
-              >
-                <Github size={18} />
-                View on GitHub
-              </a>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section >
+      <motion.div
+        className="absolute inset-0 blur-[2px]"
+        aria-hidden="true"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: showReel ? 0.75 : 0 }}
+        transition={{ duration: 1.5, ease: 'easeOut' }}
+      >
+        {showReel && <HeroReel />}
+      </motion.div>
+      <div className="absolute inset-0 bg-fd-background/34" aria-hidden="true" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.54)_0%,transparent_54%,var(--color-fd-background)_92%)] dark:bg-[radial-gradient(circle_at_center,rgba(6,17,29,0.36)_0%,transparent_55%,var(--color-fd-background)_94%)]" aria-hidden="true" />
+      <HeroContent />
+    </section>
   );
 }
