@@ -73,7 +73,7 @@ function iconAssetSrc(asset: IconAsset) {
   return typeof asset === 'string' ? asset : asset.src;
 }
 
-function createDeviconIcon(asset: IconAsset, _fallbackTitle: string, options: DeviconOptions = {}): ReelIconType {
+export function createDeviconIcon(asset: IconAsset, _fallbackTitle: string, options: DeviconOptions = {}): ReelIconType {
   function DeviconIcon({ className, size = 30 }: ReelIconProps) {
     const src = iconAssetSrc(asset);
 
@@ -137,12 +137,12 @@ const HERO_REEL_COLUMNS: readonly (readonly ReelItem[])[] = [
     { type: 'brand', label: 'CrewAI', group: 'LLM agent', icon: CrewAI },
   ],
   [
-    { type: 'brand', label: 'C++', group: 'language', icon: CplusplusIcon },
-    { type: 'brand', label: 'Rust', group: 'language', icon: RustIcon },
-    { type: 'brand', label: 'Go', group: 'language', icon: GoIcon },
-    { type: 'brand', label: 'Python', group: 'language', icon: PythonIcon },
-    { type: 'brand', label: 'TypeScript', group: 'language', icon: TypeScriptIcon },
-    { type: 'brand', label: 'Bash', group: 'tool call', icon: BashIcon },
+    { type: 'brand', label: 'C++', group: 'interpreter', icon: CplusplusIcon },
+    { type: 'brand', label: 'Rust', group: 'interpreter', icon: RustIcon },
+    { type: 'brand', label: 'Go', group: 'interpreter', icon: GoIcon },
+    { type: 'brand', label: 'Python', group: 'interpreter', icon: PythonIcon },
+    { type: 'brand', label: 'TypeScript', group: 'interpreter', icon: TypeScriptIcon },
+    { type: 'brand', label: 'Bash', group: 'terminal', icon: BashIcon },
   ],
   [
     { type: 'brand', label: 'Fireworks', group: 'inference', icon: Fireworks },

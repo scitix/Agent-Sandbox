@@ -38,6 +38,7 @@ jobs:
           cache-dependency-path: dashboard/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm exec next typegen
       - run: pnpm exec tsc --noEmit
       - run: pnpm i18n:validate
 

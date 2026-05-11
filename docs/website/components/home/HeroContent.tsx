@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { Github } from '@lobehub/icons/es/icons';
+import styles from './HeroSection.module.css';
 
 /**
  * Server Component — semantic hero content rendered in SSR HTML.
@@ -16,7 +17,7 @@ export function HeroContent() {
             Open-Source Kubernetes Sandbox Engine
           </p>
           <h1 className="home-display mt-5 text-5xl font-semibold tracking-[-0.065em] text-fd-foreground md:text-7xl lg:text-8xl">
-            Fast, Multi-Cloud<br /><span className="relative inline-block text-[var(--brand)]">Sandboxes</span> for<br />AI
+            Fast, Multi-Cloud<br /><span className={`relative inline-block ${styles.accent}`}>Sandboxes</span> for<br />AI
             Agents.
           </h1>
           <p className="mx-auto mt-6 max-w-3xl text-lg leading-8 text-fd-muted-foreground md:text-xl">

@@ -125,15 +125,6 @@
     color-mix(in srgb, var(--color-fd-card) 94%, transparent);
 }
 
-.consoleShell::after {
-  content: '';
-  position: absolute;
-  inset: 1px;
-  border-radius: inherit;
-  pointer-events: none;
-  border: 1px solid color-mix(in srgb, white 8%, transparent);
-}
-
 .carouselFrame {
   position: relative;
   overflow: hidden;

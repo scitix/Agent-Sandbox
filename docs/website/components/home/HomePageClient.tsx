@@ -5,7 +5,7 @@ import Link from 'next/link';
 import DottedMap from 'dotted-map';
 import { BookOpen, MessageSquareText } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlibabaCloud,
   Aws,
@@ -31,21 +31,21 @@ const CORE_SELLING_POINTS = [
     title: 'With <60ms sandbox allocation.',
     accent: '60ms',
     copy: 'Pre-warmed pools keep isolated environments ready for agent loops, eval batches, and RL rollouts instead of waiting on a new Pod every request.',
-    tags: ['Pre-warmed pools', 'No pod churn', 'High-volume rollouts'],
+    tags: ['Pre-warmed Pools', 'High-volume Rollouts'],
   },
   {
     eyebrow: 'Kubernetes native',
     title: 'Scale across any clouds.',
     accent: 'any clouds.',
     copy: 'Use the Kubernetes model your infrastructure team already trusts: CRDs, namespaces, RBAC, autoscaling, in-place updates, and multi-cluster routing.',
-    tags: ['CRDs + RBAC', 'In-place updates', 'Multi-cluster'],
+    tags: ['CRDs + RBAC', 'Inplace Updates', 'Multi-cluster'],
   },
   {
     eyebrow: 'Agentic RL',
     title: 'Easily run Agentic RL with zero rebuilds.',
     accent: 'zero',
     copy: 'Stay compatible with E2B / SWE-ReX workflows while adding deterministic resets, any-image runtimes, and the scale needed for asynchronous agent training.',
-    tags: ['E2B compatible', 'SWE-ReX friendly', 'Any Docker image'],
+    tags: ['E2B compatible', 'SWE-ReX', 'Any Docker image'],
   },
 ] as const;
 
@@ -152,14 +152,14 @@ const FOOTER_GROUPS = [
 const HELM_COMMAND = 'helm install agent-sandbox oci://ghcr.io/scitix/agent-sandbox-worker';
 
 const TERMINAL_LINES = [
-  { kind: 'code', text: 'from agentbox.patch_e2b import patch_e2b' },
-  { kind: 'code', text: 'patch_e2b()' },
+  { kind: 'command', text: 'from agentbox.patch_e2b import patch_e2b' },
+  { kind: 'command', text: 'patch_e2b()' },
   { kind: 'gap', text: '' },
-  { kind: 'code', text: 'from e2b import Sandbox' },
+  { kind: 'command', text: 'from e2b import Sandbox' },
   { kind: 'gap', text: '' },
   { kind: 'info', text: 'Any Docker image — no rebuild needed' },
-  { kind: 'code', text: 'sbx = Sandbox.create("my-pool//ubuntu:22.04", timeout=3600)' },
-  { kind: 'output', text: 'allocating from pre-warmed pool' },
+  { kind: 'command', text: 'sbx = Sandbox.create("us-east::my-pool//ubuntu:22.04", timeout=3600)' },
+  { kind: 'output', text: 'allocating from pre-warmed pool of us-east region' },
   { kind: 'success', text: '✓ sandbox-4f8a1c ready in 74ms' },
   { kind: 'gap', text: '' },
   { kind: 'command', text: 'sbx.commands.run("python3 --version").stdout' },
@@ -279,28 +279,40 @@ function TextLink({ href, children }: { href: string; children: React.ReactNode 
   );
 }
 
+function ScitiXColorIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" className="fill-[#000064] dark:fill-white">
+      <path d="m273.74187,78.30124l462.65816,0l-76.96556,152.20156l-279.32446,0l-90.80207,0l-217.06018,0c17.29563,-81.28947 84.7486,-152.20156 201.49411,-152.20156zm15.56607,240.40929l90.80207,0l39.77995,0l105.50336,0c275.86533,0 275.86533,402.98823 0,402.98823l-461.79337,0l76.96556,-152.20156l370.12653,0c61.39949,0 61.39949,-97.72032 0,-97.72032l-90.80207,0l-39.77995,0l-106.36814,0c-116.74552,0 -184.19848,-70.91209 -201.49411,-153.06634l217.06018,0z" />
+    </svg>
+  );
+}
+
 function CloudIconStrip() {
-  const providers = [
-    { label: 'AWS', icon: Aws },
-    { label: 'Google Cloud', icon: GoogleCloud },
-    { label: 'Azure', icon: Azure },
-    { label: 'Volcengine', icon: Volcengine },
-    { label: 'Alibaba Cloud', icon: AlibabaCloud },
-    { label: 'Cloudflare', icon: Cloudflare },
+  const providers: { label: string; href: string; icon: ReactNode }[] = [
+    { label: 'AWS', href: 'https://aws.amazon.com/', icon: <Aws.Color size={18} /> },
+    { label: 'Google Cloud', href: 'https://cloud.google.com/', icon: <GoogleCloud.Color size={18} /> },
+    { label: 'Azure', href: 'https://azure.microsoft.com/', icon: <Azure.Color size={18} /> },
+    { label: 'Volcengine', href: 'https://www.volcengine.com/', icon: <Volcengine.Color size={18} /> },
+    { label: 'Alibaba Cloud', href: 'https://www.alibabacloud.com/', icon: <AlibabaCloud.Color size={18} /> },
+    { label: 'Cloudflare', href: 'https://www.cloudflare.com/', icon: <Cloudflare.Color size={18} /> },
+    { label: 'ScitiX', href: 'https://scitix.ai/', icon: <ScitiXColorIcon size={18} /> },
   ];
 
   return (
     <div className="mt-8 flex flex-wrap gap-3">
       {providers.map((provider) => (
-        <motion.div
+        <motion.a
           key={provider.label}
+          href={provider.href}
+          target="_blank"
+          rel="noopener noreferrer"
           className={`${styles.pill} flex items-center gap-2 rounded-full px-3 py-2 text-sm text-fd-muted-foreground`}
           whileHover={{ y: -2 }}
           transition={{ duration: 0.18 }}
         >
-          <provider.icon.Color size={18} />
+          {provider.icon}
           <span>{provider.label}</span>
-        </motion.div>
+        </motion.a>
       ))}
     </div>
   );
@@ -423,7 +435,7 @@ function ProductCarouselSection({
           </button>
 
           <div className={`${styles.consoleShell} rounded-[2rem] border border-fd-border p-4 shadow-2xl shadow-fd-foreground/5 md:p-6`}>
-            <div className={`${styles.carouselFrame} aspect-[16/9] rounded-[1.5rem] border border-fd-border bg-fd-muted/30`}>
+            <div className={`${styles.carouselFrame} aspect-[16/9] rounded-[1rem] border border-fd-border bg-fd-muted/30`}>
               <AnimatePresence mode="popLayout" initial={false} custom={slideDirection}>
                 <motion.div
                   key={activeSlide}
@@ -596,14 +608,14 @@ function TerminalDemo() {
   } as const;
 
   return (
-    <div className={`${styles.terminal} overflow-hidden rounded-[2rem] border border-white/10 shadow-2xl`} aria-hidden="true">
+    <div className={`${styles.terminal} hidden sm:block rounded-[2rem] border border-white/10 shadow-2xl`} aria-hidden="true">
       <div className={`${styles.terminalChrome} flex items-center justify-between border-b border-white/10 px-5 py-3`}>
         <div className="flex items-center gap-2">
           <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
           <span className="h-3 w-3 rounded-full bg-[#ffbd2e]" />
           <span className="h-3 w-3 rounded-full bg-[#28c840]" />
         </div>
-        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/62">e2b-compatible.py</div>
+        <div className="text-xs font-mono text-white/62 mr-3">e2b-compatible.py</div>
       </div>
       <div className="overflow-x-auto p-5">
         <pre className="min-w-[640px] text-sm leading-7">
@@ -622,7 +634,7 @@ function TerminalDemo() {
                   viewport={{ once: true }}
                   whileInView={{ opacity: 1, y: 0 }}
                 >
-                  {line.kind === 'command' ? <span className="text-white/38">&gt; </span> : null}
+                  {line.kind === 'command' ? <span className="text-white/38">&gt;&gt;&gt; </span> : null}
                   {line.text}
                 </motion.span>
               );
@@ -647,7 +659,7 @@ function GlobalConnectionSection() {
             <SectionIntro
               title="Connect to any cloud."
               accent="any cloud"
-              copy="AI infrastructure is rarely balanced: GPU training clusters are expensive and scarce, while the CPU-heavy sandbox work around them often belongs somewhere else. Agent Sandbox routes execution environments to the right Kubernetes pool without forcing training teams to rebuild their stack."
+              copy="AI infrastructure is rarely balanced. Agent Sandbox routes execution environments to the best Kubernetes cluster without forcing teams to rebuild their stack."
             />
             <CloudIconStrip />
           </Reveal>
