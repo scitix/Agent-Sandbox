@@ -210,8 +210,10 @@ function ReelTile({ item }: { item: ReelItem }) {
         {BrandIcon ? <BrandIcon size={30} /> : item.type === 'custom' ? <ToolGlyph glyph={item.glyph} /> : null}
       </div>
       <div className="min-w-0">
-        <div className="truncate text-[17px] font-semibold text-fd-foreground">{item.label}</div>
-        <div className="mt-1 truncate text-[12px] font-medium uppercase tracking-[0.1em] text-fd-muted-foreground">
+        <div className="truncate text-[17px] font-semibold text-fd-foreground select-none">
+          {item.label}
+        </div>
+        <div className="mt-1 truncate text-[12px] font-medium uppercase tracking-[0.1em] select-none text-fd-muted-foreground">
           {item.group}
         </div>
       </div>
