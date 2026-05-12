@@ -696,6 +696,24 @@ export function PrometheusSection({
           onTimeRangeSelect={setTimeRange}
         />
         <MetricsChart
+          title={t("prometheus.scheduleDispatchLatency")}
+          description={t("prometheus.scheduleDispatchLatencyTooltip")}
+          series={[
+            { name: "P99", color: C.p99 },
+            { name: "P95", color: C.p95 },
+            { name: "P90", color: C.p90 },
+            { name: "P50", color: C.p50 },
+          ]}
+          response={scheduleDispatchLatencyData}
+          isLoading={scheduleDispatchLatencyLoading}
+          isFetching={scheduleDispatchLatencyFetching}
+          valueFormatter={(v) => formatDuration(v)}
+          yAxisLabel="seconds"
+          xStart={start}
+          xEnd={end}
+          onTimeRangeSelect={setTimeRange}
+        />
+        <MetricsChart
           title={t("prometheus.createRate")}
           description={t("prometheus.createRateTooltip")}
           series={[
@@ -760,24 +778,6 @@ export function PrometheusSection({
           isFetching={recycleSuccessRateFetching}
           valueFormatter={(v) => formatRate(v)}
           yAxisLabel="ops/s"
-          xStart={start}
-          xEnd={end}
-          onTimeRangeSelect={setTimeRange}
-        />
-        <MetricsChart
-          title={t("prometheus.scheduleDispatchLatency")}
-          description={t("prometheus.scheduleDispatchLatencyTooltip")}
-          series={[
-            { name: "P99", color: C.p99 },
-            { name: "P95", color: C.p95 },
-            { name: "P90", color: C.p90 },
-            { name: "P50", color: C.p50 },
-          ]}
-          response={scheduleDispatchLatencyData}
-          isLoading={scheduleDispatchLatencyLoading}
-          isFetching={scheduleDispatchLatencyFetching}
-          valueFormatter={(v) => formatDuration(v)}
-          yAxisLabel="seconds"
           xStart={start}
           xEnd={end}
           onTimeRangeSelect={setTimeRange}

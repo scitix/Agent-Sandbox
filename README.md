@@ -5,7 +5,7 @@
 <h1 align="center">Agent Sandbox</h1>
 
 <p align="center">
-  <strong>Kubernetes-native Sandbox Engine for AI Agents</strong>
+  <strong>Fast, Multi-Cloud Sandbox Engine for AI Agents</strong>
 </p>
 
 <p align="center">
@@ -24,124 +24,106 @@
 
 ---
 
-## Overview
+## What is Agent Sandbox?
 
-**Agent Sandbox** is a Kubernetes Operator that manages AI agent sandbox Pod lifecycles using a **pre-warmed Pod pool** with **in-place image upgrades**. Instead of scheduling a new Pod for every sandbox request — which incurs 15–60 seconds of cold-start latency — Agent Sandbox pre-warms a pool of idle Pods and reassigns one to an incoming request in under 100ms.
+**Agent Sandbox** is an open-source sandbox engine for AI agents. It is purpose-built for three classes of workload:
 
-It is purpose-built for workloads where sandbox allocation speed is critical:
-
-- **Reinforcement learning** training pipelines (SWE-bench, Terminal-bench, and custom RL environments)
-- **AI coding agents** that need on-demand isolated execution environments
-- **Multi-agent systems** requiring dozens or hundreds of sandboxes simultaneously
+- **Lightning Fast** — pre-warmed pools keep isolated environments on standby, eliminating cold-start latency for high-frequency agent loops, evaluations, and RL rollouts
+- **Enterprise Grade** — deploy on any cloud using native Kubernetes CRDs, RBAC, and multi-cluster routing, without vendor lock-in
+- **Agentic RL** — stateful environments with deterministic resets and any-image runtimes, built for complex multi-turn agent training
 
 ---
 
 ## Key Features
 
-| Feature | Description |
-|---------|-------------|
-| **< 100ms Allocation** | Pre-warmed Pod pool eliminates scheduling overhead; sandboxes are ready in milliseconds |
-| **In-Place Image Upgrade** | Running Pods are updated with a new image without recreation, preserving pool warmth |
-| **Cross-Cluster & Multi-Region** | ExtProc-based routing dispatches requests transparently across multiple clusters |
-| **E2B SDK Compatible** | Drop-in replacement for the E2B API — existing E2B clients work without code changes |
-| **Optimized for RL Training** | Purpose-built for SWE-bench, Terminal-bench, and large-scale RL environment rollouts |
-| **Kubernetes Native** | Managed via CRDs (`SandboxPool`, `SandboxTemplate`); integrates with RBAC, namespaces, and autoscaling |
-| **Any Image, No Rebuild** | Bring any container image; no custom base image or agent installation required |
-| **Prometheus Metrics** | First-class observability with a Prometheus endpoint and pre-built Grafana dashboards |
+| | Feature | Description |
+|---|---------|-------------|
+| ⚡ | **Speed — Sub-60ms allocation** | Pre-warmed pools deliver idle sandboxes instantly, unblocking high-volume agent loops and multi-turn RL rollouts |
+| ☸️ | **Infrastructure — Containers or microVMs** | Run on your existing estate using CRDs, namespaces, RBAC, and autoscaling to manage warm capacity efficiently |
+| 🌐 | **Routing — Cross-region and cross-cloud** | Dispatch requests across clouds, clusters, and regions without forcing application teams to manage routing logic |
+| 🧪 | **Runtime — Zero-rebuild runtimes** | Run any Docker image for SWE tasks, RL environments, and internal tools without building custom VM images |
+| 🔌 | **Ecosystem — Drop-in agent SDKs** | Seamless compatibility with E2B clients, SWE-ReX workflows, and popular reinforcement learning frameworks |
+| 📊 | **Observability — Console-grade visibility** | Complete view of pools, active sessions, logs, and metrics through a unified product console |
 
-## Architecture
-
-### Components
-
-| Binary | Purpose | Ports |
-|--------|---------|-------|
-| `cmd/sandbox` | Operator + REST API Server | `:8080` (API), `:8090` (E2B-compat), `:8082` (metrics) |
-| `cmd/envoyextproc` | Data-plane ExtProc for cross-cluster routing | `:9002` (gRPC), `:9003` (control-plane) |
-| `cmd/wsproxy` | WebSocket reverse-proxy sidecar for terminal access | `:9003` (WS), `:9004` (sync) |
-
-### CRDs
-
-- **`SandboxPool`** (`sbp`, namespace-scoped) — defines a pre-warmed Pod pool with `Replicas`, optional autoscaling, and an inline or referenced template
-- **`SandboxTemplate`** (`sbt`, cluster-scoped) — reusable Pod template with `idleImage` and `runtimes`
-
-## Performance
-
-| Metric | Traditional Kubernetes | Agent Sandbox |
-|--------|----------------------|---------------|
-| Sandbox allocation latency | 15–60 s | **< 100 ms** |
-| Pod churn per request | 1 create + 1 delete | 0 (pool reuse) |
-| Image pull on every request | Yes (cold start) | No (pre-warmed) |
-| Autoscaling to zero | Supported | Supported |
-| Cross-cluster routing | Manual / external LB | Built-in ExtProc |
-
-## Quick Start
-
-### Prerequisites
-
-- Kubernetes 1.26+
-- `kubectl` configured against your cluster
-- `helm` (optional, for chart-based install)
+---
 
 ## Use Cases
 
-### Reinforcement Learning (SWE-bench / Terminal-bench)
+### Reinforcement Learning at Scale
 
-Agent Sandbox is designed to serve as the environment backend for large-scale RL training runs. Thousands of rollout workers can each request a fresh isolated sandbox in milliseconds, dramatically reducing the environment-reset bottleneck:
+RL training requires thousands of environment resets per hour. Agent Sandbox pre-warms a pool of sandboxes so each rollout worker gets a fresh, isolated environment in milliseconds — removing the environment-reset bottleneck from your training loop. Supports SWE-bench Verified, SWE-Gym, Terminal-bench, and custom task distributions.
 
-### Cross-Cluster Scheduling
+### AI Coding Agents & Evaluations
 
-Deploy sandbox pools across multiple clusters or regions. The ExtProc component routes API requests to the appropriate cluster transparently — no changes needed in client code:
+Give every agent turn or eval call its own isolated execution environment. The E2B-compatible API means existing SWE-agent, SWE-ReX, and similar frameworks work without modification.
 
-## Development
+### Enterprise Multi-Cluster Deployment
 
-### Prerequisites
+Deploy sandbox pools across multiple clouds or regions. The built-in ExtProc routing layer dispatches requests to the most available cluster transparently — no routing logic required in application code. Supported cloud providers: AWS, Google Cloud, Azure, Alibaba Cloud, Volcengine, Cloudflare.
 
-- Go 1.25+
-- `make`
-- Docker (for image builds)
-- `controller-gen`, `oapi-codegen` (installed automatically by `make`)
+> **Coming soon:** microVM-backed sandboxes for stronger isolation guarantees.
 
-### Build
+---
 
-```bash
-# Build all binaries
-make build
+## Quick Start
 
-# Build individual binaries
-make build-controller   # sandbox operator + API server (linux/amd64)
-make build-extproc      # envoy extproc (linux/amd64)
-make build-wsproxy      # websocket proxy
-```
-
-### Code Generation
+**Requirements:** Kubernetes 1.26+, `helm`
 
 ```bash
-make manifests          # Regenerate CRD YAML + RBAC
-make generate           # Regenerate DeepCopy methods
-make gen-all-api        # openapi.yaml → Go + TypeScript + Python SDK
-make sync-crds-to-helm  # Sync CRDs + manager ClusterRole into Helm charts
+helm install agent-sandbox oci://ghcr.io/scitix/agent-sandbox-worker
 ```
 
-### Test
+See the [installation guide](https://scitix.github.io/Agent-Sandbox/docs/installation) and [quickstart](https://scitix.github.io/Agent-Sandbox/docs) for configuration, runtime pools, and routing setup.
 
-```bash
-make test               # Unit tests (no cluster required)
-make test-e2e           # E2E tests (requires a real cluster)
-```
+---
 
-### Lint
+## Performance
 
-```bash
-make lint-fix
-```
+| Metric | Standard Kubernetes | Agent Sandbox |
+|--------|--------------------|-|
+| Sandbox allocation latency | 15–60 s | **< 60 ms** |
+| Pod churn per request | 1 create + 1 delete | 0 (pool reuse) |
+| Image pull on every request | Yes | No (pre-warmed) |
+| Cross-cluster routing | Manual / external LB | Built-in ExtProc |
+
+---
+
+## Architecture
+
+Three binaries, each with a single responsibility:
+
+| Binary | Purpose | Key Ports |
+|--------|---------|-----------|
+| `cmd/sandbox` | Kubernetes Operator + REST API Server | `:8080` API, `:8090` E2B-compat, `:8082` metrics |
+| `cmd/envoyextproc` | Data-plane ExtProc for cross-cluster routing | `:9002` gRPC, `:9003` control-plane |
+| `cmd/wsproxy` | WebSocket reverse-proxy sidecar (terminal access) | `:9003` WS, `:9004` sync |
+
+**CRDs:**
+
+- `SandboxPool` (`sbp`, namespace-scoped) — pre-warmed Pod pool with `Replicas`, optional autoscaling, and an inline or referenced template
+- `SandboxTemplate` (`sbt`, cluster-scoped) — reusable Pod template with `idleImage` and `runtimes`
+
+Full architecture documentation: [docs/architecture](https://scitix.github.io/Agent-Sandbox/docs)
+
+---
+
+## Documentation
+
+| Resource | Link |
+|----------|------|
+| Documentation site | [scitix.github.io/Agent-Sandbox](https://scitix.github.io/Agent-Sandbox/) |
+| API Reference (OpenAPI) | [/docs/api/sandboxes/CreateSandbox](https://scitix.github.io/Agent-Sandbox/docs/api/sandboxes/CreateSandbox/) |
+| Installation guide | [/docs/installation](https://scitix.github.io/Agent-Sandbox/docs/installation) |
+| Integrations | [/docs/integrations](https://scitix.github.io/Agent-Sandbox/docs/integrations) |
+| Changelog | [/docs/changelog](https://scitix.github.io/Agent-Sandbox/docs/changelog) |
 
 ---
 
 ## Contributing
 
-We welcome contributions of all kinds — bug reports, feature requests, documentation improvements, and code. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
+Contributions are welcome — bug reports, feature requests, documentation, and code. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
 
-All commits must include a `Signed-off-by` line (see [DCO](https://developercertificate.org/)). Use `git commit -s` to add it automatically.
+All commits must include a `Signed-off-by` line ([DCO](https://developercertificate.org/)). Use `git commit -s`.
 
 ---
 

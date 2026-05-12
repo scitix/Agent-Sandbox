@@ -128,7 +128,7 @@ const FOOTER_GROUPS = [
     links: [
       { label: 'Quick Start', href: '/docs' },
       { label: 'Integrations', href: '/docs/integrations' },
-      { label: 'API Reference', href: '/docs/api' },
+      { label: 'API Reference', href: '/docs/api/sandboxes/CreateSandbox/' },
       { label: 'Helm Install', href: '/docs/installation' },
     ],
   },
@@ -143,9 +143,9 @@ const FOOTER_GROUPS = [
   {
     title: 'Resources',
     links: [
-      { label: 'Changelog', href: '/docs/changelog' },
-      { label: 'Contributing', href: '/docs/contributing' },
-      { label: 'License', href: '/docs/license' },
+      { label: 'Changelog', href: 'https://github.com/scitix/Agent-Sandbox/releases' },
+      { label: 'Contributing', href: 'https://github.com/scitix/Agent-Sandbox?tab=contributing-ov-file' },
+      { label: 'License', href: 'https://github.com/scitix/Agent-Sandbox?tab=Apache-2.0-1-ov-file' },
     ],
   },
 ] as const;
@@ -348,10 +348,10 @@ function CoreSellingPointsSection() {
                 <div className={styles.brandOrb} />
                 <div className="relative flex h-full flex-col">
                   <div className="flex flex-1 flex-col">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--brand)]">{item.eyebrow}</p>
-                    <h3 className="home-display mt-5 text-3xl font-semibold leading-[1.02] tracking-[-0.055em] text-fd-foreground">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--brand)]" aria-hidden="true">{item.eyebrow}</p>
+                    <h2 className="home-display mt-5 text-3xl font-semibold leading-[1.02] tracking-[-0.055em] text-fd-foreground">
                       {highlight(item.title, item.accent)}
-                    </h3>
+                    </h2>
                     <p className="mt-5 flex-1 text-sm leading-7 text-fd-muted-foreground">{item.copy}</p>
                   </div>
                   <div className="mt-auto flex flex-wrap gap-2 pt-7">
@@ -760,8 +760,8 @@ function SummarySection() {
             <Reveal key={item.title} delay={index * 0.04}>
               <article className={`${styles.summaryCard} ${styles.spotCard} rounded-[1.5rem] p-5`}>
                 <div className="relative flex h-full flex-col">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--brand)]">{item.eyebrow}</p>
-                  <h3 className="mt-4 text-xl font-semibold leading-tight tracking-[-0.035em] text-fd-foreground">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--brand)]" aria-hidden="true">{item.eyebrow}</p>
+                  <p className="mt-4 text-xl font-semibold leading-tight tracking-[-0.035em] text-fd-foreground">
                     {item.title.includes(item.accent) ? (
                       <>
                         {item.title.split(item.accent)[0]}
@@ -771,7 +771,7 @@ function SummarySection() {
                     ) : (
                       item.title
                     )}
-                  </h3>
+                  </p>
                   <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">{item.copy}</p>
                 </div>
               </article>
