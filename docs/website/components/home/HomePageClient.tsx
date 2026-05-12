@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import DottedMap from 'dotted-map';
-import { BookOpen, MessageSquareText } from 'lucide-react';
+import { ArrowUpRightIcon, BookOpen, MessageSquareText } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
@@ -18,8 +18,9 @@ import {
 } from '@lobehub/icons/es/icons';
 import type { IconType } from '@lobehub/icons/es/types';
 import { publicAsset } from '@/lib/public-assets';
-import { HeroSection } from './HeroSection';
+import { createDeviconIcon, HeroSection } from './HeroSection';
 import styles from './HomePageClient.module.css';
+import dockerIcon from 'devicon/icons/docker/docker-plain.svg';
 
 type BrandIconType = IconType & {
   Color?: IconType;
@@ -27,32 +28,32 @@ type BrandIconType = IconType & {
 
 const CORE_SELLING_POINTS = [
   {
-    eyebrow: 'Fast Startup',
-    title: 'With <60ms sandbox allocation.',
-    accent: '60ms',
-    copy: 'Pre-warmed pools keep isolated environments ready for agent loops, eval batches, and RL rollouts instead of waiting on a new Pod every request.',
-    tags: ['Pre-warmed Pools', 'High-volume Rollouts'],
+    eyebrow: 'Lightning Fast',
+    title: 'Sub-60ms sandbox allocation.',
+    accent: 'Sub-60ms',
+    copy: 'Pre-warmed pools keep isolated environments on standby. Eliminate cold-start latency for high-frequency agent loops, evaluations, and RL rollouts.',
+    tags: ['Pre-warmed Pools', 'Instant Standby'],
   },
   {
-    eyebrow: 'Kubernetes native',
-    title: 'Scale across any clouds.',
-    accent: 'any clouds.',
-    copy: 'Use the Kubernetes model your infrastructure team already trusts: CRDs, namespaces, RBAC, autoscaling, in-place updates, and multi-cluster routing.',
-    tags: ['CRDs + RBAC', 'Inplace Updates', 'Multi-cluster'],
+    eyebrow: 'Enterprise Grade',
+    title: 'Deploy across any cloud.',
+    accent: 'any cloud.',
+    copy: 'Leverage the infrastructure your team already trusts. Use native Kubernetes features like CRDs, RBAC, and multi-cluster routing—without vendor lock-in.',
+    tags: ['Multi-Cloud', 'No Lock-in', 'RBAC'],
   },
   {
     eyebrow: 'Agentic RL',
-    title: 'Easily run Agentic RL with zero rebuilds.',
-    accent: 'zero',
-    copy: 'Stay compatible with E2B / SWE-ReX workflows while adding deterministic resets, any-image runtimes, and the scale needed for asynchronous agent training.',
-    tags: ['E2B compatible', 'SWE-ReX', 'Any Docker image'],
+    title: 'Built for complex, multi-turn Agentic Reinforcement Learning.',
+    accent: 'Agentic',
+    copy: 'Power advanced asynchronous agent training with stateful environments, lightning-fast deterministic resets, and any-image runtimes.',
+    tags: ['Multi-Turn Ready', 'E2B Compatible', 'Any Docker Image'],
   },
 ] as const;
 
 const PRODUCT_SLIDES = [
   {
-    title: 'Sandbox lifecycle and pool management',
-    copy: 'Manage sandbox runtimes, dataset mounts, image versions, and reset policies without forcing researchers to operate Kubernetes directly.',
+    title: 'Abstract away the infrastructure',
+    copy: 'Empower AI researchers to manage dataset mounts, image versions, and reset policies visually—without operating infrastructure directly.',
     image: publicAsset('/monitor-compressed.webp'),
     darkImage: publicAsset('/monitor-dark-compressed.webp'),
     width: 2048,
@@ -72,9 +73,9 @@ const AUTO_SLIDE_INTERVAL_MS = 4000;
 const MANUAL_SLIDE_PAUSE_MS = 30000;
 
 const GLOBAL_NODES = [
-  { label: 'RL Training', lat: 39.0, lng: -77.0 },
-  { label: 'RL Sandbox', lat: 50.1, lng: 8.7 },
-  { label: 'RL Sandbox', lat: 35.7, lng: 139.7 },
+  { label: 'Training', lat: 39.0, lng: -77.0 },
+  { label: 'Rollout', lat: 50.1, lng: 8.7 },
+  { label: 'Rollout', lat: 35.7, lng: 139.7 },
 ] as const;
 
 const GLOBAL_ROUTES = [
@@ -85,39 +86,39 @@ const GLOBAL_ROUTES = [
 const SUMMARY_CARDS = [
   {
     eyebrow: 'Speed',
-    title: '<60ms allocation',
-    accent: '<60ms',
-    copy: 'Pre-warmed Pod pools hand requests to idle sandboxes fast enough for high-volume agent loops and RL rollouts.',
+    title: 'Sub-60ms allocation',
+    accent: 'Sub-60ms',
+    copy: 'Pre-warmed pools deliver idle sandboxes instantly, unblocking high-volume agent loops and multi-turn RL rollouts.',
   },
   {
-    eyebrow: 'Platform',
-    title: 'Kubernetes-native adoption',
-    accent: 'Kubernetes-native',
-    copy: 'Run on the Kubernetes estate your team already operates, with CRDs, namespaces, RBAC, autoscaling, and in-place updates that preserve warm capacity.',
+    eyebrow: 'Infrastructure',
+    title: 'Backed by Containers or microVMs',
+    accent: 'Containers',
+    copy: 'Run securely on your existing estate. Utilize CRDs, namespaces, RBAC, and autoscaling to manage warm capacity efficiently.',
   },
   {
     eyebrow: 'Routing',
     title: 'Cross-region and cross-cloud routing',
     accent: 'cross-cloud',
-    copy: 'Dispatch requests across clouds, clusters, and regions without forcing application teams to manage bespoke ingress or routing logic.',
+    copy: 'Dispatch requests across clouds, clusters, and regions without forcing application teams to manage routing logic.',
   },
   {
     eyebrow: 'Runtime',
-    title: 'Zero rebuild runtime changes',
-    accent: 'Zero rebuild',
-    copy: 'Use Docker images directly for SWE tasks, RL environments, terminals, and internal tools without rebuilding VM images.',
+    title: 'Zero-rebuild runtimes',
+    accent: 'Zero-rebuild',
+    copy: 'Directly run any Docker image for SWE tasks, RL environments, and internal tools without the hassle of building custom VM images.',
   },
   {
-    eyebrow: 'SDKs',
-    title: 'SDKs for agent training',
-    accent: 'agent training',
-    copy: 'Support E2B-compatible clients, SWE-ReX workflows, and reinforcement learning frameworks with a familiar sandbox API.',
+    eyebrow: 'Ecosystem',
+    title: 'Drop-in agent SDKs',
+    accent: 'agent SDKs',
+    copy: 'Seamless compatibility with E2B clients, SWE-ReX workflows, and popular reinforcement learning frameworks.',
   },
   {
-    eyebrow: 'Console',
-    title: 'Console-grade observability',
-    accent: 'observability',
-    copy: 'Give operators a complete view of pools, sessions, logs, metrics, routes, and failures from the product console.',
+    eyebrow: 'Observability',
+    title: 'Console-grade visibility',
+    accent: 'visibility',
+    copy: 'Equip operators with a complete view of pools, active sessions, logs, and metrics through a unified product console.',
   },
 ] as const;
 
@@ -198,6 +199,8 @@ const BENCHMARK_DATASETS: readonly {
     source: 'Bring your own tasks',
   },
 ] as const;
+
+const DockerIcon = createDeviconIcon(dockerIcon, 'Docker logo');
 
 function Bound({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <div className={`mx-auto w-full max-w-(--fd-layout-width) px-4 ${className}`}>{children}</div>;
@@ -406,9 +409,9 @@ function ProductCarouselSection({
         <Reveal>
           <SectionIntro
             align="center"
-            title="A complete console for sandbox operations."
+            title="A unified console for sandbox operations."
             accent="console"
-            copy="Manage preheated sandboxes, runtime images, datasets, logs, and monitoring from a single control plane built for agent infrastructure."
+            copy="Manage pre-warmed pools, runtime images, datasets, and logs from a single control plane designed specifically for AI infrastructure."
           />
         </Reveal>
 
@@ -657,9 +660,9 @@ function GlobalConnectionSection() {
 
           <Reveal delay={0.1}>
             <SectionIntro
-              title="Connect to any cloud."
-              accent="any cloud"
-              copy="AI infrastructure is rarely balanced. Agent Sandbox routes execution environments to the best Kubernetes cluster without forcing teams to rebuild their stack."
+              title="Intelligent multi-cloud routing."
+              accent="multi-cloud"
+              copy="AI compute is often fragmented. Agent Sandbox automatically routes execution workloads to the most available clusters across different clouds and regions."
             />
             <CloudIconStrip />
           </Reveal>
@@ -677,9 +680,9 @@ function CodeExampleSection() {
           <Reveal>
             <div>
               <SectionIntro
-                title="Compatible with E2B-style agent workflows."
-                accent="E2B-style"
-                copy="Keep the sandbox programming model your team already understands while running the backend on Kubernetes. Agent Sandbox is designed for coding agents, evaluation harnesses, and RL pipelines that need fast, repeatable environments."
+                title="Drop-in compatibility with E2B and popular RL frameworks."
+                accent="E2B"
+                copy="Keep the sandbox programming model your team already knows. Agent Sandbox is designed for coding agents, evaluation harnesses, and RL pipelines needing fast, repeatable environments."
               />
               <div className="mt-8 grid gap-3 sm:grid-cols-2">
                 {BENCHMARK_DATASETS.map((dataset) => {
@@ -691,10 +694,7 @@ function CodeExampleSection() {
                           {Icon ? (
                             <Icon size={21} />
                           ) : (
-                            <svg viewBox="0 0 24 24" className="h-5 w-5 text-[var(--brand)]" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                              <path d="M12 3.5l7 4v8l-7 5-7-5v-8z" />
-                              <path d="M8.5 10.5h7M8.5 14h4.5" strokeLinecap="round" />
-                            </svg>
+                            <DockerIcon className="size-6 text-fd-muted-foreground" aria-label={`View ${dataset.label} on ${dataset.source}`} />
                           )}
                         </span>
                         <span className="min-w-0">
@@ -703,15 +703,7 @@ function CodeExampleSection() {
                         </span>
                       </span>
                       {dataset.href ? (
-                        <svg
-                          viewBox="0 0 24 24"
-                          className="h-4 w-4 shrink-0 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.8}
-                        >
-                          <path d="M7 17L17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
+                        <ArrowUpRightIcon className='size-4 text-fd-muted-foreground' />
                       ) : null}
                     </>
                   );
@@ -758,9 +750,9 @@ function SummarySection() {
         <Reveal>
           <SectionIntro
             align="center"
-            title="The sandbox backend AI teams can grow into."
-            accent="AI teams"
-            copy="Start with fast allocation, then scale into multi-cloud routing, direct Docker image runtimes, training-framework SDKs, and console-grade observability without replacing your Kubernetes platform."
+            title="The sandbox backend your AI team can grow into."
+            accent="AI team"
+            copy="Start with fast allocation, then seamlessly scale into multi-cloud routing, multi-turn RL frameworks, and console-grade observability."
           />
         </Reveal>
         <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -806,8 +798,8 @@ function HelmInstallSection() {
         <Reveal className="mx-auto max-w-4xl text-center">
           <SectionIntro
             align="center"
-            title="Start with Helm and Kubernetes."
-            copy="Start with the Helm chart, then follow the installation guide for CRDs, routing, runtime pools, and production configuration."
+            title="Deploy in minutes."
+            copy="Start with our Helm chart, then follow the quickstart guide to configure routing, runtime pools, and production-ready environments."
           />
           <div className={`${styles.glassCard} ${styles.installPanel} mt-10 rounded-[2rem] p-4`}>
             <div className="relative flex flex-col gap-3 rounded-[1.5rem] border border-fd-border bg-fd-background/70 p-4 md:flex-row md:items-center">
@@ -853,7 +845,7 @@ function Footer() {
               <span className="font-semibold text-fd-foreground">Agent Sandbox</span>
             </div>
             <p className="mt-4 max-w-sm text-sm leading-6 text-fd-muted-foreground">
-              Kubernetes sandbox infrastructure for AI agents, evals, and Agentic RL workloads.
+              The open-source sandbox engine for AI agents, evals, and multi-turn Agentic RL workloads.
             </p>
           </div>
           <div className="grid gap-8 sm:grid-cols-3">

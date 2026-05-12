@@ -20,14 +20,15 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { Metadata } from 'next';
 import { IBM_Plex_Mono, Manrope, Sora } from 'next/font/google';
 import { publicAsset } from '@/lib/public-assets';
+import { SITE_DESCRIPTION, SITE_TITLE, SITE_URL } from '@/lib/metadata';
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://scitix.github.io/Agent-Sandbox/'),
+  metadataBase: SITE_URL,
   title: {
     default: 'Agent Sandbox',
     template: '%s — Agent Sandbox',
   },
-  description: 'Kubernetes Sandbox Engine for AI Agents. Any Docker image, <100ms allocation.',
+  description: SITE_DESCRIPTION,
   icons: { icon: publicAsset('/logo.svg') },
 };
 

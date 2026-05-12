@@ -16,40 +16,45 @@
 
 import type { Metadata } from 'next';
 import { HomePageClient } from '@/components/home/HomePageClient';
+import { SITE_TITLE, SITE_URL, SITE_DESCRIPTION } from '@/lib/metadata';
 
-const SITE_URL = 'https://scitix.github.io/Agent-Sandbox/';
 
 export const metadata: Metadata = {
-  title: 'Agent Sandbox — Fast, Multi-Cloud Sandboxes for AI Agents',
-  description:
-    'Open-source Kubernetes sandbox engine for AI agents. Pre-warmed pools with <60ms allocation, cross-cloud routing, zero-rebuild runtime changes, and E2B-compatible SDKs.',
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
   keywords: [
     'AI sandbox',
-    'Kubernetes sandbox',
     'agent infrastructure',
-    'E2B alternative',
+    'multi-turn RL',
     'agentic RL',
-    'sandbox as a service',
-    'sandbox engine',
+    'E2B alternative',
+    'SWE-Bench',
+    'LLM sandbox',
     'AI agent runtime',
-    'pre-warmed pods',
-    'in-place upgrade',
+    'Kubernetes sandbox',
+    'sandbox engine',
   ],
   openGraph: {
-    title: 'Agent Sandbox — Fast Sandboxes for AI Agents',
-    description:
-      'Open-source Kubernetes sandbox engine. <60ms allocation, any Docker image, multi-cloud.',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
     url: SITE_URL,
     siteName: 'Agent Sandbox',
-    type: 'website',
-    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'Agent Sandbox' }],
+    type: "website",
+    locale: 'en-US',
+    images: [
+      {
+        url: 'https://scitix.github.io/Agent-Sandbox/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Agent Sandbox',
+      }
+    ]
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Agent Sandbox — Fast Sandboxes for AI Agents',
-    description:
-      'Open-source Kubernetes sandbox engine. <60ms allocation, any Docker image, multi-cloud.',
-    images: ['/og-image.png'],
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: ['https://scitix.github.io/Agent-Sandbox/og-image.png'],
   },
   alternates: {
     canonical: SITE_URL,
@@ -67,9 +72,8 @@ export default function HomePage() {
             '@type': 'SoftwareApplication',
             name: 'Agent Sandbox',
             applicationCategory: 'DeveloperApplication',
-            operatingSystem: 'Kubernetes',
-            description:
-              'Open-source Kubernetes sandbox engine for AI agents with pre-warmed pools, cross-cloud routing, and E2B-compatible SDKs.',
+            operatingSystem: 'Kubernetes / VirtualMachine',
+            description: SITE_DESCRIPTION,
             url: SITE_URL,
             offers: {
               '@type': 'Offer',
