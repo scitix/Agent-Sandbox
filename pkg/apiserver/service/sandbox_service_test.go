@@ -49,7 +49,7 @@ func newTestSandboxService(t *testing.T, objs ...any) SandboxService {
 			builder = builder.WithObjects(v)
 		}
 	}
-	return NewSandboxService(builder.Build(), nil, nil, nil, "", "", nil)
+	return NewSandboxService(builder.Build(), nil, nil, nil, "", "", nil, nil)
 }
 
 func newTestSandboxServiceWithStore(t *testing.T, s store.SandboxStore, objs ...any) SandboxService {
@@ -67,7 +67,7 @@ func newTestSandboxServiceWithStore(t *testing.T, s store.SandboxStore, objs ...
 			builder = builder.WithObjects(v)
 		}
 	}
-	return NewSandboxService(builder.Build(), nil, nil, s, "", "", nil)
+	return NewSandboxService(builder.Build(), nil, nil, s, "", "", nil, nil)
 }
 
 func newTestStore(t *testing.T) store.SandboxStore {
@@ -516,7 +516,7 @@ func TestSandboxService_Create_NoIdlePods_WithStoppingDetail(t *testing.T) {
 		t.Fatalf("get fake client builder: %v", err)
 	}
 	client := cb.WithObjects(pool).Build()
-	svc := NewSandboxService(client, nil, nil, nil, "http://gateway.example.com", "", nil)
+	svc := NewSandboxService(client, nil, nil, nil, "http://gateway.example.com", "", nil, nil)
 
 	_, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
 		PoolName:       "pool-a",
@@ -556,7 +556,7 @@ func TestSandboxService_Create_BuildsEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get fake client builder: %v", err)
 	}
-	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil)
+	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil, nil)
 
 	result, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
 		PoolName:  "pool-a",
@@ -587,7 +587,7 @@ func TestSandboxService_Get_BuildsEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get fake client builder: %v", err)
 	}
-	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil)
+	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil, nil)
 
 	result, appErr := svc.Get(context.Background(), "tenant-a", sandboxID)
 	if appErr != nil {
@@ -628,7 +628,7 @@ func TestSandboxService_Delete_SetsStopAnnotations(t *testing.T) {
 		t.Fatalf("get fake client builder: %v", err)
 	}
 	cli := cb.WithObjects(pool, pod).Build()
-	svc := NewSandboxService(cli, nil, nil, nil, "", "", nil)
+	svc := NewSandboxService(cli, nil, nil, nil, "", "", nil, nil)
 
 	result, appErr := svc.Delete(context.Background(), "tenant-a", sandboxID)
 	if appErr != nil {
@@ -907,7 +907,7 @@ func TestIsReady_NoReadinessProbe_DefaultsReady(t *testing.T) {
 	}
 	svc := NewSandboxService(
 		cb.WithObjects(pool, pod).Build(),
-		nil, nil, nil, "http://gw.example.com", "", nil,
+		nil, nil, nil, "http://gw.example.com", "", nil, nil,
 	)
 
 	result, appErr := svc.IsReady(context.Background(), testNamespace, "sb-ready-1")
@@ -937,7 +937,7 @@ func TestIsReady_SandboxNotRunning_NotReady(t *testing.T) {
 	}
 	svc := NewSandboxService(
 		cb.WithObjects(pool, pod).Build(),
-		nil, nil, nil, "", "", nil,
+		nil, nil, nil, "", "", nil, nil,
 	)
 
 	result, appErr := svc.IsReady(context.Background(), testNamespace, "sb-starting-1")
@@ -1086,5 +1086,127 @@ func TestCreate_IdleTimeoutAnnotationRequestTakesPriority(t *testing.T) {
 	}
 	if result.SandboxID == "" {
 		t.Fatal("expected non-empty sandbox ID")
+	}
+}
+
+// ── Image registry rewrite integration tests ─────────────────────────────────
+
+// newTestSandboxServiceWithRegistry creates a SandboxService wired with the
+// given RegistryStore so that resolveContainerImages exercises the rewrite path.
+func newTestSandboxServiceWithRegistry(t *testing.T, rs RegistryStore, objs ...any) *k8sSandboxService {
+	t.Helper()
+	cb, err := indexer.GetFakeClientBuilderWithIndexers()
+	if err != nil {
+		t.Fatalf("get fake client builder: %v", err)
+	}
+	builder := cb
+	for _, o := range objs {
+		switch v := o.(type) {
+		case *agentsv1alpha1.SandboxPool:
+			builder = builder.WithObjects(v)
+		case *corev1.Pod:
+			builder = builder.WithObjects(v)
+		}
+	}
+	svc := NewSandboxService(builder.Build(), nil, nil, nil, "", "eu-west", nil, rs)
+	return svc.(*k8sSandboxService)
+}
+
+type testRegistryStore struct {
+	hostToMeta map[string][2]string
+	typeToHost map[string]string
+}
+
+func (f *testRegistryStore) LookupRegistry(host string) (clusterID, typ string, ok bool) {
+	if m, found := f.hostToMeta[host]; found {
+		return m[0], m[1], true
+	}
+	return "", "", false
+}
+
+func (f *testRegistryStore) RegistryForType(clusterID, typ string) (host string, ok bool) {
+	h, ok := f.typeToHost[clusterID+":"+typ]
+	return h, ok
+}
+
+func newTwoClusterStore() *testRegistryStore {
+	return &testRegistryStore{
+		hostToMeta: map[string][2]string{
+			"us-docker.pkg.dev": {"us-east", "gar"},
+			"eu-docker.pkg.dev": {"eu-west", "gar"},
+		},
+		typeToHost: map[string]string{
+			"us-east:gar": "us-docker.pkg.dev",
+			"eu-west:gar": "eu-docker.pkg.dev",
+		},
+	}
+}
+
+func TestResolveContainerImages_RewritesInputImage(t *testing.T) {
+	pool := makePool(testPoolName, testNamespace)
+	svc := newTestSandboxServiceWithRegistry(t, newTwoClusterStore(), pool)
+
+	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+		Image: "us-docker.pkg.dev/myproject/myimage:v1.0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := imgs[pool.Spec.Template.Spec.Containers[0].Name]
+	want := "eu-docker.pkg.dev/myproject/myimage:v1.0"
+	if got != want {
+		t.Errorf("resolveContainerImages: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveContainerImages_RewritesContainerImages(t *testing.T) {
+	pool := makePool(testPoolName, testNamespace)
+	svc := newTestSandboxServiceWithRegistry(t, newTwoClusterStore(), pool)
+
+	containerName := pool.Spec.Template.Spec.Containers[0].Name
+	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+		ContainerImages: map[string]string{
+			containerName: "us-docker.pkg.dev/myproject/myimage:v1.0",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := imgs[containerName]
+	want := "eu-docker.pkg.dev/myproject/myimage:v1.0"
+	if got != want {
+		t.Errorf("resolveContainerImages containerImages: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveContainerImages_NoRewriteForPublicRegistry(t *testing.T) {
+	pool := makePool(testPoolName, testNamespace)
+	svc := newTestSandboxServiceWithRegistry(t, newTwoClusterStore(), pool)
+
+	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+		Image: "ghcr.io/org/myimage:v1.0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := imgs[pool.Spec.Template.Spec.Containers[0].Name]
+	if got != "ghcr.io/org/myimage:v1.0" {
+		t.Errorf("public registry should not be rewritten, got %q", got)
+	}
+}
+
+func TestResolveContainerImages_NoRegistryStore(t *testing.T) {
+	pool := makePool(testPoolName, testNamespace)
+	svc := newTestSandboxServiceWithRegistry(t, nil, pool)
+
+	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+		Image: "us-docker.pkg.dev/myproject/myimage:v1.0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := imgs[pool.Spec.Template.Spec.Containers[0].Name]
+	if got != "us-docker.pkg.dev/myproject/myimage:v1.0" {
+		t.Errorf("nil store: image should not be rewritten, got %q", got)
 	}
 }

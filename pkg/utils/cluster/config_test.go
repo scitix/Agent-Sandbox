@@ -21,6 +21,11 @@ import (
 	"testing"
 )
 
+const (
+	testClusterUSEast = "us-east"
+	testClusterEUWest = "eu-west"
+)
+
 func TestGatewayConfigURLs(t *testing.T) {
 	gw := &GatewayConfig{
 		NativeURL: "https://native.cluster-b.internal",
@@ -300,5 +305,173 @@ func TestStoreLoadFromDataInvalidYAML(t *testing.T) {
 	s := NewStore()
 	if err := s.LoadFromData([]byte("{{invalid yaml")); err == nil {
 		t.Error("expected error for invalid YAML")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Registry index tests
+// ---------------------------------------------------------------------------
+
+func TestStoreRegistryIndex_LookupAndReplace(t *testing.T) {
+	s := NewStore()
+	s.ApplyConfig(ClusterConfig{
+		Clusters: []ClusterEntry{
+			{
+				ID: testClusterUSEast,
+				Registries: []RegistryEntry{
+					{Host: "us-docker.pkg.dev", Type: "gar"},
+					{Host: "us.internal.registry.io", Type: "internal"},
+				},
+			},
+			{
+				ID: testClusterEUWest,
+				Registries: []RegistryEntry{
+					{Host: "eu-docker.pkg.dev", Type: "gar"},
+					{Host: "eu.internal.registry.io", Type: "internal"},
+				},
+			},
+		},
+	})
+
+	// LookupRegistry — known hosts
+	clusterID, typ, ok := s.LookupRegistry("us-docker.pkg.dev")
+	if !ok || clusterID != testClusterUSEast || typ != "gar" {
+		t.Errorf("LookupRegistry(us-docker.pkg.dev) = (%q, %q, %v), want (us-east, gar, true)", clusterID, typ, ok)
+	}
+
+	clusterID, typ, ok = s.LookupRegistry("eu.internal.registry.io")
+	if !ok || clusterID != testClusterEUWest || typ != "internal" {
+		t.Errorf("LookupRegistry(eu.internal.registry.io) = (%q, %q, %v), want (eu-west, internal, true)", clusterID, typ, ok)
+	}
+
+	// LookupRegistry — unknown host (public registry)
+	_, _, ok = s.LookupRegistry("ghcr.io")
+	if ok {
+		t.Error("LookupRegistry(ghcr.io) should return ok=false")
+	}
+
+	// RegistryForType — find replacement target
+	host, ok := s.RegistryForType(testClusterEUWest, "gar")
+	if !ok || host != "eu-docker.pkg.dev" {
+		t.Errorf("RegistryForType(eu-west, gar) = (%q, %v), want (eu-docker.pkg.dev, true)", host, ok)
+	}
+
+	// RegistryForType — type not present in cluster
+	_, ok = s.RegistryForType(testClusterEUWest, "nonexistent-type")
+	if ok {
+		t.Error("RegistryForType(eu-west, nonexistent-type) should return ok=false")
+	}
+}
+
+func TestStoreRegistryIndex_EmptyType(t *testing.T) {
+	s := NewStore()
+	s.ApplyConfig(ClusterConfig{
+		Clusters: []ClusterEntry{
+			{ID: testClusterUSEast, Registries: []RegistryEntry{{Host: "us.private.io", Type: ""}}},
+			{ID: testClusterEUWest, Registries: []RegistryEntry{{Host: "eu.private.io", Type: ""}}},
+		},
+	})
+
+	clusterID, typ, ok := s.LookupRegistry("us.private.io")
+	if !ok || clusterID != testClusterUSEast || typ != "" {
+		t.Errorf("LookupRegistry(us.private.io) = (%q, %q, %v), want (us-east, '', true)", clusterID, typ, ok)
+	}
+
+	host, ok := s.RegistryForType(testClusterEUWest, "")
+	if !ok || host != "eu.private.io" {
+		t.Errorf("RegistryForType(eu-west, '') = (%q, %v), want (eu.private.io, true)", host, ok)
+	}
+}
+
+func TestStoreRegistryIndex_DuplicateTypeFirstWins(t *testing.T) {
+	s := NewStore()
+	s.ApplyConfig(ClusterConfig{
+		Clusters: []ClusterEntry{
+			{
+				ID: testClusterEUWest,
+				Registries: []RegistryEntry{
+					{Host: "eu-first.pkg.dev", Type: "gar"},
+					{Host: "eu-second.pkg.dev", Type: "gar"}, // duplicate type, should be ignored
+				},
+			},
+		},
+	})
+
+	host, ok := s.RegistryForType(testClusterEUWest, "gar")
+	if !ok || host != "eu-first.pkg.dev" {
+		t.Errorf("RegistryForType(eu-west, gar) = (%q, %v), want (eu-first.pkg.dev, true)", host, ok)
+	}
+	// Second host must still be looked up (it IS registered in hostIndex)
+	clusterID, _, ok := s.LookupRegistry("eu-second.pkg.dev")
+	if !ok || clusterID != testClusterEUWest {
+		t.Errorf("LookupRegistry(eu-second.pkg.dev) = (%q, %v), want (eu-west, true)", clusterID, ok)
+	}
+}
+
+func TestStoreRegistryIndex_RebuiltOnApplyConfig(t *testing.T) {
+	s := NewStore()
+	s.ApplyConfig(ClusterConfig{
+		Clusters: []ClusterEntry{
+			{ID: testClusterUSEast, Registries: []RegistryEntry{{Host: "us-docker.pkg.dev", Type: "gar"}}},
+		},
+	})
+
+	// Initial state: us-docker.pkg.dev known
+	_, _, ok := s.LookupRegistry("us-docker.pkg.dev")
+	if !ok {
+		t.Fatal("expected us-docker.pkg.dev to be in index after first ApplyConfig")
+	}
+
+	// Replace with new config — old entry must be gone
+	s.ApplyConfig(ClusterConfig{
+		Clusters: []ClusterEntry{
+			{ID: testClusterEUWest, Registries: []RegistryEntry{{Host: "eu-docker.pkg.dev", Type: "gar"}}},
+		},
+	})
+
+	_, _, ok = s.LookupRegistry("us-docker.pkg.dev")
+	if ok {
+		t.Error("us-docker.pkg.dev should be gone after second ApplyConfig")
+	}
+	_, _, ok = s.LookupRegistry("eu-docker.pkg.dev")
+	if !ok {
+		t.Error("eu-docker.pkg.dev should be present after second ApplyConfig")
+	}
+}
+
+func TestStoreRegistryIndex_LoadFromFile(t *testing.T) {
+	content := `clusters:
+  - id: "us-east"
+    name: "US East"
+    registries:
+      - host: "us-docker.pkg.dev"
+        type: "gar"
+      - host: "us.internal.registry.io"
+        type: "internal"
+  - id: "eu-west"
+    name: "EU West"
+    registries:
+      - host: "eu-docker.pkg.dev"
+        type: "gar"
+`
+	dir := t.TempDir()
+	path := dir + "/clusters.yaml"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewStore()
+	if err := s.LoadFromFile(path); err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+
+	clusterID, typ, ok := s.LookupRegistry("us-docker.pkg.dev")
+	if !ok || clusterID != "us-east" || typ != "gar" {
+		t.Errorf("LookupRegistry after LoadFromFile = (%q, %q, %v), want (us-east, gar, true)", clusterID, typ, ok)
+	}
+
+	host, ok := s.RegistryForType("eu-west", "gar")
+	if !ok || host != "eu-docker.pkg.dev" {
+		t.Errorf("RegistryForType after LoadFromFile = (%q, %v), want (eu-docker.pkg.dev, true)", host, ok)
 	}
 }

@@ -92,6 +92,7 @@ type k8sSandboxService struct {
 	execTokens     *execTokenStore
 	httpClient     *http.Client
 	extprocClient  ExtProcClient // may be nil in tests; used to push new routes to ExtProc
+	registryStore  RegistryStore // may be nil; used for per-cluster image registry rewriting
 
 	schedulersMu sync.RWMutex
 	schedulers   map[string]*schedule.PoolScheduler // key: "namespace/name"
@@ -105,7 +106,8 @@ const defaultCreateStartupTimeout = 2 * time.Minute
 // gatewayBaseURL is the base URL of the Envoy gateway (e.g. http://gateway.example.com); it may be empty.
 // localClusterID identifies the local cluster for cross-cluster sandbox ID prefixing; it may be empty.
 // extprocClient pushes new sandbox routes to ExtProc so Create can return without polling; may be nil in tests.
-func NewSandboxService(c client.Client, cs kubernetes.Interface, restCfg *rest.Config, s store.SandboxStore, gatewayBaseURL string, localClusterID string, extprocClient ExtProcClient) SandboxService {
+// registryStore supplies per-cluster registry metadata for automatic image host rewriting; may be nil (no rewriting).
+func NewSandboxService(c client.Client, cs kubernetes.Interface, restCfg *rest.Config, s store.SandboxStore, gatewayBaseURL string, localClusterID string, extprocClient ExtProcClient, registryStore RegistryStore) SandboxService {
 	// Use a never-closing channel; the GC goroutine will be cleaned up by the process exiting.
 	done := make(chan struct{})
 
@@ -119,6 +121,7 @@ func NewSandboxService(c client.Client, cs kubernetes.Interface, restCfg *rest.C
 		execTokens:     newExecTokenStore(done),
 		httpClient:     &http.Client{Timeout: 5 * time.Second},
 		extprocClient:  extprocClient,
+		registryStore:  registryStore,
 		schedulers:     make(map[string]*schedule.PoolScheduler),
 	}
 }
@@ -753,6 +756,20 @@ func (s *k8sSandboxService) resolveContainerImages(pool *agentsv1alpha1.SandboxP
 	for name, img := range input.ContainerImages {
 		if err := ValidateContainerImage(img); err != nil {
 			return nil, fmt.Errorf("containerImages[%s]: %w", name, err)
+		}
+	}
+
+	// Rewrite private registry hosts for images that belong to a different cluster.
+	if s.registryStore != nil {
+		if input.Image != "" {
+			input.Image = RewriteImageForCluster(input.Image, s.localClusterID, s.registryStore)
+		}
+		if len(input.ContainerImages) > 0 {
+			rewritten := make(map[string]string, len(input.ContainerImages))
+			for name, img := range input.ContainerImages {
+				rewritten[name] = RewriteImageForCluster(img, s.localClusterID, s.registryStore)
+			}
+			input.ContainerImages = rewritten
 		}
 	}
 

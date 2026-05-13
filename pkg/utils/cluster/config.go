@@ -66,10 +66,31 @@ type ClusterEntry struct {
 	// `cluster="cluster1",region="region1"`. It is passed through verbatim to Prometheus
 	// queries on the Dashboard; ID is purely an internal business identifier and
 	// no longer has to match the `cluster` label value.
-	Selector string            `json:"selector,omitempty"`
-	Headers  map[string]string `json:"headers,omitempty"` // Dashboard headers
-	Visible  string            `json:"visible,omitempty"` // visibility control
-	Gateway  *GatewayConfig    `json:"gateway,omitempty"` // cross-cluster gateway config
+	Selector   string            `json:"selector,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"` // Dashboard headers
+	Visible    string            `json:"visible,omitempty"` // visibility control
+	Gateway    *GatewayConfig    `json:"gateway,omitempty"` // cross-cluster gateway config
+	Registries []RegistryEntry   `json:"registries,omitempty"`
+}
+
+// RegistryEntry describes a private container image registry that belongs to a
+// cluster. When a sandbox creation request carries an image whose host matches a
+// registry owned by a different cluster, the host is automatically rewritten to
+// the corresponding registry (same Type) of the local cluster.
+//
+// Host must be a plain registry hostname, optionally with a port
+// (e.g. "us-docker.pkg.dev" or "registry.example.com:5000").
+// Do NOT include a path component here; path rewriting is not supported.
+//
+// Type is an arbitrary label used to pair registries across clusters.
+// Only registries with the same Type are considered equivalent and eligible for
+// rewriting. Leaving Type empty is valid — empty-type registries are only
+// matched against other empty-type registries. Each cluster must have at most
+// one registry per Type value; duplicates within the same cluster are ignored
+// (the first entry wins) and a warning is logged.
+type RegistryEntry struct {
+	Host string `json:"host"`
+	Type string `json:"type,omitempty"`
 }
 
 // GatewayConfig describes the internal gateway used for cross-cluster forwarding.
@@ -136,6 +157,12 @@ func (g *GatewayConfig) MergedHeaders(kind URLKind) map[string]string {
 	return merged
 }
 
+// registryMeta records the cluster ownership and type of a single registry host.
+type registryMeta struct {
+	clusterID string
+	typ       string
+}
+
 // Store is a thread-safe in-memory store of cluster configurations keyed by cluster ID.
 type Store struct {
 	mu       sync.RWMutex
@@ -147,6 +174,13 @@ type Store struct {
 	hostAliases []corev1.HostAlias
 	// subscribers receive a copy of hostAliases every time ApplyConfig changes them.
 	hostAliasSubs []HostAliasSubscriber
+
+	// hostIndex maps a registry host to its owning cluster ID and type.
+	// Built eagerly in applyConfigLocked and never modified after that.
+	hostIndex map[string]registryMeta
+	// typeIndex maps "clusterID:type" to the first registry host of that type
+	// for the given cluster. Used to look up the local replacement target.
+	typeIndex map[string]string
 }
 
 // HostAliasSubscriber is invoked with the full host-alias list every time the
@@ -157,7 +191,9 @@ type HostAliasSubscriber func([]corev1.HostAlias)
 // NewStore creates an empty cluster config store.
 func NewStore() *Store {
 	return &Store{
-		clusters: make(map[string]ClusterEntry),
+		clusters:  make(map[string]ClusterEntry),
+		hostIndex: make(map[string]registryMeta),
+		typeIndex: make(map[string]string),
 	}
 }
 
@@ -326,11 +362,14 @@ func (s *Store) ApplyConfig(cfg ClusterConfig) ConfigDiff {
 		}
 	}
 	aliases := append([]corev1.HostAlias(nil), cfg.HostAliases...)
+	hostIdx, typeIdx := buildRegistryIndexes(m)
 
 	s.mu.Lock()
 	diff := diffConfig(s.clusters, m, s.hostAliases, aliases)
 	s.clusters = m
 	s.hostAliases = aliases
+	s.hostIndex = hostIdx
+	s.typeIndex = typeIdx
 	subs := append([]HostAliasSubscriber(nil), s.hostAliasSubs...)
 	s.mu.Unlock()
 
@@ -340,6 +379,56 @@ func (s *Store) ApplyConfig(cfg ClusterConfig) ConfigDiff {
 		}
 	}
 	return diff
+}
+
+// buildRegistryIndexes constructs the hostIndex and typeIndex from a cluster map.
+// Within each cluster, only the first RegistryEntry for a given Type is kept;
+// subsequent duplicates are skipped (caller is responsible for logging warnings
+// at config-load time if needed — keeping this function pure/log-free makes it
+// easier to test).
+func buildRegistryIndexes(clusters map[string]ClusterEntry) (hostIdx map[string]registryMeta, typeIdx map[string]string) {
+	hostIdx = make(map[string]registryMeta)
+	typeIdx = make(map[string]string)
+	for clusterID, entry := range clusters {
+		// Track which types we have already seen for this cluster so that the
+		// first entry wins and duplicates are silently dropped.
+		seenTypes := make(map[string]struct{})
+		for _, reg := range entry.Registries {
+			if reg.Host == "" {
+				continue
+			}
+			hostIdx[reg.Host] = registryMeta{clusterID: clusterID, typ: reg.Type}
+			typeKey := clusterID + ":" + reg.Type
+			if _, seen := seenTypes[reg.Type]; !seen {
+				seenTypes[reg.Type] = struct{}{}
+				typeIdx[typeKey] = reg.Host
+			}
+		}
+	}
+	return
+}
+
+// LookupRegistry returns the owning cluster ID and registry type for the given
+// host. Returns ok=false when the host is not registered to any cluster (i.e.
+// it is a public registry that should not be rewritten).
+func (s *Store) LookupRegistry(host string) (clusterID, typ string, ok bool) {
+	s.mu.RLock()
+	meta, ok := s.hostIndex[host]
+	s.mu.RUnlock()
+	if !ok {
+		return "", "", false
+	}
+	return meta.clusterID, meta.typ, true
+}
+
+// RegistryForType returns the first registry host configured for the given
+// cluster and registry type. Returns ok=false when the cluster has no registry
+// of that type (the caller should keep the original image unchanged).
+func (s *Store) RegistryForType(clusterID, typ string) (host string, ok bool) {
+	s.mu.RLock()
+	host, ok = s.typeIndex[clusterID+":"+typ]
+	s.mu.RUnlock()
+	return
 }
 
 // LoadFromFile reads a clusters.yaml file and replaces the store contents.

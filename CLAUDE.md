@@ -55,6 +55,8 @@ go test -tags=e2e ./test/e2e/ -v -ginkgo.v --ginkgo.focus="xxx"  # Run a single 
 
 > `make test` / `make build` automatically run `manifests → generate → gen-all-api → fmt → vet` first.
 
+> **Before completion**: always run `make lint-fix` and confirm **0 issues**. The pre-push CI gate runs the same linter and will reject commits that contain lint errors.
+
 ---
 
 ## Change Checklist

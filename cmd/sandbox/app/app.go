@@ -290,7 +290,7 @@ func Run(opts Options) {
 	}()
 
 	sandboxSvc := service.NewSandboxService(
-		mgr.GetClient(), clientset, restCfg, sandboxStore, envoyGatewayBaseURL, localClusterID, extprocClient,
+		mgr.GetClient(), clientset, restCfg, sandboxStore, envoyGatewayBaseURL, localClusterID, extprocClient, clusterStore,
 	)
 	// Drain pending claim requests after the HTTP server stops accepting new ones.
 	if shutdownable, ok := sandboxSvc.(interface{ Shutdown() }); ok {
