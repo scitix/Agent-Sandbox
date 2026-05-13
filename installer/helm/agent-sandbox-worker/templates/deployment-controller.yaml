@@ -22,7 +22,7 @@ spec:
           image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
           command:
-            - /manager
+            - /sandbox
           args:
             - --leader-elect
             - --health-probe-bind-address=:8081
