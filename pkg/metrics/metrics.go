@@ -155,7 +155,7 @@ func init() {
 	SandboxClaimDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "agentbox_sandbox_claim_duration_seconds",
 		Help:    "Duration of ClaimIdlePod operations in seconds.",
-		Buckets: prometheus.ExponentialBuckets(0.05, 2, 17),
+		Buckets: prometheus.ExponentialBuckets(0.01, 2, 18),
 	}, append(poolLabels, "outcome"))
 
 	SandboxStartingDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -163,21 +163,19 @@ func init() {
 		Help: "Sandbox startup duration (from claimedAt to startedAt, i.e. image pull + container start) in seconds. " +
 			"For Canceled sandboxes (never reached Running), measures claimedAt to terminatedAt. " +
 			"outcome: success/canceled.",
-		// 0.05s → ~3276s (~54 min) in 17 exponential steps
-		Buckets: prometheus.ExponentialBuckets(0.05, 2, 17),
+		Buckets: prometheus.ExponentialBuckets(0.01, 2, 20),
 	}, append(poolLabels, "outcome"))
 
 	SandboxRunningDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "agentbox_sandbox_running_duration_seconds",
-		Help: "Actual sandbox running duration (from startedAt to terminatedAt) in seconds.",
-		// 0.05s -> ~3.8 days in 20 exponential steps
-		Buckets: prometheus.ExponentialBuckets(0.05, 2, 20),
+		Name:    "agentbox_sandbox_running_duration_seconds",
+		Help:    "Actual sandbox running duration (from startedAt to terminatedAt) in seconds.",
+		Buckets: prometheus.ExponentialBuckets(0.1, 2, 20),
 	}, append(poolLabels, "stop_reason"))
 
 	SandboxRecycleDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "agentbox_sandbox_recycle_duration_seconds",
 		Help:    "Sandbox recycle duration (from terminatedAt to recycledAt, i.e. Stopping→Idle image restore) in seconds.",
-		Buckets: prometheus.ExponentialBuckets(0.05, 2, 17),
+		Buckets: prometheus.ExponentialBuckets(0.01, 2, 18),
 	}, poolLabels)
 
 	SandboxRunningInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{

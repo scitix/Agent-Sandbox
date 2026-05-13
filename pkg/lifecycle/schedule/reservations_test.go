@@ -16,6 +16,7 @@ package schedule
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -200,6 +201,7 @@ func TestReservations_ConcurrentHighLoad(t *testing.T) {
 				r.reserve(name)
 				reserves.Add(1)
 				k++
+				runtime.Gosched()
 			}
 		}(i * 7919) // odd stride per goroutine
 	}
@@ -222,6 +224,7 @@ func TestReservations_ConcurrentHighLoad(t *testing.T) {
 				}
 				reads.Add(1)
 				k++
+				runtime.Gosched()
 			}
 		}(i * 6131)
 	}
@@ -236,6 +239,7 @@ func TestReservations_ConcurrentHighLoad(t *testing.T) {
 				}
 				r.sweep()
 				sweeps.Add(1)
+				runtime.Gosched()
 			}
 		})
 	}
@@ -282,6 +286,7 @@ func TestReservations_SweepConcurrentWithReserve(t *testing.T) {
 				}
 				r.reserve(fmt.Sprintf("w%d-%d", id, n))
 				n++
+				runtime.Gosched()
 			}
 		}(i)
 	}
@@ -296,6 +301,7 @@ func TestReservations_SweepConcurrentWithReserve(t *testing.T) {
 			}
 			clk.Advance(10 * time.Millisecond)
 			r.sweep()
+			runtime.Gosched()
 		}
 	})
 
