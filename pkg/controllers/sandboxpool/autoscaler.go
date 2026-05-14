@@ -54,6 +54,7 @@ func (r *SandboxPoolReconciler) syncAutoscaling(
 	ctx context.Context,
 	pool *agentsv1alpha1.SandboxPool,
 	idlePods []corev1.Pod,
+	runningReplicas int32,
 ) (ctrl.Result, error) {
 	// Always maintain IdleZeroSince regardless of autoscaling.enabled, so the
 	// timestamp is ready for scale-up detection.
@@ -63,6 +64,26 @@ func (r *SandboxPoolReconciler) syncAutoscaling(
 
 	if pool.Spec.Autoscaling == nil || !pool.Spec.Autoscaling.Enabled {
 		return ctrl.Result{}, nil
+	}
+
+	// Invariant guard: spec.replicas must never drop below the number of running
+	// sandboxes. If a previous scale-down decision over-shot (e.g. a sandbox was
+	// claimed between the idle-pod check and the patch), correct it immediately
+	// before any further autoscaler logic runs.
+	if pool.Spec.Replicas < runningReplicas {
+		base := pool.DeepCopy()
+		pool.Spec.Replicas = runningReplicas
+		if err := r.Patch(ctx, pool, client.MergeFrom(base)); err != nil {
+			return ctrl.Result{}, err
+		}
+		klog.InfoS("Autoscaler: corrected spec.replicas to match running sandboxes",
+			"pool", pool.Namespace+"/"+pool.Name,
+			"correctedReplicas", runningReplicas)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(pool, nil, corev1.EventTypeWarning, "AutoscalerCorrection", "ReplicasCorrection",
+				"Autoscaler corrected spec.replicas from %d to %d to match running sandboxes",
+				base.Spec.Replicas, runningReplicas)
+		}
 	}
 
 	// Scale-up is evaluated first. If we actually scaled up this cycle, skip the
@@ -77,7 +98,7 @@ func (r *SandboxPoolReconciler) syncAutoscaling(
 		return upResult, nil
 	}
 
-	downResult, err := r.reconcileScaleDown(ctx, pool, idlePods)
+	downResult, err := r.reconcileScaleDown(ctx, pool, idlePods, runningReplicas)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -121,10 +142,15 @@ func (r *SandboxPoolReconciler) syncIdleZeroSince(ctx context.Context, pool *age
 // The decision is made purely based on pool-level status and the provided idle
 // pod list. Pod deletion itself is handled by the regular reconcilePods
 // scale-down path, which also enforces the two-phase protection window.
+//
+// runningReplicas is used as a hard floor: spec.replicas will never be reduced
+// below max(effectiveMinReplicas, runningReplicas), ensuring the autoscaler does
+// not under-provision while sandboxes are still active.
 func (r *SandboxPoolReconciler) reconcileScaleDown(
 	ctx context.Context,
 	pool *agentsv1alpha1.SandboxPool,
 	idlePods []corev1.Pod,
+	runningReplicas int32,
 ) (ctrl.Result, error) {
 	if pool.Spec.Autoscaling == nil || !pool.Spec.Autoscaling.Enabled {
 		return ctrl.Result{}, nil
@@ -139,8 +165,12 @@ func (r *SandboxPoolReconciler) reconcileScaleDown(
 		return ctrl.Result{}, nil
 	}
 
-	// Condition 2: replicas must be above the effective lower bound.
-	if pool.Spec.Replicas <= effectiveMinReplicas(pool) {
+	// Condition 2: replicas must be above the effective lower bound, which is
+	// the greater of the configured minReplicas and the current running count.
+	// This prevents the autoscaler from reducing spec.replicas below the number
+	// of active sandboxes.
+	lowerBound := max(effectiveMinReplicas(pool), runningReplicas)
+	if pool.Spec.Replicas <= lowerBound {
 		return ctrl.Result{}, nil
 	}
 

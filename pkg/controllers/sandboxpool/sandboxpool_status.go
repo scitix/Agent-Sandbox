@@ -390,16 +390,12 @@ func (r *SandboxPoolReconciler) emitPhaseTransitionEvent(
 				"Pool reached desired state: %d replicas, %d idle", pool.Spec.Replicas, status.IdleReplicas)
 		}
 	case agentsv1alpha1.SandboxPoolPhaseDegraded:
-		if status.UnavailableIdleReplicas > 0 && status.FailedReplicas > 0 {
+		if status.FailedReplicas > 0 {
 			r.Recorder.Eventf(pool, nil, corev1.EventTypeWarning, string(agentsv1alpha1.SandboxPoolPhaseDegraded), "Degraded",
-				"%d unavailable idle pod(s) (NotReady), %d failed pod(s)",
-				status.UnavailableIdleReplicas, status.FailedReplicas)
-		} else if status.UnavailableIdleReplicas > 0 {
-			r.Recorder.Eventf(pool, nil, corev1.EventTypeWarning, "UnhealthyIdlePods", "Degraded",
-				"%d/%d idle pod(s) are NotReady", status.UnavailableIdleReplicas, status.IdleReplicas)
-		} else {
-			r.Recorder.Eventf(pool, nil, corev1.EventTypeWarning, "FailedPodsPresent", "Degraded",
 				"%d pod(s) failed, creating replacements", status.FailedReplicas)
 		}
+		// UnavailableIdleReplicas (NotReady) transitions are intentionally not
+		// emitted as events — NotReady is transient during image pulls and pod
+		// restarts, and emitting an event on every flip would flood the event stream.
 	}
 }

@@ -360,7 +360,7 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 	// (read-only) so the autoscaler can compute per-pod idle durations without
 	// needing a separate List call.
 	idlePods := filterPodsByPhase(pods, agentsv1alpha1.SandboxPhaseIdle)
-	autoResult, err := r.syncAutoscaling(ctx, sandboxPool, idlePods)
+	autoResult, err := r.syncAutoscaling(ctx, sandboxPool, idlePods, status.RunningReplicas)
 	if err != nil {
 		return reconcile.Result{}, err
 	}

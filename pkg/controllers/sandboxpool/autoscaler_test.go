@@ -22,6 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
@@ -202,7 +203,7 @@ func TestReconcileScaleDown_Disabled(t *testing.T) {
 	r := &SandboxPoolReconciler{Client: cli}
 
 	idlePods := []corev1.Pod{makeIdlePodWithAge("pod-1", 10*time.Minute)}
-	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods)
+	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +225,7 @@ func TestReconcileScaleDown_NoIdlePods(t *testing.T) {
 	cli := newTestClientBuilder(t).WithObjects(pool).Build()
 	r := &SandboxPoolReconciler{Client: cli}
 
-	result, err := r.reconcileScaleDown(context.Background(), pool, nil)
+	result, err := r.reconcileScaleDown(context.Background(), pool, nil, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,7 +248,7 @@ func TestReconcileScaleDown_AtMinReplicas(t *testing.T) {
 	r := &SandboxPoolReconciler{Client: cli}
 
 	idlePods := []corev1.Pod{makeIdlePodWithAge("pod-1", 10*time.Minute)}
-	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods)
+	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +274,7 @@ func TestReconcileScaleDown_StabilizationNotPassed(t *testing.T) {
 	r := &SandboxPoolReconciler{Client: cli}
 
 	idlePods := []corev1.Pod{makeIdlePodWithAge("pod-1", 10*time.Minute)}
-	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods)
+	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestReconcileScaleDown_PodNotYetExpired(t *testing.T) {
 	r := &SandboxPoolReconciler{Client: cli}
 
 	idlePods := []corev1.Pod{makeIdlePodWithAge("pod-1", 2*time.Minute)}
-	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods)
+	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -329,7 +330,7 @@ func TestReconcileScaleDown_ShouldScale(t *testing.T) {
 	r := &SandboxPoolReconciler{Client: cli}
 
 	idlePods := []corev1.Pod{makeIdlePodWithAge("pod-1", 10*time.Minute)}
-	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods)
+	result, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -357,7 +358,7 @@ func TestReconcileScaleDown_RespectsMinReplicas_ZeroMin(t *testing.T) {
 	r := &SandboxPoolReconciler{Client: cli}
 
 	idlePods := []corev1.Pod{makeIdlePodWithAge("pod-1", 10*time.Minute)}
-	_, err := r.reconcileScaleDown(context.Background(), pool, idlePods)
+	_, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestReconcileScaleDown_MultipleScaleDownsConverge(t *testing.T) {
 	}
 
 	// First call: replicas 4 → 3
-	if _, err := r.reconcileScaleDown(context.Background(), pool, idlePods); err != nil {
+	if _, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 0); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
 
@@ -398,7 +399,7 @@ func TestReconcileScaleDown_MultipleScaleDownsConverge(t *testing.T) {
 	}
 
 	// Second call (stabilization=0 so no cooldown): replicas 3 → 2
-	if _, err := r.reconcileScaleDown(context.Background(), updated, idlePods); err != nil {
+	if _, err := r.reconcileScaleDown(context.Background(), updated, idlePods, 0); err != nil {
 		t.Fatalf("second call: %v", err)
 	}
 	updated2 := &agentsv1alpha1.SandboxPool{}
@@ -867,7 +868,7 @@ func TestSyncAutoscaling_ScaleUpSkipsScaleDown(t *testing.T) {
 	cli := newTestClientBuilder(t).WithObjects(pool).Build()
 	r := &SandboxPoolReconciler{Client: cli}
 
-	_, err := r.syncAutoscaling(context.Background(), pool, idlePods)
+	_, err := r.syncAutoscaling(context.Background(), pool, idlePods, 0)
 	if err != nil {
 		t.Fatalf("syncAutoscaling: %v", err)
 	}
@@ -1075,7 +1076,7 @@ func TestSyncAutoscaling_ScaleDownNotCalledAfterScaleUp(t *testing.T) {
 	r := &SandboxPoolReconciler{Client: cli}
 
 	// Call syncAutoscaling with 0 idle pods — scale-up fires, scale-down is skipped.
-	_, err := r.syncAutoscaling(context.Background(), pool, nil)
+	_, err := r.syncAutoscaling(context.Background(), pool, nil, 0)
 	if err != nil {
 		t.Fatalf("syncAutoscaling: %v", err)
 	}
@@ -1092,5 +1093,74 @@ func TestSyncAutoscaling_ScaleDownNotCalledAfterScaleUp(t *testing.T) {
 	}
 	if updated.Status.LastScaleDownTime != nil {
 		t.Errorf("LastScaleDownTime must NOT be set when scale-down was skipped, got %v", updated.Status.LastScaleDownTime)
+	}
+}
+
+// TestReconcileScaleDown_RunningFloor verifies that spec.replicas is never reduced
+// below the current running count, even when idle pods have expired.
+func TestReconcileScaleDown_RunningFloor(t *testing.T) {
+	// Pool has replicas=2, minReplicas=0, one idle expired pod, one running sandbox.
+	// The running floor should prevent a scale-down to 1 (which equals running count).
+	pool := makePool("pool-a", 2, i32ptr(0), makeScaleDownPolicy(60, 0))
+	cli := newTestClientBuilder(t).WithObjects(pool).Build()
+	r := &SandboxPoolReconciler{Client: cli}
+
+	idlePods := []corev1.Pod{makeIdlePodWithAge("pod-1", 10*time.Minute)}
+	_, err := r.reconcileScaleDown(context.Background(), pool, idlePods, 1 /* runningReplicas */)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated := &agentsv1alpha1.SandboxPool{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Name: pool.Name, Namespace: pool.Namespace}, updated); err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	// replicas=2, running=1 → lowerBound=max(0,1)=1; replicas(2) > lowerBound(1) → scale-down fires → replicas=1, not 0.
+	if updated.Spec.Replicas != 1 {
+		t.Errorf("expected spec.replicas=1 (one scale-down allowed), got %d", updated.Spec.Replicas)
+	}
+
+	// Second call: now replicas=1 equals the running floor (1) → must not scale further.
+	if _, err := r.reconcileScaleDown(context.Background(), updated, idlePods, 1); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	updated2 := &agentsv1alpha1.SandboxPool{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Name: pool.Name, Namespace: pool.Namespace}, updated2); err != nil {
+		t.Fatalf("get pool after 2nd call: %v", err)
+	}
+	if updated2.Spec.Replicas != 1 {
+		t.Errorf("spec.replicas must not drop below running count (1), got %d", updated2.Spec.Replicas)
+	}
+}
+
+// TestSyncAutoscaling_CorrectOvershootReplicas verifies that syncAutoscaling patches
+// spec.replicas back up when it has fallen below the running count (overshoot correction).
+func TestSyncAutoscaling_CorrectOvershootReplicas(t *testing.T) {
+	// Simulate a race: autoscaler previously set spec.replicas=0, but there is
+	// still one running sandbox (pod was claimed between the idle check and the patch).
+	pool := makePool("pool-a", 0, i32ptr(0), makeScaleDownPolicy(60, 0))
+	pool.Spec.Autoscaling = &agentsv1alpha1.PoolAutoscalingSpec{
+		Enabled: true,
+		ScaleDownPolicy: &agentsv1alpha1.PoolScaleDownPolicy{
+			IdleTimeoutSeconds:      60,
+			StabilizationSeconds:    0,
+			ProtectionWindowSeconds: 10,
+		},
+	}
+	cli := newTestClientBuilder(t).WithObjects(pool).Build()
+	r := &SandboxPoolReconciler{Client: cli, Recorder: events.NewFakeRecorder(10)}
+
+	// No idle pods, one running sandbox → correction should fire immediately.
+	_, err := r.syncAutoscaling(context.Background(), pool, nil /* idlePods */, 1 /* runningReplicas */)
+	if err != nil {
+		t.Fatalf("syncAutoscaling: %v", err)
+	}
+
+	updated := &agentsv1alpha1.SandboxPool{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Name: pool.Name, Namespace: pool.Namespace}, updated); err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if updated.Spec.Replicas != 1 {
+		t.Errorf("expected spec.replicas corrected to 1, got %d", updated.Spec.Replicas)
 	}
 }
