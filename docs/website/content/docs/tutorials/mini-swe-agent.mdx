@@ -1,0 +1,98 @@
+---
+title: mini SWE Agent
+description: Welcome to the ScitiX Agent Sandbox documentation.
+---
+
+Scitix AgentBox is a sandbox service designed for Agentic scenarios. It provides secure isolation and flexible deployment capabilities, catering to requirements such as inference evaluation and training rollouts.
+
+For SWE-Agent inference evaluation/streaming scenarios, we provide a pre-packaged **mini-SWE-Agent** that connects directly to the AgentBox sandbox resource pool, eliminating the need for manual sandbox lifecycle management.
+
+---
+
+## Installation
+
+Install the mini-SWE-Agent compatible with Scitix AgentBox.
+
+---
+
+## Quick Start
+
+Refer to the aforementioned documentation to apply for an API Key and create a sandbox warm-up pool based on the SWE template. Then, set the following environment variables:
+
+```bash
+export SCITIX_API_KEY="${AGBX_API_KEY}"       # Please apply for the API Key via the platform
+export SCITIX_POOL_NAME="${AGBX_POOL_NAME}"   # The name of the warm-up pool configured later
+```
+
+Select the corresponding SWE-Bench image registry based on your current cluster:
+
+```bash
+export SWEBENCH_REGISTRY="docker.io/swebench"
+export SWEBENCH_IMAGE_TAG="latest"
+```
+
+Then, run `mini-extra swebench`:
+
+```bash
+mini-extra swebench \
+    --subset verified \
+    --split test \
+    -m openai/zai-org/GLM-4.7 \
+    -c swebench \
+    -c swebench_scitix \
+    -c "environment.idle_timeout=30m" \
+    -w 10 \
+    -c "model.model_kwargs.api_base=XXXXXXXX" \
+    -c "model.model_kwargs.api_key=XXXXXXXX" \
+    -c "model.cost_tracking=ignore_errors" \
+    -c "agent.step_limit=1000000" \
+    -c "agent.cost_limit=1000000"
+```
+
+Once running, logs related to Scitix Sandbox creation should appear, indicating successful execution.
+
+---
+
+## Parameter Description
+
+### `-c` Configuration Options
+
+| Parameter | Meaning |
+|---|---|
+| `-c swebench` | Uses official SWE-Agent default configuration; **must be included** |
+| `-c swebench_scitix` | Uses Scitix custom initialization configuration (sets Idle Timeout, Startup Timeout, etc.) |
+| `-c "environment.idle_timeout=30m"` | Overrides the default Idle Timeout (default is 5m); set to an appropriate value |
+
+> **Note**: `-c swebench_scitix` must be added *after* `-c swebench`. Do not replace the original `-c swebench`.
+
+### Worker Count
+
+The `-w` parameter specifies the number of concurrent workers. It is recommended to keep this consistent with the size of the warm-up pool to avoid frequent cold starts.
+
+---
+
+## Cross-Cluster Usage
+
+If the warm-up pool is in a different cluster, prefix the `SCITIX_POOL_NAME` with the cluster ID in the format `clusterId::poolName`:
+
+```bash
+export SCITIX_POOL_NAME="${AGBX_CLUSTER_ID}::${AGBX_POOL_NAME}"
+```
+
+> Cross-cluster requests are automatically forwarded by the AgentBox control plane via the Gateway. Authentication methods are the same as within the local cluster, requiring no additional configuration. If authentication errors occur, please re-apply for your API Key on the platform.
+
+---
+
+## FAQ
+
+**Q: No Scitix Sandbox creation logs appear after running?**
+
+Check if `-c swebench_scitix` has been added and ensure that the three environment variables `SCITIX_ENDPOINT`, `SCITIX_API_KEY`, and `SCITIX_POOL_NAME` are set correctly.
+
+**Q: Sandboxes are frequently timing out or being reclaimed?**
+
+The default `idle_timeout` is 5 minutes. If a single episode in your streaming task exceeds this duration, the sandbox will be reclaimed prematurely. It is recommended to adjust this using `-c "environment.idle_timeout=30m"`.
+
+**Q: Receiving "no idle sandbox" errors during concurrent tasks?**
+
+There are insufficient available sandboxes in the warm-up pool. Check if the number of replicas configured for the warm-up pool is equal to or greater than the number of workers specified by `-w`. Consider expanding the warm-up pool or reducing the concurrency.

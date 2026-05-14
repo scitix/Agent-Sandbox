@@ -344,8 +344,7 @@ function CoreSellingPointsSection() {
         <div className="grid gap-4 lg:grid-cols-3">
           {CORE_SELLING_POINTS.map((item, index) => (
             <Reveal key={item.title} className="h-full" delay={index * 0.08}>
-              <article className={`${styles.featureCard} ${styles.spotCard} h-full rounded-[2rem] p-6 md:p-7`}>
-                <div className={styles.brandOrb} />
+              <article className={`${styles.featureCard} bg-fd-background h-full rounded-[2rem] p-6 md:p-7`}>
                 <div className="relative flex h-full flex-col">
                   <div className="flex flex-1 flex-col">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--brand)]" aria-hidden="true">{item.eyebrow}</p>

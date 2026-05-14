@@ -19,7 +19,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
-const HIDDEN_TAGS = new Set(['admin']);
+// const HIDDEN_TAGS = new Set(['admin']);
+const HIDDEN_TAGS = new Set([]) as Set<string>;
 
 function loadFilteredDocument(filePath: string): unknown {
   const raw = fs.readFileSync(filePath, 'utf8');

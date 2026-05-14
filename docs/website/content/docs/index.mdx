@@ -1,28 +1,44 @@
 ---
-title: AgentBox API
-description: AgentBox API documentation — Sandbox lifecycle management and tenant API key provisioning.
+title: Introduction
+description: Welcome to the ScitiX Agent Sandbox documentation.
 ---
 
-## Overview
 
-AgentBox provides Sandbox lifecycle management and tenant API key provisioning.
+## What is Agent Sandbox?
 
-### Admin Impersonation
+**Agent Sandbox** is an open-source sandbox engine for AI agents. It is purpose-built for three classes of workload:
 
-Admin callers can act on behalf of any user by adding the following optional headers to **any regular (non-admin) endpoint**:
+- **Lightning Fast** — pre-warmed pools keep isolated environments on standby, eliminating cold-start latency for high-frequency agent loops, evaluations, and RL rollouts
+- **Enterprise Grade** — deploy on any cloud using native Kubernetes CRDs, RBAC, and multi-cluster routing, without vendor lock-in
+- **Agentic RL** — stateful environments with deterministic resets and any-image runtimes, built for complex multi-turn agent training
 
-```
-X-Impersonate-Team: <team>
-X-Impersonate-User: <user>
-```
+---
 
-When both headers are present and the caller has admin role, the server resolves the target user's Kubernetes namespace via IAM and executes the request as if that user made the call. Non-admin callers that supply these headers have them silently ignored.
+## Key Features
 
-## API Sections
+| | Feature | Description |
+|---|---------|-------------|
+| ⚡ | **Speed — Sub-60ms allocation** | Pre-warmed pools deliver idle sandboxes instantly, unblocking high-volume agent loops and multi-turn RL rollouts |
+| ☸️ | **Infrastructure — Containers or microVMs** | Run on your existing estate using CRDs, namespaces, RBAC, and autoscaling to manage warm capacity efficiently |
+| 🌐 | **Routing — Cross-region and cross-cloud** | Dispatch requests across clouds, clusters, and regions without forcing application teams to manage routing logic |
+| 🧪 | **Runtime — Zero-rebuild runtimes** | Run any Docker image for SWE tasks, RL environments, and internal tools without building custom VM images |
+| 🔌 | **Ecosystem — Drop-in agent SDKs** | Seamless compatibility with E2B clients, SWE-ReX workflows, and popular reinforcement learning frameworks |
+| 📊 | **Observability — Console-grade visibility** | Complete view of pools, active sessions, logs, and metrics through a unified product console |
 
-- **Auth** — Caller identity and authentication
-- **Sandboxes** — Sandbox lifecycle management
-- **Pools** — SandboxPool management
-- **Templates** — SandboxTemplate read-only access
-- **Quotas** — Quota information
-- **Instance Types** — Available compute configurations
+---
+
+## Use Cases
+
+### Reinforcement Learning at Scale
+
+RL training requires thousands of environment resets per hour. Agent Sandbox pre-warms a pool of sandboxes so each rollout worker gets a fresh, isolated environment in milliseconds — removing the environment-reset bottleneck from your training loop. Supports SWE-bench Verified, SWE-Gym, Terminal-bench, and custom task distributions.
+
+### AI Coding Agents & Evaluations
+
+Give every agent turn or eval call its own isolated execution environment. The E2B-compatible API means existing SWE-agent, SWE-ReX, and similar frameworks work without modification.
+
+### Enterprise Multi-Cluster Deployment
+
+Deploy sandbox pools across multiple clouds or regions. The built-in ExtProc routing layer dispatches requests to the most available cluster transparently — no routing logic required in application code. Supported cloud providers: AWS, Google Cloud, Azure, Alibaba Cloud, Volcengine, Cloudflare.
+
+> **Coming soon:** microVM-backed sandboxes for stronger isolation guarantees.

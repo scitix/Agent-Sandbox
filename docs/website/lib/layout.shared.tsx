@@ -23,11 +23,15 @@ export function baseOptions(): BaseLayoutProps {
     githubUrl: 'https://github.com/scitix/Agent-Sandbox',
     nav: {
       title: (
-        <span className="flex items-center gap-2.5">
-          <Image src={publicAsset('/logo.svg')} alt="Agent Sandbox" width={24} height={24} className="shrink-0" />
+        <span className="flex items-center gap-1.5">
+          <Image src={publicAsset('/ScitiX.svg')} alt="Agent Sandbox" width={20} height={20} className="shrink-0" />
           <span className="home-display font-bold text-sm tracking-tight">Agent Sandbox</span>
         </span>
       ),
     },
+    links: [
+      { url: '/docs', text: 'Documentation' },
+      { url: '/docs/api/sandboxes/CreateSandbox/', text: 'API Reference' },
+    ]
   };
 }

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "postbuild": "next-sitemap",
+    "postbuild": "tsx scripts/generate-md-pages.ts && next-sitemap",
     "start": "next start",
     "compress-images": "uv run --with pillow python scripts/compress-images.py",
     "generate": "tsx scripts/generate-docs.ts"

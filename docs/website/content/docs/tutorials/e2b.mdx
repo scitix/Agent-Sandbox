@@ -1,0 +1,165 @@
+---
+title: E2B Python SDK
+description: Welcome to the ScitiX Agent Sandbox documentation.
+---
+
+Scitix AgentBox is a sandbox service designed for Agentic scenarios, offering secure isolation and flexible deployment to support various use cases such as reasoning evaluation and training rollouts.[E2B](https://e2b.dev/docs) is the sandbox provider behind Manus, and `envd` is the runtime environment provided by E2B. Scitix AgentBox provides compatibility and enhancements for the E2B SDK. This document guides you on how to access Scitix AgentBox resources using the E2B SDK.
+
+By reading this document, we assume you have already completed the sandbox pool pre-warming and API Key application process. To use resources from the sandbox pool `${AGBX_POOL_NAME}`, first install the E2B SDK and the AgentBox patch package:
+
+```bash
+uv pip install e2b==2.19.0 agent-sandbox-e2b==0.0.1
+```
+
+## Quick Start
+
+You must apply the patch **before** importing `Sandbox`; otherwise, the SDK will connect to the official E2B service instead of AgentBox:
+
+```python
+import os
+
+# Replace with your actual AgentBox API Key
+os.environ["E2B_API_KEY"] = "YOUR_API_KEY"
+
+from agentbox.patch_e2b import patch_e2b  # Must be called before importing Sandbox
+patch_e2b()
+
+from e2b import Sandbox
+
+# Create a sandbox using the pool
+sandbox = Sandbox.create("CLUSTER_ID::POOL_NAME//docker.io/library/ubuntu:22.04", timeout=3000, secure=False)
+print(sandbox.is_running())
+sandbox.kill()
+```
+
+## Cross-Cluster Usage
+
+To access sandbox resources from a different cluster, prefix the `templateID` with the cluster ID in the format `clusterId::poolName`:
+
+```python
+# Standard mode: Use resource pool from the current cluster
+sandbox = Sandbox.create("POOL_NAME", timeout=3000, secure=False)
+
+# Cross-cluster mode: Specify the resource pool on a specific cluster
+sandbox = Sandbox.create("CLUSTER_ID::POOL_NAME", timeout=3000, secure=False)
+```
+
+> Cross-cluster requests are automatically routed by AgentBox, requiring no extra configuration. If you encounter authentication errors, please re-apply for your API Key via the platform.
+
+## Sandbox Operations
+
+Once the sandbox is successfully created, you can use the standard E2B SDK operations:
+
+```python
+# Check if the sandbox is running (poll until True after creation)
+sandbox.is_running()
+
+# Execute commands (as standard user)
+sandbox.commands.run("echo 'hello' && python --version")
+
+# Execute commands (as root user)
+sandbox.commands.run('id', user='root')
+
+# File I/O
+sandbox.files.write("/tmp/script.py", b"print('hello from AgentBox')\n")
+content = sandbox.files.read("/tmp/script.py")
+
+# Dynamically extend idle timeout (in seconds)
+sandbox.set_timeout(1800)
+
+# Destroy the sandbox (always call this when finished)
+sandbox.kill()
+```
+
+For more detailed command documentation, refer to the [official E2B documentation](https://e2b.dev/docs/sdk-reference/python-sdk/v2.15.2/sandbox_sync).
+
+If you need session features similar to `tmux`, please refer to the [official PTY configuration guide](https://e2b.dev/docs/sandbox/pty).
+
+The default user for command execution in E2B is a standard user (UID=1001). To switch to `root`, use the `user` parameter in `sandbox.commands.run("id", user='root')` or configure it via PTY session startup parameters.
+
+## Parameter Reference
+
+Scitix AgentBox supports two types of timeout controls that can be combined as needed.
+
+### Idle Timeout
+
+The `timeout` parameter controls the **idle lifespan** of the sandbox (in seconds). If there are no active gRPC/WebSocket/HTTP connections within this period after the sandbox is created, it will be automatically reclaimed.
+
+```python
+# Sandbox will be destroyed after 1 hour of inactivity
+sandbox = Sandbox.create("POOL_NAME", timeout=3600, secure=False)
+```
+
+| Value | Behavior |
+|---|---|
+| `0` or omitted | Never times out |
+| Positive Integer (seconds) | Sets idle timeout duration |
+
+During the sandbox session, you can dynamically extend the lifespan using `set_timeout`:
+
+```python
+# Reset remaining timeout to 1800 seconds
+sandbox.set_timeout(1800)
+```
+
+### Startup Timeout
+
+The Startup Timeout controls the maximum wait time for sandbox creation (in seconds), defaulting to 120s. If creation fails within this time (e.g., due to resource insufficiency), `Sandbox.create()` will raise an exception.
+
+Set this via the `metadata` dictionary using the reserved key `agentbox.scitix.ai/startup-timeout`:
+
+```python
+sandbox = Sandbox.create(
+    "POOL_NAME",
+    timeout=3000,
+    secure=False,
+    metadata={"agentbox.scitix.ai/startup-timeout": "120"},  # Max 120 seconds to start
+)
+```
+
+### Custom Images
+
+You can override the pool's default image at creation time using the `agentbox.scitix.ai/image` reserved key in `metadata`:
+
+```python
+sandbox = Sandbox.create(
+    "POOL_NAME",
+    timeout=3000,
+    secure=False,
+    metadata={"agentbox.scitix.ai/image": "registry.example.com/my-env:v2"},
+)
+```
+
+Alternatively, use the shorthand `poolName//image` syntax:
+
+```python
+sandbox = Sandbox.create(
+    "CLUSTER_ID::POOL_NAME//registry.example.com/my-env:v2",
+    timeout=3000,
+    secure=False,
+)
+```
+
+### Complete Example
+
+```python
+sandbox = Sandbox.create(
+    "CLUSTER_ID::POOL_NAME//registry.example.com/my-env:v2",
+    timeout=3600,           # Idle timeout: 1 hour
+    secure=False,
+    metadata={
+        "agentbox.scitix.ai/startup-timeout": "120",          # Startup timeout: 2 mins
+        "my-custom-key": "my-value",                          # Custom user metadata (optional)
+    },
+)
+```
+
+## FAQ
+
+**Q: `Sandbox.create()` hangs for a long time without returning?**
+
+The sandbox is waiting for the Pod to become ready (either from the pre-warmed pool or a cold start). It is recommended to set a reasonable startup timeout using `agentbox.scitix.ai/startup-timeout` (default 120s) to prevent the program from waiting indefinitely.
+
+**Q: Sandbox is destroyed unexpectedly?**
+
+Check if the `timeout` is set too short. If there are long intervals without active connections during tasks like training, be sure to call `sandbox.set_timeout()` before the interval begins to extend the session.

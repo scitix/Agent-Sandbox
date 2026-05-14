@@ -20,11 +20,14 @@ import {
   DocsDescription,
   DocsPage,
   DocsTitle,
+  MarkdownCopyButton,
+  ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/notebook/page';
 import { notFound } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import type { Metadata } from 'next';
 import { APIPage } from '@/components/api-page';
+import { publicAsset } from '@/lib/public-assets';
 
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
@@ -47,12 +50,18 @@ export default async function Page(props: {
   }
 
   const MDX = page.data.body;
+  const markdownUrl = publicAsset(`${page.url}.md` as `/${string}`);
+  const githubUrl = `https://github.com/scitix/Agent-Sandbox/blob/develop/docs/website/content/docs/${page.path}`;
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
+        <div className="flex flex-row gap-2 items-center border-b pb-4 mb-2">
+          <MarkdownCopyButton markdownUrl={markdownUrl} />
+          <ViewOptionsPopover markdownUrl={markdownUrl} githubUrl={githubUrl} />
+        </div>
         <MDX components={getMDXComponents()} />
       </DocsBody>
     </DocsPage>

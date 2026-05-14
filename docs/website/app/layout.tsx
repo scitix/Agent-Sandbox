@@ -29,7 +29,7 @@ export const metadata: Metadata = {
     template: '%s — Agent Sandbox',
   },
   description: SITE_DESCRIPTION,
-  icons: { icon: publicAsset('/logo.svg') },
+  icons: { icon: publicAsset('/ScitiX.svg') },
 };
 
 const sansFont = Manrope({
