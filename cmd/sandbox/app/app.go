@@ -150,6 +150,19 @@ func Run(opts Options) {
 
 	ctrl.SetLogger(klog.NewKlogr())
 
+	if adminKey == "" {
+		setupLog.Info("" +
+			"################################################################################\n" +
+			"#                          !! SECURITY WARNING !!                              #\n" +
+			"#                                                                              #\n" +
+			"#  AGENTBOX_ADMIN_KEY is not set. Running in DEV MODE: ALL requests are        #\n" +
+			"#  granted anonymous admin access regardless of the API key provided.          #\n" +
+			"#                                                                              #\n" +
+			"#  DO NOT run in this mode in production. Set --admin-key or the              #\n" +
+			"#  AGENTBOX_ADMIN_KEY environment variable to enable authentication.           #\n" +
+			"################################################################################")
+	}
+
 	if extprocInternalAPIURL == "" {
 		setupLog.Error(nil, "--extproc-internal-api-url is required (gRPC dial target, e.g. agentbox-extproc.agentbox-system.svc:9003)") //nolint:lll
 		os.Exit(1)

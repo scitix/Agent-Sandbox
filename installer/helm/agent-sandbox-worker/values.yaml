@@ -73,6 +73,16 @@ controller:
       nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 
+  # Gateway API alternative to ingress (use with Envoy Gateway or similar).
+  # Mutually exclusive with ingress; enable one or the other.
+  gateway:
+    enabled: false
+    name: eg
+    namespace: envoy-gateway-system
+    host: agent-sandbox.example.com
+    timeouts:
+      request: "3600s"
+
 # ---------------------------------------------------------------------------
 # ExtProc (Envoy External Processor + data-plane manager)
 # ---------------------------------------------------------------------------
@@ -126,6 +136,17 @@ extproc:
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+  # Gateway API alternative to ingress (use with Envoy Gateway or similar).
+  # Mutually exclusive with ingress; enable one or the other.
+  # Replaces ALL nginx annotations above via native EG CRDs (SecurityPolicy, BackendTrafficPolicy, ClientTrafficPolicy).
+  gateway:
+    enabled: false
+    name: eg
+    namespace: envoy-gateway-system
+    host: agent-sandbox-gateway.example.com
+    timeouts:
+      request: "3600s"
 
 # ---------------------------------------------------------------------------
 # Metrics / Prometheus (optional)

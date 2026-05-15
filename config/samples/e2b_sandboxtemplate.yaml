@@ -1,0 +1,110 @@
+apiVersion: agents.navix.sh/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: e2b-envd
+spec:
+  version: 0.0.1
+  description: E2B-compatible sandbox with pure explicit injection logic in Template
+  idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.1
+  runtimes:
+    - name: envd
+      port: 49983
+      protocol: TCP
+      description: E2B envd runtime
+      readinessProbe:
+        httpGet:
+          port: 49983
+          path: /health
+  template:
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - command:
+            - /mnt/agentbox/tini
+            - -g
+            - --
+            - /bin/sh
+            - /mnt/agentbox/agentbox-entrypoint.sh
+          env:
+            - name: AGENTBOX_DIR
+              value: /mnt/agentbox
+            - name: PORT
+              value: "49999"
+          image: ghcr.io/scitix/agent-sandbox-envd:0.5.16
+          imagePullPolicy: IfNotPresent
+          name: sandbox
+          ports:
+            - containerPort: 49983
+              name: envd
+              protocol: TCP
+            - containerPort: 49999
+              name: app
+              protocol: TCP
+          resources:
+            limits:
+              cpu: "1"
+              memory: 16Gi
+            requests:
+              cpu: "1"
+              memory: 16Gi
+          securityContext:
+            runAsGroup: 0
+            runAsUser: 0
+          volumeMounts:
+            - mountPath: /mnt/agentbox
+              name: shared-bin
+              readOnly: true
+      enableServiceLinks: false
+      initContainers:
+        - args:
+            - >
+              TARGET_DIR="/mnt/agentbox"
+
+              mkdir -p "$TARGET_DIR"
+
+              if [ -f "$TARGET_DIR/tini" ]; then
+                  echo "[Init] tini already exists at $TARGET_DIR. Skipping copy."
+              else
+                  cp /workspace/tini "$TARGET_DIR/tini"
+                  chmod +x "$TARGET_DIR/tini"
+                  echo "[Init] tini static injected successfully."
+              fi
+          command:
+            - sh
+            - -c
+          image: ghcr.io/scitix/agent-sandbox-tini:v0.19.0
+          imagePullPolicy: IfNotPresent
+          name: tini-injector
+          resources: {}
+          volumeMounts:
+            - mountPath: /mnt/agentbox
+              name: shared-bin
+        - args:
+            - >
+              TARGET_DIR="/mnt/agentbox"
+
+              mkdir -p "$TARGET_DIR"
+
+              if [ -f "$TARGET_DIR/envd" ] && [ -f
+              "$TARGET_DIR/agentbox-entrypoint.sh" ]; then
+                  echo "[Init] envd and scripts already exist in $TARGET_DIR. Skipping copy."
+              else
+                  cp /workspace/envd "$TARGET_DIR/"
+                  cp /workspace/agentbox-entrypoint.sh "$TARGET_DIR/"
+                  chmod +x "$TARGET_DIR/envd" "$TARGET_DIR/agentbox-entrypoint.sh"
+                  echo "[Init] envd & scripts successfully injected."
+              fi
+          command:
+            - sh
+            - -c
+          image: ghcr.io/scitix/agent-sandbox-envd:0.5.16
+          imagePullPolicy: IfNotPresent
+          name: envd-injector
+          resources: {}
+          volumeMounts:
+            - mountPath: /mnt/agentbox
+              name: shared-bin
+      shareProcessNamespace: false
+      volumes:
+        - emptyDir: {}
+          name: shared-bin

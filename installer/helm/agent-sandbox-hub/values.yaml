@@ -99,6 +99,16 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 
+# Gateway API alternative to ingress (use with Envoy Gateway or similar).
+# Mutually exclusive with ingress; enable one or the other.
+gateway:
+  enabled: false
+  name: eg
+  namespace: envoy-gateway-system
+  host: agent-sandbox-dashboard.example.com
+  timeouts:
+    request: "3600s"
+
 nodeAffinity: {}
 tolerations: []
 
