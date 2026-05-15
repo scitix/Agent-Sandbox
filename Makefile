@@ -278,8 +278,9 @@ sync-e2b-spec: ## Sync E2B OpenAPI spec from GitHub (use E2B_SPEC_VERSION=x.y to
 
 .PHONY: generate-api
 generate-api: oapi-codegen ## Generate API code from OpenAPI specs
-	mkdir -p pkg/apiserver/gen pkg/e2bcompat/gen
+	mkdir -p pkg/apiserver/gen pkg/e2bcompat/gen pkg/wsproxy/gen
 	"$(OAPI_CODEGEN)" --config pkg/openapi/native/oapi-codegen.yaml pkg/openapi/native/openapi.yaml
+	"$(OAPI_CODEGEN)" --config pkg/openapi/global/oapi-codegen.yaml pkg/openapi/global/openapi.yaml
 	@if [ -f pkg/openapi/e2b/openapi.yaml ]; then \
 		"$(OAPI_CODEGEN)" --config pkg/openapi/e2b/oapi-codegen.yaml pkg/openapi/e2b/openapi.yaml; \
 	else \
@@ -301,6 +302,7 @@ gen-internal-proto: ## Generate Go/gRPC code from pkg/proto/ (internal Controlle
 .PHONY: gen-all-api
 gen-all-api: generate-api gen-internal-proto ## Regenerate all API clients from OpenAPI spec: Go server, TS dashboard, Python SDK.
 	cd dashboard && pnpm run gen:types
+	cd dashboard && pnpm run gen:global-types
 	uvx openapi-python-client generate \
 		--path pkg/openapi/native/openapi.yaml \
 		--config sdk/python/abx/openapi-gen-config.yaml \
@@ -313,6 +315,7 @@ gen-all-api: generate-api gen-internal-proto ## Regenerate all API clients from 
 	@echo "All API code regenerated:"
 	@echo "  Go     → pkg/apiserver/gen/agentbox.gen.go"
 	@echo "  TS     → dashboard/lib/api/schema.d.ts"
+	@echo "  TS hub → dashboard/lib/api/global-schema.d.ts"
 	@echo "  Python → sdk/python/abx/agentbox_sdk/_generated/"
 
 .PHONY: add-license

@@ -49,7 +49,10 @@ type SandboxTemplateService interface {
 	// List returns templates visible to the caller (auth). isAdmin=true bypasses
 	// visibility filtering and returns all templates.
 	List(ctx context.Context, auth domain.AuthInfo, isAdmin bool) ([]domain.SandboxTemplate, *domain.AppError)
-	Get(ctx context.Context, name string) (*domain.SandboxTemplate, *domain.AppError)
+	// Get returns a single template if it is visible to the caller. isAdmin=true
+	// bypasses visibility filtering. Returns ErrCodeNotFound when the template
+	// does not exist or the caller cannot see it (to avoid leaking names).
+	Get(ctx context.Context, name string, auth domain.AuthInfo, isAdmin bool) (*domain.SandboxTemplate, *domain.AppError)
 	// Admin only:
 	Create(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*domain.SandboxTemplate, *domain.AppError)
 	Update(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*domain.SandboxTemplate, *domain.AppError)
@@ -93,13 +96,17 @@ func (s *k8sSandboxTemplateService) List(ctx context.Context, auth domain.AuthIn
 	return items, nil
 }
 
-func (s *k8sSandboxTemplateService) Get(ctx context.Context, name string) (*domain.SandboxTemplate, *domain.AppError) {
+func (s *k8sSandboxTemplateService) Get(ctx context.Context, name string, auth domain.AuthInfo, isAdmin bool) (*domain.SandboxTemplate, *domain.AppError) {
 	tmpl := &agentsv1alpha1.SandboxTemplate{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: name}, tmpl); err != nil {
 		if k8serrors.IsNotFound(err) {
 			return nil, domain.NewNotFound(fmt.Sprintf("sandbox template %q not found", name))
 		}
 		return nil, domain.NewInternal(err.Error(), err)
+	}
+	if !isAdmin && !isVisible(tmpl.Spec.Visibility, auth) {
+		// Return 404 to avoid leaking the existence of restricted templates.
+		return nil, domain.NewNotFound(fmt.Sprintf("sandbox template %q not found", name))
 	}
 	result := templateFromCRD(ctx, tmpl)
 	return &result, nil

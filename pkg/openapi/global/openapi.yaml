@@ -1,0 +1,666 @@
+openapi: 3.0.3
+info:
+  title: AgentBox Hub (wsproxy) API
+  version: "0.0.0"
+  description: |
+    Management API served by the wsproxy component on port 9004.
+    Handles cross-cluster SandboxTemplate CRUD with broadcast to all Worker clusters.
+
+    ## Authentication
+
+    All endpoints accept `Authorization: Bearer <JWT>` (same HS256 secret as the Worker API).
+    The static `AGENTBOX-MANAGER-TOKEN` header is an operational backdoor for tooling only.
+
+    Template write operations (`POST`, `PUT`, `DELETE`) require admin role.
+
+servers:
+  - url: "http://localhost:9004"
+    description: Local wsproxy
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "JWT issued by the BFF dashboard. Admin role required for write operations."
+    ManagerTokenAuth:
+      type: apiKey
+      in: header
+      name: AGENTBOX-MANAGER-TOKEN
+      description: "Static shared secret for operational tooling. Treated as admin."
+
+  schemas:
+    SandboxTemplate:
+      $ref: '../native/openapi.yaml#/components/schemas/SandboxTemplate'
+    SandboxTemplateSummary:
+      $ref: '../native/openapi.yaml#/components/schemas/SandboxTemplateSummary'
+    SandboxTemplateEnvelope:
+      $ref: '../native/openapi.yaml#/components/schemas/SandboxTemplateEnvelope'
+    ListSandboxTemplatesResult:
+      $ref: '../native/openapi.yaml#/components/schemas/ListSandboxTemplatesResult'
+    UpsertSandboxTemplateRequest:
+      $ref: '../native/openapi.yaml#/components/schemas/UpsertSandboxTemplateRequest'
+    ErrorResponse:
+      $ref: '../native/openapi.yaml#/components/schemas/ErrorResponse'
+
+    # ── API Key schemas ──────────────────────────────────────────────────────
+    APIKeyItem:
+      $ref: '../native/openapi.yaml#/components/schemas/APIKeyItem'
+    CreateAPIKeyResult:
+      $ref: '../native/openapi.yaml#/components/schemas/CreateAPIKeyResult'
+    ListAPIKeysResult:
+      $ref: '../native/openapi.yaml#/components/schemas/ListAPIKeysResult'
+    CreateAPIKeyRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        tokenHash:
+          type: string
+          description: "Import mode: pre-computed token hash."
+        hashPrefix:
+          type: string
+          description: "Import mode: hash prefix (8 hex chars)."
+        issuedAt:
+          type: string
+          format: date-time
+          description: "Import mode: original issuedAt timestamp."
+        namespace:
+          type: string
+          description: "Import mode: original namespace."
+        user:
+          type: string
+          description: "Import mode: original user."
+        team:
+          type: string
+          description: "Import mode: original team."
+        quotaURL:
+          type: string
+          description: "Import mode: quota URL."
+
+    # ── Images Catalog schemas ───────────────────────────────────────────────
+    ImageDataset:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        imageCount:
+          type: integer
+        category:
+          type: string
+        source:
+          type: string
+        huggingFaceUrl:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        clusterDocs:
+          type: object
+          additionalProperties:
+            type: string
+
+paths:
+  # ── SandboxTemplate endpoints ────────────────────────────────────────────────
+
+  /v1/sandbox-templates:
+    get:
+      operationId: ListSandboxTemplates
+      summary: List global sandbox templates
+      description: |
+        Returns all SandboxTemplate resources on the Master cluster.
+        Admin callers see all templates; tenant callers see only templates
+        accessible within their team/user scope.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [sandbox-templates]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSandboxTemplatesResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/sandbox-templates/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "SandboxTemplate name (RFC 1123 DNS label)."
+
+    get:
+      operationId: GetSandboxTemplate
+      summary: Get a global sandbox template
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [sandbox-templates]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/admin/sandbox-templates:
+    post:
+      operationId: AdminCreateSandboxTemplate
+      summary: Create a global sandbox template (admin)
+      description: |
+        Creates a SandboxTemplate on the Master cluster and broadcasts it to all
+        connected Worker clusters. Requires admin role.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [sandbox-templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertSandboxTemplateRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/admin/sandbox-templates/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "SandboxTemplate name (RFC 1123 DNS label)."
+
+    put:
+      operationId: AdminUpdateSandboxTemplate
+      summary: Update a global sandbox template (admin)
+      description: |
+        Replaces a SandboxTemplate on the Master cluster and broadcasts the update
+        to all connected Worker clusters. Requires admin role.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [sandbox-templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertSandboxTemplateRequest'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      operationId: AdminDeleteSandboxTemplate
+      summary: Delete a global sandbox template (admin)
+      description: |
+        Deletes a SandboxTemplate from the Master cluster and broadcasts the deletion
+        to all connected Worker clusters. Requires admin role.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [sandbox-templates]
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── API Key endpoints ────────────────────────────────────────────────────────
+
+  /v1/api-keys:
+    get:
+      operationId: ListMyApiKeys
+      summary: List API keys for the authenticated user
+      description: Returns keys scoped to the caller's team/user from the JWT.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [api-keys]
+      parameters:
+        - name: team
+          in: query
+          schema:
+            type: string
+          description: "Filter by team (admin only)."
+        - name: user
+          in: query
+          schema:
+            type: string
+          description: "Filter by user (admin only)."
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAPIKeysResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      operationId: CreateApiKey
+      summary: Create an API key
+      description: |
+        Creates an API key. The user/team/namespace are derived from the JWT unless
+        admin impersonation headers are provided.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [api-keys]
+      parameters:
+        - name: X-Impersonate-Team
+          in: header
+          schema:
+            type: string
+          description: "Admin only: create key on behalf of this team."
+        - name: X-Impersonate-User
+          in: header
+          schema:
+            type: string
+          description: "Admin only: create key on behalf of this user."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResult'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Conflict (max keys per user exceeded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/api-keys/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "API key ID (agentbox-apikey-<hash-prefix>)."
+
+    delete:
+      operationId: DeleteApiKey
+      summary: Delete an API key
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [api-keys]
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Images Catalog endpoints ─────────────────────────────────────────────────
+
+  /v1/images-catalog:
+    get:
+      operationId: ListImagesCatalog
+      summary: List image datasets
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [images-catalog]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ImageDataset'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      operationId: CreateImageDataset
+      summary: Create or upsert an image dataset (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [images-catalog]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageDataset'
+      responses:
+        "200":
+          description: Updated (upsert)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageDataset'
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageDataset'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/images-catalog/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Dataset ID."
+
+    put:
+      operationId: UpdateImageDataset
+      summary: Update an image dataset (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [images-catalog]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageDataset'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageDataset'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      operationId: DeleteImageDataset
+      summary: Delete an image dataset (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [images-catalog]
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

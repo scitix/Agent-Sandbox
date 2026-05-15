@@ -112,9 +112,9 @@ function CreateApiKeyDialog({
           setExpiresAt(undefined)
           onOpenChange(false)
           onKeyCreated({
-            apiKey: result.rawToken,
+            apiKey: result.apiKey,
             keyId: result.keyId,
-            team: result.team,
+            team: result.team ?? undefined,
           })
         },
       },

@@ -1,0 +1,12 @@
+# oapi-codegen configuration for wsproxy Global Internal API
+package: wsproxygen
+output: pkg/wsproxy/gen/wsproxy.gen.go
+generate:
+  gin-server: true
+  strict-server: true
+  models: true
+  embedded-spec: false
+output-options:
+  skip-prune: false
+import-mapping:
+  ../native/openapi.yaml: github.com/scitix/agent-sandbox/pkg/apiserver/gen

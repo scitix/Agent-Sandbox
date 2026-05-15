@@ -10,6 +10,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "gen:types": "openapi-typescript ../pkg/openapi/native/openapi.yaml -o lib/api/schema.d.ts",
+    "gen:global-types": "openapi-typescript ../pkg/openapi/global/openapi.yaml -o lib/api/global-schema.d.ts",
     "i18n:extract": "tsx scripts/i18n-extract.ts",
     "i18n:validate": "tsx scripts/i18n-validate.ts",
     "i18n:gen-types": "tsx scripts/i18n-gen-types.ts"

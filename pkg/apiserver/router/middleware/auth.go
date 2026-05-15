@@ -256,7 +256,6 @@ func NewAuthenticateMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore api
 			Role:       meta.Role,
 			User:       meta.User,
 			Team:       meta.Team,
-			QuotaURL:   meta.QuotaURL,
 			AuthMethod: "apikey",
 		})
 

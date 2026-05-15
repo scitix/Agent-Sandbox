@@ -18,28 +18,13 @@
 //
 // List uses the per-cluster /api-keys endpoint (self-service, tenant-scoped)
 // so keys are read from the Worker the user is currently connected to.
-// Create and Delete still go through BFF → ws-proxy → Manager for broadcast.
+// Create and Delete go through hub proxy → wsproxy, which derives user/team
+// from the JWT and broadcasts key creation to all connected Workers.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import {
-  currentApiClient,
-  type GlobalCreateApiKeyResult,
-} from "@/lib/api/client"
-import { bff } from "@/lib/api/bff-client"
+import { currentApiClient } from "@/lib/api/client"
+import { getHubFetchClient } from "@/lib/api/hub-client"
 import { delayedInvalidate } from "./utils"
-
-// ─── BFF calls (create/delete go through BFF → ws-proxy → Manager for broadcast) ──
-
-async function createGlobalApiKey(body: {
-  description?: string
-  expiresAt?: string
-}): Promise<GlobalCreateApiKeyResult> {
-  return bff.post("api/global-api-keys", { json: body }).json()
-}
-
-async function deleteGlobalApiKey(name: string): Promise<void> {
-  await bff.delete(`api/global-api-keys/${encodeURIComponent(name)}`)
-}
 
 // ─── Query options ────────────────────────────────────────────────────────────
 
@@ -60,7 +45,16 @@ export function globalApiKeysQueryOptions() {
 export function useCreateGlobalApiKey() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: createGlobalApiKey,
+    mutationFn: async (body: { description?: string; expiresAt?: string }) => {
+      const { data, error } = await getHubFetchClient().POST("/v1/api-keys", {
+        body: {
+          description: body.description,
+          expiresAt: body.expiresAt,
+        },
+      })
+      if (error) throw error
+      return data
+    },
     onSuccess: () => delayedInvalidate(qc, ["get", "/api-keys"]),
   })
 }
@@ -68,7 +62,12 @@ export function useCreateGlobalApiKey() {
 export function useDeleteGlobalApiKey() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: deleteGlobalApiKey,
+    mutationFn: async (name: string) => {
+      const { error } = await getHubFetchClient().DELETE("/v1/api-keys/{name}", {
+        params: { path: { name } },
+      })
+      if (error) throw error
+    },
     onSuccess: () => delayedInvalidate(qc, ["get", "/api-keys"]),
   })
 }

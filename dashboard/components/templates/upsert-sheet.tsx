@@ -598,11 +598,19 @@ function UpsertTemplateForm({
   // ─── Submit ───────────────────────────────────────────────────────────────────
 
   const doSubmit = async (crdYaml: string) => {
+    // Convert the YAML the user edited to a JSON string for the API.
+    let crdJson: string
+    try {
+      crdJson = JSON.stringify(yamlParse(crdYaml))
+    } catch (e) {
+      toast.error(`Invalid YAML: ${(e as Error).message}`)
+      return
+    }
     try {
       if (isEdit) {
         await new Promise<void>((resolve, reject) => {
           updateMutate(
-            { name: template!.name, crdYaml },
+            { name: template!.name, crdJson },
             {
               onSuccess: () => {
                 toast.success(t("templates.updatedSuccess"))
@@ -615,7 +623,7 @@ function UpsertTemplateForm({
       } else {
         await new Promise<void>((resolve, reject) => {
           createMutate(
-            { crdYaml },
+            { crdJson },
             {
               onSuccess: () => {
                 toast.success(t("templates.createdSuccess"))

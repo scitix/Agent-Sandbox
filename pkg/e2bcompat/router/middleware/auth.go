@@ -125,7 +125,6 @@ func NewE2BAuthMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore apikey.K
 			Role:      meta.Role,
 			User:      meta.User,
 			Team:      meta.Team,
-			QuotaURL:  meta.QuotaURL,
 		})
 		c.Next()
 	}

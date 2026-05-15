@@ -278,6 +278,7 @@ func Run() {
 			TemplateClient:  k8sClient,
 			TemplateService: templateSvc,
 			MaxPerUser:      maxPerUser,
+			JWTSecret:       os.Getenv("JWT_SECRET"),
 		})
 
 		internalSrv := &http.Server{

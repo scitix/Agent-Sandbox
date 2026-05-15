@@ -103,6 +103,10 @@ async function proxyRequest(request: NextRequest, clusterID: string, path: strin
   // Use undici instead of fetch: the Fetch API forbids overriding the `Host` header,
   // so fetch silently sends the IP as Host and backend virtual-host routing breaks.
   // undici has no such restriction.
+  //
+  // Note: the hub proxy (app/api/hub/[...path]/route.ts) targets a fixed internal
+  // address (WSPROXY_INTERNAL_URL) with no virtual-host routing and uses native
+  // fetch instead.
   const headersRecord: Record<string, string> = {}
   headers.forEach((value, key) => {
     headersRecord[key] = value

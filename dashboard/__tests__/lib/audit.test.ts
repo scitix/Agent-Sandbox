@@ -484,9 +484,9 @@ describe("Cluster proxy route — audit integration", () => {
   })
 })
 
-// ─── 4. Global API keys route integration ─────────────────────────────────
+// ─── 4. Hub proxy route integration (API keys) ──────────────────────────────
 
-describe("Global API keys routes — audit integration", () => {
+describe("Hub proxy routes — API keys audit integration", () => {
   const LOG_PATH = "/tmp/test-audit-apikeys-vitest.log"
 
   beforeEach(() => {
@@ -513,7 +513,7 @@ describe("Global API keys routes — audit integration", () => {
     return fs.existsSync(LOG_PATH) ? fs.readFileSync(LOG_PATH, "utf-8") : ""
   }
 
-  it("writes apikey.create on successful POST /api/global-api-keys", async () => {
+  it("writes api.create on successful POST /api/hub/v1/api-keys", async () => {
     const token = await makeJWT({
       role: "admin",
       user: "alice",
@@ -523,25 +523,27 @@ describe("Global API keys routes — audit integration", () => {
 
     // Mock global fetch for wsproxy call
     const mockFetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ name: "agbx_newkey", prefix: "agbx_ne" }), {
+      new Response(JSON.stringify({ apiKey: "agbx_newkey", keyId: "agbx_ne" }), {
         status: 201,
         headers: { "Content-Type": "application/json" },
       }),
     )
     vi.stubGlobal("fetch", mockFetch)
 
-    const { POST } = await import("@/app/api/global-api-keys/route")
-    const req = new Request("http://localhost/api/global-api-keys", {
+    const { POST } = await import("@/app/api/hub/[...path]/route")
+    const req = new Request("http://localhost/api/hub/v1/api-keys", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ description: "my key" }),
     })
-    const res = await POST(req as never)
+    const res = await POST(req as never, {
+      params: Promise.resolve({ path: ["v1", "api-keys"] }),
+    })
     expect(res.status).toBe(201)
 
     const log = readLog()
     expect(log).toContain("[CREATE]")
-    expect(log).toContain("/api/global-api-keys")
+    expect(log).toContain("/v1/api-keys")
     expect(log).toContain("→ 201")
     expect(log).toContain("alice")
     expect(log).toContain("team-ops")
@@ -549,7 +551,7 @@ describe("Global API keys routes — audit integration", () => {
     vi.unstubAllGlobals()
   })
 
-  it("writes apikey.delete on successful DELETE /api/global-api-keys/[name]", async () => {
+  it("writes api.delete on successful DELETE /api/hub/v1/api-keys/{name}", async () => {
     const token = await makeJWT({
       role: "admin",
       user: "alice",
@@ -560,26 +562,26 @@ describe("Global API keys routes — audit integration", () => {
     const mockFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     vi.stubGlobal("fetch", mockFetch)
 
-    const { DELETE } = await import("@/app/api/global-api-keys/[name]/route")
-    const req = new Request("http://localhost/api/global-api-keys/agbx_mykey", {
+    const { DELETE } = await import("@/app/api/hub/[...path]/route")
+    const req = new Request("http://localhost/api/hub/v1/api-keys/agbx_mykey", {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     })
     const res = await DELETE(req as never, {
-      params: Promise.resolve({ name: "agbx_mykey" }),
+      params: Promise.resolve({ path: ["v1", "api-keys", "agbx_mykey"] }),
     })
     expect(res.status).toBe(204)
 
     const log = readLog()
     expect(log).toContain("[DELETE]")
-    expect(log).toContain("/api/global-api-keys/agbx_mykey")
+    expect(log).toContain("/v1/api-keys/agbx_mykey")
     expect(log).toContain("→ 204")
     expect(log).toContain("alice")
 
     vi.unstubAllGlobals()
   })
 
-  it("does NOT write audit log when DELETE fails (wsproxy error)", async () => {
+  it("writes api.error on failed DELETE /api/hub/v1/api-keys/{name}", async () => {
     const token = await makeJWT({ role: "admin", user: "alice", authMethod: "oidc" })
 
     const mockFetch = vi
@@ -587,18 +589,20 @@ describe("Global API keys routes — audit integration", () => {
       .mockResolvedValue(new Response(JSON.stringify({ error: "not found" }), { status: 404 }))
     vi.stubGlobal("fetch", mockFetch)
 
-    const { DELETE } = await import("@/app/api/global-api-keys/[name]/route")
-    const req = new Request("http://localhost/api/global-api-keys/no-such-key", {
+    const { DELETE } = await import("@/app/api/hub/[...path]/route")
+    const req = new Request("http://localhost/api/hub/v1/api-keys/no-such-key", {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     })
     const res = await DELETE(req as never, {
-      params: Promise.resolve({ name: "no-such-key" }),
+      params: Promise.resolve({ path: ["v1", "api-keys", "no-such-key"] }),
     })
     expect(res.status).toBe(404)
 
     const log = readLog()
-    expect(log).toBe("")
+    expect(log).toContain("[ERROR ]")
+    expect(log).toContain("/v1/api-keys/no-such-key")
+    expect(log).toContain("→ 404")
 
     vi.unstubAllGlobals()
   })

@@ -14,40 +14,22 @@
  * limitations under the License.
  */
 
-// Queries and mutations for the images catalog BFF API.
-// GET is public; POST/PUT/DELETE are admin-only (enforced server-side too).
+// Queries and mutations for the images catalog hub API.
+// All operations go through hub proxy → wsproxy.
+// GET is accessible to any authenticated user; POST/PUT/DELETE are admin-only (enforced server-side).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { getHubApiClient, getHubFetchClient } from "@/lib/api/hub-client"
 import type { ImageDataset } from "@/components/images/data"
-import { bff } from "@/lib/api/bff-client"
 
 export const IMAGES_QUERY_KEY = ["images-catalog"] as const
-
-// ─── BFF fetch helpers ────────────────────────────────────────────────────────
-
-async function fetchImagesCatalog(): Promise<ImageDataset[]> {
-  return bff.get("api/images-catalog").json()
-}
-
-async function createImageDataset(body: ImageDataset): Promise<ImageDataset> {
-  return bff.post("api/images-catalog", { json: body }).json()
-}
-
-async function updateImageDataset(body: ImageDataset): Promise<ImageDataset> {
-  return bff.put(`api/images-catalog/${encodeURIComponent(body.id)}`, { json: body }).json()
-}
-
-async function deleteImageDataset(id: string): Promise<void> {
-  await bff.delete(`api/images-catalog/${encodeURIComponent(id)}`)
-}
 
 // ─── Query options ────────────────────────────────────────────────────────────
 
 export function imagesCatalogQueryOptions() {
-  return {
-    queryKey: IMAGES_QUERY_KEY,
-    queryFn: fetchImagesCatalog,
-  }
+  return getHubApiClient().queryOptions("get", "/v1/images-catalog", {}, {
+    select: (data) => (data ?? []) as unknown as ImageDataset[],
+  })
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
@@ -55,7 +37,23 @@ export function imagesCatalogQueryOptions() {
 export function useCreateImageDataset() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: createImageDataset,
+    mutationFn: async (body: ImageDataset) => {
+      const { data, error } = await getHubFetchClient().POST("/v1/images-catalog", {
+        body: {
+          id: body.id,
+          name: body.name,
+          description: body.description,
+          imageCount: body.imageCount,
+          category: body.category,
+          source: body.source,
+          huggingFaceUrl: body.huggingFaceUrl,
+          tags: body.tags,
+          clusterDocs: body.clusterDocs,
+        },
+      })
+      if (error) throw error
+      return data
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: IMAGES_QUERY_KEY }),
   })
 }
@@ -63,7 +61,24 @@ export function useCreateImageDataset() {
 export function useUpdateImageDataset() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: updateImageDataset,
+    mutationFn: async (body: ImageDataset) => {
+      const { data, error } = await getHubFetchClient().PUT("/v1/images-catalog/{id}", {
+        params: { path: { id: body.id } },
+        body: {
+          id: body.id,
+          name: body.name,
+          description: body.description,
+          imageCount: body.imageCount,
+          category: body.category,
+          source: body.source,
+          huggingFaceUrl: body.huggingFaceUrl,
+          tags: body.tags,
+          clusterDocs: body.clusterDocs,
+        },
+      })
+      if (error) throw error
+      return data
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: IMAGES_QUERY_KEY }),
   })
 }
@@ -71,7 +86,12 @@ export function useUpdateImageDataset() {
 export function useDeleteImageDataset() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: deleteImageDataset,
+    mutationFn: async (id: string) => {
+      const { error } = await getHubFetchClient().DELETE("/v1/images-catalog/{id}", {
+        params: { path: { id } },
+      })
+      if (error) throw error
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: IMAGES_QUERY_KEY }),
   })
 }

@@ -103,6 +103,7 @@ type Deps struct {
 	TemplateClient  client.Client                  // websocket sync path: raw K8s ops + snapshot
 	TemplateService service.SandboxTemplateService // internal HTTP API: business logic + rendered responses
 	MaxPerUser      int
+	JWTSecret       string // HS256 secret shared with the BFF; enables Bearer JWT auth on internal API
 }
 
 // New creates a new SyncManager.

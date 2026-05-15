@@ -28,7 +28,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/yaml"
@@ -401,185 +400,17 @@ func templateToSummaryGen(t *domain.SandboxTemplate) gen.SandboxTemplateSummary 
 	return service.TemplateToSummaryGen(t)
 }
 
-// domainTemplateSpecToGen converts agentsv1alpha1.SandboxTemplateSpec to gen.SandboxTemplateSpec.
-// The Template field (*corev1.PodTemplateSpec) is serialised back to a YAML string.
-func domainTemplateSpecToGen(spec agentsv1alpha1.SandboxTemplateSpec) gen.SandboxTemplateSpec {
-	result := gen.SandboxTemplateSpec{
-		Version:     ptr.To(spec.Version),
-		Description: ptr.To(spec.Description),
-		IdleImage:   ptr.To(spec.IdleImage),
+// parseCRDJSON deserialises a complete SandboxTemplate CRD JSON string into an
+// agentsv1alpha1.SandboxTemplate. metadata.name must be present.
+func parseCRDJSON(jsonStr string) (*agentsv1alpha1.SandboxTemplate, error) {
+	var tmpl agentsv1alpha1.SandboxTemplate
+	if err := json.Unmarshal([]byte(jsonStr), &tmpl); err != nil {
+		return nil, fmt.Errorf("invalid CRD JSON: %w", err)
 	}
-
-	// Runtimes
-	if len(spec.Runtimes) > 0 {
-		runtimes := make([]gen.Runtime, 0, len(spec.Runtimes))
-		for _, r := range spec.Runtimes {
-			gr := gen.Runtime{Name: r.Name, Port: r.Port}
-			if r.Protocol != nil {
-				p := string(*r.Protocol)
-				gr.Protocol = &p
-			}
-			if r.Description != "" {
-				gr.Description = &r.Description
-			}
-			if r.LogDir != "" {
-				gr.LogDir = &r.LogDir
-			}
-			if r.ReadinessProbe != nil && r.ReadinessProbe.HTTPGet != nil {
-				hg := r.ReadinessProbe.HTTPGet
-				portVal := hg.Port.IntVal
-				probePath := hg.Path
-				gr.ReadinessProbe = &gen.RuntimeReadinessProbe{
-					HttpGet: &struct {
-						Path *string `json:"path,omitempty"`
-						Port int32   `json:"port"`
-					}{
-						Port: portVal,
-						Path: &probePath,
-					},
-				}
-			}
-			runtimes = append(runtimes, gr)
-		}
-		result.Runtimes = &runtimes
+	if tmpl.Name == "" {
+		return nil, fmt.Errorf("CRD JSON must include metadata.name")
 	}
-
-	// Visibility
-	if spec.Visibility != nil && len(spec.Visibility.Rules) > 0 {
-		rules := make([]gen.VisibilityRule, 0, len(spec.Visibility.Rules))
-		for _, r := range spec.Visibility.Rules {
-			vr := gen.VisibilityRule{}
-			if r.Team != "" {
-				vr.Team = &r.Team
-			}
-			if len(r.Users) > 0 {
-				users := r.Users
-				vr.Users = &users
-			}
-			rules = append(rules, vr)
-		}
-		result.Visibility = &gen.VisibilityConfig{Rules: &rules}
-	}
-
-	// Template — serialise PodTemplateSpec back to a YAML string
-	if spec.Template != nil {
-		if yamlBytes, err := yaml.Marshal(spec.Template); err == nil {
-			yamlStr := string(yamlBytes)
-			result.Template = &yamlStr
-		}
-	}
-
-	return result
-}
-
-// genSpecToK8sSpec converts gen.SandboxTemplateSpec to agentsv1alpha1.SandboxTemplateSpec.
-// The `template` field in the HTTP DTO is a YAML string containing a PodTemplateSpec.
-// All other fields are mapped 1:1.
-func genSpecToK8sSpec(spec gen.SandboxTemplateSpec) (agentsv1alpha1.SandboxTemplateSpec, error) {
-	result := agentsv1alpha1.SandboxTemplateSpec{}
-	if spec.Version != nil {
-		result.Version = *spec.Version
-	}
-	if spec.Description != nil {
-		result.Description = *spec.Description
-	}
-	if spec.IdleImage != nil {
-		result.IdleImage = *spec.IdleImage
-	}
-
-	// Runtimes
-	if spec.Runtimes != nil {
-		runtimes := make([]agentsv1alpha1.SandboxRuntimeSpec, 0, len(*spec.Runtimes))
-		for _, r := range *spec.Runtimes {
-			sr := agentsv1alpha1.SandboxRuntimeSpec{Name: r.Name}
-			if r.Port != nil {
-				sr.Port = r.Port
-			}
-			if r.Protocol != nil {
-				p := corev1.Protocol(*r.Protocol)
-				sr.Protocol = &p
-			}
-			if r.Description != nil {
-				sr.Description = *r.Description
-			}
-			if r.LogDir != nil {
-				sr.LogDir = *r.LogDir
-			}
-			if r.ReadinessProbe != nil && r.ReadinessProbe.HttpGet != nil {
-				hg := r.ReadinessProbe.HttpGet
-				probePath := "/"
-				if hg.Path != nil {
-					probePath = *hg.Path
-				}
-				sr.ReadinessProbe = &corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{
-						HTTPGet: &corev1.HTTPGetAction{
-							Port: intstr.FromInt32(hg.Port),
-							Path: probePath,
-						},
-					},
-				}
-			}
-			runtimes = append(runtimes, sr)
-		}
-		result.Runtimes = runtimes
-	}
-
-	// Visibility
-	if spec.Visibility != nil && spec.Visibility.Rules != nil {
-		rules := make([]agentsv1alpha1.TemplateVisibilityRule, 0, len(*spec.Visibility.Rules))
-		for _, r := range *spec.Visibility.Rules {
-			rule := agentsv1alpha1.TemplateVisibilityRule{}
-			if r.Team != nil {
-				rule.Team = *r.Team
-			}
-			if r.Users != nil {
-				rule.Users = *r.Users
-			}
-			rules = append(rules, rule)
-		}
-		result.Visibility = &agentsv1alpha1.TemplateVisibility{Rules: rules}
-	}
-
-	// Template — the HTTP DTO carries a YAML string; unmarshal it to PodTemplateSpec.
-	if spec.Template != nil && strings.TrimSpace(*spec.Template) != "" {
-		var pts corev1.PodTemplateSpec
-		if err := yaml.Unmarshal([]byte(*spec.Template), &pts); err != nil {
-			return result, fmt.Errorf("invalid template YAML: %w", err)
-		}
-		result.Template = &pts
-	}
-
-	return result, nil
-}
-
-// parsedCRD holds the fields extracted from a full SandboxTemplate CRD YAML.
-type parsedCRD struct {
-	Name            string
-	ResourceVersion string
-	Spec            agentsv1alpha1.SandboxTemplateSpec
-	Labels          map[string]string
-	Annotations     map[string]string
-}
-
-// parseCRDYaml deserialises a complete SandboxTemplate CRD YAML string and returns
-// the extracted name, spec, labels, and annotations.
-// It validates that apiVersion and kind are correct and that name is non-empty.
-func parseCRDYaml(yamlStr string) (parsedCRD, error) {
-	var raw agentsv1alpha1.SandboxTemplate
-	if err := yaml.Unmarshal([]byte(yamlStr), &raw); err != nil {
-		return parsedCRD{}, fmt.Errorf("invalid CRD YAML: %w", err)
-	}
-	if raw.Name == "" {
-		return parsedCRD{}, fmt.Errorf("CRD YAML must include metadata.name")
-	}
-	return parsedCRD{
-		Name:            raw.Name,
-		ResourceVersion: raw.ResourceVersion,
-		Spec:            raw.Spec,
-		Labels:          raw.Labels,
-		Annotations:     raw.Annotations,
-	}, nil
+	return &tmpl, nil
 }
 
 // toCreatePoolInput converts a gen.CreateSandboxPoolRequest to a domain.CreateSandboxPoolInput.
@@ -1211,7 +1042,9 @@ func (s *Server) ListSandboxTemplates(ctx context.Context, _ gen.ListSandboxTemp
 }
 
 func (s *Server) GetSandboxTemplate(ctx context.Context, req gen.GetSandboxTemplateRequestObject) (gen.GetSandboxTemplateResponseObject, error) {
-	result, appErr := s.template.Get(ctx, req.Name)
+	auth := authFrom(ctx)
+	isAdmin := auth.Role == apikey.RoleAdmin
+	result, appErr := s.template.Get(ctx, req.Name, auth, isAdmin)
 	if appErr != nil {
 		if appErr.Code == domain.ErrCodeNotFound {
 			return gen.GetSandboxTemplate404JSONResponse(errResp(ctx, appErr)), nil
@@ -1227,53 +1060,20 @@ func (s *Server) AdminCreateSandboxTemplate(ctx context.Context, req gen.AdminCr
 		return gen.AdminCreateSandboxTemplate400JSONResponse{Error: "request body required"}, nil
 	}
 
-	// crdYaml path: parse the full CRD YAML and extract name/spec/labels/annotations.
-	var (
-		name        string
-		k8sSpec     agentsv1alpha1.SandboxTemplateSpec
-		labels      map[string]string
-		annotations map[string]string
-	)
-	if req.Body.CrdYaml != nil && strings.TrimSpace(*req.Body.CrdYaml) != "" {
-		parsed, parseErr := parseCRDYaml(*req.Body.CrdYaml)
-		if parseErr != nil {
-			return gen.AdminCreateSandboxTemplate400JSONResponse{Error: parseErr.Error()}, nil
-		}
-		name = parsed.Name
-		k8sSpec = parsed.Spec
-		labels = parsed.Labels
-		annotations = parsed.Annotations
-	} else {
-		name = derefString(req.Body.Name)
-		if req.Body.Spec != nil {
-			var convErr error
-			k8sSpec, convErr = genSpecToK8sSpec(*req.Body.Spec)
-			if convErr != nil {
-				return gen.AdminCreateSandboxTemplate400JSONResponse{Error: convErr.Error()}, nil
-			}
-		}
+	tmplObj, parseErr := parseCRDJSON(req.Body.CrdJson)
+	if parseErr != nil {
+		return gen.AdminCreateSandboxTemplate400JSONResponse{Error: parseErr.Error()}, nil
 	}
-
-	if name == "" {
-		return gen.AdminCreateSandboxTemplate400JSONResponse{Error: "name is required"}, nil
-	}
-	if err := k8sname.Validate(name); err != nil {
+	if err := k8sname.Validate(tmplObj.Name); err != nil {
 		return gen.AdminCreateSandboxTemplate400JSONResponse{Error: err.Error()}, nil
 	}
 
 	// When connected to ws-proxy, forward the write to master so it propagates
 	// to all clusters. Fall back to local create when sync is not configured.
 	if s.sync != nil {
-		// Serialize the full SandboxTemplate object so wsproxy can write it
-		// directly to K8s, preserving all metadata fields.
-		tmplObj := &agentsv1alpha1.SandboxTemplate{}
-		tmplObj.Name = name
-		tmplObj.Labels = labels
-		tmplObj.Annotations = annotations
-		tmplObj.Spec = k8sSpec
 		raw, marshalErr := json.Marshal(tmplObj)
 		if marshalErr != nil {
-			httplog.LogServerError(httpctx.GinFromCtx(ctx), marshalErr, "failed to serialize template for sync create", "name", name)
+			httplog.LogServerError(httpctx.GinFromCtx(ctx), marshalErr, "failed to serialize template for sync create", "name", tmplObj.Name)
 			return gen.AdminCreateSandboxTemplate500JSONResponse{Error: "failed to serialize template"}, nil
 		}
 		if syncErr := s.sync.RequestTemplateCreate(ctx, raw); syncErr != nil {
@@ -1281,24 +1081,16 @@ func (s *Server) AdminCreateSandboxTemplate(ctx context.Context, req gen.AdminCr
 		}
 		// The template will be synced back to this cluster via template_sync broadcast.
 		// Read the locally synced copy to return in the response (best-effort).
-		result, appErr := s.template.Get(ctx, name)
+		result, appErr := s.template.Get(ctx, tmplObj.Name, domain.AuthInfo{}, true)
 		if appErr != nil {
-			// Not yet visible locally — return a minimal response.
 			return gen.AdminCreateSandboxTemplate201JSONResponse{
-				Template: gen.SandboxTemplate{Name: name},
+				Template: gen.SandboxTemplate{Name: tmplObj.Name},
 			}, nil
 		}
 		return gen.AdminCreateSandboxTemplate201JSONResponse{Template: templateToGen(result)}, nil
 	}
 
-	result, appErr := s.template.Create(ctx, &agentsv1alpha1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: k8sSpec,
-	})
+	result, appErr := s.template.Create(ctx, tmplObj)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeBadRequest:
@@ -1317,40 +1109,15 @@ func (s *Server) AdminUpdateSandboxTemplate(ctx context.Context, req gen.AdminUp
 		return gen.AdminUpdateSandboxTemplate400JSONResponse{Error: "request body required"}, nil
 	}
 
-	var (
-		k8sSpec         agentsv1alpha1.SandboxTemplateSpec
-		labels          map[string]string
-		annotations     map[string]string
-		resourceVersion string
-	)
-	if req.Body.CrdYaml != nil && strings.TrimSpace(*req.Body.CrdYaml) != "" {
-		parsed, parseErr := parseCRDYaml(*req.Body.CrdYaml)
-		if parseErr != nil {
-			return gen.AdminUpdateSandboxTemplate400JSONResponse{Error: parseErr.Error()}, nil
-		}
-		k8sSpec = parsed.Spec
-		labels = parsed.Labels
-		annotations = parsed.Annotations
-		resourceVersion = parsed.ResourceVersion
-	} else {
-		if req.Body.Spec != nil {
-			var convErr error
-			k8sSpec, convErr = genSpecToK8sSpec(*req.Body.Spec)
-			if convErr != nil {
-				return gen.AdminUpdateSandboxTemplate400JSONResponse{Error: convErr.Error()}, nil
-			}
-		}
+	tmplObj, parseErr := parseCRDJSON(req.Body.CrdJson)
+	if parseErr != nil {
+		return gen.AdminUpdateSandboxTemplate400JSONResponse{Error: parseErr.Error()}, nil
 	}
+	// URL path name takes precedence over whatever name is in the JSON body.
+	tmplObj.Name = req.Name
 
 	// Forward to ws-proxy when sync is configured.
 	if s.sync != nil {
-		// Serialize the full SandboxTemplate object for wsproxy to do a full replacement.
-		tmplObj := &agentsv1alpha1.SandboxTemplate{}
-		tmplObj.Name = req.Name
-		tmplObj.Labels = labels
-		tmplObj.Annotations = annotations
-		tmplObj.Spec = k8sSpec
-		tmplObj.ResourceVersion = resourceVersion
 		raw, marshalErr := json.Marshal(tmplObj)
 		if marshalErr != nil {
 			httplog.LogServerError(httpctx.GinFromCtx(ctx), marshalErr, "failed to serialize template for sync update", "name", req.Name)
@@ -1359,7 +1126,7 @@ func (s *Server) AdminUpdateSandboxTemplate(ctx context.Context, req gen.AdminUp
 		if syncErr := s.sync.RequestTemplateUpdate(ctx, raw); syncErr != nil {
 			return templateSyncErrToUpdateResp(syncErr), nil
 		}
-		result, appErr := s.template.Get(ctx, req.Name)
+		result, appErr := s.template.Get(ctx, req.Name, domain.AuthInfo{}, true)
 		if appErr != nil {
 			return gen.AdminUpdateSandboxTemplate200JSONResponse{
 				Template: gen.SandboxTemplate{Name: req.Name},
@@ -1368,15 +1135,7 @@ func (s *Server) AdminUpdateSandboxTemplate(ctx context.Context, req gen.AdminUp
 		return gen.AdminUpdateSandboxTemplate200JSONResponse{Template: templateToGen(result)}, nil
 	}
 
-	result, appErr := s.template.Update(ctx, &agentsv1alpha1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            req.Name,
-			Labels:          labels,
-			Annotations:     annotations,
-			ResourceVersion: resourceVersion,
-		},
-		Spec: k8sSpec,
-	})
+	result, appErr := s.template.Update(ctx, tmplObj)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeBadRequest:
@@ -1397,7 +1156,7 @@ func (s *Server) AdminDeleteSandboxTemplate(ctx context.Context, req gen.AdminDe
 	// managed. Single-cluster (legacy) templates are deleted locally even if sync is
 	// enabled, since the global manager has no record of them.
 	if s.sync != nil {
-		tmpl, getErr := s.template.Get(ctx, req.Name)
+		tmpl, getErr := s.template.Get(ctx, req.Name, domain.AuthInfo{}, true)
 		if getErr != nil {
 			if getErr.Code == domain.ErrCodeNotFound {
 				return gen.AdminDeleteSandboxTemplate404JSONResponse(errResp(ctx, getErr)), nil
@@ -1421,6 +1180,31 @@ func (s *Server) AdminDeleteSandboxTemplate(ctx context.Context, req gen.AdminDe
 		return gen.AdminDeleteSandboxTemplate500JSONResponse(errResp(ctx, appErr)), nil
 	}
 	return gen.AdminDeleteSandboxTemplate202JSONResponse{Name: req.Name, Status: "Terminating"}, nil
+}
+
+func (s *Server) AdminListSandboxTemplates(ctx context.Context, req gen.AdminListSandboxTemplatesRequestObject) (gen.AdminListSandboxTemplatesResponseObject, error) {
+	auth := authFrom(ctx)
+	// Admin list: apply optional team/user filter from query params while keeping full visibility.
+	if req.Params.Team != nil && *req.Params.Team != "" {
+		auth.Team = *req.Params.Team
+	}
+	if req.Params.User != nil && *req.Params.User != "" {
+		auth.User = *req.Params.User
+	}
+	items, appErr := s.template.List(ctx, auth, true)
+	if appErr != nil {
+		return gen.AdminListSandboxTemplates500JSONResponse(errResp(ctx, appErr)), nil
+	}
+	payloads := make([]gen.SandboxTemplateSummary, 0, len(items))
+	for i := range items {
+		payloads = append(payloads, templateToSummaryGen(&items[i]))
+	}
+	return gen.AdminListSandboxTemplates200JSONResponse{
+		Items:  payloads,
+		Total:  len(payloads),
+		Limit:  0,
+		Offset: 0,
+	}, nil
 }
 
 // templateSyncErrToCreateResp converts a sync forwarding error to the appropriate Create response.

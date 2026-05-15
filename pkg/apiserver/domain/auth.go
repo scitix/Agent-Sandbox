@@ -21,7 +21,6 @@ type AuthInfo struct {
 	Role      string
 	User      string
 	Team      string
-	QuotaURL  string
 	// AuthMethod indicates how the caller was authenticated: "apikey" or "jwt".
 	AuthMethod string
 	// Email is the user's email address (populated from JWT claims).

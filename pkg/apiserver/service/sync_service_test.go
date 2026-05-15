@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -596,7 +597,7 @@ func TestHandleIncoming_TemplateSync_CreateOrUpdate(t *testing.T) {
 	}
 
 	// The template should exist locally after sync.
-	got, appErr := tmplSvc.Get(ctx, "tmpl-a")
+	got, appErr := tmplSvc.Get(ctx, "tmpl-a", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("Get() after template_sync error = %v", appErr)
 	}
@@ -642,7 +643,7 @@ func TestHandleIncoming_TemplateDeleteSync_DeletesLocal(t *testing.T) {
 		t.Fatalf("HandleIncoming(template_delete_sync) error = %v", err)
 	}
 
-	_, appErr := tmplSvc.Get(ctx, "tmpl-to-del")
+	_, appErr := tmplSvc.Get(ctx, "tmpl-to-del", domain.AuthInfo{}, true)
 	if appErr == nil {
 		t.Fatal("expected not-found after template_delete_sync, got nil error")
 	}
@@ -687,7 +688,7 @@ func TestHandleIncoming_TemplateSnapshot_AppliesAll(t *testing.T) {
 	}
 
 	for _, name := range []string{"tmpl-a", "tmpl-b"} {
-		if _, appErr := tmplSvc.Get(ctx, name); appErr != nil {
+		if _, appErr := tmplSvc.Get(ctx, name, domain.AuthInfo{}, true); appErr != nil {
 			t.Errorf("Get(%q) after snapshot error = %v", name, appErr)
 		}
 	}

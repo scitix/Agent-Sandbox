@@ -1116,18 +1116,11 @@ components:
 
     UpsertSandboxTemplateRequest:
       type: object
+      required: [crdJson]
       properties:
-        name:
+        crdJson:
           type: string
-          minLength: 1
-          maxLength: 63
-          pattern: '^[a-z]([a-z0-9-]*[a-z0-9])?$'
-          description: "RFC 1123 DNS label (letter-start): lowercase letters, digits, hyphens; start with a letter, end with alphanumeric"
-        spec:
-          $ref: '#/components/schemas/SandboxTemplateSpec'
-        crdYaml:
-          type: string
-          description: "Complete SandboxTemplate CRD YAML string. When provided, name/spec/labels/annotations are extracted from the YAML and the individual fields above are ignored."
+          description: "Complete SandboxTemplate CRD object serialized as JSON. metadata.name is required. Labels, annotations, and resourceVersion are extracted from the JSON."
 
     DeleteSandboxTemplateResult:
       type: object
@@ -2937,9 +2930,55 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # =========================================================
-  # Admin: SandboxTemplate write operations
+  # Admin: SandboxTemplate CRUD
   # =========================================================
   /admin/sandbox-templates:
+    get:
+      operationId: AdminListSandboxTemplates
+      summary: List sandbox templates (admin)
+      description: |
+        Returns all SandboxTemplate resources. Admin callers see every template
+        regardless of origin; optional `team` / `user` query parameters narrow
+        results to templates accessible by a specific identity.
+      security:
+        - AdminKeyAuth: []
+      tags: [admin]
+      parameters:
+        - name: team
+          in: query
+          schema:
+            type: string
+          description: "Filter by team."
+        - name: user
+          in: query
+          schema:
+            type: string
+          description: "Filter by user."
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSandboxTemplatesResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     post:
       operationId: AdminCreateSandboxTemplate
       summary: Create a sandbox template (admin)

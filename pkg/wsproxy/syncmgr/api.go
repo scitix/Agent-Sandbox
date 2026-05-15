@@ -15,9 +15,9 @@
 package syncmgr
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -25,11 +25,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/api/protocol"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
+	wsproxygen "github.com/scitix/agent-sandbox/pkg/wsproxy/gen"
 )
 
 // managerTokenMiddleware returns a Gin middleware that enforces the AGENTBOX-MANAGER-TOKEN header.
@@ -44,13 +44,52 @@ func managerTokenMiddleware(token string) gin.HandlerFunc {
 	}
 }
 
+// jwtOrManagerTokenMiddleware authenticates requests using either a Bearer JWT
+// (same HS256 secret as the Worker API, issued by the BFF) or the static
+// AGENTBOX-MANAGER-TOKEN header (treated as admin, for operational tooling).
+// When both jwtSecret and managerToken are empty (dev mode), all requests pass
+// through as anonymous admin.
+func jwtOrManagerTokenMiddleware(jwtSecret, managerToken string) gin.HandlerFunc {
+	if jwtSecret == "" && managerToken == "" {
+		// Dev mode: grant anonymous admin.
+		return func(c *gin.Context) {
+			c.Set(middleware.AuthContextKey, domain.AuthInfo{
+				Namespace:  middleware.DefaultNamespace,
+				Role:       apikey.RoleAdmin,
+				User:       "anonymous-admin",
+				AuthMethod: "apikey",
+			})
+			c.Next()
+		}
+	}
+
+	jwtSecret = cmp.Or(jwtSecret, managerToken)
+	jwtMiddleware := middleware.NewAuthenticateMiddleware(nil, nil, jwtSecret, nil)
+	return func(c *gin.Context) {
+		// Manager token takes priority: treated as admin without JWT validation.
+		if managerToken != "" && c.GetHeader("AGENTBOX-MANAGER-TOKEN") == managerToken {
+			c.Set(middleware.AuthContextKey, domain.AuthInfo{
+				Namespace:  middleware.DefaultNamespace,
+				Role:       apikey.RoleAdmin,
+				User:       "system",
+				Team:       "system",
+				AuthMethod: "apikey",
+			})
+			c.Next()
+			return
+		}
+		// Fall through to JWT validation.
+		jwtMiddleware(c)
+	}
+}
+
 // InternalAPIHandler returns the HTTP handler for the internal management API (:9004).
 func (m *SyncManager) InternalAPIHandler() http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// /ping is public — no manager token required.
+	// /ping is public — no auth required.
 	r.GET("/ping", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
@@ -58,34 +97,36 @@ func (m *SyncManager) InternalAPIHandler() http.Handler {
 	// /metrics is public — Prometheus scrapes without auth.
 	r.GET("/metrics", gin.WrapH(MetricsHandler()))
 
-	// All /internal/* routes require the manager token.
-	internal := r.Group("/internal", managerTokenMiddleware(m.managerToken))
+	// SandboxTemplate endpoints use JWT-or-manager-token auth (Bearer JWT from BFF,
+	// or AGENTBOX-MANAGER-TOKEN for operational tooling). Registered first so that
+	// more specific routes take precedence over the legacy group below.
+	tmplAuth := jwtOrManagerTokenMiddleware(m.deps.JWTSecret, m.managerToken)
+	strictHandler := wsproxygen.NewStrictHandler(&templateServer{m: m}, nil)
+	wsproxygen.RegisterHandlersWithOptions(r, strictHandler, wsproxygen.GinServerOptions{
+		BaseURL:     "",
+		Middlewares: []wsproxygen.MiddlewareFunc{wsproxygen.MiddlewareFunc(tmplAuth)},
+	})
+
+	// Legacy /internal/* routes continue to use the static manager token.
+	legacy := r.Group("/internal", managerTokenMiddleware(m.managerToken))
 
 	// API key endpoints.
-	internal.POST("/api-keys", m.handleInternalCreate)
-	internal.GET("/api-keys", m.handleInternalList)
-	internal.DELETE("/api-keys/:name", m.handleInternalDelete)
+	legacy.POST("/api-keys", m.handleInternalCreate)
+	legacy.GET("/api-keys", m.handleInternalList)
+	legacy.DELETE("/api-keys/:name", m.handleInternalDelete)
 
 	// Broadcast endpoint.
-	internal.POST("/broadcast", m.handleInternalBroadcast)
-
-	// SandboxTemplate endpoints.
-	internal.GET("/templates", m.handleInternalTemplateList)
-	internal.POST("/templates", m.handleInternalTemplateCreate)
-	internal.GET("/templates/:name", m.handleInternalTemplateGet)
-	internal.PATCH("/templates/:name", m.handleInternalTemplateUpdate)
-	internal.PUT("/templates/:name", m.handleInternalTemplateUpdate)
-	internal.DELETE("/templates/:name", m.handleInternalTemplateDelete)
+	legacy.POST("/broadcast", m.handleInternalBroadcast)
 
 	// Cluster heartbeat / status endpoints.
-	internal.GET("/clusters/status", m.handleClusterStatus)
-	internal.GET("/status", m.handleInternalStatus)
+	legacy.GET("/clusters/status", m.handleClusterStatus)
+	legacy.GET("/status", m.handleInternalStatus)
 
 	// Images catalog endpoints.
-	internal.GET("/images-catalog", m.handleImagesCatalogList)
-	internal.POST("/images-catalog", m.handleImagesCatalogUpsert)
-	internal.PUT("/images-catalog/:id", m.handleImagesCatalogUpsert)
-	internal.DELETE("/images-catalog/:id", m.handleImagesCatalogDelete)
+	legacy.GET("/images-catalog", m.handleImagesCatalogList)
+	legacy.POST("/images-catalog", m.handleImagesCatalogUpsert)
+	legacy.PUT("/images-catalog/:id", m.handleImagesCatalogUpsert)
+	legacy.DELETE("/images-catalog/:id", m.handleImagesCatalogDelete)
 
 	return r
 }
@@ -326,158 +367,6 @@ func (m *SyncManager) handleInternalBroadcast(c *gin.Context) {
 // appErrStatus maps a domain.AppError to the appropriate HTTP status code.
 func appErrStatus(err *domain.AppError) int {
 	return int(err.Code)
-}
-
-func (m *SyncManager) handleInternalTemplateList(c *gin.Context) {
-	if m.deps.TemplateService == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "template sync not configured"})
-		return
-	}
-	team := c.Query("team")
-	user := c.Query("user")
-	isAdmin := team == "" && user == ""
-	auth := domain.AuthInfo{Team: team, User: user}
-
-	ctx := c.Request.Context()
-	items, appErr := m.deps.TemplateService.List(ctx, auth, isAdmin)
-	if appErr != nil {
-		log.Printf("syncManager: internal template list error: %v", appErr)
-		c.JSON(appErrStatus(appErr), gin.H{"error": appErr.Message})
-		return
-	}
-
-	summaries := make([]any, len(items))
-	for i := range items {
-		summaries[i] = service.TemplateToSummaryGen(&items[i])
-	}
-	c.JSON(http.StatusOK, gin.H{"items": summaries, "total": len(summaries)})
-}
-
-func (m *SyncManager) handleInternalTemplateGet(c *gin.Context) {
-	if m.deps.TemplateService == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "template sync not configured"})
-		return
-	}
-	name := c.Param("name")
-	ctx := c.Request.Context()
-	tmpl, appErr := m.deps.TemplateService.Get(ctx, name)
-	if appErr != nil {
-		c.JSON(appErrStatus(appErr), gin.H{"error": appErr.Message})
-		return
-	}
-	c.JSON(http.StatusOK, service.TemplateToGen(tmpl))
-}
-
-func (m *SyncManager) handleInternalTemplateCreate(c *gin.Context) {
-	if m.deps.TemplateService == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "template sync not configured"})
-		return
-	}
-
-	tmpl, ok := parseCRDBody(c)
-	if !ok {
-		return
-	}
-	if tmpl.Labels == nil {
-		tmpl.Labels = make(map[string]string)
-	}
-	tmpl.Labels["agentbox.io/sync-source"] = agentsv1alpha1.LabelSyncSourceGlobal
-
-	ctx := c.Request.Context()
-	result, appErr := m.deps.TemplateService.Create(ctx, tmpl)
-	if appErr != nil {
-		log.Printf("syncManager: internal template create error: %v", appErr)
-		c.JSON(appErrStatus(appErr), gin.H{"error": appErr.Message})
-		return
-	}
-
-	if sf, fErr := templateDomainToFrame(result); fErr == nil {
-		sf.Type = protocol.FrameTemplateSync
-		m.broadcast(sf)
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"name": result.Name})
-}
-
-func (m *SyncManager) handleInternalTemplateUpdate(c *gin.Context) {
-	if m.deps.TemplateService == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "template sync not configured"})
-		return
-	}
-	name := c.Param("name")
-
-	desired, ok := parseCRDBody(c)
-	if !ok {
-		return
-	}
-	desired.Name = name
-	if desired.Labels == nil {
-		desired.Labels = make(map[string]string)
-	}
-	desired.Labels["agentbox.io/sync-source"] = "global"
-
-	ctx := c.Request.Context()
-	result, appErr := m.deps.TemplateService.Update(ctx, desired)
-	if appErr != nil {
-		log.Printf("syncManager: internal template update error: %v", appErr)
-		c.JSON(appErrStatus(appErr), gin.H{"error": appErr.Message})
-		return
-	}
-
-	if sf, fErr := templateDomainToFrame(result); fErr == nil {
-		sf.Type = protocol.FrameTemplateSync
-		m.broadcast(sf)
-	}
-
-	c.JSON(http.StatusOK, gin.H{"name": result.Name})
-}
-
-func (m *SyncManager) handleInternalTemplateDelete(c *gin.Context) {
-	if m.deps.TemplateService == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "template sync not configured"})
-		return
-	}
-	name := c.Param("name")
-	ctx := c.Request.Context()
-	if appErr := m.deps.TemplateService.Delete(ctx, name); appErr != nil {
-		log.Printf("syncManager: internal template delete error: %v", appErr)
-		c.JSON(appErrStatus(appErr), gin.H{"error": appErr.Message})
-		return
-	}
-	m.broadcast(protocol.Frame{Type: protocol.FrameTemplateDeleteSync, Name: name})
-	c.Status(http.StatusNoContent)
-}
-
-// parseCRDBody decodes the request body as { "crdObject": <json> } or as a raw
-// SandboxTemplate JSON, and unmarshals it into an agentsv1alpha1.SandboxTemplate.
-// Returns false and writes an error response if parsing fails.
-func parseCRDBody(c *gin.Context) (*agentsv1alpha1.SandboxTemplate, bool) {
-	type withCRD struct {
-		CRDObject json.RawMessage `json:"crdObject"`
-	}
-	var wrapper withCRD
-	raw, err := io.ReadAll(c.Request.Body)
-	if err != nil || len(raw) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "empty body"})
-		return nil, false
-	}
-	_ = json.Unmarshal(raw, &wrapper)
-
-	payload := raw
-	if len(wrapper.CRDObject) > 0 {
-		payload = wrapper.CRDObject
-	}
-
-	tmpl := &agentsv1alpha1.SandboxTemplate{}
-	if err := json.Unmarshal(payload, tmpl); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body: " + err.Error()})
-		return nil, false
-	}
-	if tmpl.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "metadata.name is required"})
-		return nil, false
-	}
-	return tmpl, true
 }
 
 // ── Cluster status / heartbeat endpoints ─────────────────────────────────────

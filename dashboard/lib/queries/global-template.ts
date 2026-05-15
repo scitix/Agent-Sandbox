@@ -16,91 +16,80 @@
 
 // Query options and mutations for Global SandboxTemplate management.
 //
-// All operations go through BFF → ws-proxy internal API, which reads/writes
+// All operations go through the hub proxy (/api/hub → wsproxy), which reads/writes
 // from the Master cluster and broadcasts changes to all Worker clusters.
 // This ensures ResourceVersion is always from Master, eliminating 409 conflicts
 // caused by mismatched Worker/Master versions.
 
-import { useMutation, useQueryClient, queryOptions } from "@tanstack/react-query"
-import type { AgentSandboxTemplate, AgentSandboxTemplateSummary } from "@/lib/api/client"
-import { bff } from "@/lib/api/bff-client"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { getHubApiClient, getHubFetchClient } from "@/lib/api/hub-client"
 import { delayedInvalidate } from "./utils"
 
-// ─── BFF calls ───────────────────────────────────────────────────────────────
-
-async function fetchGlobalTemplates(): Promise<AgentSandboxTemplateSummary[]> {
-  const data = await bff.get("api/global-templates").json<{ items?: AgentSandboxTemplateSummary[] }>()
-  return data.items ?? []
-}
-
-async function fetchGlobalTemplate(name: string): Promise<{ template: AgentSandboxTemplate }> {
-  return bff.get(`api/global-templates/${encodeURIComponent(name)}`).json()
-}
-
-async function createGlobalTemplate(body: {
-  name?: string
-  spec?: unknown
-  crdYaml?: string
-}): Promise<{ name: string }> {
-  return bff.post("api/global-templates", { json: body }).json()
-}
-
-async function updateGlobalTemplate(args: {
-  name: string
-  spec?: unknown
-  crdYaml?: string
-}): Promise<{ name: string }> {
-  const { name, ...body } = args
-  return bff.put(`api/global-templates/${encodeURIComponent(name)}`, { json: body }).json()
-}
-
-async function deleteGlobalTemplate(name: string): Promise<void> {
-  await bff.delete(`api/global-templates/${encodeURIComponent(name)}`)
-}
-
-// ─── Query options (Master reads via BFF) ────────────────────────────────────
+// ─── Query options (Master reads via hub proxy) ───────────────────────────────
 
 export const globalTemplatesQueryOptions = () =>
-  queryOptions({
-    queryKey: ["global-templates"],
-    queryFn: fetchGlobalTemplates,
+  getHubApiClient().queryOptions("get", "/v1/sandbox-templates", {}, {
+    select: (data) => data.items ?? [],
   })
 
 export const globalTemplateQueryOptions = (name: string) =>
-  queryOptions({
-    queryKey: ["global-templates", name],
-    queryFn: () => fetchGlobalTemplate(name),
-    enabled: !!name,
-  })
+  getHubApiClient().queryOptions(
+    "get",
+    "/v1/sandbox-templates/{name}",
+    { params: { path: { name } } },
+    { enabled: !!name },
+  )
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 export function useCreateGlobalTemplate() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: createGlobalTemplate,
-    onSuccess: () => delayedInvalidate(qc, ["global-templates"]),
+    mutationFn: async (body: { crdJson: string }) => {
+      const { data, error } = await getHubFetchClient().POST("/v1/admin/sandbox-templates", {
+        body,
+      })
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => delayedInvalidate(qc, ["get", "/v1/sandbox-templates"]),
   })
 }
 
 export function useUpdateGlobalTemplate() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: updateGlobalTemplate,
-    onSuccess: () => delayedInvalidate(qc, ["global-templates"]),
+    mutationFn: async (args: { name: string; crdJson: string }) => {
+      const { data, error } = await getHubFetchClient().PUT(
+        "/v1/admin/sandbox-templates/{name}",
+        { params: { path: { name: args.name } }, body: { crdJson: args.crdJson } },
+      )
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => delayedInvalidate(qc, ["get", "/v1/sandbox-templates"]),
   })
 }
 
 export function useDeleteGlobalTemplate() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: deleteGlobalTemplate,
-    onSuccess: () => delayedInvalidate(qc, ["global-templates"]),
+    mutationFn: async (name: string) => {
+      const { error } = await getHubFetchClient().DELETE(
+        "/v1/admin/sandbox-templates/{name}",
+        { params: { path: { name } } },
+      )
+      if (error) throw error
+    },
+    onSuccess: () => delayedInvalidate(qc, ["get", "/v1/sandbox-templates"]),
   })
 }
 
 // ─── Imperative helpers (for batch operations) ───────────────────────────────
 
 export async function deleteGlobalTemplateImperative(name: string): Promise<void> {
-  return deleteGlobalTemplate(name)
+  const { error } = await getHubFetchClient().DELETE("/v1/admin/sandbox-templates/{name}", {
+    params: { path: { name } },
+  })
+  if (error) throw error
 }

@@ -115,7 +115,7 @@ func TestSandboxTemplateService_List_MultipleTemplates(t *testing.T) {
 func TestSandboxTemplateService_Get_NotFound(t *testing.T) {
 	svc := newTestSandboxTemplateService(t)
 
-	_, appErr := svc.Get(context.Background(), "nonexistent")
+	_, appErr := svc.Get(context.Background(), "nonexistent", domain.AuthInfo{}, true)
 	if appErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -129,7 +129,7 @@ func TestSandboxTemplateService_Get_Success(t *testing.T) {
 	tmpl.Spec.Description = "A useful template"
 	svc := newTestSandboxTemplateService(t, tmpl)
 
-	result, appErr := svc.Get(context.Background(), "tmpl-a")
+	result, appErr := svc.Get(context.Background(), "tmpl-a", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
@@ -182,7 +182,7 @@ func TestSandboxTemplateService_Create_Success(t *testing.T) {
 	}
 
 	// Verify it can be retrieved
-	fetched, appErr := svc.Get(context.Background(), "new-template")
+	fetched, appErr := svc.Get(context.Background(), "new-template", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("get after create: %v", appErr)
 	}
@@ -237,7 +237,7 @@ func TestSandboxTemplateService_Delete_Success(t *testing.T) {
 	}
 
 	// Verify it's gone
-	_, getErr := svc.Get(context.Background(), "tmpl-to-delete")
+	_, getErr := svc.Get(context.Background(), "tmpl-to-delete", domain.AuthInfo{}, true)
 	if getErr == nil {
 		t.Fatal("expected not-found error after delete, got nil")
 	}
@@ -597,7 +597,7 @@ func TestSandboxTemplateService_CreateOrUpdate_Create(t *testing.T) {
 		t.Fatalf("CreateOrUpdate (create path) error: %v", appErr)
 	}
 
-	got, getErr := svc.Get(context.Background(), "tmpl-upsert")
+	got, getErr := svc.Get(context.Background(), "tmpl-upsert", domain.AuthInfo{}, true)
 	if getErr != nil {
 		t.Fatalf("Get() after CreateOrUpdate error: %v", getErr)
 	}
@@ -619,7 +619,7 @@ func TestSandboxTemplateService_CreateOrUpdate_Update(t *testing.T) {
 		t.Fatalf("CreateOrUpdate (update path) error: %v", appErr)
 	}
 
-	got, getErr := svc.Get(context.Background(), "tmpl-upsert")
+	got, getErr := svc.Get(context.Background(), "tmpl-upsert", domain.AuthInfo{}, true)
 	if getErr != nil {
 		t.Fatalf("Get() after CreateOrUpdate error: %v", getErr)
 	}
@@ -665,7 +665,7 @@ func TestUpdate_OptimisticLock_HappyPath(t *testing.T) {
 	svc := newTestSandboxTemplateService(t, tmpl)
 
 	// GET to obtain crdYaml which contains the current resourceVersion.
-	got, appErr := svc.Get(context.Background(), "tmpl-lock")
+	got, appErr := svc.Get(context.Background(), "tmpl-lock", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("get: %v", appErr)
 	}
@@ -706,7 +706,7 @@ func TestUpdate_OptimisticLock_AnnotationsPreserved(t *testing.T) {
 	tmpl.Annotations = map[string]string{"agentbox.navix.sh/docs": "original docs"}
 	svc := newTestSandboxTemplateService(t, tmpl)
 
-	got, appErr := svc.Get(context.Background(), "tmpl-ann")
+	got, appErr := svc.Get(context.Background(), "tmpl-ann", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("get: %v", appErr)
 	}
@@ -736,7 +736,7 @@ func TestUpdate_OptimisticLock_AnnotationsPreserved(t *testing.T) {
 	}
 
 	// Re-GET and verify annotation is still there.
-	after, appErr := svc.Get(context.Background(), "tmpl-ann")
+	after, appErr := svc.Get(context.Background(), "tmpl-ann", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("get after update: %v", appErr)
 	}
@@ -750,7 +750,7 @@ func TestUpdate_OptimisticLock_StaleRV_ReturnsConflict(t *testing.T) {
 	svc := newTestSandboxTemplateService(t, tmpl)
 
 	// First update bumps the resourceVersion.
-	got, _ := svc.Get(context.Background(), "tmpl-stale")
+	got, _ := svc.Get(context.Background(), "tmpl-stale", domain.AuthInfo{}, true)
 	rv := extractResourceVersion(t, got.CrdYaml)
 
 	_, _ = svc.Update(context.Background(), ptr.To(agentsv1alpha1.SandboxTemplate{
@@ -808,7 +808,7 @@ func TestGet_CrdYaml_ContainsExpectedFields(t *testing.T) {
 	tmpl.Annotations = map[string]string{"agentbox.navix.sh/docs": "hello docs"}
 	svc := newTestSandboxTemplateService(t, tmpl)
 
-	got, appErr := svc.Get(context.Background(), "tmpl-yaml")
+	got, appErr := svc.Get(context.Background(), "tmpl-yaml", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("get: %v", appErr)
 	}
@@ -831,7 +831,7 @@ func TestGet_CrdYaml_ContainsResourceVersion(t *testing.T) {
 	tmpl := makeSandboxTemplate("tmpl-rv", "1.0.0")
 	svc := newTestSandboxTemplateService(t, tmpl)
 
-	got, appErr := svc.Get(context.Background(), "tmpl-rv")
+	got, appErr := svc.Get(context.Background(), "tmpl-rv", domain.AuthInfo{}, true)
 	if appErr != nil {
 		t.Fatalf("get: %v", appErr)
 	}
