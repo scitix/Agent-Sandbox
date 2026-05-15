@@ -113,3 +113,29 @@ func TestBroadcastClusterConfig_WithGateway(t *testing.T) {
 		t.Errorf("NativeURL = %q", cfg.Clusters[0].Gateway.NativeURL)
 	}
 }
+
+func TestBroadcastClusterConfig_SuppressesRepeatLog(t *testing.T) {
+	entries := []cluster.ClusterEntry{
+		{ID: "cluster-a", URL: "https://a.example.com"},
+	}
+	store := cluster.NewStore()
+	store.ApplyConfig(cluster.ClusterConfig{Clusters: entries})
+
+	sm := syncmgr.New(store, "token", "mgr", syncmgr.Deps{})
+
+	// First broadcast — hash transitions from zero to the content hash.
+	sm.BroadcastClusterConfig()
+
+	raw1 := sm.ExportClusterConfigSnapshot()
+	if len(raw1) == 0 {
+		t.Fatal("expected non-empty snapshot after first broadcast")
+	}
+
+	// Second broadcast with identical config — hash unchanged, no log emitted.
+	sm.BroadcastClusterConfig()
+	raw2 := sm.ExportClusterConfigSnapshot()
+
+	if string(raw1) != string(raw2) {
+		t.Errorf("snapshot changed unexpectedly:\n  first:  %s\n  second: %s", raw1, raw2)
+	}
+}

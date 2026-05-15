@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncmgr
+package handlers
 
 import (
 	"context"
@@ -22,15 +22,16 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	wsproxygen "github.com/scitix/agent-sandbox/pkg/wsproxy/gen"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/syncmgr"
 )
 
 // ── ListImagesCatalog ─────────────────────────────────────────────────────────
 
-func (s *templateServer) ListImagesCatalog(
+func (s *Server) ListImagesCatalog(
 	ctx context.Context,
 	_ wsproxygen.ListImagesCatalogRequestObject,
 ) (wsproxygen.ListImagesCatalogResponseObject, error) {
-	datasets, err := s.m.loadCatalog(ctx)
+	datasets, err := s.m.LoadCatalog(ctx)
 	if err != nil {
 		log.Printf("syncManager: images catalog list error: %v", err)
 		return wsproxygen.ListImagesCatalog503JSONResponse{Error: "failed to load catalog"}, nil
@@ -40,7 +41,7 @@ func (s *templateServer) ListImagesCatalog(
 
 // ── CreateImageDataset ────────────────────────────────────────────────────────
 
-func (s *templateServer) CreateImageDataset(
+func (s *Server) CreateImageDataset(
 	ctx context.Context,
 	request wsproxygen.CreateImageDatasetRequestObject,
 ) (wsproxygen.CreateImageDatasetResponseObject, error) {
@@ -53,7 +54,7 @@ func (s *templateServer) CreateImageDataset(
 		return wsproxygen.CreateImageDataset400JSONResponse{Error: "id and name are required"}, nil
 	}
 
-	datasets, err := s.m.loadCatalog(ctx)
+	datasets, err := s.m.LoadCatalog(ctx)
 	if err != nil {
 		log.Printf("syncManager: images catalog create load error: %v", err)
 		return wsproxygen.CreateImageDataset503JSONResponse{Error: "failed to load catalog"}, nil
@@ -71,7 +72,7 @@ func (s *templateServer) CreateImageDataset(
 		datasets = append(datasets, dataset)
 	}
 
-	if err := s.m.saveCatalog(ctx, datasets); err != nil {
+	if err := s.m.SaveCatalog(ctx, datasets); err != nil {
 		log.Printf("syncManager: images catalog create save error: %v", err)
 		return wsproxygen.CreateImageDataset503JSONResponse{Error: "failed to save catalog"}, nil
 	}
@@ -85,7 +86,7 @@ func (s *templateServer) CreateImageDataset(
 
 // ── UpdateImageDataset ────────────────────────────────────────────────────────
 
-func (s *templateServer) UpdateImageDataset(
+func (s *Server) UpdateImageDataset(
 	ctx context.Context,
 	request wsproxygen.UpdateImageDatasetRequestObject,
 ) (wsproxygen.UpdateImageDatasetResponseObject, error) {
@@ -96,7 +97,7 @@ func (s *templateServer) UpdateImageDataset(
 	dataset := imageDatasetFromGen(request.Body)
 	dataset.ID = request.Id
 
-	datasets, err := s.m.loadCatalog(ctx)
+	datasets, err := s.m.LoadCatalog(ctx)
 	if err != nil {
 		log.Printf("syncManager: images catalog update load error: %v", err)
 		return wsproxygen.UpdateImageDataset503JSONResponse{Error: "failed to load catalog"}, nil
@@ -114,7 +115,7 @@ func (s *templateServer) UpdateImageDataset(
 		return wsproxygen.UpdateImageDataset404JSONResponse{Error: "dataset not found"}, nil
 	}
 
-	if err := s.m.saveCatalog(ctx, datasets); err != nil {
+	if err := s.m.SaveCatalog(ctx, datasets); err != nil {
 		log.Printf("syncManager: images catalog update save error: %v", err)
 		return wsproxygen.UpdateImageDataset503JSONResponse{Error: "failed to save catalog"}, nil
 	}
@@ -124,7 +125,7 @@ func (s *templateServer) UpdateImageDataset(
 
 // ── DeleteImageDataset ────────────────────────────────────────────────────────
 
-func (s *templateServer) DeleteImageDataset(
+func (s *Server) DeleteImageDataset(
 	ctx context.Context,
 	request wsproxygen.DeleteImageDatasetRequestObject,
 ) (wsproxygen.DeleteImageDatasetResponseObject, error) {
@@ -133,7 +134,7 @@ func (s *templateServer) DeleteImageDataset(
 		return wsproxygen.DeleteImageDataset403JSONResponse{Error: "admin access required"}, nil
 	}
 
-	datasets, err := s.m.loadCatalog(ctx)
+	datasets, err := s.m.LoadCatalog(ctx)
 	if err != nil {
 		log.Printf("syncManager: images catalog delete load error: %v", err)
 		return wsproxygen.DeleteImageDataset503JSONResponse{Error: "failed to load catalog"}, nil
@@ -152,7 +153,7 @@ func (s *templateServer) DeleteImageDataset(
 		return wsproxygen.DeleteImageDataset404JSONResponse{Error: "dataset not found"}, nil
 	}
 
-	if err := s.m.saveCatalog(ctx, filtered); err != nil {
+	if err := s.m.SaveCatalog(ctx, filtered); err != nil {
 		log.Printf("syncManager: images catalog delete save error: %v", err)
 		return wsproxygen.DeleteImageDataset503JSONResponse{Error: "failed to save catalog"}, nil
 	}
@@ -162,8 +163,8 @@ func (s *templateServer) DeleteImageDataset(
 
 // ── conversion helpers ────────────────────────────────────────────────────────
 
-func imageDatasetFromGen(g *wsproxygen.ImageDataset) ImageDataset {
-	d := ImageDataset{
+func imageDatasetFromGen(g *wsproxygen.ImageDataset) syncmgr.ImageDataset {
+	d := syncmgr.ImageDataset{
 		ID:   g.Id,
 		Name: g.Name,
 	}
@@ -191,7 +192,7 @@ func imageDatasetFromGen(g *wsproxygen.ImageDataset) ImageDataset {
 	return d
 }
 
-func imageDatasetToGen(d ImageDataset) wsproxygen.ImageDataset {
+func imageDatasetToGen(d syncmgr.ImageDataset) wsproxygen.ImageDataset {
 	g := wsproxygen.ImageDataset{
 		Id:   d.ID,
 		Name: d.Name,
@@ -224,7 +225,7 @@ func imageDatasetToGen(d ImageDataset) wsproxygen.ImageDataset {
 	return g
 }
 
-func imageDatasetsToGen(datasets []ImageDataset) []wsproxygen.ImageDataset {
+func imageDatasetsToGen(datasets []syncmgr.ImageDataset) []wsproxygen.ImageDataset {
 	result := make([]wsproxygen.ImageDataset, len(datasets))
 	for i, d := range datasets {
 		result[i] = imageDatasetToGen(d)

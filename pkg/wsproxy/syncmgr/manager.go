@@ -24,11 +24,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/scitix/agent-sandbox/pkg/api/protocol"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 )
 
@@ -91,15 +93,18 @@ type SyncManager struct {
 	managerToken string
 	startedAt    time.Time
 
-	mu               sync.RWMutex
-	registry         map[string]*clusterSyncConn
-	lastConnected    map[string]time.Time
-	lastDisconnected map[string]time.Time
+	mu                sync.RWMutex
+	registry          map[string]*clusterSyncConn
+	lastConnected     map[string]time.Time
+	lastDisconnected  map[string]time.Time
+	lastBroadcastHash [32]byte
 }
 
 // Deps bundles all optional dependencies injected into SyncManager.
 type Deps struct {
 	KeyStore        KeyStore
+	AdminKeyMgr     *apikey.AdminKeyManager        // validates the shared admin key; nil = dev mode
+	IAMService      service.IAMService             // namespace resolution for API key auth; may be nil
 	TemplateClient  client.Client                  // websocket sync path: raw K8s ops + snapshot
 	TemplateService service.SandboxTemplateService // internal HTTP API: business logic + rendered responses
 	MaxPerUser      int
@@ -272,6 +277,29 @@ func (m *SyncManager) handleWorkerFrame(ctx context.Context, sc *clusterSyncConn
 	}
 }
 
+// Broadcast sends a frame to all connected Worker clusters.
+// Exported for use by the handlers subpackage.
+func (m *SyncManager) Broadcast(frame protocol.Frame) {
+	m.broadcast(frame)
+}
+
+// GetDeps returns the Deps struct for read-only access by the handlers subpackage.
+func (m *SyncManager) GetDeps() Deps {
+	return m.deps
+}
+
+// LoadCatalog reads the images catalog from the master cluster's ConfigMap.
+// Exported for use by the handlers subpackage.
+func (m *SyncManager) LoadCatalog(ctx context.Context) ([]ImageDataset, error) {
+	return m.loadCatalog(ctx)
+}
+
+// SaveCatalog writes the images catalog to the master cluster's ConfigMap.
+// Exported for use by the handlers subpackage.
+func (m *SyncManager) SaveCatalog(ctx context.Context, datasets []ImageDataset) error {
+	return m.saveCatalog(ctx, datasets)
+}
+
 // broadcast sends a frame to all connected Worker clusters.
 func (m *SyncManager) broadcast(frame protocol.Frame) {
 	m.mu.RLock()
@@ -286,6 +314,22 @@ func (m *SyncManager) broadcast(frame protocol.Frame) {
 			log.Printf("syncManager: broadcast to cluster %s failed: %v", c.clusterID, err)
 		}
 	}
+}
+
+// RegisterLegacyRoutes registers the legacy /internal/* HTTP handlers onto the
+// provided Gin RouterGroup. Called by server.NewInternalServer so the legacy
+// routes remain accessible after the Gin engine is assembled outside SyncManager.
+func (m *SyncManager) RegisterLegacyRoutes(rg *gin.RouterGroup) {
+	rg.POST("/api-keys", m.handleInternalCreate)
+	rg.GET("/api-keys", m.handleInternalList)
+	rg.DELETE("/api-keys/:name", m.handleInternalDelete)
+	rg.POST("/broadcast", m.handleInternalBroadcast)
+	rg.GET("/clusters/status", m.handleClusterStatus)
+	rg.GET("/status", m.handleInternalStatus)
+	rg.GET("/images-catalog", m.handleImagesCatalogList)
+	rg.POST("/images-catalog", m.handleImagesCatalogUpsert)
+	rg.PUT("/images-catalog/:id", m.handleImagesCatalogUpsert)
+	rg.DELETE("/images-catalog/:id", m.handleImagesCatalogDelete)
 }
 
 // ClusterIDs returns a snapshot of known cluster IDs (for logging / status).

@@ -16,32 +16,22 @@
 // (cmd/wsproxy). It hosts two endpoints:
 //
 //   - Terminal WebSocket proxy (default :9003): routes dashboard terminal
-//     connections to the appropriate Worker cluster's sandbox terminal
-//     endpoint.
+//     connections to the appropriate Worker cluster's sandbox terminal endpoint.
 //   - Sync manager + internal HTTP API (default :9004, enabled when
 //     AGENTBOX_SYNC_TOKEN is set): maintains persistent WebSocket connections
-//     to every Worker cluster and exposes /internal/* endpoints for the
-//     Dashboard BFF to manage global API keys and SandboxTemplates.
+//     to every Worker cluster and exposes management endpoints for API keys,
+//     SandboxTemplates, and cluster config.
 //
-// Downstream (closed-source) distributions should import this package and
-// invoke Run() from their thin main() wrapper so they stay in sync with
-// upstream wiring changes.
+// Downstream distributions should import this package and invoke Run() from
+// their thin main() wrapper to stay in sync with upstream wiring changes.
 package wsproxy
 
 import (
 	"context"
-	"fmt"
-	"io"
+	"flag"
 	"log"
-	"net/http"
-	"net/url"
-	"os"
-	"path"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -52,260 +42,96 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/config"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/server"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/syncmgr"
 )
 
-const defaultClustersFile = "/etc/agentbox/clusters.yaml"
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin:     func(_ *http.Request) bool { return true },
-	ReadBufferSize:  4096,
-	WriteBufferSize: 4096,
-}
-
-var dialer = websocket.Dialer{
-	HandshakeTimeout: 10 * time.Second,
-}
-
-// bridgeConns copies messages bidirectionally between two WebSocket connections
-// until one of them closes or returns an error.
-func bridgeConns(a, b *websocket.Conn) {
-	done := make(chan struct{}, 2)
-	copyFn := func(src, dst *websocket.Conn) {
-		defer func() { done <- struct{}{} }()
-		for {
-			msgType, msg, err := src.ReadMessage()
-			if err != nil {
-				return
-			}
-			if err := dst.WriteMessage(msgType, msg); err != nil {
-				return
-			}
-		}
-	}
-	go copyFn(a, b)
-	go copyFn(b, a)
-	<-done
-}
-
-// proxyHandler proxies WebSocket terminal connections from the Dashboard to the
-// target Worker cluster.  It expects the path:
-//
-//	/ws/clusters/{clusterID}/sandboxes/{sandboxId}/terminal
-//	(or with an arbitrary prefix before "/ws/")
-func proxyHandler(store *cluster.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		log.Printf("wsproxy: incoming request path=%q", p)
-
-		const wsMarker = "/ws/"
-		idx := strings.Index(p, wsMarker)
-		if idx == -1 {
-			if !strings.HasSuffix(p, "/ws") {
-				log.Printf("wsproxy: path %q does not contain /ws/, returning 404", p)
-				http.Error(w, "invalid path", http.StatusNotFound)
-				return
-			}
-			p = ""
-		} else {
-			p = p[idx+len(wsMarker)-1:]
-		}
-
-		parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
-		log.Printf("wsproxy: parsed path parts=%v", parts)
-		if len(parts) != 5 || parts[0] != "clusters" || parts[2] != "sandboxes" || parts[4] != "terminal" {
-			log.Printf("wsproxy: invalid path structure, parts=%v", parts)
-			http.Error(w, "invalid path", http.StatusNotFound)
-			return
-		}
-		clusterID := parts[1]
-		sandboxID := parts[3]
-
-		token := r.URL.Query().Get("token")
-		if token == "" {
-			http.Error(w, "token query parameter is required", http.StatusUnauthorized)
-			return
-		}
-
-		entry, ok := store.Get(clusterID)
-		if !ok {
-			allIDs := func() []string {
-				all := store.All()
-				ids := make([]string, 0, len(all))
-				for _, e := range all {
-					ids = append(ids, e.ID)
-				}
-				return ids
-			}()
-			log.Printf("wsproxy: cluster %q not found (known clusters: %v)", clusterID, allIDs)
-			http.Error(w, fmt.Sprintf("cluster %q not found", clusterID), http.StatusBadGateway)
-			return
-		}
-
-		upstream, err := url.Parse(entry.URL)
-		if err != nil {
-			log.Printf("wsproxy: invalid cluster URL %q: %v", entry.URL, err)
-			http.Error(w, "invalid cluster URL", http.StatusInternalServerError)
-			return
-		}
-		upstream.Scheme = toWSScheme(upstream.Scheme)
-		upstream.Path = path.Join(upstream.Path, "v1", "sandboxes", sandboxID, "terminal")
-		q := url.Values{"token": []string{token}}
-		upstream.RawQuery = q.Encode()
-
-		log.Printf("wsproxy: dialing upstream %s", upstream.String())
-
-		upstreamHeader := http.Header{}
-		for k, v := range entry.Headers {
-			upstreamHeader.Set(k, v)
-		}
-		upstreamConn, _, err := dialer.Dial(upstream.String(), upstreamHeader)
-		if err != nil {
-			log.Printf("wsproxy: dial %s failed: %v", upstream, err)
-			http.Error(w, "upstream connection failed", http.StatusBadGateway)
-			return
-		}
-		defer upstreamConn.Close() //nolint:errcheck
-
-		clientConn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("wsproxy: client upgrade failed: %v", err)
-			return
-		}
-		defer clientConn.Close() //nolint:errcheck
-
-		log.Printf("wsproxy: proxying terminal cluster=%s sandbox=%s", clusterID, sandboxID)
-		bridgeConns(clientConn, upstreamConn)
-		log.Printf("wsproxy: terminal session ended cluster=%s sandbox=%s", clusterID, sandboxID)
-	}
-}
-
-func toWSScheme(scheme string) string {
-	switch scheme {
-	case "https":
-		return "wss"
-	case "wss", "ws":
-		return scheme
-	default:
-		return "ws"
-	}
-}
-
-// buildScheme returns the runtime.Scheme used by the k8s client. The wsproxy
-// only needs core types plus the agents.navix.sh CRDs (for SandboxTemplate
-// sync). Kept small to minimize binary size.
-func buildScheme() *runtime.Scheme {
-	s := runtime.NewScheme()
-	utilruntime.Must(clientgoscheme.AddToScheme(s))
-	utilruntime.Must(agentsv1alpha1.AddToScheme(s))
-	return s
-}
-
-// Run is the single entry point for cmd/wsproxy. It reads configuration from
-// environment variables, starts the terminal proxy, and optionally starts the
-// sync manager + internal HTTP API. Blocks forever.
+// Run is the single entry point for cmd/wsproxy. It parses flags (with env-var
+// defaults), assembles the terminal proxy and optional sync manager layers,
+// and blocks until the process is killed.
 func Run() {
-	listenAddr := os.Getenv("WSPROXY_LISTEN_ADDR")
-	if listenAddr == "" {
-		listenAddr = ":9003"
+	cfg := config.FromFlags(flag.CommandLine)
+	flag.Parse()
+
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("wsproxy: configuration error: %v", err)
 	}
 
-	clustersFilePath := os.Getenv("CLUSTERS_CONFIG_PATH")
-	if clustersFilePath == "" {
-		clustersFilePath = defaultClustersFile
+	if cfg.AdminKey == "" {
+		log.Printf("wsproxy: WARNING: AGENTBOX_ADMIN_KEY is not set — running in dev mode" +
+			" (all requests authenticated as admin)")
 	}
 
-	// Use the shared cluster.Store so both the terminal proxy and sync manager
-	// read from the same in-memory view and benefit from Gateway fields.
+	// ── Cluster store ─────────────────────────────────────────────────────────
+
 	store := cluster.NewStore()
-	if err := store.LoadFromFile(clustersFilePath); err != nil {
+	if err := store.LoadFromFile(cfg.ClustersFilePath); err != nil {
 		log.Printf("wsproxy: initial cluster config load failed (continuing): %v", err)
 	}
 
-	// Terminal WS proxy.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", proxyHandler(store))
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, "ok") //nolint:errcheck
-	})
+	// ── Layer 1: Terminal WebSocket proxy (:9003) ─────────────────────────────
 
-	log.Printf("wsproxy: listening on %s", listenAddr)
+	terminalSrv := server.NewTerminalServer(cfg, store)
 	go func() {
-		if err := http.ListenAndServe(listenAddr, mux); err != nil { //nolint:gosec
-			log.Fatalf("wsproxy: listen error: %v", err)
+		log.Printf("wsproxy: terminal proxy listening on %s", cfg.ListenAddr)
+		if err := terminalSrv.ListenAndServe(); err != nil {
+			log.Fatalf("wsproxy: terminal proxy error: %v", err)
 		}
 	}()
 
-	syncToken := os.Getenv("AGENTBOX_SYNC_TOKEN")
-	managerToken := os.Getenv("AGENTBOX_MANAGER_TOKEN")
+	// ── Layer 2: Sync manager + internal API (:9004) ──────────────────────────
 
 	var sm *syncmgr.SyncManager
 
-	if syncToken != "" {
-		internalAddr := os.Getenv("WSPROXY_INTERNAL_ADDR")
-		if internalAddr == "" {
-			internalAddr = ":9004"
-		}
-
-		maxPerUser := 0
-		if v := os.Getenv("AGENTBOX_MAX_KEYS_PER_USER"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				maxPerUser = n
-			}
-		}
-
-		apikeyNamespace := os.Getenv("AGENTBOX_APIKEY_NAMESPACE")
-		if apikeyNamespace == "" {
-			apikeyNamespace = "agentbox-system"
-		}
-
-		cfg := ctrl.GetConfigOrDie()
-		k8sClient, err := client.New(cfg, client.Options{Scheme: buildScheme()})
-		if err != nil {
-			log.Fatalf("wsproxy: failed to create k8s client: %v", err)
-		}
+	if cfg.SyncEnabled() {
+		k8sClient := buildK8sClient()
 
 		ks := apikey.NewSecretKeyStore(apikey.SecretKeyStoreConfig{
 			Client:           k8sClient,
-			SecretsNamespace: apikeyNamespace,
+			SecretsNamespace: cfg.APIKeyNamespace,
 			CacheTTL:         time.Minute,
 		})
 
+		adminKeyMgr := apikey.NewAdminKeyManager(cfg.AdminKey)
 		templateSvc := service.NewSandboxTemplateService(k8sClient)
 
-		sm = syncmgr.New(store, syncToken, managerToken, syncmgr.Deps{
+		sm = syncmgr.New(store, cfg.SyncToken, cfg.ManagerToken, syncmgr.Deps{
 			KeyStore:        ks,
+			AdminKeyMgr:     adminKeyMgr,
 			TemplateClient:  k8sClient,
 			TemplateService: templateSvc,
-			MaxPerUser:      maxPerUser,
-			JWTSecret:       os.Getenv("JWT_SECRET"),
+			MaxPerUser:      cfg.MaxKeysPerUser,
+			JWTSecret:       cfg.JWTSecret,
 		})
 
-		internalSrv := &http.Server{
-			Addr:              internalAddr,
-			Handler:           sm.InternalAPIHandler(),
-			ReadHeaderTimeout: 5 * time.Second,
-		}
+		internalSrv := server.NewInternalServer(cfg, server.RouterDeps{
+			SyncManager:  sm,
+			AdminKeyMgr:  adminKeyMgr,
+			KeyStore:     ks,
+			JWTSecret:    cfg.JWTSecret,
+			ManagerToken: cfg.ManagerToken,
+		})
 		go func() {
-			log.Printf("wsproxy: internal API listening on %s", internalAddr)
+			log.Printf("wsproxy: internal API listening on %s", cfg.InternalAddr)
 			if err := internalSrv.ListenAndServe(); err != nil {
-				log.Fatalf("wsproxy: internal API listen error: %v", err)
+				log.Fatalf("wsproxy: internal API error: %v", err)
 			}
 		}()
 
 		ctx := context.Background()
 		go sm.Run(ctx)
 
-		log.Printf("wsproxy: global key sync enabled (max-keys-per-user=%d)", maxPerUser)
+		log.Printf("wsproxy: sync manager enabled (max-keys-per-user=%d)", cfg.MaxKeysPerUser)
 	}
 
-	// Reload cluster config every 30 s.  After each reload, broadcast updated
-	// ClusterEntry data (including Gateway fields) to all connected Workers.
+	// ── Cluster config reload (30s) ───────────────────────────────────────────
+
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			if err := store.LoadFromFile(clustersFilePath); err != nil {
+			if err := store.LoadFromFile(cfg.ClustersFilePath); err != nil {
 				log.Printf("wsproxy: cluster config reload failed: %v", err)
 				continue
 			}
@@ -316,4 +142,18 @@ func Run() {
 	}()
 
 	select {}
+}
+
+// buildK8sClient creates a controller-runtime client for the in-cluster config.
+func buildK8sClient() client.Client {
+	s := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(s))
+	utilruntime.Must(agentsv1alpha1.AddToScheme(s))
+
+	cfg := ctrl.GetConfigOrDie()
+	k8sClient, err := client.New(cfg, client.Options{Scheme: s})
+	if err != nil {
+		log.Fatalf("wsproxy: failed to create k8s client: %v", err)
+	}
+	return k8sClient
 }

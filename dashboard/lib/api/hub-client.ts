@@ -21,7 +21,7 @@
 import createFetchClient from "openapi-fetch"
 import createClient from "openapi-react-query"
 import type { paths } from "./global-schema"
-import { basePath, getToken } from "@/lib/api/client"
+import { basePath, getToken, handleErrorResponse } from "@/lib/api/client"
 import type { Middleware } from "openapi-fetch"
 
 // ─── Type aliases ─────────────────────────────────────────────────────────────
@@ -45,6 +45,13 @@ function buildHubMiddleware(): Middleware {
       const token = getToken()
       if (token) request.headers.set("Authorization", `Bearer ${token}`)
       return request
+    },
+    async onResponse({ response }) {
+      if (!response.ok) {
+        if (typeof window === "undefined") return response
+        return handleErrorResponse(response)
+      }
+      return response
     },
   }
 }

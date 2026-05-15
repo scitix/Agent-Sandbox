@@ -29,6 +29,7 @@ type KeyStore interface {
 	CountUserKeys(ctx context.Context, namespace, user string) (int, error)
 	Create(ctx context.Context, meta apikey.KeyMetadata) (rawToken, keyID string, err error)
 	CreateFromHash(ctx context.Context, meta apikey.KeyMetadata, tokenHash, hashPrefix string) error
+	Validate(ctx context.Context, rawToken string) (*apikey.KeyMetadata, error)
 	Get(ctx context.Context, keyID string) (*apikey.KeyMetadata, error)
 	Delete(ctx context.Context, keyID string) error
 }

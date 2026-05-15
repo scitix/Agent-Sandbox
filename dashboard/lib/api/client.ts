@@ -138,6 +138,56 @@ function getClusterIDFromPath(): string {
   return match?.[1] ?? "default"
 }
 
+// ─── Shared error response handler ────────────────────────────────────────────
+
+/**
+ * Parses a non-2xx response, shows a toast, and throws so react-query sees an
+ * error state. Pass suppressedCodes to silence toasts for specific error codes.
+ */
+export async function handleErrorResponse(
+  response: Response,
+  suppressedCodes: string[] = [],
+): Promise<never> {
+  const status = response.status
+  let message = `HTTP ${status}: ${response.statusText || "Request failed"}`
+  let detail: unknown = undefined
+  let errorCode: string | undefined = undefined
+
+  try {
+    const cloned = response.clone()
+    const text = await cloned.text()
+    if (text) {
+      const body = JSON.parse(text) as Partial<BackendError>
+      if (body.error) {
+        message = body.error
+        detail = body.detail
+        errorCode = body.errorCode
+      }
+    }
+  } catch {
+    // keep default message
+  }
+
+  if (!(errorCode && suppressedCodes.includes(errorCode))) {
+    const timestamp = new Date().toISOString()
+    if (detail !== undefined) {
+      toast.error(message, {
+        duration: 8000,
+        action: {
+          label: "Details",
+          onClick: () => {
+            store.set(errorReportAtom, { status, message, detail, errorCode, timestamp })
+          },
+        },
+      })
+    } else {
+      toast.error(message, { duration: 6000 })
+    }
+  }
+
+  throw Object.assign(new Error(message), { errorCode })
+}
+
 // ─── Middleware ────────────────────────────────────────────────────────────────
 
 function buildMiddleware(): Middleware {
@@ -158,7 +208,6 @@ function buildMiddleware(): Middleware {
       // On 401, clear auth state and hard-redirect to login.
       if (response.status === 401 && typeof window !== "undefined") {
         clearSessionData()
-        // Build locale-aware login path
         const locale = getLocaleFromPath(window.location.pathname)
         const localeLoginPath =
           locale === "en" ? `${basePath}/login` : `${basePath}/${locale}/login`
@@ -171,55 +220,9 @@ function buildMiddleware(): Middleware {
         return response
       }
 
-      // Non-2xx → parse error body, show toast, then throw so react-query sees an error state.
       if (!response.ok) {
         if (typeof window === "undefined") return response
-
-        const status = response.status
-        let message = `HTTP ${status}: ${response.statusText || "Request failed"}`
-        let detail: unknown = undefined
-        let errorCode: string | undefined = undefined
-
-        try {
-          const cloned = response.clone()
-          const text = await cloned.text()
-          if (text) {
-            const body = JSON.parse(text) as Partial<BackendError>
-            if (body.error) {
-              message = body.error
-              detail = body.detail
-              errorCode = body.errorCode
-            }
-          }
-        } catch {
-          // keep default message
-        }
-
-        if (!(errorCode && SUPPRESSED_ERROR_CODES.includes(errorCode))) {
-          const timestamp = new Date().toISOString()
-
-          if (detail !== undefined) {
-            toast.error(message, {
-              duration: 8000,
-              action: {
-                label: "Details",
-                onClick: () => {
-                  store.set(errorReportAtom, {
-                    status,
-                    message,
-                    detail,
-                    errorCode,
-                    timestamp,
-                  })
-                },
-              },
-            })
-          } else {
-            toast.error(message, { duration: 6000 })
-          }
-        }
-
-        throw Object.assign(new Error(message), { errorCode })
+        return handleErrorResponse(response, SUPPRESSED_ERROR_CODES)
       }
 
       return response

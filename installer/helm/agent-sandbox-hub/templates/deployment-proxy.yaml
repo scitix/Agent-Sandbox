@@ -47,6 +47,16 @@ spec:
               value: {{ .Values.globalApiKey.maxKeysPerUser | quote }}
             - name: AGENTBOX_APIKEY_NAMESPACE
               value: "agentbox-system"
+            - name: AGENTBOX_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: AGENTBOX_ADMIN_KEY
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: JWT_SECRET
           {{- end }}
           volumeMounts:
             - name: cluster-config

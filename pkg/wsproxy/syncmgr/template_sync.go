@@ -21,11 +21,9 @@ import (
 	"log"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/api/protocol"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 )
 
 // sendTemplateSnapshot sends all existing SandboxTemplates as a template_snapshot frame.
@@ -173,23 +171,6 @@ func templateToFrame(tmpl *agentsv1alpha1.SandboxTemplate) (protocol.Frame, erro
 		Type:         protocol.FrameTemplateSync,
 		TemplateFull: fullRaw,
 	}, nil
-}
-
-// templateDomainToFrame constructs a broadcast protocol.Frame from a domain.SandboxTemplate.
-// It YAML→JSON converts CrdYaml so that Workers can unmarshal it as a full CRD object.
-func templateDomainToFrame(dt *domain.SandboxTemplate) (protocol.Frame, error) {
-	if dt.CrdYaml == "" {
-		return protocol.Frame{}, fmt.Errorf("CrdYaml is empty for template %q", dt.Name)
-	}
-	var obj any
-	if err := yaml.Unmarshal([]byte(dt.CrdYaml), &obj); err != nil {
-		return protocol.Frame{}, fmt.Errorf("unmarshal CrdYaml for %q: %w", dt.Name, err)
-	}
-	raw, err := json.Marshal(obj)
-	if err != nil {
-		return protocol.Frame{}, fmt.Errorf("marshal CrdYaml JSON for %q: %w", dt.Name, err)
-	}
-	return protocol.Frame{Type: protocol.FrameTemplateSync, TemplateFull: raw}, nil
 }
 
 // frameToSandboxTemplate deserialises a Frame into a SandboxTemplate ready for K8s ops.

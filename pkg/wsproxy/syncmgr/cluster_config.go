@@ -15,6 +15,7 @@
 package syncmgr
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"log"
 
@@ -46,6 +47,7 @@ func (m *SyncManager) sendClusterConfigSnapshot(sc *clusterSyncConn) error {
 // after reloading the Manager's cluster config file so Workers pick up
 // changes (new Gateway fields, host-alias updates, ...) without restarting.
 // A no-op when the snapshot is empty (does not clear Worker config).
+// Suppresses the log line when the snapshot is identical to the last broadcast.
 func (m *SyncManager) BroadcastClusterConfig() {
 	snapshot := m.currentSnapshot()
 	if isEmptySnapshot(snapshot) {
@@ -57,12 +59,21 @@ func (m *SyncManager) BroadcastClusterConfig() {
 		log.Printf("syncManager: BroadcastClusterConfig: marshal error: %v", err)
 		return
 	}
+	hash := sha256.Sum256(raw)
+	m.mu.Lock()
+	unchanged := hash == m.lastBroadcastHash
+	if !unchanged {
+		m.lastBroadcastHash = hash
+	}
+	m.mu.Unlock()
 	m.broadcast(protocol.Frame{
 		Type:           protocol.FrameClusterConfigSync,
 		ConfigSnapshot: raw,
 	})
-	log.Printf("syncManager: broadcast cluster_config_sync to all workers (clusters=%d, hostAliases=%d)",
-		len(snapshot.Clusters), len(snapshot.HostAliases))
+	if !unchanged {
+		log.Printf("syncManager: broadcast cluster_config_sync to all workers (clusters=%d, hostAliases=%d)",
+			len(snapshot.Clusters), len(snapshot.HostAliases))
+	}
 }
 
 // ExportClusterConfigSnapshot is a test helper that returns the current

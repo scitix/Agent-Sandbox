@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncmgr
+package handlers
 
 import (
 	"context"
@@ -30,18 +30,18 @@ import (
 
 // ── ListMyApiKeys ─────────────────────────────────────────────────────────────
 
-func (s *templateServer) ListMyApiKeys(
+func (s *Server) ListMyApiKeys(
 	ctx context.Context,
 	request wsproxygen.ListMyApiKeysRequestObject,
 ) (wsproxygen.ListMyApiKeysResponseObject, error) {
-	if s.m.deps.KeyStore == nil {
+	deps := s.m.GetDeps()
+	if deps.KeyStore == nil {
 		return wsproxygen.ListMyApiKeys503JSONResponse{Error: "key store not configured"}, nil
 	}
 
 	auth := httpctx.AuthFrom(ctx)
 	isAdmin := auth.Role == apikey.RoleAdmin
 
-	// Admin may filter by team/user; tenants are always scoped to their own identity.
 	var team, user string
 	if isAdmin {
 		if request.Params.Team != nil {
@@ -55,7 +55,7 @@ func (s *templateServer) ListMyApiKeys(
 		user = auth.User
 	}
 
-	metas, err := s.m.deps.KeyStore.ListByTeamAndUser(ctx, team, user)
+	metas, err := deps.KeyStore.ListByTeamAndUser(ctx, team, user)
 	if err != nil {
 		log.Printf("syncManager: api-keys list error: %v", err)
 		return wsproxygen.ListMyApiKeys503JSONResponse{Error: "failed to list keys"}, nil
@@ -73,11 +73,12 @@ func (s *templateServer) ListMyApiKeys(
 
 // ── CreateApiKey ─────────────────────────────────────────────────────────────
 
-func (s *templateServer) CreateApiKey(
+func (s *Server) CreateApiKey(
 	ctx context.Context,
 	request wsproxygen.CreateApiKeyRequestObject,
 ) (wsproxygen.CreateApiKeyResponseObject, error) {
-	if s.m.deps.KeyStore == nil {
+	deps := s.m.GetDeps()
+	if deps.KeyStore == nil {
 		return wsproxygen.CreateApiKey503JSONResponse{Error: "key store not configured"}, nil
 	}
 
@@ -85,19 +86,16 @@ func (s *templateServer) CreateApiKey(
 	isAdmin := auth.Role == apikey.RoleAdmin
 	body := request.Body
 
-	// Impersonation: admin may create a key on behalf of another user.
 	impTeam := derefStr(request.Params.XImpersonateTeam)
 	impUser := derefStr(request.Params.XImpersonateUser)
 	isImpersonating := isAdmin && impTeam != "" && impUser != ""
 
-	// Import mode: both tokenHash and hashPrefix must be present.
 	isImport := body.TokenHash != nil && *body.TokenHash != "" &&
 		body.HashPrefix != nil && *body.HashPrefix != ""
 	if isImport {
-		return s.importApiKey(ctx, auth, body)
+		return s.importApiKey(ctx, body)
 	}
 
-	// Normal creation: derive user/team from JWT (or impersonation).
 	targetUser := auth.User
 	targetTeam := auth.Team
 	targetNamespace := auth.Namespace
@@ -108,14 +106,14 @@ func (s *templateServer) CreateApiKey(
 		role = apikey.RoleTenant
 	}
 
-	if s.m.deps.MaxPerUser > 0 {
-		count, err := s.m.deps.KeyStore.CountUserKeys(ctx, targetNamespace, targetUser)
+	if deps.MaxPerUser > 0 {
+		count, err := deps.KeyStore.CountUserKeys(ctx, targetNamespace, targetUser)
 		if err != nil {
 			return wsproxygen.CreateApiKey503JSONResponse{Error: "internal error"}, nil
 		}
-		if count >= s.m.deps.MaxPerUser {
+		if count >= deps.MaxPerUser {
 			return wsproxygen.CreateApiKey409JSONResponse{
-				Error: fmt.Sprintf("exceeded max keys per user (%d)", s.m.deps.MaxPerUser),
+				Error: fmt.Sprintf("exceeded max keys per user (%d)", deps.MaxPerUser),
 			}, nil
 		}
 	}
@@ -135,17 +133,17 @@ func (s *templateServer) CreateApiKey(
 		ExpiresAt:   expiresAt,
 	}
 
-	rawToken, keyID, err := s.m.deps.KeyStore.Create(ctx, meta)
+	rawToken, keyID, err := deps.KeyStore.Create(ctx, meta)
 	if err != nil {
 		log.Printf("syncManager: api-key create error: %v", err)
 		return wsproxygen.CreateApiKey503JSONResponse{Error: "failed to create key"}, nil
 	}
 
-	createdMeta, _ := s.m.deps.KeyStore.Get(ctx, keyID)
+	createdMeta, _ := deps.KeyStore.Get(ctx, keyID)
 	if createdMeta != nil {
 		syncF := metaToFrame(*createdMeta)
 		syncF.Type = protocol.FrameKeySync
-		s.m.broadcast(syncF)
+		s.m.Broadcast(syncF)
 	}
 
 	return wsproxygen.CreateApiKey201JSONResponse{
@@ -158,11 +156,12 @@ func (s *templateServer) CreateApiKey(
 	}, nil
 }
 
-func (s *templateServer) importApiKey(
+func (s *Server) importApiKey(
 	ctx context.Context,
-	_ any,
 	body *wsproxygen.CreateAPIKeyRequest,
 ) (wsproxygen.CreateApiKeyResponseObject, error) {
+	deps := s.m.GetDeps()
+
 	issuedAt := time.Now().UTC()
 	if body.IssuedAt != nil {
 		issuedAt = *body.IssuedAt
@@ -183,17 +182,17 @@ func (s *templateServer) importApiKey(
 		ExpiresAt:   expiresAt,
 	}
 
-	if err := s.m.deps.KeyStore.CreateFromHash(ctx, meta, *body.TokenHash, *body.HashPrefix); err != nil {
+	if err := deps.KeyStore.CreateFromHash(ctx, meta, *body.TokenHash, *body.HashPrefix); err != nil {
 		log.Printf("syncManager: api-key import error: %v", err)
 		return wsproxygen.CreateApiKey503JSONResponse{Error: "failed to import key"}, nil
 	}
 
 	keyID := "agentbox-apikey-" + *body.HashPrefix
-	createdMeta, _ := s.m.deps.KeyStore.Get(ctx, keyID)
+	createdMeta, _ := deps.KeyStore.Get(ctx, keyID)
 	if createdMeta != nil {
 		syncF := metaToFrame(*createdMeta)
 		syncF.Type = protocol.FrameKeySync
-		s.m.broadcast(syncF)
+		s.m.Broadcast(syncF)
 	}
 
 	return wsproxygen.CreateApiKey201JSONResponse{
@@ -208,22 +207,23 @@ func (s *templateServer) importApiKey(
 
 // ── DeleteApiKey ─────────────────────────────────────────────────────────────
 
-func (s *templateServer) DeleteApiKey(
+func (s *Server) DeleteApiKey(
 	ctx context.Context,
 	request wsproxygen.DeleteApiKeyRequestObject,
 ) (wsproxygen.DeleteApiKeyResponseObject, error) {
-	if s.m.deps.KeyStore == nil {
+	deps := s.m.GetDeps()
+	if deps.KeyStore == nil {
 		return wsproxygen.DeleteApiKey503JSONResponse{Error: "key store not configured"}, nil
 	}
 
-	if err := s.m.deps.KeyStore.Delete(ctx, request.Name); err != nil {
+	if err := deps.KeyStore.Delete(ctx, request.Name); err != nil {
 		if err == apikey.ErrTokenNotFound {
 			return wsproxygen.DeleteApiKey404JSONResponse{Error: "api key not found"}, nil
 		}
 		log.Printf("syncManager: api-key delete error: %v", err)
 		return wsproxygen.DeleteApiKey503JSONResponse{Error: "failed to delete key"}, nil
 	}
-	s.m.broadcast(protocol.Frame{Type: protocol.FrameKeyDeleteSync, Name: request.Name})
+	s.m.Broadcast(protocol.Frame{Type: protocol.FrameKeyDeleteSync, Name: request.Name})
 	return wsproxygen.DeleteApiKey204Response{}, nil
 }
 
@@ -262,4 +262,35 @@ func keyMetasToGenItems(metas []apikey.KeyMetadata) []nativegen.APIKeyItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+// metaToFrame converts a KeyMetadata to a protocol.Frame for key_sync / key_snapshot items.
+// Mirrors syncmgr.metaToFrame; duplicated here to avoid cross-package unexported access.
+func metaToFrame(meta apikey.KeyMetadata) protocol.Frame {
+	f := protocol.Frame{
+		TokenHash:   meta.TokenHash,
+		Namespace:   meta.Namespace,
+		Role:        meta.Role,
+		User:        meta.User,
+		Team:        meta.Team,
+		QuotaURL:    meta.QuotaURL,
+		Description: meta.Description,
+		RawToken:    meta.RawToken,
+	}
+	if !meta.IssuedAt.IsZero() {
+		f.IssuedAt = meta.IssuedAt.UTC().Format(time.RFC3339)
+	}
+	if !meta.ExpiresAt.IsZero() {
+		f.ExpiresAt = meta.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	shortName := meta.KeyID
+	if i := strings.LastIndex(meta.KeyID, "/"); i >= 0 {
+		shortName = meta.KeyID[i+1:]
+	}
+	f.Name = shortName
+	const prefix = "agentbox-apikey-"
+	if strings.HasPrefix(shortName, prefix) {
+		f.HashPrefix = shortName[len(prefix):]
+	}
+	return f
 }

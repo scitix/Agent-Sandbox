@@ -15,7 +15,6 @@
 package syncmgr
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -26,110 +25,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/scitix/agent-sandbox/pkg/api/protocol"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
-	wsproxygen "github.com/scitix/agent-sandbox/pkg/wsproxy/gen"
 )
-
-// managerTokenMiddleware returns a Gin middleware that enforces the AGENTBOX-MANAGER-TOKEN header.
-// When token is empty (dev mode), all requests are allowed through.
-func managerTokenMiddleware(token string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if token != "" && c.GetHeader("AGENTBOX-MANAGER-TOKEN") != token {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-			return
-		}
-		c.Next()
-	}
-}
-
-// jwtOrManagerTokenMiddleware authenticates requests using either a Bearer JWT
-// (same HS256 secret as the Worker API, issued by the BFF) or the static
-// AGENTBOX-MANAGER-TOKEN header (treated as admin, for operational tooling).
-// When both jwtSecret and managerToken are empty (dev mode), all requests pass
-// through as anonymous admin.
-func jwtOrManagerTokenMiddleware(jwtSecret, managerToken string) gin.HandlerFunc {
-	if jwtSecret == "" && managerToken == "" {
-		// Dev mode: grant anonymous admin.
-		return func(c *gin.Context) {
-			c.Set(middleware.AuthContextKey, domain.AuthInfo{
-				Namespace:  middleware.DefaultNamespace,
-				Role:       apikey.RoleAdmin,
-				User:       "anonymous-admin",
-				AuthMethod: "apikey",
-			})
-			c.Next()
-		}
-	}
-
-	jwtSecret = cmp.Or(jwtSecret, managerToken)
-	jwtMiddleware := middleware.NewAuthenticateMiddleware(nil, nil, jwtSecret, nil)
-	return func(c *gin.Context) {
-		// Manager token takes priority: treated as admin without JWT validation.
-		if managerToken != "" && c.GetHeader("AGENTBOX-MANAGER-TOKEN") == managerToken {
-			c.Set(middleware.AuthContextKey, domain.AuthInfo{
-				Namespace:  middleware.DefaultNamespace,
-				Role:       apikey.RoleAdmin,
-				User:       "system",
-				Team:       "system",
-				AuthMethod: "apikey",
-			})
-			c.Next()
-			return
-		}
-		// Fall through to JWT validation.
-		jwtMiddleware(c)
-	}
-}
-
-// InternalAPIHandler returns the HTTP handler for the internal management API (:9004).
-func (m *SyncManager) InternalAPIHandler() http.Handler {
-	gin.SetMode(gin.ReleaseMode)
-	r := gin.New()
-	r.Use(gin.Recovery())
-
-	// /ping is public — no auth required.
-	r.GET("/ping", func(c *gin.Context) {
-		c.String(http.StatusOK, "ok")
-	})
-
-	// /metrics is public — Prometheus scrapes without auth.
-	r.GET("/metrics", gin.WrapH(MetricsHandler()))
-
-	// SandboxTemplate endpoints use JWT-or-manager-token auth (Bearer JWT from BFF,
-	// or AGENTBOX-MANAGER-TOKEN for operational tooling). Registered first so that
-	// more specific routes take precedence over the legacy group below.
-	tmplAuth := jwtOrManagerTokenMiddleware(m.deps.JWTSecret, m.managerToken)
-	strictHandler := wsproxygen.NewStrictHandler(&templateServer{m: m}, nil)
-	wsproxygen.RegisterHandlersWithOptions(r, strictHandler, wsproxygen.GinServerOptions{
-		BaseURL:     "",
-		Middlewares: []wsproxygen.MiddlewareFunc{wsproxygen.MiddlewareFunc(tmplAuth)},
-	})
-
-	// Legacy /internal/* routes continue to use the static manager token.
-	legacy := r.Group("/internal", managerTokenMiddleware(m.managerToken))
-
-	// API key endpoints.
-	legacy.POST("/api-keys", m.handleInternalCreate)
-	legacy.GET("/api-keys", m.handleInternalList)
-	legacy.DELETE("/api-keys/:name", m.handleInternalDelete)
-
-	// Broadcast endpoint.
-	legacy.POST("/broadcast", m.handleInternalBroadcast)
-
-	// Cluster heartbeat / status endpoints.
-	legacy.GET("/clusters/status", m.handleClusterStatus)
-	legacy.GET("/status", m.handleInternalStatus)
-
-	// Images catalog endpoints.
-	legacy.GET("/images-catalog", m.handleImagesCatalogList)
-	legacy.POST("/images-catalog", m.handleImagesCatalogUpsert)
-	legacy.PUT("/images-catalog/:id", m.handleImagesCatalogUpsert)
-	legacy.DELETE("/images-catalog/:id", m.handleImagesCatalogDelete)
-
-	return r
-}
 
 // ── API Key handlers ──────────────────────────────────────────────────────────
 
@@ -360,13 +257,6 @@ func (m *SyncManager) handleInternalBroadcast(c *gin.Context) {
 	}
 	m.broadcast(frame)
 	c.Status(http.StatusNoContent)
-}
-
-// ── Template handlers ─────────────────────────────────────────────────────────
-
-// appErrStatus maps a domain.AppError to the appropriate HTTP status code.
-func appErrStatus(err *domain.AppError) int {
-	return int(err.Code)
 }
 
 // ── Cluster status / heartbeat endpoints ─────────────────────────────────────

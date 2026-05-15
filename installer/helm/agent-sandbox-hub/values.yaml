@@ -146,6 +146,7 @@ globalApiKey:
   enabled: false
   token: ""
   maxKeysPerUser: 0
+  adminKey: ""    # AGENTBOX_ADMIN_KEY: wsproxy admin key for API key auth; empty = dev mode
 
 # Images Catalog configuration.
 # When enabled, the catalog ConfigMap is managed by ws-proxy at runtime.

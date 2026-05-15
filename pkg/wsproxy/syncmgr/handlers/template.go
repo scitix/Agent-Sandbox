@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncmgr
+package handlers
 
 import (
 	"context"
@@ -28,34 +28,23 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	wsproxygen "github.com/scitix/agent-sandbox/pkg/wsproxy/gen"
+	"sigs.k8s.io/yaml"
 )
-
-// templateServer implements wsproxygen.StrictServerInterface for the five
-// SandboxTemplate endpoints. Auth context is read from the gin request via
-// httpctx.AuthFrom — populated by jwtOrManagerTokenMiddleware.
-type templateServer struct {
-	m *SyncManager
-}
-
-func (s *templateServer) requireAdmin(ctx context.Context) bool {
-	return httpctx.AuthFrom(ctx).Role == apikey.RoleAdmin
-}
 
 // ── ListSandboxTemplates ─────────────────────────────────────────────────────
 
-func (s *templateServer) ListSandboxTemplates(
+func (s *Server) ListSandboxTemplates(
 	ctx context.Context,
 	_ wsproxygen.ListSandboxTemplatesRequestObject,
 ) (wsproxygen.ListSandboxTemplatesResponseObject, error) {
-	if s.m.deps.TemplateService == nil {
-		return wsproxygen.ListSandboxTemplates503JSONResponse{
-			Error: "template sync not configured",
-		}, nil
+	deps := s.m.GetDeps()
+	if deps.TemplateService == nil {
+		return wsproxygen.ListSandboxTemplates503JSONResponse{Error: "template sync not configured"}, nil
 	}
 
 	auth := httpctx.AuthFrom(ctx)
 	isAdmin := auth.Role == apikey.RoleAdmin
-	items, appErr := s.m.deps.TemplateService.List(ctx, auth, isAdmin)
+	items, appErr := deps.TemplateService.List(ctx, auth, isAdmin)
 	if appErr != nil {
 		log.Printf("syncManager: template list error: %v", appErr)
 		return wsproxygen.ListSandboxTemplates503JSONResponse{Error: appErr.Message}, nil
@@ -76,19 +65,18 @@ func (s *templateServer) ListSandboxTemplates(
 
 // ── GetSandboxTemplate ───────────────────────────────────────────────────────
 
-func (s *templateServer) GetSandboxTemplate(
+func (s *Server) GetSandboxTemplate(
 	ctx context.Context,
 	request wsproxygen.GetSandboxTemplateRequestObject,
 ) (wsproxygen.GetSandboxTemplateResponseObject, error) {
-	if s.m.deps.TemplateService == nil {
-		return wsproxygen.GetSandboxTemplate503JSONResponse{
-			Error: "template sync not configured",
-		}, nil
+	deps := s.m.GetDeps()
+	if deps.TemplateService == nil {
+		return wsproxygen.GetSandboxTemplate503JSONResponse{Error: "template sync not configured"}, nil
 	}
 
 	auth := httpctx.AuthFrom(ctx)
 	isAdmin := auth.Role == apikey.RoleAdmin
-	tmpl, appErr := s.m.deps.TemplateService.Get(ctx, request.Name, auth, isAdmin)
+	tmpl, appErr := deps.TemplateService.Get(ctx, request.Name, auth, isAdmin)
 	if appErr != nil {
 		if appErrStatus(appErr) == 404 {
 			return wsproxygen.GetSandboxTemplate404JSONResponse{Error: appErr.Message}, nil
@@ -102,31 +90,25 @@ func (s *templateServer) GetSandboxTemplate(
 
 // ── AdminCreateSandboxTemplate ───────────────────────────────────────────────
 
-func (s *templateServer) AdminCreateSandboxTemplate(
+func (s *Server) AdminCreateSandboxTemplate(
 	ctx context.Context,
 	request wsproxygen.AdminCreateSandboxTemplateRequestObject,
 ) (wsproxygen.AdminCreateSandboxTemplateResponseObject, error) {
-	if s.m.deps.TemplateService == nil {
-		return wsproxygen.AdminCreateSandboxTemplate503JSONResponse{
-			Error: "template sync not configured",
-		}, nil
+	deps := s.m.GetDeps()
+	if deps.TemplateService == nil {
+		return wsproxygen.AdminCreateSandboxTemplate503JSONResponse{Error: "template sync not configured"}, nil
 	}
 	if !s.requireAdmin(ctx) {
-		return wsproxygen.AdminCreateSandboxTemplate403JSONResponse{
-			Error: "admin access required",
-		}, nil
+		return wsproxygen.AdminCreateSandboxTemplate403JSONResponse{Error: "admin access required"}, nil
 	}
 
-	crdJSON := request.Body.CrdJson
-	tmpl, parseErr := parseCRDJSONToK8s(crdJSON)
+	tmpl, parseErr := parseCRDJSONToK8s(request.Body.CrdJson)
 	if parseErr != nil {
-		return wsproxygen.AdminCreateSandboxTemplate400JSONResponse{
-			Error: parseErr.Error(),
-		}, nil
+		return wsproxygen.AdminCreateSandboxTemplate400JSONResponse{Error: parseErr.Error()}, nil
 	}
 	injectGlobalLabel(tmpl)
 
-	result, appErr := s.m.deps.TemplateService.Create(ctx, tmpl)
+	result, appErr := deps.TemplateService.Create(ctx, tmpl)
 	if appErr != nil {
 		log.Printf("syncManager: template create error: %v", appErr)
 		switch appErrStatus(appErr) {
@@ -146,32 +128,26 @@ func (s *templateServer) AdminCreateSandboxTemplate(
 
 // ── AdminUpdateSandboxTemplate ───────────────────────────────────────────────
 
-func (s *templateServer) AdminUpdateSandboxTemplate(
+func (s *Server) AdminUpdateSandboxTemplate(
 	ctx context.Context,
 	request wsproxygen.AdminUpdateSandboxTemplateRequestObject,
 ) (wsproxygen.AdminUpdateSandboxTemplateResponseObject, error) {
-	if s.m.deps.TemplateService == nil {
-		return wsproxygen.AdminUpdateSandboxTemplate503JSONResponse{
-			Error: "template sync not configured",
-		}, nil
+	deps := s.m.GetDeps()
+	if deps.TemplateService == nil {
+		return wsproxygen.AdminUpdateSandboxTemplate503JSONResponse{Error: "template sync not configured"}, nil
 	}
 	if !s.requireAdmin(ctx) {
-		return wsproxygen.AdminUpdateSandboxTemplate403JSONResponse{
-			Error: "admin access required",
-		}, nil
+		return wsproxygen.AdminUpdateSandboxTemplate403JSONResponse{Error: "admin access required"}, nil
 	}
 
-	crdJSON := request.Body.CrdJson
-	desired, parseErr := parseCRDJSONToK8s(crdJSON)
+	desired, parseErr := parseCRDJSONToK8s(request.Body.CrdJson)
 	if parseErr != nil {
-		return wsproxygen.AdminUpdateSandboxTemplate400JSONResponse{
-			Error: parseErr.Error(),
-		}, nil
+		return wsproxygen.AdminUpdateSandboxTemplate400JSONResponse{Error: parseErr.Error()}, nil
 	}
 	desired.Name = request.Name
 	injectGlobalLabel(desired)
 
-	result, appErr := s.m.deps.TemplateService.Update(ctx, desired)
+	result, appErr := deps.TemplateService.Update(ctx, desired)
 	if appErr != nil {
 		log.Printf("syncManager: template update error: %v", appErr)
 		switch appErrStatus(appErr) {
@@ -193,36 +169,31 @@ func (s *templateServer) AdminUpdateSandboxTemplate(
 
 // ── AdminDeleteSandboxTemplate ───────────────────────────────────────────────
 
-func (s *templateServer) AdminDeleteSandboxTemplate(
+func (s *Server) AdminDeleteSandboxTemplate(
 	ctx context.Context,
 	request wsproxygen.AdminDeleteSandboxTemplateRequestObject,
 ) (wsproxygen.AdminDeleteSandboxTemplateResponseObject, error) {
-	if s.m.deps.TemplateService == nil {
-		return wsproxygen.AdminDeleteSandboxTemplate503JSONResponse{
-			Error: "template sync not configured",
-		}, nil
+	deps := s.m.GetDeps()
+	if deps.TemplateService == nil {
+		return wsproxygen.AdminDeleteSandboxTemplate503JSONResponse{Error: "template sync not configured"}, nil
 	}
 	if !s.requireAdmin(ctx) {
-		return wsproxygen.AdminDeleteSandboxTemplate403JSONResponse{
-			Error: "admin access required",
-		}, nil
+		return wsproxygen.AdminDeleteSandboxTemplate403JSONResponse{Error: "admin access required"}, nil
 	}
 
-	if appErr := s.m.deps.TemplateService.Delete(ctx, request.Name); appErr != nil {
+	if appErr := deps.TemplateService.Delete(ctx, request.Name); appErr != nil {
 		log.Printf("syncManager: template delete error: %v", appErr)
 		if appErrStatus(appErr) == 404 {
 			return wsproxygen.AdminDeleteSandboxTemplate404JSONResponse{Error: appErr.Message}, nil
 		}
 		return wsproxygen.AdminDeleteSandboxTemplate503JSONResponse{Error: appErr.Message}, nil
 	}
-	s.m.broadcast(protocol.Frame{Type: protocol.FrameTemplateDeleteSync, Name: request.Name})
+	s.m.Broadcast(protocol.Frame{Type: protocol.FrameTemplateDeleteSync, Name: request.Name})
 	return wsproxygen.AdminDeleteSandboxTemplate204Response{}, nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// parseCRDJSONToK8s deserializes a JSON string into an agentsv1alpha1.SandboxTemplate
-// and validates that metadata.name is present.
 func parseCRDJSONToK8s(jsonStr string) (*agentsv1alpha1.SandboxTemplate, error) {
 	var tmpl agentsv1alpha1.SandboxTemplate
 	if err := json.Unmarshal([]byte(jsonStr), &tmpl); err != nil {
@@ -241,12 +212,27 @@ func injectGlobalLabel(tmpl *agentsv1alpha1.SandboxTemplate) {
 	tmpl.Labels["agentbox.io/sync-source"] = agentsv1alpha1.LabelSyncSourceGlobal
 }
 
-// broadcastDomainTemplate sends a FrameTemplateSync to all connected Worker clusters.
-func (s *templateServer) broadcastDomainTemplate(result *domain.SandboxTemplate) {
-	if sf, fErr := templateDomainToFrame(result); fErr == nil {
-		sf.Type = protocol.FrameTemplateSync
-		s.m.broadcast(sf)
-	} else {
-		log.Printf("syncManager: failed to build template broadcast frame: %v", fErr)
+func appErrStatus(appErr *domain.AppError) int {
+	if appErr == nil {
+		return 0
 	}
+	return int(appErr.Code)
+}
+
+func (s *Server) broadcastDomainTemplate(result *domain.SandboxTemplate) {
+	if result.CrdYaml == "" {
+		log.Printf("syncManager: template %q has empty CrdYaml, skipping broadcast", result.Name)
+		return
+	}
+	var obj any
+	if err := yaml.Unmarshal([]byte(result.CrdYaml), &obj); err != nil {
+		log.Printf("syncManager: failed to unmarshal CrdYaml for broadcast: %v", err)
+		return
+	}
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		log.Printf("syncManager: failed to marshal CrdYaml JSON for broadcast: %v", err)
+		return
+	}
+	s.m.Broadcast(protocol.Frame{Type: protocol.FrameTemplateSync, TemplateFull: raw})
 }
