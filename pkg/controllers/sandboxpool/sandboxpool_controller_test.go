@@ -328,6 +328,35 @@ var _ = Describe("SandboxPool Controller", func() {
 			podList.Items[4].Labels[agentsv1alpha1.SandboxPhaseLabelKey] = agentsv1alpha1.SandboxPhaseFailed
 			Expect(k8sClient.Update(ctx, &podList.Items[4])).To(Succeed())
 
+			// Wait for the informer cache to reflect all label updates before triggering
+			// Reconcile. k8sClient is cache-backed: Update() completes as soon as the
+			// API server accepts the write, but reads still go through the cache which
+			// may lag by one or more watch events. Reconciling against a stale cache
+			// would see pods as phase="" (idle priority) and delete them incorrectly.
+			expectedPhases := map[string]string{
+				podList.Items[0].Name: agentsv1alpha1.SandboxPhaseIdle,
+				podList.Items[1].Name: agentsv1alpha1.SandboxPhaseIdle,
+				podList.Items[2].Name: agentsv1alpha1.SandboxPhaseRunning,
+				podList.Items[3].Name: agentsv1alpha1.SandboxPhaseStarting,
+				podList.Items[4].Name: agentsv1alpha1.SandboxPhaseFailed,
+			}
+			Eventually(func() bool {
+				updated := &corev1.PodList{}
+				if err := k8sClient.List(ctx, updated,
+					client.InNamespace(namespace),
+					client.MatchingFields{indexer.IndexFieldSandboxPool: resourceName},
+				); err != nil {
+					return false
+				}
+				for i := range updated.Items {
+					want, ok := expectedPhases[updated.Items[i].Name]
+					if !ok || updated.Items[i].Labels[agentsv1alpha1.SandboxPhaseLabelKey] != want {
+						return false
+					}
+				}
+				return true
+			}, timeout, interval).Should(BeTrue(), "cache should reflect all pod phase updates before reconciling")
+
 			By("scaling down to 2 replicas (should delete idle pods first)")
 			updatedPool := &agentsv1alpha1.SandboxPool{}
 			Eventually(func() error {
@@ -435,6 +464,27 @@ var _ = Describe("SandboxPool Controller", func() {
 				podList.Items[i].Labels[agentsv1alpha1.SandboxPhaseLabelKey] = agentsv1alpha1.SandboxPhaseRunning
 				Expect(k8sClient.Update(ctx, &podList.Items[i])).To(Succeed())
 			}
+
+			// Wait for the informer cache to reflect all Running label updates.
+			// k8sClient is cache-backed: reads lag behind writes by one or more watch
+			// events. Reconciling against a stale cache would see phase="" (idle) and
+			// delete pods that are actually Running.
+			Eventually(func() (int, error) {
+				updated := &corev1.PodList{}
+				if err := k8sClient.List(ctx, updated,
+					client.InNamespace(namespace),
+					client.MatchingFields{indexer.IndexFieldSandboxPool: resourceName},
+				); err != nil {
+					return 0, err
+				}
+				count := 0
+				for i := range updated.Items {
+					if updated.Items[i].Labels[agentsv1alpha1.SandboxPhaseLabelKey] == agentsv1alpha1.SandboxPhaseRunning {
+						count++
+					}
+				}
+				return count, nil
+			}, timeout, interval).Should(Equal(3), "cache should see all 3 pods as Running before reconciling")
 
 			By("trying to scale down to 1 replica (should not delete running pods)")
 			updatedPool := &agentsv1alpha1.SandboxPool{}

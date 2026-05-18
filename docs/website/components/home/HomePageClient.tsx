@@ -840,7 +840,7 @@ function Footer() {
         <div className="grid gap-10 border-b border-fd-border pb-10 md:grid-cols-[1.2fr_2fr]">
           <div>
             <div className="flex items-center gap-3">
-              <Image src={publicAsset('/logo.svg')} alt="" width={24} height={24} />
+              <Image src={publicAsset('/ScitiX.svg')} alt="" width={24} height={24} />
               <span className="font-semibold text-fd-foreground">Agent Sandbox</span>
             </div>
             <p className="mt-4 max-w-sm text-sm leading-6 text-fd-muted-foreground">
