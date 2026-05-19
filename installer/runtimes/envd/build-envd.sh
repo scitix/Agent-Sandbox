@@ -83,8 +83,9 @@ docker push "$ENVD_LATEST_TAG"
 echo "--- Step 5: Building tini image ---"
 # tini version is extracted from the e2b-infra Dockerfile or a known constant
 TINI_VERSION=${TINI_VERSION:-"v0.19.0"}
+TINI_IMAGE_TAG=${TINI_IMAGE_TAG:-"${TINI_VERSION}-static"}
 
-TINI_VERSIONED_TAG="${REGISTRY_PREFIX}${TINI_IMAGE_NAME}:${TINI_VERSION}"
+TINI_VERSIONED_TAG="${REGISTRY_PREFIX}${TINI_IMAGE_NAME}:${TINI_IMAGE_TAG}"
 TINI_LATEST_TAG="${REGISTRY_PREFIX}${TINI_IMAGE_NAME}:latest"
 
 docker build \

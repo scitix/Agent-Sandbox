@@ -65,48 +65,6 @@ Deploy sandbox pools across multiple clouds or regions. The built-in ExtProc rou
 
 ---
 
-## Quick Start
-
-**Requirements:** Kubernetes 1.26+, `helm`
-
-```bash
-helm install agent-sandbox oci://ghcr.io/scitix/agent-sandbox-worker
-```
-
-See the [installation guide](https://scitix.github.io/Agent-Sandbox/docs/installation) and [quickstart](https://scitix.github.io/Agent-Sandbox/docs) for configuration, runtime pools, and routing setup.
-
----
-
-## Performance
-
-| Metric | Standard Kubernetes | Agent Sandbox |
-|--------|--------------------|-|
-| Sandbox allocation latency | 15–60 s | **< 60 ms** |
-| Pod churn per request | 1 create + 1 delete | 0 (pool reuse) |
-| Image pull on every request | Yes | No (pre-warmed) |
-| Cross-cluster routing | Manual / external LB | Built-in ExtProc |
-
----
-
-## Architecture
-
-Three binaries, each with a single responsibility:
-
-| Binary | Purpose | Key Ports |
-|--------|---------|-----------|
-| `cmd/sandbox` | Kubernetes Operator + REST API Server | `:8080` API, `:8090` E2B-compat, `:8082` metrics |
-| `cmd/envoyextproc` | Data-plane ExtProc for cross-cluster routing | `:9002` gRPC, `:9003` control-plane |
-| `cmd/wsproxy` | WebSocket reverse-proxy sidecar (terminal access) | `:9003` WS, `:9004` sync |
-
-**CRDs:**
-
-- `SandboxPool` (`sbp`, namespace-scoped) — pre-warmed Pod pool with `Replicas`, optional autoscaling, and an inline or referenced template
-- `SandboxTemplate` (`sbt`, cluster-scoped) — reusable Pod template with `idleImage` and `runtimes`
-
-Full architecture documentation: [docs/architecture](https://scitix.github.io/Agent-Sandbox/docs)
-
----
-
 ## Documentation
 
 | Resource | Link |

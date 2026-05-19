@@ -16,11 +16,13 @@ FROM debian:bookworm-slim
 
 ARG ENVD_VERSION=unknown
 
-# envd binary is expected to be copied into the build context as ./envd
-COPY envd /usr/local/bin/envd
-COPY agentbox-entrypoint.sh /usr/local/bin/agentbox-entrypoint.sh
+WORKDIR /workspace
 
-RUN chmod +x /usr/local/bin/envd /usr/local/bin/agentbox-entrypoint.sh && \
+# envd binary is expected to be copied into the build context as ./envd
+COPY envd /workspace/envd
+COPY agentbox-entrypoint.sh /workspace/agentbox-entrypoint.sh
+
+RUN chmod +x /workspace/envd /workspace/agentbox-entrypoint.sh && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         bash \
@@ -32,4 +34,4 @@ LABEL org.opencontainers.image.source="https://github.com/scitix/agent-sandbox"
 LABEL org.opencontainers.image.version="${ENVD_VERSION}"
 LABEL org.opencontainers.image.description="envd runtime for agent-sandbox (e2b-dev/infra compatible)"
 
-ENTRYPOINT ["/usr/local/bin/agentbox-entrypoint.sh"]
+ENTRYPOINT ["/workspace/agentbox-entrypoint.sh"]

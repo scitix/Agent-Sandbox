@@ -17,6 +17,8 @@ FROM debian:bookworm-slim
 ARG TINI_VERSION=v0.19.0
 ARG TARGETARCH
 
+WORKDIR /workspace
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
@@ -27,9 +29,9 @@ RUN apt-get update && \
         arm64) TINI_ARCH="arm64" ;; \
         *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
     esac && \
-    curl -fsSL "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-${TINI_ARCH}" \
-        -o /usr/local/bin/tini && \
-    chmod +x /usr/local/bin/tini && \
+    curl -fsSL "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-${TINI_ARCH}" \
+        -o /workspace/tini && \
+    chmod +x /workspace/tini && \
     rm -rf /var/lib/apt/lists/*
 
 LABEL org.opencontainers.image.source="https://github.com/scitix/agent-sandbox"
