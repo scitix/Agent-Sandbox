@@ -15,6 +15,7 @@
 package sandboxpool
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -179,6 +180,14 @@ func (r *SandboxPoolReconciler) statusEquals(sandboxPool *agentsv1alpha1.Sandbox
 		return false
 	}
 	return conditionsEqual(old.Conditions, newStatus.Conditions)
+}
+
+func (r *SandboxPoolReconciler) markPoolTerminating(ctx context.Context, sandboxPool *agentsv1alpha1.SandboxPool) error {
+	if sandboxPool.Status.Phase == agentsv1alpha1.SandboxPoolPhaseTerminating {
+		return nil
+	}
+	sandboxPool.Status.Phase = agentsv1alpha1.SandboxPoolPhaseTerminating
+	return r.Status().Update(ctx, sandboxPool)
 }
 
 // timePointerEqual returns true when both pointers are nil, or both are non-nil

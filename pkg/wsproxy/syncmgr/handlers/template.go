@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"log"
 
+	"sigs.k8s.io/yaml"
+
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/api/protocol"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
@@ -28,7 +30,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	wsproxygen "github.com/scitix/agent-sandbox/pkg/wsproxy/gen"
-	"sigs.k8s.io/yaml"
 )
 
 // ── ListSandboxTemplates ─────────────────────────────────────────────────────

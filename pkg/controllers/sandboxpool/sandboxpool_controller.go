@@ -151,6 +151,14 @@ func (r *SandboxPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 func (r *SandboxPoolReconciler) handleDeletion(ctx context.Context, sandboxPool *agentsv1alpha1.SandboxPool) (ctrl.Result, error) {
 	klog.V(2).InfoS("Handling SandboxPool deletion", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
 
+	if err := r.markPoolTerminating(ctx, sandboxPool); err != nil {
+		if errors.IsConflict(err) {
+			return reconcile.Result{Requeue: true}, nil
+		}
+		klog.ErrorS(err, "Failed to mark SandboxPool as terminating", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
+		return reconcile.Result{}, err
+	}
+
 	// List all Pods belonging to this SandboxPool
 	pods, err := indexer.ListPodsBySandboxPool(ctx, r.Client, sandboxPool.Namespace, sandboxPool.Name)
 	if err != nil {

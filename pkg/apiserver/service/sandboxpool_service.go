@@ -691,11 +691,7 @@ func poolToDomain(ctx context.Context, pool *agentsv1alpha1.SandboxPool, diags [
 			dp.Memory = memory.String()
 		}
 	}
-	// Override phase to "Terminating" when the pool is being deleted (DeletionTimestamp set).
-	// This is an API-layer concern only — the CRD controller never writes this phase.
-	if !pool.DeletionTimestamp.IsZero() {
-		dp.Status.Phase = "Terminating"
-	}
+
 	return dp
 }
 

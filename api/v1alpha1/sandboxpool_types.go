@@ -22,7 +22,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // SandboxPoolPhase is the high-level phase of a SandboxPool.
-// +kubebuilder:validation:Enum=Pending;Ready;ScalingUp;ScalingDown;Degraded
+// +kubebuilder:validation:Enum=Pending;Ready;ScalingUp;ScalingDown;Degraded;Terminating
 type SandboxPoolPhase string
 
 const (
@@ -38,6 +38,8 @@ const (
 	// SandboxPoolPhaseDegraded indicates the pool has reached the desired replica count but
 	// some idle pods are unavailable (NotReady) or some pods are in failed state.
 	SandboxPoolPhaseDegraded SandboxPoolPhase = "Degraded"
+	// SandboxPoolPhaseTerminating indicates the pool is being deleted.
+	SandboxPoolPhaseTerminating SandboxPoolPhase = "Terminating"
 )
 
 // Condition type constants for SandboxPool.
@@ -140,9 +142,10 @@ type SandboxPoolStatus struct {
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 
 	// Phase is a high-level summary of the pool's current state.
-	// Possible values: Pending, Ready, ScalingUp, ScalingDown, Degraded.
+	// Possible values: Pending, Ready, ScalingUp, ScalingDown, Degraded, Terminating.
 	//
 	// Phase is determined by the following priority rules:
+	//   - Terminating: DeletionTimestamp is set
 	//   - Pending:     spec.replicas == 0 and no pods exist
 	//   - ScalingUp:   current pod count < spec.replicas
 	//   - ScalingDown: current pod count > spec.replicas (may persist while running pods cannot be deleted)

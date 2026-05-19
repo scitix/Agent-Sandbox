@@ -1576,6 +1576,44 @@ func TestCreatePod_PolicyIdleImageEmpty(t *testing.T) {
 	}
 }
 
+func TestHandleDeletion_MarksPoolTerminating(t *testing.T) {
+	const ns, poolName = "default", "pool-deleting"
+	deletionTime := metav1.Now()
+	pool := &agentsv1alpha1.SandboxPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              poolName,
+			Namespace:         ns,
+			Finalizers:        []string{FinalizerName},
+			DeletionTimestamp: &deletionTime,
+		},
+		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 1},
+		Status: agentsv1alpha1.SandboxPoolStatus{
+			Phase:        agentsv1alpha1.SandboxPoolPhaseReady,
+			IdleReplicas: 1,
+		},
+	}
+	pod := makeIdlePodForPool("pod-1", ns, poolName)
+
+	cli := newTestClientBuilder(t).WithObjects(pool, pod).Build()
+	r := &SandboxPoolReconciler{Client: cli, Scheme: setupScheme(t)}
+
+	result, err := r.handleDeletion(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("handleDeletion: %v", err)
+	}
+	if result.RequeueAfter == 0 {
+		t.Fatalf("expected requeue while deleting pool pods")
+	}
+
+	updated := &agentsv1alpha1.SandboxPool{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: poolName}, updated); err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if updated.Status.Phase != agentsv1alpha1.SandboxPoolPhaseTerminating {
+		t.Fatalf("expected phase %q, got %q", agentsv1alpha1.SandboxPoolPhaseTerminating, updated.Status.Phase)
+	}
+}
+
 // setupScheme is a small helper used by tests that need both core and agents schemes.
 func setupScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()

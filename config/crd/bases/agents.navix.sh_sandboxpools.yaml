@@ -584,9 +584,10 @@ spec:
               phase:
                 description: |-
                   Phase is a high-level summary of the pool's current state.
-                  Possible values: Pending, Ready, ScalingUp, ScalingDown, Degraded.
+                  Possible values: Pending, Ready, ScalingUp, ScalingDown, Degraded, Terminating.
 
                   Phase is determined by the following priority rules:
+                    - Terminating: DeletionTimestamp is set
                     - Pending:     spec.replicas == 0 and no pods exist
                     - ScalingUp:   current pod count < spec.replicas
                     - ScalingDown: current pod count > spec.replicas (may persist while running pods cannot be deleted)
@@ -598,6 +599,7 @@ spec:
                 - ScalingUp
                 - ScalingDown
                 - Degraded
+                - Terminating
                 type: string
               phaseSelectors:
                 additionalProperties:
