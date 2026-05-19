@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Patch e2b==2.19.0 to target an Agent Sandbox deployment.
+Patch the E2B Python SDK to target an Agent Sandbox deployment.
 
 Default in-cluster configuration:
   - Data plane gateway:
@@ -32,8 +32,6 @@ Usage:
 
 import os
 from urllib.parse import urlparse
-
-COMPATIBLE_E2B_VERSION = "2.19.0"
 
 _DEFAULT_DOMAIN = "agent-sandbox-data-plane.agentbox-system.svc.cluster.local"
 _DEFAULT_API_URL = (

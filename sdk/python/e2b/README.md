@@ -7,7 +7,7 @@ Agent Sandbox is a Kubernetes-native sandbox service for agentic AI scenarios (r
 ## Installation
 
 ```bash
-pip install e2b==2.19.0 agent-sandbox-e2b
+pip install e2b agent-sandbox-e2b
 ```
 
 ## Quick Start
@@ -97,7 +97,8 @@ patch_e2b(
 
 ## Compatibility
 
-Tested against `e2b==2.19.0`. After patching, all standard E2B SDK operations work unchanged:
+Release builds verify the patch against the latest E2B SDK from PyPI before
+publishing. After patching, all standard E2B SDK operations work unchanged:
 
 ```python
 sandbox.commands.run("python --version")

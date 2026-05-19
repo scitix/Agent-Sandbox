@@ -17,5 +17,6 @@
 from .patch_e2b import patch_e2b
 
 __version__ = "0.0.2"
+SUPPORTED_E2B_MAX_VERSION = ""
 
-__all__ = ["patch_e2b"]
+__all__ = ["SUPPORTED_E2B_MAX_VERSION", "patch_e2b"]

@@ -18,18 +18,13 @@ on:
   push:
     tags:
       - "v*.*.*"
-    branches:
-      - develop
-    paths:
-      - "sdk/python/e2b/**"
-      - ".github/workflows/sdk-python-publish.yml"
-  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      e2b_version: ${{ steps.compat.outputs.e2b_version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,21 +35,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build
+        run: python -m pip install uv
 
       - name: Resolve version
         id: version
         run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            # v0.0.1 → 0.0.1
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            SHORT_SHA="${{ github.sha }}"
-            SHORT_SHA="${SHORT_SHA:0:7}"
-            # dev builds use a local version identifier (not published)
-            VERSION="0.0.0.dev+${SHORT_SHA}"
-          fi
+          # v0.0.1 -> 0.0.1
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Resolved version: ${VERSION}"
 
@@ -63,9 +51,142 @@ jobs:
           sed -i "s/__version__ = \".*\"/__version__ = \"${{ steps.version.outputs.version }}\"/" \
             sdk/python/e2b/agent_sandbox_e2b/__init__.py
 
+      - name: Check compatibility with latest e2b
+        id: compat
+        working-directory: sdk/python/e2b
+        run: |
+          uv venv .compat-venv
+          uv pip install --python .compat-venv/bin/python . e2b
+
+          E2B_VERSION=$(.compat-venv/bin/python - <<'PY'
+          import importlib.metadata
+
+          print(importlib.metadata.version("e2b"))
+          PY
+          )
+          echo "e2b_version=${E2B_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved latest e2b: ${E2B_VERSION}"
+
+          .compat-venv/bin/python - <<'PY'
+          import importlib.metadata
+          import inspect
+          import os
+
+          from agent_sandbox_e2b import patch_e2b
+          from e2b.connection_config import ConnectionConfig
+          from e2b.sandbox.main import SandboxBase
+
+          print(f"agent-sandbox-e2b={importlib.metadata.version('agent-sandbox-e2b')}")
+          print(f"e2b={importlib.metadata.version('e2b')}")
+
+          def assert_signature(obj, expected_names):
+              actual_names = list(inspect.signature(obj).parameters)
+              if actual_names != expected_names:
+                  raise AssertionError(
+                      f"{obj} signature changed: expected "
+                      f"{expected_names}, got {actual_names}"
+                  )
+
+          assert callable(ConnectionConfig.get_host), "ConnectionConfig.get_host missing"
+          assert callable(ConnectionConfig.get_sandbox_url), (
+              "ConnectionConfig.get_sandbox_url missing"
+          )
+          assert callable(SandboxBase.get_host), "SandboxBase.get_host missing"
+          assert_signature(
+              ConnectionConfig.get_host,
+              ["self", "sandbox_id", "sandbox_domain", "port"],
+          )
+          assert_signature(
+              ConnectionConfig.get_sandbox_url,
+              ["self", "sandbox_id", "sandbox_domain"],
+          )
+          assert_signature(SandboxBase.get_host, ["self", "port"])
+
+          data_domain = "localhost:9081/agent-sandbox/api/data"
+          api_url = "http://localhost:9082/agent-sandbox/api/e2b"
+          patch_e2b(https=False, domain=data_domain, api_url=api_url)
+
+          if os.environ["E2B_API_URL"] != api_url:
+              raise AssertionError("patch_e2b did not set E2B_API_URL")
+
+          config = ConnectionConfig()
+          host = config.get_host("sbx_123", "ignored.e2b.dev", 8080)
+          expected_host = f"{data_domain}/sandboxes/sbx_123/8080"
+          if host != expected_host:
+              raise AssertionError(f"unexpected get_host result: {host!r}")
+
+          sandbox_url = config.get_sandbox_url("sbx_123", "ignored.e2b.dev")
+          expected_url = (
+              "http://"
+              f"{data_domain}/sandboxes/sbx_123/{config.envd_port}"
+          )
+          if sandbox_url != expected_url:
+              raise AssertionError(
+                  f"unexpected get_sandbox_url result: {sandbox_url!r}"
+              )
+
+          class DummySandbox:
+              sandbox_id = "sbx_456"
+
+          sandbox_host = SandboxBase.get_host(DummySandbox(), 9000)
+          expected_sandbox_host = f"{data_domain}/sandboxes/sbx_456/9000"
+          if sandbox_host != expected_sandbox_host:
+              raise AssertionError(
+                  f"unexpected SandboxBase.get_host result: {sandbox_host!r}"
+              )
+
+          patch_e2b(
+              https=True,
+              domain="https://gateway.example.com/agent-sandbox/api/data",
+              api_url="https://gateway.example.com/agent-sandbox/api/e2b",
+          )
+
+          config = ConnectionConfig()
+          host = config.get_host("sbx_789", "ignored.e2b.dev", 8080)
+          expected_host = (
+              "gateway.example.com/agent-sandbox/api/data/sandboxes/sbx_789/8080"
+          )
+          if host != expected_host:
+              raise AssertionError(f"scheme/path handling failed: {host!r}")
+
+          sandbox_url = config.get_sandbox_url("sbx_789", "ignored.e2b.dev")
+          if not sandbox_url.startswith(
+              "https://gateway.example.com/agent-sandbox/api/data/"
+          ):
+              raise AssertionError(
+                  f"https sandbox URL handling failed: {sandbox_url!r}"
+              )
+
+          print("patch_e2b compatibility check passed")
+          PY
+
+      - name: Stamp supported e2b version
+        run: |
+          E2B_VERSION="${{ steps.compat.outputs.e2b_version }}"
+          sed -i "s/SUPPORTED_E2B_MAX_VERSION = \".*\"/SUPPORTED_E2B_MAX_VERSION = \"${E2B_VERSION}\"/" \
+            sdk/python/e2b/agent_sandbox_e2b/__init__.py
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          e2b_version = os.environ["E2B_VERSION"]
+          path = Path("sdk/python/e2b/pyproject.toml")
+          text = path.read_text()
+          text = re.sub(
+              r'e2b = \["e2b>=2\.0\.0(?:,[^"]*)?"\]',
+              f'e2b = ["e2b>=2.0.0,<={e2b_version}"]',
+              text,
+          )
+          path.write_text(text)
+          PY
+        env:
+          E2B_VERSION: ${{ steps.compat.outputs.e2b_version }}
+
       - name: Build wheel and sdist
         working-directory: sdk/python/e2b
-        run: python -m build
+        run: uv run --with build python -m build
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4
@@ -76,8 +197,6 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: build
-    # Only publish on tag pushes; develop branch only builds (dry-run)
-    if: github.ref_type == 'tag'
     environment:
       name: pypi
       url: https://pypi.org/project/agent-sandbox-e2b/${{ needs.build.outputs.version }}/
