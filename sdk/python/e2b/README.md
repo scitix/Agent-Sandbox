@@ -2,7 +2,7 @@
 
 A one-line patch that redirects the [E2B Python SDK](https://e2b.dev/docs) to a self-hosted [Agent Sandbox](https://github.com/scitix/agent-sandbox) deployment — no code changes to your existing E2B workflows required.
 
-AgentBox is a Kubernetes-native sandbox service for agentic AI scenarios (reasoning evaluation, training rollouts, code execution). It exposes an E2B-compatible API so you can reuse the E2B SDK while running on your own infrastructure.
+Agent Sandbox is a Kubernetes-native sandbox service for agentic AI scenarios (reasoning evaluation, training rollouts, code execution). It exposes an E2B-compatible API so you can reuse the E2B SDK while running on your own infrastructure.
 
 ## Installation
 
@@ -12,14 +12,14 @@ pip install e2b==2.19.0 agent-sandbox-e2b
 
 ## Quick Start
 
-Call `patch_e2b()` **before** importing `Sandbox`. It redirects all SDK requests to your AgentBox cluster.
+Call `patch_e2b()` **before** importing `Sandbox`. It redirects all SDK requests to your Agent Sandbox cluster.
 
 ```python
 import os
 
 os.environ["E2B_API_KEY"] = "agbx_your_api_key"
 
-from agentbox.patch_e2b import patch_e2b
+from agent_sandbox_e2b import patch_e2b
 patch_e2b()  # zero-argument: uses default in-cluster addresses
 
 from e2b import Sandbox
@@ -66,8 +66,8 @@ sandbox = Sandbox.create(
 
 | Parameter | Default (in-cluster) | Description |
 |-----------|----------------------|-------------|
-| `domain` | `agentbox-data-plane.agentbox-system.svc.cluster.local` | Data plane Envoy gateway address |
-| `api_url` | `http://agentbox-e2b-api.agentbox-system.svc.cluster.local` | Control plane E2B-compatible API URL |
+| `domain` | `agent-sandbox-data-plane.agentbox-system.svc.cluster.local` | Data-plane Envoy gateway address |
+| `api_url` | `http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local` | E2B-compatible API URL |
 | `https` | `False` | Use HTTPS for the data plane |
 
 **Priority**: explicit argument > `E2B_DOMAIN` / `E2B_API_URL` environment variables > built-in defaults.
@@ -77,10 +77,22 @@ sandbox = Sandbox.create(
 patch_e2b(https=False, domain="localhost:9081", api_url="http://localhost:9082")
 
 # Via environment variables (CI/CD)
-# export E2B_DOMAIN=agentbox-data-plane.agentbox-system.svc.cluster.local
-# export E2B_API_URL=http://agentbox-e2b-api.agentbox-system.svc.cluster.local
+# export E2B_DOMAIN=agent-sandbox-data-plane.agentbox-system.svc.cluster.local
+# export E2B_API_URL=http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local
 # export E2B_API_KEY=agbx_your_key
 patch_e2b()
+```
+
+When using the Helm chart in a namespace other than `agentbox-system`, pass the
+installed namespace explicitly:
+
+```python
+from agent_sandbox_e2b import patch_e2b
+
+patch_e2b(
+    domain="agent-sandbox-data-plane.my-namespace.svc.cluster.local",
+    api_url="http://agent-sandbox-e2b-api.my-namespace.svc.cluster.local",
+)
 ```
 
 ## Compatibility
@@ -98,6 +110,6 @@ sandbox.kill()
 
 ## Links
 
-- [AgentBox documentation](https://github.com/scitix/agent-sandbox)
+- [Agent Sandbox documentation](https://github.com/scitix/agent-sandbox)
 - [E2B SDK reference](https://e2b.dev/docs/sdk-reference/python-sdk/v2.15.2/sandbox_sync)
 - [License: Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)

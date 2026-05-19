@@ -61,28 +61,6 @@ controller:
   nodeAffinity: {}
   tolerations: []
 
-  # Ingress for the controller API server (optional).
-  # This exposes /v1/... (native REST API) directly from the control-plane service.
-  # For production, the data-plane ingress below is the recommended entry point.
-  ingress:
-    enabled: false
-    className: nginx
-    host: agent-sandbox.example.com
-    annotations:
-      nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
-      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-
-  # Gateway API alternative to ingress (use with Envoy Gateway or similar).
-  # Mutually exclusive with ingress; enable one or the other.
-  gateway:
-    enabled: false
-    name: eg
-    namespace: envoy-gateway-system
-    host: agent-sandbox.example.com
-    timeouts:
-      request: "3600s"
-
 # ---------------------------------------------------------------------------
 # ExtProc (Envoy External Processor + data-plane manager)
 # ---------------------------------------------------------------------------
@@ -119,9 +97,9 @@ extproc:
 
   # Ingress for the data-plane (recommended external entry point).
   # Exposes three sub-paths:
-  #   /agentbox/api/native  → controller API server (port 80)
-  #   /agentbox/api/data    → extproc data-plane (port 80)
-  #   /agentbox/api/e2b     → E2B-compatible API (port 80)
+  #   /agent-sandbox/api/native  → controller API server (port 80)
+  #   /agent-sandbox/api/data    → extproc data-plane (port 80)
+  #   /agent-sandbox/api/e2b     → E2B-compatible API (port 80)
   ingress:
     enabled: true
     className: nginx

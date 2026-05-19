@@ -61,7 +61,7 @@ jobs:
       - name: Stamp version into __init__.py
         run: |
           sed -i "s/__version__ = \".*\"/__version__ = \"${{ steps.version.outputs.version }}\"/" \
-            sdk/python/e2b/agentbox/__init__.py
+            sdk/python/e2b/agent_sandbox_e2b/__init__.py
 
       - name: Build wheel and sdist
         working-directory: sdk/python/e2b
@@ -82,7 +82,7 @@ jobs:
       name: pypi
       url: https://pypi.org/project/agent-sandbox-e2b/${{ needs.build.outputs.version }}/
     permissions:
-      id-token: write  # Required for OIDC Trusted Publisher
+      id-token: write # Required for OIDC Trusted Publisher
     steps:
       - name: Download dist artifacts
         uses: actions/download-artifact@v4

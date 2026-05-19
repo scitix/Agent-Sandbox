@@ -93,7 +93,7 @@ Before tagging, run through this list:
 ```
 [ ] VERSION file updated to the new version (e.g. echo "0.0.1" > VERSION)
 [ ] make sync-version run (syncs openapi.yaml, pyproject.toml, __init__.py)
-[ ] sdk/python/e2b/agentbox/__init__.py __version__ matches the release version
+[ ] sdk/python/e2b/agent_sandbox_e2b/__init__.py __version__ matches the release version
 [ ] sdk/typescript/e2b/package.json version matches (the workflow stamps it at build time,
     but you can update it manually to keep the file consistent in the repo)
 [ ] Helm chart Chart.yaml versions updated if bumping charts

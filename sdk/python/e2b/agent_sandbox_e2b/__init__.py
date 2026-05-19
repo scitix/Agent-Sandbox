@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-AgentBox __init__.py
+"""Agent Sandbox E2B SDK patch package."""
 
-AgentBox E2B SDK patch package.
-"""
+from .patch_e2b import patch_e2b
 
-__version__ = "0.0.0"
+__version__ = "0.0.2"
+
+__all__ = ["patch_e2b"]

@@ -17,7 +17,7 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /agentbox/api/native
+            value: /agent-sandbox/api/native
       filters:
         - type: URLRewrite
           urlRewrite:
@@ -25,12 +25,12 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: {{ include "agent-sandbox-worker.fullname" . }}-control-plane
+        - name: agent-sandbox-api
           port: 80
     - matches:
         - path:
             type: PathPrefix
-            value: /agentbox/api/data
+            value: /agent-sandbox/api/data
       filters:
         - type: URLRewrite
           urlRewrite:
@@ -38,12 +38,12 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: {{ include "agent-sandbox-worker.fullname" . }}-data-plane
+        - name: agent-sandbox-data-plane
           port: 80
     - matches:
         - path:
             type: PathPrefix
-            value: /agentbox/api/e2b
+            value: /agent-sandbox/api/e2b
       filters:
         - type: URLRewrite
           urlRewrite:
@@ -51,7 +51,7 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: {{ include "agent-sandbox-worker.fullname" . }}-e2b-api
+        - name: agent-sandbox-e2b-api
           port: 80
 ---
 # SecurityPolicy: Replaces nginx cors-allow-* annotations

@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 ScitiX
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 'use client';
 
 import Image from 'next/image';
@@ -153,7 +169,7 @@ const FOOTER_GROUPS = [
 const HELM_COMMAND = 'helm install agent-sandbox oci://ghcr.io/scitix/agent-sandbox-worker';
 
 const TERMINAL_LINES = [
-  { kind: 'command', text: 'from agentbox.patch_e2b import patch_e2b' },
+  { kind: 'command', text: 'from agent_sandbox_e2b import patch_e2b' },
   { kind: 'command', text: 'patch_e2b()' },
   { kind: 'gap', text: '' },
   { kind: 'command', text: 'from e2b import Sandbox' },

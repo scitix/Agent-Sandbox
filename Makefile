@@ -316,7 +316,7 @@ gen-all-api: generate-api gen-internal-proto ## Regenerate all API clients from 
 	@echo "  Go     → pkg/apiserver/gen/agentbox.gen.go"
 	@echo "  TS     → dashboard/lib/api/schema.d.ts"
 	@echo "  TS hub → dashboard/lib/api/global-schema.d.ts"
-	@echo "  Python → sdk/python/abx/agentbox_sdk/_generated/"
+	@echo "  Python → sdk/python/abx/agent_sandbox_e2b/_generated/"
 
 .PHONY: add-license
 add-license: addlicense

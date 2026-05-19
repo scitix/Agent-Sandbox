@@ -17,25 +17,25 @@ spec:
     - host: {{ .Values.extproc.ingress.host }}
       http:
         paths:
-          - path: /agentbox/api/native(/|$)(.*)
+          - path: /agent-sandbox/api/native(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
-                name: {{ include "agent-sandbox-worker.fullname" . }}-control-plane
+                name: agent-sandbox-api
                 port:
                   number: 80
-          - path: /agentbox/api/data(/|$)(.*)
+          - path: /agent-sandbox/api/data(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
-                name: {{ include "agent-sandbox-worker.fullname" . }}-data-plane
+                name: agent-sandbox-data-plane
                 port:
                   number: 80
-          - path: /agentbox/api/e2b(/|$)(.*)
+          - path: /agent-sandbox/api/e2b(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
-                name: {{ include "agent-sandbox-worker.fullname" . }}-e2b-api
+                name: agent-sandbox-e2b-api
                 port:
                   number: 80
 {{- end }}

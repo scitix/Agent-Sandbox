@@ -1,6 +1,6 @@
-# E2B JavaScript SDK Patch for AgentBox
+# E2B JavaScript SDK Patch for Agent Sandbox
 
-Monkey-patches the [E2B JavaScript SDK](https://github.com/e2b-dev/E2B/tree/main/packages/js-sdk) to redirect control-plane API calls and data-plane sandbox connections to an AgentBox deployment.
+Monkey-patches the [E2B JavaScript SDK](https://github.com/e2b-dev/E2B/tree/main/packages/js-sdk) to redirect control-plane API calls and data-plane sandbox connections to an Agent Sandbox deployment.
 
 **Tested against: e2b `2.19.0`**
 
@@ -11,14 +11,14 @@ Monkey-patches the [E2B JavaScript SDK](https://github.com/e2b-dev/E2B/tree/main
 The E2B JS SDK constructs sandbox connection URLs using `ConnectionConfig.getHost()`:
 
 ```
-// Default E2B (subdomain routing — incompatible with AgentBox)
+// Default E2B (subdomain routing — incompatible with Agent Sandbox)
 ${port}-${sandboxId}.${domain}
 
-// AgentBox (path-based routing via Envoy ExtProc gateway)
+// Agent Sandbox (path-based routing via Envoy ExtProc gateway)
 ${gateway}/sandboxes/${sandboxId}/${port}
 ```
 
-`patchE2b()` overrides `ConnectionConfig.prototype.getHost` and `getSandboxUrl` to use the AgentBox path format, and sets `E2B_API_URL` / `E2B_DOMAIN` so the SDK's static getters point at the correct endpoints.
+`patchE2b()` overrides `ConnectionConfig.prototype.getHost` and `getSandboxUrl` to use the Agent Sandbox path format, and sets `E2B_API_URL` / `E2B_DOMAIN` so the SDK's static getters point at the correct endpoints.
 
 ---
 
@@ -74,8 +74,8 @@ const { Sandbox } = require('e2b');
 ```js
 await patchE2b({
   https:  false,
-  domain: 'agentbox-data-plane.agentbox-system.svc.cluster.local',
-  apiUrl: 'http://agentbox-e2b-api.agentbox-system.svc.cluster.local',
+  domain: 'agent-sandbox-data-plane.agentbox-system.svc.cluster.local',
+  apiUrl: 'http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local',
 });
 ```
 
@@ -83,8 +83,8 @@ await patchE2b({
 
 ```bash
 export E2B_API_KEY=agbx_your_key
-export E2B_DOMAIN=agentbox-data-plane.agentbox-system.svc.cluster.local
-export E2B_API_URL=http://agentbox-e2b-api.agentbox-system.svc.cluster.local
+export E2B_DOMAIN=agent-sandbox-data-plane.agentbox-system.svc.cluster.local
+export E2B_API_URL=http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local
 ```
 
 ```js
@@ -97,12 +97,12 @@ patchE2b(); // reads from env, no arguments needed
 
 | Variable | Default |
 |---|---|
-| `E2B_DOMAIN` | `agentbox-data-plane.agentbox-system.svc.cluster.local` |
-| `E2B_API_URL` | `http://agentbox-e2b-api.agentbox-system.svc.cluster.local` |
+| `E2B_DOMAIN` | `agent-sandbox-data-plane.agentbox-system.svc.cluster.local` |
+| `E2B_API_URL` | `http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local` |
 | HTTPS | `false` |
 
 ---
 
 ## Python equivalent
 
-See [`sdk/python/e2b/agentbox/patch_e2b.py`](../../python/e2b/agentbox/patch_e2b.py) for the Python version.
+See [`sdk/python/e2b/agent_sandbox_e2b/patch_e2b.py`](../../python/e2b/agent_sandbox_e2b/patch_e2b.py) for the Python version.

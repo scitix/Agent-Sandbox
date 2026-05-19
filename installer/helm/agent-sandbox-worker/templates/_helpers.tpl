@@ -64,7 +64,7 @@ Resolved extproc internal API URL.
 {{- if .Values.controller.extprocInternalApiUrl }}
 {{- .Values.controller.extprocInternalApiUrl }}
 {{- else }}
-{{- printf "%s-data-plane.%s.svc.cluster.local:9003" (include "agent-sandbox-worker.fullname" .) .Release.Namespace }}
+{{- printf "agent-sandbox-data-plane.%s.svc.cluster.local:9003" .Release.Namespace }}
 {{- end }}
 {{- end }}
 
@@ -75,7 +75,7 @@ Resolved envoy gateway base URL.
 {{- if .Values.controller.envoyGatewayBaseUrl }}
 {{- .Values.controller.envoyGatewayBaseUrl }}
 {{- else }}
-{{- printf "http://%s-data-plane.%s.svc.cluster.local" (include "agent-sandbox-worker.fullname" .) .Release.Namespace }}
+{{- printf "http://agent-sandbox-data-plane.%s.svc.cluster.local" .Release.Namespace }}
 {{- end }}
 {{- end }}
 
@@ -86,6 +86,6 @@ Resolved E2B domain.
 {{- if .Values.controller.e2bDomain }}
 {{- .Values.controller.e2bDomain }}
 {{- else }}
-{{- printf "%s-data-plane.%s.svc.cluster.local" (include "agent-sandbox-worker.fullname" .) .Release.Namespace }}
+{{- printf "agent-sandbox-data-plane.%s.svc.cluster.local" .Release.Namespace }}
 {{- end }}
 {{- end }}

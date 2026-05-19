@@ -8,7 +8,7 @@ Scitix AgentBox is a sandbox service designed for Agentic scenarios, offering se
 By reading this document, we assume you have already completed the sandbox pool pre-warming and API Key application process. To use resources from the sandbox pool `${AGBX_POOL_NAME}`, first install the E2B SDK and the AgentBox patch package:
 
 ```bash
-uv pip install e2b==2.19.0 agent-sandbox-e2b==0.0.1
+uv pip install e2b==2.19.0 agent-sandbox-e2b==0.0.2
 ```
 
 ## Quick Start
@@ -21,7 +21,7 @@ import os
 # Replace with your actual AgentBox API Key
 os.environ["E2B_API_KEY"] = "YOUR_API_KEY"
 
-from agentbox.patch_e2b import patch_e2b  # Must be called before importing Sandbox
+from agent_sandbox_e2b import patch_e2b  # Must be called before importing Sandbox
 patch_e2b()
 
 from e2b import Sandbox

@@ -3,8 +3,7 @@ revision = 3
 requires-python = ">=3.10"
 
 [[package]]
-name = "agentbox-e2b"
-version = "0.1.3"
+name = "agent-sandbox-e2b"
 source = { editable = "." }
 
 [package.optional-dependencies]

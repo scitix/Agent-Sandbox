@@ -33,11 +33,11 @@ import (
 type URLKind int
 
 const (
-	// URLKindNative targets the Native API (agentbox-control-plane).
+	// URLKindNative targets the Native API (agent-sandbox-api).
 	URLKindNative URLKind = iota
-	// URLKindE2B targets the E2B-compatible API (agentbox-e2b-api).
+	// URLKindE2B targets the E2B-compatible API (agent-sandbox-e2b-api).
 	URLKindE2B
-	// URLKindData targets the data plane (agentbox-data-plane).
+	// URLKindData targets the data plane (agent-sandbox-data-plane).
 	URLKindData
 )
 
@@ -111,9 +111,9 @@ type RegistryEntry struct {
 //	  X-GW-Auth: data-only-token   # overrides shared-token for data-plane calls
 type GatewayConfig struct {
 	// Explicit per-plane URLs.
-	NativeURL string `json:"nativeURL,omitempty"` // Native API (agentbox-control-plane)
-	E2BURL    string `json:"e2bURL,omitempty"`    // E2B-compat API (agentbox-e2b-api)
-	DataURL   string `json:"dataURL,omitempty"`   // data plane (agentbox-data-plane)
+	NativeURL string `json:"nativeURL,omitempty"` // Native API (agent-sandbox-api)
+	E2BURL    string `json:"e2bURL,omitempty"`    // E2B-compat API (agent-sandbox-e2b-api)
+	DataURL   string `json:"dataURL,omitempty"`   // data plane (agent-sandbox-data-plane)
 
 	// Headers injected into every forwarded request.
 	Headers map[string]string `json:"headers,omitempty"`
@@ -125,13 +125,13 @@ type GatewayConfig struct {
 	DataHeaders   map[string]string `json:"dataHeaders,omitempty"`
 }
 
-// NativeAPIBaseURL returns the base URL for the Native API (agentbox-control-plane service).
+// NativeAPIBaseURL returns the base URL for the Native API (agent-sandbox-api service).
 func (g *GatewayConfig) NativeAPIBaseURL() string { return g.NativeURL }
 
-// E2BAPIBaseURL returns the base URL for the E2B-compatible API (agentbox-e2b-api service).
+// E2BAPIBaseURL returns the base URL for the E2B-compatible API (agent-sandbox-e2b-api service).
 func (g *GatewayConfig) E2BAPIBaseURL() string { return g.E2BURL }
 
-// DataPlaneBaseURL returns the base URL for the data plane (agentbox-data-plane service).
+// DataPlaneBaseURL returns the base URL for the data plane (agent-sandbox-data-plane service).
 func (g *GatewayConfig) DataPlaneBaseURL() string { return g.DataURL }
 
 // MergedHeaders returns Headers merged with the per-plane override for the

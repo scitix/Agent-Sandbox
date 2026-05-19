@@ -1,27 +1,53 @@
 Agent Sandbox has been deployed to namespace {{ .Release.Namespace }}.
 
 CONTROLLER:
-  API:       http://{{ include "agent-sandbox-worker.fullname" . }}-control-plane.{{ .Release.Namespace }}.svc.cluster.local/
-  E2B API:   http://{{ include "agent-sandbox-worker.fullname" . }}-e2b-api.{{ .Release.Namespace }}.svc.cluster.local/
-  Metrics:   http://{{ include "agent-sandbox-worker.fullname" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc.cluster.local:8082/metrics
+  API:       http://agent-sandbox-api.{{ .Release.Namespace }}.svc.cluster.local/
+  E2B API:   http://agent-sandbox-e2b-api.{{ .Release.Namespace }}.svc.cluster.local/
+  Metrics:   http://agent-sandbox-controller-metrics.{{ .Release.Namespace }}.svc.cluster.local:8082/metrics
 
 DATA PLANE (ExtProc + Envoy):
-  Gateway:   http://{{ include "agent-sandbox-worker.fullname" . }}-data-plane.{{ .Release.Namespace }}.svc.cluster.local/
+  Gateway:   http://agent-sandbox-data-plane.{{ .Release.Namespace }}.svc.cluster.local/
 
 {{- if .Values.extproc.ingress.enabled }}
 
 GATEWAY INGRESS:
-  https://{{ .Values.extproc.ingress.host }}/agentbox/api/native  → controller API
-  https://{{ .Values.extproc.ingress.host }}/agentbox/api/data    → data-plane
-  https://{{ .Values.extproc.ingress.host }}/agentbox/api/e2b     → E2B-compatible API
+  https://{{ .Values.extproc.ingress.host }}/agent-sandbox/api/native  → controller API
+  https://{{ .Values.extproc.ingress.host }}/agent-sandbox/api/data    → data-plane
+  https://{{ .Values.extproc.ingress.host }}/agent-sandbox/api/e2b     → E2B-compatible API
 {{- end }}
+
+E2B PYTHON SDK:
+{{- if eq .Release.Namespace "agentbox-system" }}
+  The default SDK patch targets namespace agentbox-system, so in-cluster clients can use:
+
+    from agent_sandbox_e2b import patch_e2b
+    patch_e2b()
+{{- else }}
+  This release was installed in namespace {{ .Release.Namespace }}. Configure the SDK patch explicitly:
+
+    from agent_sandbox_e2b import patch_e2b
+
+    patch_e2b(
+        domain="agent-sandbox-data-plane.{{ .Release.Namespace }}.svc.cluster.local",
+        api_url="http://agent-sandbox-e2b-api.{{ .Release.Namespace }}.svc.cluster.local",
+    )
+
+  Or set environment variables before calling patch_e2b():
+
+    export E2B_DOMAIN=agent-sandbox-data-plane.{{ .Release.Namespace }}.svc.cluster.local
+    export E2B_API_URL=http://agent-sandbox-e2b-api.{{ .Release.Namespace }}.svc.cluster.local
+{{- end }}
+
+PREVIEW THIS MESSAGE:
+  helm install agent-sandbox-worker installer/helm/agent-sandbox-worker \
+    --namespace {{ .Release.Namespace }} --create-namespace --dry-run --debug
 
 NEXT STEPS:
   1. Create a SandboxTemplate:
-       kubectl apply -f https://raw.githubusercontent.com/scitix/agent-sandbox/main/config/samples/envd_sandboxtemplate.yaml
+       kubectl apply -f https://raw.githubusercontent.com/scitix/agent-sandbox/develop/config/samples/e2b_sandboxtemplate.yaml
 
   2. Create a SandboxPool:
-       kubectl apply -f https://raw.githubusercontent.com/scitix/agent-sandbox/main/config/samples/agents_v1alpha1_sandboxpool.yaml
+       https://scitix.github.io/Agent-Sandbox/docs/api/pools/CreateSandboxPool/
 
   3. Check pool status:
        kubectl get sandboxpool -A

@@ -1,0 +1,135 @@
+# Copyright 2026 ScitiX
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Patch e2b==2.19.0 to target an Agent Sandbox deployment.
+
+Default in-cluster configuration:
+  - Data plane gateway:
+    agent-sandbox-data-plane.agentbox-system.svc.cluster.local
+  - E2B-compatible API:
+    http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local
+
+Usage:
+    from agent_sandbox_e2b import patch_e2b
+
+    patch_e2b()
+
+    from e2b import Sandbox
+    sandbox = Sandbox.create("my-pool", timeout=3600, secure=False)
+"""
+
+import os
+from urllib.parse import urlparse
+
+COMPATIBLE_E2B_VERSION = "2.19.0"
+
+_DEFAULT_DOMAIN = "agent-sandbox-data-plane.agentbox-system.svc.cluster.local"
+_DEFAULT_API_URL = (
+    "http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local"
+)
+
+
+def _domain_host_and_path(url: str) -> str:
+    """Return host[:port][/path] without a scheme or trailing slash."""
+    parsed = urlparse(url)
+    if parsed.scheme in ("http", "https"):
+        value = f"{parsed.netloc}{parsed.path}"
+    else:
+        value = url
+    return value.rstrip("/")
+
+
+def _make_sandbox_get_host(resolved_domain: str | None):
+    """Return a get_host method for SandboxBase using Agent Sandbox paths."""
+
+    def _get_host(self, port: int) -> str:
+        dom = _domain_host_and_path(
+            resolved_domain or os.environ.get("E2B_DOMAIN", "localhost")
+        )
+        sid = getattr(self, "sandbox_id", None) or ""
+        return f"{dom}/sandboxes/{sid}/{port}"
+
+    return _get_host
+
+
+def patch_e2b(
+    https: bool = False,
+    domain: str | None = None,
+    api_url: str | None = None,
+) -> None:
+    """
+    Patch the E2B SDK to target Agent Sandbox.
+
+    Call this function before importing or using E2B Sandbox classes.
+
+    Args:
+        https: Use HTTPS for data-plane sandbox URLs.
+        domain: Data-plane gateway host, optionally with an ingress path.
+            Priority: argument > E2B_DOMAIN > default in-cluster service.
+        api_url: E2B-compatible API URL, including scheme.
+            Priority: argument > E2B_API_URL > default in-cluster service.
+
+    Raises:
+        ImportError: If the e2b package is not installed.
+    """
+    try:
+        import e2b  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "The 'e2b' package is required. Install it with: pip install e2b"
+        ) from exc
+
+    resolved_domain = (
+        domain or os.environ.get("E2B_DOMAIN", "") or _DEFAULT_DOMAIN
+    )
+    resolved_api_url = (
+        api_url or os.environ.get("E2B_API_URL", "") or _DEFAULT_API_URL
+    )
+    os.environ["E2B_API_URL"] = resolved_api_url
+
+    try:
+        from e2b.sandbox.main import SandboxBase  # type: ignore[import]
+
+        SandboxBase.get_host = _make_sandbox_get_host(resolved_domain)
+    except ImportError:
+        pass
+
+    try:
+        from e2b.connection_config import (
+            ConnectionConfig,  # type: ignore[import]
+        )
+
+        def _connection_config_get_host(
+            _, sandbox_id: str, sandbox_domain: str, port: int
+        ) -> str:
+            dom = _domain_host_and_path(
+                resolved_domain or sandbox_domain or "localhost"
+            )
+            return f"{dom}/sandboxes/{sandbox_id}/{port}"
+
+        ConnectionConfig.get_host = _connection_config_get_host
+
+        def _connection_config_get_sandbox_url(
+            self, sandbox_id: str, sandbox_domain: str
+        ) -> str:
+            if self._sandbox_url:
+                return self._sandbox_url
+            scheme = "https" if https else "http"
+            host = self.get_host(sandbox_id, sandbox_domain, self.envd_port)
+            return f"{scheme}://{host}"
+
+        ConnectionConfig.get_sandbox_url = _connection_config_get_sandbox_url
+    except (ImportError, AttributeError):
+        pass

@@ -15,13 +15,13 @@
  */
 
 /**
- * patch_e2b — AgentBox patch for e2b JS SDK (v2.19.0)
+ * patch_e2b — Agent Sandbox patch for e2b JS SDK (v2.19.0)
  *
  * Monkey-patches the E2B SDK to redirect API calls and sandbox connections
- * to an AgentBox deployment.
+ * to an Agent Sandbox deployment.
  *
  * Architecture:
- *   - Control plane (E2B-compatible REST API): AgentBox exposes standard E2B
+ *   - Control plane (E2B-compatible REST API): Agent Sandbox exposes standard E2B
  *     routes at :8090. Set E2B_API_URL=http(s)://<host> (no path suffix).
  *   - Data plane (envd gRPC / connect-proto): Traffic goes through the Envoy
  *     ExtProc gateway using the path format:
@@ -29,8 +29,10 @@
  *     E2B_DOMAIN should be the gateway host (no scheme).
  *
  * In-cluster defaults (call patchE2b() with no arguments):
- *   - Data plane gateway: agentbox-data-plane.agentbox-system.svc.cluster.local
- *   - Control plane API:  http://agentbox-e2b-api.agentbox-system.svc.cluster.local
+ *   - Data plane gateway:
+ *     agent-sandbox-data-plane.agentbox-system.svc.cluster.local
+ *   - Control plane API:
+ *     http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local
  *   - HTTPS: false
  *
  * Usage (ESM):
@@ -53,8 +55,8 @@
 // Compatible e2b version this patch was written and tested against.
 const COMPATIBLE_E2B_VERSION = '2.19.0';
 
-const DEFAULT_DOMAIN = 'agentbox-data-plane.agentbox-system.svc.cluster.local';
-const DEFAULT_API_URL = 'http://agentbox-e2b-api.agentbox-system.svc.cluster.local';
+const DEFAULT_DOMAIN = 'agent-sandbox-data-plane.agentbox-system.svc.cluster.local';
+const DEFAULT_API_URL = 'http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local';
 
 /**
  * Strip http:// or https:// scheme prefix from a URL string.
@@ -66,7 +68,7 @@ function stripScheme(url) {
 }
 
 /**
- * Patch the E2B SDK to route API calls and sandbox connections to AgentBox.
+ * Patch the E2B SDK to route API calls and sandbox connections to Agent Sandbox.
  *
  * @param {object}  [opts]
  * @param {boolean} [opts.https=false]    Use HTTPS for envd data-plane connections.
@@ -113,12 +115,12 @@ async function patchE2b({ https = false, domain, apiUrl } = {}) {
   }
 
   /**
-   * Override getHost to use the AgentBox path-based routing format:
+   * Override getHost to use the Agent Sandbox path-based routing format:
    *   <gateway>/sandboxes/<sandboxId>/<port>
    *
    * The default E2B implementation uses subdomain routing:
    *   <port>-<sandboxId>.<domain>
-   * which is incompatible with AgentBox's Envoy ExtProc gateway.
+   * which is incompatible with Agent Sandbox's Envoy ExtProc gateway.
    */
   ConnectionConfig.prototype.getHost = function (sandboxId, port, _sandboxDomain) {
     return `${resolvedDomain}/sandboxes/${sandboxId}/${port}`;
