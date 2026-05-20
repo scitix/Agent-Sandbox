@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-sandbox-harbor"
+dynamic = ["version"]
+description = "Agent Sandbox plugin for Harbor — run Terminal-Bench / SWE-bench / Harbor benchmarks on Agent Sandbox pools"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+dependencies = [
+    "agent-sandbox-e2b>=0.0.2",
+]
+# harbor is an optional peer dependency installed by users via `harbor[e2b]`;
+# we don't pin it as a hard dependency to avoid version conflicts with users
+# who pin a specific harbor version themselves.
+
+[project.optional-dependencies]
+harbor = ["harbor>=0.7.0", "e2b>=2.0.0"]
+dev = ["harbor>=0.7.0", "e2b>=2.0.0", "ruff>=0.4.0"]
+
+[tool.setuptools.dynamic]
+version = { attr = "agent_sandbox_harbor.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent_sandbox_harbor*"]
+
+[project.urls]
+Homepage = "https://github.com/scitix/agent-sandbox"
+Source = "https://github.com/scitix/agent-sandbox/tree/main/sdk/python/harbor"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

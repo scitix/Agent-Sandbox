@@ -1,0 +1,190 @@
+# Copyright 2026 ScitiX
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Publish Harbor Plugin (PyPI)
+
+on:
+  push:
+    tags:
+      # Use a prefix so this workflow does not collide with the e2b SDK's
+      # ``v*.*.*`` tag pattern. Tag example: ``harbor-v0.0.3``.
+      - "harbor-v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      harbor_version: ${{ steps.compat.outputs.harbor_version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install uv
+
+      - name: Resolve version
+        id: version
+        run: |
+          # harbor-v0.0.3 -> 0.0.3
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#harbor-v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Resolved version: ${VERSION}"
+
+      - name: Stamp version into __init__.py
+        run: |
+          sed -i "s/__version__ = \".*\"/__version__ = \"${{ steps.version.outputs.version }}\"/" \
+            sdk/python/harbor/agent_sandbox_harbor/__init__.py
+
+      - name: Check compatibility with latest harbor
+        id: compat
+        working-directory: sdk/python/harbor
+        run: |
+          uv venv .compat-venv
+          # Install the plugin together with harbor[e2b] so that the e2b backend
+          # (which we subclass) is available for inspection.
+          uv pip install --python .compat-venv/bin/python . "harbor[e2b]"
+
+          HARBOR_VERSION=$(.compat-venv/bin/python - <<'PY'
+          import importlib.metadata
+
+          print(importlib.metadata.version("harbor"))
+          PY
+          )
+          echo "harbor_version=${HARBOR_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved latest harbor: ${HARBOR_VERSION}"
+
+          .compat-venv/bin/python - <<'PY'
+          import importlib.metadata
+          import inspect
+
+          # Importing agent_sandbox_harbor triggers patch_e2b() at module
+          # top-level. The harbor[e2b] backend should subsequently import
+          # cleanly via the patched SDK.
+          import agent_sandbox_harbor
+          from agent_sandbox_harbor import AgentSandboxEnvironment
+          from harbor.environments.e2b import E2BEnvironment
+          from harbor.models.environment_type import EnvironmentType
+
+          print(f"agent-sandbox-harbor={importlib.metadata.version('agent-sandbox-harbor')}")
+          print(f"agent-sandbox-e2b={importlib.metadata.version('agent-sandbox-e2b')}")
+          print(f"harbor={importlib.metadata.version('harbor')}")
+          print(f"e2b={importlib.metadata.version('e2b')}")
+
+          # We subclass E2BEnvironment and override these three methods. If
+          # Harbor upstream renames or removes any of them, the plugin would
+          # silently lose the override — fail the publish instead.
+          for method in (
+              "_does_template_exist",
+              "_create_template",
+              "_create_sandbox",
+              "__init__",
+              "start",
+              "stop",
+              "exec",
+              "upload_file",
+              "upload_dir",
+              "download_file",
+              "download_dir",
+          ):
+              if not hasattr(E2BEnvironment, method):
+                  raise AssertionError(
+                      f"harbor.environments.e2b.E2BEnvironment is missing "
+                      f"required method: {method}"
+                  )
+
+          # Identity check: our class must be a strict subclass of the harbor
+          # E2BEnvironment so that all inherited methods work unchanged.
+          if not issubclass(AgentSandboxEnvironment, E2BEnvironment):
+              raise AssertionError(
+                  "AgentSandboxEnvironment must subclass "
+                  "harbor.environments.e2b.E2BEnvironment"
+              )
+
+          # The environment must still self-identify as the E2B backend so
+          # Harbor's downstream code paths (mounts, OS detection, etc.) treat
+          # it consistently with other e2b-based environments.
+          if AgentSandboxEnvironment.type() is not EnvironmentType.E2B:
+              raise AssertionError(
+                  "AgentSandboxEnvironment.type() must be EnvironmentType.E2B"
+              )
+
+          # _create_sandbox is async; sanity-check by introspection rather than
+          # calling (we have no live cluster in CI).
+          if not inspect.iscoroutinefunction(AgentSandboxEnvironment._create_sandbox):
+              raise AssertionError(
+                  "_create_sandbox should remain a coroutine function"
+              )
+
+          print("agent-sandbox-harbor compatibility check passed")
+          PY
+
+      - name: Stamp supported harbor version
+        run: |
+          HARBOR_VERSION="${{ steps.compat.outputs.harbor_version }}"
+          sed -i "s/SUPPORTED_HARBOR_MAX_VERSION = \".*\"/SUPPORTED_HARBOR_MAX_VERSION = \"${HARBOR_VERSION}\"/" \
+            sdk/python/harbor/agent_sandbox_harbor/__init__.py
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          harbor_version = os.environ["HARBOR_VERSION"]
+          path = Path("sdk/python/harbor/pyproject.toml")
+          text = path.read_text()
+          text = re.sub(
+              r'harbor = \["harbor>=0\.7\.0(?:,[^"]*)?"[^]]*\]',
+              f'harbor = ["harbor>=0.7.0,<={harbor_version}", "e2b>=2.0.0"]',
+              text,
+          )
+          path.write_text(text)
+          PY
+        env:
+          HARBOR_VERSION: ${{ steps.compat.outputs.harbor_version }}
+
+      - name: Build wheel and sdist
+        working-directory: sdk/python/harbor
+        run: uv run --with build python -m build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-harbor-dist
+          path: sdk/python/harbor/dist/
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: pypi
+      url: https://pypi.org/project/agent-sandbox-harbor/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write # Required for OIDC Trusted Publisher
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-harbor-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No token needed — uses OIDC Trusted Publisher configured on PyPI
