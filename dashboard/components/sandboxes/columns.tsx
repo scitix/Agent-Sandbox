@@ -344,15 +344,10 @@ export function createSandboxColumns(
         return <span className="text-muted-foreground text-xs">---</span>
       return (
         <div className="flex flex-col gap-0.5">
-          {Object.entries(images).map(([name, image]) => {
+          {Object.entries(images).map(([, image]) => {
             const shortImage = image.includes("/") ? (image.split("/").pop() ?? image) : image
             return (
-              <div key={name} className="flex flex-col gap-0">
-                <span className="text-muted-foreground font-mono text-[10px] uppercase">
-                  {name}
-                </span>
-                <CopyableText value={image} label={shortImage} className="font-mono text-xs" />
-              </div>
+              <CopyableText value={image} label={shortImage} className="font-mono text-xs" />
             )
           })}
         </div>

@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
@@ -1461,6 +1462,209 @@ func TestScaleDownProtectionWindow_WithAutoscaling(t *testing.T) {
 	}
 	if w := scaleDownProtectionWindow(pool); w != 15*time.Second {
 		t.Errorf("expected 15s, got %v", w)
+	}
+}
+
+// TestScaleDownProtectionWindow_AutoscalingDisabled confirms that the two-phase
+// scale-down dance is skipped when autoscaling.enabled=false, even though the
+// Autoscaling object itself is non-nil. Without this short-circuit, calling
+// markScaleDownProtected on a pool that has autoscaling toggled off (but
+// previously had it on) would stamp idle pods with an annotation that nothing
+// ever clears, silently removing them from the scheduler's ready queue.
+func TestScaleDownProtectionWindow_AutoscalingDisabled(t *testing.T) {
+	pool := &agentsv1alpha1.SandboxPool{
+		Spec: agentsv1alpha1.SandboxPoolSpec{
+			Replicas: 5,
+			Autoscaling: &agentsv1alpha1.PoolAutoscalingSpec{
+				Enabled: false,
+				ScaleDownPolicy: &agentsv1alpha1.PoolScaleDownPolicy{
+					ProtectionWindowSeconds: 15,
+				},
+			},
+		},
+	}
+	if w := scaleDownProtectionWindow(pool); w != 0 {
+		t.Errorf("expected 0 when autoscaling.enabled=false, got %v", w)
+	}
+}
+
+// makeProtectedIdlePod builds an idle pod carrying the scale-down-protected
+// annotation, simulating either a residual mark from earlier autoscaling
+// activity or a fresh Phase-A mark from the current cycle.
+func makeProtectedIdlePod(name, ns, poolName, ts string) *corev1.Pod { //nolint:unparam
+	p := makeIdlePodForPool(name, ns, poolName)
+	if p.Annotations == nil {
+		p.Annotations = map[string]string{}
+	}
+	p.Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey] = ts
+	return p
+}
+
+// TestUnmarkStaleScaleDownProtected_DirectCall exercises the bulk sweeper in
+// isolation: every idle pod carrying the annotation should be cleared, while
+// non-idle or unannotated pods are left alone.
+func TestUnmarkStaleScaleDownProtected_DirectCall(t *testing.T) {
+	const ns, poolName = "default", "pool-cleanup"
+	idleWithAnnot := makeProtectedIdlePod("idle-stale-1", ns, poolName, "2026-05-08T08:20:02Z")
+	idleWithoutAnnot := makeIdlePodForPool("idle-clean", ns, poolName)
+	startingWithAnnot := makeIdlePodForPool("starting-pod", ns, poolName)
+	startingWithAnnot.Labels[agentsv1alpha1.SandboxPhaseLabelKey] = agentsv1alpha1.SandboxPhaseStarting
+	startingWithAnnot.Annotations = map[string]string{
+		agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey: "2026-05-08T08:20:02Z",
+	}
+
+	cli := newTestClientBuilder(t).WithObjects(idleWithAnnot, idleWithoutAnnot, startingWithAnnot).Build()
+	r := &SandboxPoolReconciler{Client: cli, Scheme: setupScheme(t)}
+
+	pods := []corev1.Pod{*idleWithAnnot, *idleWithoutAnnot, *startingWithAnnot}
+	cleared := r.unmarkStaleScaleDownProtected(context.Background(), pods)
+	if cleared != 1 {
+		t.Fatalf("expected 1 cleared, got %d", cleared)
+	}
+
+	got := &corev1.Pod{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Name: idleWithAnnot.Name, Namespace: ns}, got); err != nil {
+		t.Fatalf("get idle pod: %v", err)
+	}
+	if v, ok := got.Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey]; ok && v != "" {
+		t.Errorf("expected annotation removed from idle pod, still got %q", v)
+	}
+
+	// Starting pod must keep its annotation — the sweeper only touches Idle pods.
+	if err := cli.Get(context.Background(), types.NamespacedName{Name: startingWithAnnot.Name, Namespace: ns}, got); err != nil {
+		t.Fatalf("get starting pod: %v", err)
+	}
+	if got.Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey] == "" {
+		t.Error("expected starting pod's annotation to be preserved")
+	}
+}
+
+// fakeIdleNotifier records NotifyIdleAvailable calls for assertions.
+type fakeIdleNotifier struct {
+	notified []string // ns/name pairs
+}
+
+func (f *fakeIdleNotifier) NotifyIdleAvailable(namespace, poolName string) {
+	f.notified = append(f.notified, namespace+"/"+poolName)
+}
+func (f *fakeIdleNotifier) OnSandboxReleased(_ context.Context, _ string) {}
+
+// TestReconcile_UnmarksStaleProtection_AutoscalingOff verifies that when a
+// pool has autoscaling disabled, reconcile clears every idle pod's residual
+// scale-down-protected annotation and wakes the scheduler — the core fix for
+// the production stuck-pool bug. No pod should be deleted.
+func TestReconcile_UnmarksStaleProtection_AutoscalingOff(t *testing.T) {
+	const ns, poolName = "default", "terminal2"
+	pool := makePoolForGuard(ns, poolName, 3)
+	// Explicit autoscaling block with enabled=false, mirroring production yaml.
+	pool.Spec.Autoscaling = &agentsv1alpha1.PoolAutoscalingSpec{Enabled: false}
+
+	pods := []*corev1.Pod{
+		makeProtectedIdlePod("p1", ns, poolName, "2026-05-08T08:20:02Z"),
+		makeProtectedIdlePod("p2", ns, poolName, "2026-05-08T08:20:02Z"),
+		makeProtectedIdlePod("p3", ns, poolName, "2026-05-08T08:20:02Z"),
+	}
+	objs := make([]client.Object, 0, 1+len(pods))
+	objs = append(objs, pool)
+	for _, p := range pods {
+		objs = append(objs, p)
+	}
+	cli := newTestClientBuilder(t).WithObjects(objs...).Build()
+	notifier := &fakeIdleNotifier{}
+	r := &SandboxPoolReconciler{
+		Client:       cli,
+		Scheme:       setupScheme(t),
+		expectations: NewPoolExpectations(),
+		IdleNotifier: notifier,
+	}
+
+	if _, err := r.reconcilePods(context.Background(), pool); err != nil {
+		t.Fatalf("reconcilePods: %v", err)
+	}
+
+	// All three pods must still exist (no scale-down) and lose the annotation.
+	for _, p := range pods {
+		got := &corev1.Pod{}
+		if err := cli.Get(context.Background(), types.NamespacedName{Name: p.Name, Namespace: ns}, got); err != nil {
+			t.Fatalf("pod %s should still exist: %v", p.Name, err)
+		}
+		if v, ok := got.Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey]; ok && v != "" {
+			t.Errorf("pod %s still carries scale-down-protected annotation: %q", p.Name, v)
+		}
+	}
+	if len(notifier.notified) == 0 {
+		t.Error("expected IdleNotifier.NotifyIdleAvailable to be invoked")
+	}
+}
+
+// TestReconcile_PendingDemand_OverridesScaleDown covers the autoscaling-on
+// case: current(3) > desired(2) would normally trigger scale-down, but a
+// fresh PoolScaleUpPendingAnnotationKey on the pool tells the controller the
+// scheduler has waiters. We expect: protection stripped from all idle pods,
+// no deletions, and an early requeue.
+func TestReconcile_PendingDemand_OverridesScaleDown(t *testing.T) {
+	const ns, poolName = "default", "demand-pool"
+	pool := makePoolForGuard(ns, poolName, 2)
+	// Cap MaxReplicas so the autoscaler cannot bump desired upward in response
+	// to the pending annotation; this forces current(3) > desired(2) and
+	// exercises branch (b) of the cleanup logic specifically.
+	maxRep := int32(2)
+	minRep := int32(2)
+	pool.Spec.MinReplicas = &minRep
+	pool.Spec.MaxReplicas = &maxRep
+	pool.Spec.Autoscaling = &agentsv1alpha1.PoolAutoscalingSpec{
+		Enabled: true,
+		ScaleDownPolicy: &agentsv1alpha1.PoolScaleDownPolicy{
+			ProtectionWindowSeconds: 30,
+		},
+	}
+	if pool.Annotations == nil {
+		pool.Annotations = map[string]string{}
+	}
+	pool.Annotations[agentsv1alpha1.PoolScaleUpPendingAnnotationKey] = time.Now().UTC().Format(time.RFC3339)
+
+	pods := []*corev1.Pod{
+		makeProtectedIdlePod("p1", ns, poolName, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)),
+		makeProtectedIdlePod("p2", ns, poolName, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)),
+		makeProtectedIdlePod("p3", ns, poolName, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)),
+	}
+	objs := make([]client.Object, 0, 1+len(pods))
+	objs = append(objs, pool)
+	for _, p := range pods {
+		objs = append(objs, p)
+	}
+	cli := newTestClientBuilder(t).WithObjects(objs...).Build()
+	notifier := &fakeIdleNotifier{}
+	r := &SandboxPoolReconciler{
+		Client:       cli,
+		Scheme:       setupScheme(t),
+		expectations: NewPoolExpectations(),
+		IdleNotifier: notifier,
+	}
+
+	res, err := r.reconcilePods(context.Background(), pool)
+	if err != nil {
+		t.Fatalf("reconcilePods: %v", err)
+	}
+	if res.RequeueAfter == 0 {
+		t.Error("expected RequeueAfter to be set so the next cycle re-evaluates")
+	}
+
+	// No pod should be deleted, every pod loses the annotation.
+	podList := &corev1.PodList{}
+	if err := cli.List(context.Background(), podList); err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	if len(podList.Items) != 3 {
+		t.Errorf("expected 3 pods preserved, got %d", len(podList.Items))
+	}
+	for i := range podList.Items {
+		if v := podList.Items[i].Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey]; v != "" {
+			t.Errorf("pod %s still has annotation: %q", podList.Items[i].Name, v)
+		}
+	}
+	if len(notifier.notified) == 0 {
+		t.Error("expected NotifyIdleAvailable to fire under pending demand")
 	}
 }
 

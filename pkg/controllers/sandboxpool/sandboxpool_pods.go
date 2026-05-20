@@ -21,6 +21,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
@@ -202,9 +203,11 @@ func filterPodsNotDeleting(pods []corev1.Pod) []corev1.Pod {
 
 // scaleDownProtectionWindow returns the duration of the two-phase protection
 // window for idle pods being deleted. Returns 0 when autoscaling is not
-// configured, preserving the original immediate-delete behaviour.
+// configured or explicitly disabled, preserving the original immediate-delete
+// behaviour — in those cases the two-phase mark-then-delete dance only stamps
+// annotations that nothing ever clears.
 func scaleDownProtectionWindow(pool *agentsv1alpha1.SandboxPool) time.Duration {
-	if pool.Spec.Autoscaling == nil {
+	if pool.Spec.Autoscaling == nil || !pool.Spec.Autoscaling.Enabled {
 		return 0
 	}
 	_, _, protectionWindowSec := scaleDownPolicyOrDefault(pool)
@@ -222,4 +225,43 @@ func (r *SandboxPoolReconciler) markScaleDownProtected(ctx context.Context, pod 
 	ts := time.Now().UTC().Format(time.RFC3339)
 	patch := []byte(`{"metadata":{"annotations":{"` + agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey + `":"` + ts + `"}}}`)
 	return r.Patch(ctx, pod, client.RawPatch(types.MergePatchType, patch))
+}
+
+// unmarkScaleDownProtected removes the scale-down-protected annotation from a
+// single pod. A JSON merge patch with a null value deletes the key in K8s
+// semantics. Idempotent: re-running on a pod that no longer carries the
+// annotation is a no-op patch.
+func (r *SandboxPoolReconciler) unmarkScaleDownProtected(ctx context.Context, pod *corev1.Pod) error {
+	patch := []byte(`{"metadata":{"annotations":{"` + agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey + `":null}}}`)
+	return r.Patch(ctx, pod, client.RawPatch(types.MergePatchType, patch))
+}
+
+// unmarkStaleScaleDownProtected strips SandboxScaleDownProtectedAnnotationKey
+// from every Idle pod in pods that currently carries it. Returns the number of
+// pods successfully cleared (for metrics). Errors on individual pods are
+// logged but do not abort the sweep — the next reconcile retries stragglers.
+//
+// The caller decides *when* this is safe to run (e.g. autoscaling disabled, or
+// no scale-down planned this cycle, or scheduler reported pending demand);
+// this function makes no policy decision of its own.
+func (r *SandboxPoolReconciler) unmarkStaleScaleDownProtected(ctx context.Context, pods []corev1.Pod) int {
+	cleared := 0
+	for i := range pods {
+		p := &pods[i]
+		if inplaceupdate.GetSandboxPhase(p) != agentsv1alpha1.SandboxPhaseIdle {
+			continue
+		}
+		if p.Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey] == "" {
+			continue
+		}
+		if err := r.unmarkScaleDownProtected(ctx, p); err != nil {
+			if !errors.IsNotFound(err) {
+				klog.ErrorS(err, "unmarkStaleScaleDownProtected: patch failed",
+					"namespace", p.Namespace, "name", p.Name)
+			}
+			continue
+		}
+		cleared++
+	}
+	return cleared
 }

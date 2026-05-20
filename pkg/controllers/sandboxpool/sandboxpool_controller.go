@@ -375,6 +375,48 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 	// Re-read desired replicas in case the autoscaler changed spec.replicas.
 	desiredReplicas = sandboxPool.Spec.Replicas
 
+	// ── Clear residual / overridden scale-down-protected annotations ─────────
+	//
+	// The scheduler's ready queue (pkg/lifecycle/schedule/ready_queue.go) drops
+	// any idle pod that carries SandboxScaleDownProtectedAnnotationKey, so a
+	// stale annotation (e.g. left over from a time when autoscaling was on, or
+	// from a scale-down cycle that never reached the delete step) silently
+	// removes the pod from the schedulable set. Two situations call for a
+	// proactive cleanup here:
+	//
+	//   (a) No scale-down is planned this cycle (autoscaling disabled, or
+	//       current ≤ desired). The annotation has no purpose; clear it.
+	//   (b) Scale-down would normally fire, but the scheduler reported pending
+	//       claim demand via PoolScaleUpPendingAnnotationKey. Demand wins —
+	//       release the protection and skip scale-down for this cycle.
+	//
+	// After clearing we wake the scheduler so it refreshes immediately instead
+	// of waiting for its 10s pollTimer (and its exponential backoff).
+	if sandboxPool.Spec.Autoscaling == nil || !sandboxPool.Spec.Autoscaling.Enabled ||
+		currentReplicas <= desiredReplicas {
+		if n := r.unmarkStaleScaleDownProtected(ctx, pods); n > 0 {
+			klog.V(2).InfoS("Cleared stale scale-down-protected annotations",
+				"namespace", sandboxPool.Namespace, "name", sandboxPool.Name, "count", n, "reason", "no_scale_down")
+			if r.IdleNotifier != nil {
+				r.IdleNotifier.NotifyIdleAvailable(sandboxPool.Namespace, sandboxPool.Name)
+			}
+		}
+	} else if isPendingScaleUpAnnotationFresh(sandboxPool, 0) {
+		excess := currentReplicas - desiredReplicas
+		klog.InfoS("Skipping scale-down: scheduler reported pending claim demand",
+			"namespace", sandboxPool.Namespace, "name", sandboxPool.Name, "excess", excess)
+		if n := r.unmarkStaleScaleDownProtected(ctx, pods); n > 0 {
+			klog.V(2).InfoS("Cleared scale-down-protected annotations due to pending demand",
+				"namespace", sandboxPool.Namespace, "name", sandboxPool.Name, "count", n)
+			if r.IdleNotifier != nil {
+				r.IdleNotifier.NotifyIdleAvailable(sandboxPool.Namespace, sandboxPool.Name)
+			}
+		}
+		// Skip scale-down for this cycle; requeue so the next reconcile re-evaluates
+		// once the demand burst clears.
+		return reconcile.Result{RequeueAfter: RequeueAfter}, nil
+	}
+
 	// ── Scale up ─────────────────────────────────────────────────────────────
 	if currentReplicas < desiredReplicas {
 		// Guard: if in-flight creations from the previous scale-up have not yet
@@ -488,8 +530,25 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 					"namespace", pod.Namespace, "name", pod.Name)
 				return reconcile.Result{}, err
 			}
-			if err := r.Delete(ctx, pod); err != nil {
-				if !errors.IsNotFound(err) {
+			// Delete with UID + ResourceVersion preconditions: `pods` was captured
+			// at the entry of reconcilePods, so by the time we get here a fast
+			// claim CAS may have mutated the pod (e.g. removed the protection
+			// annotation and transitioned phase Idle→Starting). Without the
+			// precondition we'd race-delete that newly-claimed pod. With it the
+			// Delete is rejected as Conflict and we skip — the next reconcile
+			// will re-evaluate against fresh state.
+			delOpts := []client.DeleteOption{client.Preconditions{
+				UID:             &pod.UID,
+				ResourceVersion: &pod.ResourceVersion,
+			}}
+			if err := r.Delete(ctx, pod, delOpts...); err != nil {
+				if errors.IsNotFound(err) {
+					// Already gone — fall through.
+				} else if errors.IsConflict(err) {
+					klog.V(2).InfoS("Scale-down Delete skipped: pod was mutated after snapshot (likely claimed by scheduler)",
+						"namespace", pod.Namespace, "name", pod.Name, "err", err)
+					continue
+				} else {
 					klog.ErrorS(err, "Failed to delete Pod", "namespace", pod.Namespace, "name", pod.Name)
 					return reconcile.Result{}, err
 				}
@@ -546,10 +605,18 @@ func (r *SandboxPoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	builder := ctrl.NewControllerManagedBy(mgr).
-		// Use GenerationChangedPredicate so that status-only updates (which do
-		// not increment metadata.generation) are filtered out, preventing the
-		// reconcile-storm caused by Status().Update() re-triggering itself.
-		For(&agentsv1alpha1.SandboxPool{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// Use GenerationChangedPredicate to filter status-only updates (which do
+		// not increment metadata.generation), preventing the reconcile-storm
+		// caused by Status().Update() re-triggering itself. We also allow
+		// annotation-only changes through so that the scheduler's writes to
+		// PoolScaleUpPendingAnnotationKey (an annotation-only patch) wake the
+		// controller, letting it release scale-down-protection under demand.
+		// SandboxPool annotations change rarely, so this widening does not
+		// create a reconcile storm.
+		For(&agentsv1alpha1.SandboxPool{}, ctrlbuilder.WithPredicates(predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		))).
 		Named("sandboxpool").
 		// Allow multiple SandboxPool objects to be reconciled concurrently.
 		// Each pool is an independent unit of work; serialising them behind a
