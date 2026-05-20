@@ -55,8 +55,9 @@ for reference.
 
 ## Cutting a release
 
-The workflow triggers on **tags shaped `harbor-v<MAJOR>.<MINOR>.<PATCH>`** — a different
-prefix from the e2b SDK's `v*.*.*` tags, so the two workflows never collide.
+The workflow triggers on **tags shaped `v<MAJOR>.<MINOR>.<PATCH>`** — the same pattern used
+by the `agent-sandbox-e2b` workflow. Every such tag publishes **both** packages at the same
+version: there is no separate "harbor-only" release cadence.
 
 1. Make sure the desired commit is on `main` (or the release branch). The workflow runs
    against `github.ref`, which is the tag, so it will pick up whatever the tag points at.
@@ -70,15 +71,15 @@ prefix from the e2b SDK's `v*.*.*` tags, so the two workflows never collide.
 3. Tag & push:
 
    ```bash
-   # Example: cut version 0.0.3
-   git tag harbor-v0.0.3
-   git push origin harbor-v0.0.3
+   # Example: cut version 0.0.4 (bumps both agent-sandbox-e2b and agent-sandbox-harbor)
+   git tag v0.0.4
+   git push origin v0.0.4
    ```
 
 4. Watch the run at
    https://github.com/scitix/agent-sandbox/actions/workflows/sdk-python-harbor-publish.yml.
    The `build` job:
-   - Resolves version `0.0.3` from `harbor-v0.0.3`.
+   - Resolves version `0.0.4` from `v0.0.4`.
    - Stamps it into `__init__.py`.
    - Installs `harbor[e2b]` plus the local source.
    - Runs the **compatibility check** — confirms that `harbor.environments.e2b.E2BEnvironment`
@@ -92,7 +93,11 @@ prefix from the e2b SDK's `v*.*.*` tags, so the two workflows never collide.
 5. The `publish` job runs only if `build` succeeded. It downloads the artifact and
    uploads via `pypa/gh-action-pypi-publish@release/v1` with OIDC. No token in scope.
 
-6. Confirm at https://pypi.org/project/agent-sandbox-harbor/0.0.3/.
+6. Confirm at https://pypi.org/project/agent-sandbox-harbor/0.0.4/.
+
+   In parallel, the sibling `sdk-python-publish.yml` workflow runs on the same tag and
+   publishes `agent-sandbox-e2b` at the same version. Both PyPI projects should end up at
+   `0.0.4` simultaneously.
 
 ---
 
@@ -100,10 +105,20 @@ prefix from the e2b SDK's `v*.*.*` tags, so the two workflows never collide.
 
 | Action | Command |
 |---|---|
-| First release | `git tag harbor-v0.0.3 && git push origin harbor-v0.0.3` |
-| Subsequent release | `git tag harbor-v0.0.4 && git push origin harbor-v0.0.4` |
-| Delete a bad tag locally + remotely | `git tag -d harbor-v0.0.3 && git push --delete origin harbor-v0.0.3` |
+| Cut a release (both packages) | `git tag v0.0.4 && git push origin v0.0.4` |
+| Delete a bad tag locally + remotely | `git tag -d v0.0.4 && git push --delete origin v0.0.4` |
 | Move a tag | delete then re-create (force-tagging is discouraged) |
+
+> **Unified versioning.** A single `v<X>.<Y>.<Z>` tag publishes both
+> `agent-sandbox-e2b` and `agent-sandbox-harbor` at the same version. There is no
+> harbor-only or e2b-only release path.
+>
+> **Already-published versions are auto-skipped.** Each workflow's `precheck` job
+> queries PyPI before doing anything else. If the target version already exists for
+> that package, the `build` and `publish` jobs both skip cleanly (the run still ends
+> green, with a notice). This means it's safe to push a tag like `v0.0.3` even when
+> one of the two packages is already at 0.0.3 — that side is a no-op, the other side
+> publishes normally.
 
 > **Yanking a release.** If a published version is broken, log in to PyPI and "yank" it
 > through the project settings page; CI won't do this for you. Yanking hides the version
@@ -147,9 +162,14 @@ too — the same install path is exercised.
 
 ```
 .github/workflows/sdk-python-harbor-publish.yml
-├── on: push tags 'harbor-v*.*.*'
-├── jobs.build
-│   ├── Resolve version from tag (strip 'harbor-v' prefix)
+├── on: push tags 'v*.*.*'   (same pattern as sdk-python-publish.yml)
+├── jobs.precheck
+│   ├── Resolve version from tag (strip 'v' prefix)
+│   └── curl https://pypi.org/pypi/agent-sandbox-harbor/<v>/json
+│         200 → should_publish=false   (skip build + publish, run ends green)
+│         404 → should_publish=true    (proceed)
+├── jobs.build      [needs: precheck, if: should_publish == 'true']
+│   ├── (version comes from precheck output)
 │   ├── sed __version__ into agent_sandbox_harbor/__init__.py
 │   ├── uv pip install ".[harbor]" + harbor[e2b]
 │   ├── Inline Python compat check:
@@ -160,7 +180,7 @@ too — the same install path is exercised.
 │   ├── Stamp `harbor>=0.7.0,<=<resolved>` upper bound into pyproject.toml
 │   ├── python -m build (wheel + sdist)
 │   └── upload-artifact 'python-harbor-dist'
-└── jobs.publish (needs: build)
+└── jobs.publish    [needs: precheck + build, if: should_publish == 'true']
     ├── environment: pypi   # MUST match Trusted Publisher config on PyPI
     ├── permissions: id-token: write
     ├── download-artifact 'python-harbor-dist'
@@ -173,7 +193,8 @@ too — the same install path is exercised.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Workflow run skipped on `harbor-v0.0.3` tag push | Tag pushed to a fork, or workflow file not on the tag commit | Push the tag to `scitix/agent-sandbox` directly; ensure the workflow file is committed before the tag. |
+| Workflow run skipped on `v0.0.4` tag push | Tag pushed to a fork, or workflow file not on the tag commit | Push the tag to `scitix/agent-sandbox` directly; ensure the workflow file is committed before the tag. |
+| Only one of the two packages was published for this tag | The other one's `precheck` saw that its target version already exists on PyPI and skipped. Look for the `::notice::` line in that workflow run. | This is expected behaviour with unified tagging — no action needed unless you intended both to publish, in which case bump the tag. |
 | `build` step fails at the compat check | Harbor renamed / removed one of the methods we subclass | Update `environment.py` to track the new method names; bump the local lower-bound on `harbor` in `pyproject.toml`. |
 | `publish` step fails with `permission denied` | Trusted Publisher config missing or `environment:` name mismatched | Double-check the four fields under PyPI's *publishing* settings; the environment name must be exactly `pypi`. |
 | Published version is correct but `pip install` resolves an older one | PyPI caching | Wait 1–2 min, or use `pip install --no-cache-dir`. |
