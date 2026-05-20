@@ -19,140 +19,101 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	"github.com/scitix/agent-sandbox/pkg/api/protocol"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	syncv1 "github.com/scitix/agent-sandbox/pkg/proto/sandbox/sync/v1"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 )
 
-// newCorrelationID generates a new UUID v4 string for request correlation.
-func newCorrelationID() string {
-	return uuid.New().String()
-}
-
-// ErrSyncNotConnected is returned when an operation requires an active WS connection
-// to ws-proxy but none is established.
+// ErrSyncNotConnected is returned when an operation requires an active sync
+// session to ws-proxy but none is established.
 var ErrSyncNotConnected = errors.New("ws-proxy sync not connected")
 
-// ── Re-export protocol types for existing callers ────────────────────────────
-//
-// Downstream code (handlers, tests) already imports this package and references
-// service.SyncFrameType, service.SyncEvent, etc.  Providing type aliases keeps
-// those callers working without modification while the canonical definitions
-// now live in pkg/api/protocol.
+// SyncHTTPError carries an HTTP-style status code translated from a gRPC
+// status code. It is the cross-package error type that
+// pkg/apiserver/handlers/server.go uses to map sync forwarding failures into
+// the appropriate native API responses.
+type SyncHTTPError struct {
+	Status  int
+	Message string
+}
 
-// SyncFrameType is an alias for protocol.FrameType.
-type SyncFrameType = protocol.FrameType
+func (e *SyncHTTPError) Error() string { return e.Message }
 
-// SyncEvent is an alias for protocol.Frame — the unified wire-format envelope.
-type SyncEvent = protocol.Frame
+// CreateKeyRequest carries the parameters for forwarding an API key
+// CreateKey RPC to the Hub.
+type CreateKeyRequest struct {
+	Namespace   string
+	User        string
+	Team        string
+	Role        string
+	Description string
+	QuotaURL    string
+	ExpiresAt   string // RFC3339; empty = never expires
 
-// CreateKeyRequest is an alias for protocol.CreateKeyRequest.
-type CreateKeyRequest = protocol.CreateKeyRequest
+	// Import/promote mode: when TokenHash + HashPrefix are set the Hub calls
+	// CreateFromHash instead of generating a new token.
+	TokenHash  string
+	HashPrefix string
+	IssuedAt   string // RFC3339
+	RawToken   string // plaintext token for promote
+}
 
-// CreateKeyResponse is an alias for protocol.CreateKeyResponse.
-type CreateKeyResponse = protocol.CreateKeyResponse
+// CreateKeyResponse is the parsed result of a successful Hub-side CreateKey.
+type CreateKeyResponse struct {
+	RawToken   string
+	KeyID      string
+	TokenHash  string
+	HashPrefix string
+	IssuedAt   string // RFC3339
+}
 
-// SyncHTTPError is an alias for protocol.HTTPError.
-type SyncHTTPError = protocol.HTTPError
-
-// Frame type constants — re-exported from the protocol package.
-const (
-	FrameKeySync       = protocol.FrameKeySync
-	FrameKeyDeleteSync = protocol.FrameKeyDeleteSync
-	FrameKeySnapshot   = protocol.FrameKeySnapshot
-	FrameKeyCreateResp = protocol.FrameKeyCreateResp
-	FrameKeyDeleteResp = protocol.FrameKeyDeleteResp
-
-	FrameTemplateSnapshot   = protocol.FrameTemplateSnapshot
-	FrameTemplateSync       = protocol.FrameTemplateSync
-	FrameTemplateDeleteSync = protocol.FrameTemplateDeleteSync
-	FrameTemplateCreateResp = protocol.FrameTemplateCreateResp
-	FrameTemplateUpdateResp = protocol.FrameTemplateUpdateResp
-	FrameTemplateDeleteResp = protocol.FrameTemplateDeleteResp
-
-	FrameClusterConfigSync     = protocol.FrameClusterConfigSync
-	FrameClusterConfigSnapshot = protocol.FrameClusterConfigSnapshot
-)
-
-// ── ClusterConfigSink ─────────────────────────────────────────────────────────
-
-// ClusterConfigSink receives ClusterConfig snapshots from ws-proxy and persists
-// them (e.g. to a Kubernetes ConfigMap) so that other Worker components such
-// as ExtProc and the in-process DNS resolver can read the latest state.
-//
-// Implementations must treat a zero-valued snapshot (no clusters and no host
-// aliases) as a no-op so that a transient empty push cannot erase an already
-// populated configuration.
+// ClusterConfigSink receives ClusterConfig snapshots from ws-proxy and
+// persists them (e.g. to a Kubernetes ConfigMap) so that other Worker
+// components (ExtProc, in-process DNS resolver, ...) can read the latest
+// state. Implementations must treat a zero-valued snapshot (no clusters and
+// no host aliases) as a no-op.
 type ClusterConfigSink interface {
 	ApplyClusterConfig(ctx context.Context, cfg cluster.ClusterConfig) error
 }
 
-// ── SyncService interface ─────────────────────────────────────────────────────
-
-// SyncService manages the full-duplex WS channel between a Worker and ws-proxy.
-// It handles inbound sync pushes (key_sync, key_delete_sync, key_snapshot,
-// template_sync, template_delete_sync, template_snapshot) and
-// outbound synchronous requests (key_create, key_delete, template_create,
-// template_update, template_delete).
+// SyncService manages the gRPC client connection to ws-proxy. It exposes
+// synchronous request methods for the apiserver business layer and runs
+// background goroutines that consume the three Watch* streams to keep the
+// local KeyStore / SandboxTemplate / ClusterConfig state up to date.
 type SyncService interface {
-	// OnConnect registers the ws-proxy WS connection. The caller is responsible
-	// for reading from the connection; the service only writes to it.
-	// It returns a connection ID that must be passed to OnDisconnect so that
-	// a stale connection's cleanup does not accidentally clear a newer one.
-	OnConnect(conn *websocket.Conn) uint64
+	// OnConnect registers a new ClientConn (produced by wsmux.DialGRPC after
+	// a fresh /v1/ws/sync upgrade). Returns a connection generation ID that
+	// must be passed back to OnDisconnect so that a stale teardown does not
+	// race against a newer connect.
+	OnConnect(conn *grpc.ClientConn) uint64
 
-	// OnDisconnect clears the active connection only if connID matches the
-	// current connection, and cancels all pending requests. This prevents a
-	// stale connection's deferred cleanup from clobbering a newer connection.
+	// OnDisconnect tears down all background Watch goroutines associated
+	// with connID and clears the ClientConn — but only if connID still
+	// matches the currently-registered conn.
 	OnDisconnect(connID uint64)
 
-	// RequestCreate sends a key_create frame to ws-proxy and waits for the
-	// key_create_resp (up to ctx deadline). Returns ErrSyncNotConnected when
-	// no connection is active.
 	RequestCreate(ctx context.Context, req CreateKeyRequest) (*CreateKeyResponse, error)
-
-	// RequestDelete sends a key_delete frame to ws-proxy and waits for the
-	// key_delete_resp. Returns ErrSyncNotConnected when no connection is active.
 	RequestDelete(ctx context.Context, name string) error
-
-	// RequestTemplateCreate sends a template_create frame to ws-proxy and waits
-	// for template_create_resp. Returns ErrSyncNotConnected when no connection is
-	// active.
 	RequestTemplateCreate(ctx context.Context, raw json.RawMessage) error
-
-	// RequestTemplateUpdate sends a template_update frame to ws-proxy and waits
-	// for template_update_resp. Returns ErrSyncNotConnected when no connection is
-	// active.
 	RequestTemplateUpdate(ctx context.Context, raw json.RawMessage) error
-
-	// RequestTemplateDelete sends a template_delete frame to ws-proxy and waits
-	// for template_delete_resp. Returns ErrSyncNotConnected when no connection is
-	// active.
 	RequestTemplateDelete(ctx context.Context, name string) error
-
-	// HandleIncoming processes a frame received from ws-proxy. Responses to
-	// pending requests are routed via the pendingMap; push frames are applied
-	// to the key store or template service.
-	HandleIncoming(ctx context.Context, event SyncEvent) error
 }
 
-// ── pendingEntry ─────────────────────────────────────────────────────────────
-
-type pendingEntry struct {
-	ch chan protocol.Frame
-}
-
-// ── syncServiceImpl ───────────────────────────────────────────────────────────
-
+// syncServiceImpl is the live SyncService backed by a gRPC ClientConn.
 type syncServiceImpl struct {
 	store apikey.KeyStore
 	log   interface {
@@ -161,17 +122,19 @@ type syncServiceImpl struct {
 	}
 
 	mu     sync.RWMutex
-	conn   *websocket.Conn // nil when disconnected
-	connID uint64          // monotonically increasing connection generation
+	conn   *grpc.ClientConn
+	connID uint64
+	cancel context.CancelFunc // cancels the Watch goroutines for the current conn
 
-	pending sync.Map // correlationID(string) → *pendingEntry
+	keyClient    syncv1.APIKeyServiceClient
+	tmplClient   syncv1.TemplateServiceClient
+	configClient syncv1.ClusterConfigServiceClient
 
 	templateSvc SandboxTemplateService // may be nil when template sync is not configured
 	clusterSink ClusterConfigSink      // may be nil when cluster config sync is not configured
 }
 
 // NewSyncService creates a new SyncService.
-// store is the local Worker KeyStore used to apply sync events.
 func NewSyncService(store apikey.KeyStore) SyncService {
 	return &syncServiceImpl{
 		store: store,
@@ -179,8 +142,8 @@ func NewSyncService(store apikey.KeyStore) SyncService {
 	}
 }
 
-// NewSyncServiceWithTemplate creates a new SyncService that also handles
-// SandboxTemplate sync events, applying them via templateSvc.
+// NewSyncServiceWithTemplate creates a SyncService that also handles
+// SandboxTemplate sync events.
 func NewSyncServiceWithTemplate(store apikey.KeyStore, templateSvc SandboxTemplateService) SyncService {
 	return &syncServiceImpl{
 		store:       store,
@@ -190,9 +153,6 @@ func NewSyncServiceWithTemplate(store apikey.KeyStore, templateSvc SandboxTempla
 }
 
 // NewSyncServiceFull creates a SyncService with all optional components wired in.
-// Use this constructor when both SandboxTemplate sync and ClusterConfig sync are
-// required (the typical production setup in Worker clusters that participate in
-// multi-cluster routing).
 func NewSyncServiceFull(store apikey.KeyStore, templateSvc SandboxTemplateService, clusterSink ClusterConfigSink) SyncService {
 	return &syncServiceImpl{
 		store:       store,
@@ -204,380 +164,338 @@ func NewSyncServiceFull(store apikey.KeyStore, templateSvc SandboxTemplateServic
 
 // ── OnConnect / OnDisconnect ──────────────────────────────────────────────────
 
-func (s *syncServiceImpl) OnConnect(conn *websocket.Conn) uint64 {
+func (s *syncServiceImpl) OnConnect(conn *grpc.ClientConn) uint64 {
 	s.mu.Lock()
 	if s.conn != nil {
-		s.log.Info("ws-proxy connection replaced; closing previous connection")
+		s.log.Info("ws-proxy connection replaced; tearing down previous")
+		if s.cancel != nil {
+			s.cancel()
+		}
 	}
 	s.connID++
 	id := s.connID
 	s.conn = conn
+	s.keyClient = syncv1.NewAPIKeyServiceClient(conn)
+	s.tmplClient = syncv1.NewTemplateServiceClient(conn)
+	s.configClient = syncv1.NewClusterConfigServiceClient(conn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
 	s.mu.Unlock()
-	remoteAddr := ""
-	if conn != nil {
-		remoteAddr = conn.RemoteAddr().String()
-	}
-	s.log.Info("ws-proxy connection established", "connID", id, "remoteAddr", remoteAddr)
+
+	s.log.Info("ws-proxy connection established", "connID", id)
+
+	// Background Watch goroutines: each consumes its server-stream until it
+	// errors or the context is cancelled. On unexpected stream end we log and
+	// exit; the outer reconnect loop in handlers/sync.go produces a new
+	// ClientConn (and a new OnConnect) when a fresh WS dial succeeds.
+	go s.runWatchKeys(ctx, id)
+	go s.runWatchTemplates(ctx, id)
+	go s.runWatchClusterConfig(ctx, id)
 	return id
 }
 
 func (s *syncServiceImpl) OnDisconnect(connID uint64) {
 	s.mu.Lock()
 	if s.connID != connID {
-		// A newer connection has been registered; do not clear it.
 		s.mu.Unlock()
-		s.log.Info("ws-proxy OnDisconnect skipped; stale connection", "staleConnID", connID, "currentConnID", s.connID)
+		s.log.Info("ws-proxy OnDisconnect skipped; stale", "staleConnID", connID, "currentConnID", s.connID)
 		return
 	}
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
 	s.conn = nil
+	s.keyClient = nil
+	s.tmplClient = nil
+	s.configClient = nil
 	s.mu.Unlock()
-	s.log.Info("ws-proxy connection lost; cancelling pending requests", "connID", connID)
-
-	// Drain all pending requests with a synthetic error response.
-	s.pending.Range(func(key, value any) bool {
-		entry := value.(*pendingEntry)
-		entry.ch <- protocol.Frame{
-			ID:         key.(string),
-			Type:       protocol.FrameKeyCreateResp,
-			OK:         false,
-			Error:      "ws-proxy disconnected",
-			HTTPStatus: 503,
-		}
-		s.pending.Delete(key)
-		return true
-	})
+	s.log.Info("ws-proxy connection lost", "connID", connID)
 }
 
-// ── RequestCreate ─────────────────────────────────────────────────────────────
+// currentClients snapshots the unary-RPC clients alongside the underlying
+// ClientConn (used by callers to detect "not connected"). The Watch* clients
+// are read directly inside their goroutines so they intentionally do not flow
+// through here.
+func (s *syncServiceImpl) currentClients() (kc syncv1.APIKeyServiceClient, tc syncv1.TemplateServiceClient, conn *grpc.ClientConn) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.keyClient, s.tmplClient, s.conn
+}
+
+// ── unary requests forwarded to the Hub ──────────────────────────────────────
 
 func (s *syncServiceImpl) RequestCreate(ctx context.Context, req CreateKeyRequest) (*CreateKeyResponse, error) {
-	id, ch, err := s.sendFrame(protocol.Frame{
-		Type:        protocol.FrameKeyCreate,
+	kc, _, conn := s.currentClients()
+	if conn == nil {
+		return nil, ErrSyncNotConnected
+	}
+	pbReq := &syncv1.CreateKeyRequest{
 		Namespace:   req.Namespace,
 		User:        req.User,
 		Team:        req.Team,
 		Role:        req.Role,
 		Description: req.Description,
-		ExpiresAt:   req.ExpiresAt,
-		// import/promote fields (zero values are omitempty, no-op for normal creates)
-		TokenHash:  req.TokenHash,
-		HashPrefix: req.HashPrefix,
-		IssuedAt:   req.IssuedAt,
-		QuotaURL:   req.QuotaURL,
-		RawToken:   req.RawToken,
-	})
-	if err != nil {
-		return nil, err
+		QuotaUrl:    req.QuotaURL,
+		TokenHash:   req.TokenHash,
+		HashPrefix:  req.HashPrefix,
+		RawToken:    req.RawToken,
 	}
-	defer s.pending.Delete(id)
-
-	select {
-	case resp := <-ch:
-		if !resp.OK {
-			if resp.HTTPStatus != 0 {
-				return nil, &protocol.HTTPError{Status: resp.HTTPStatus, Message: resp.Error}
-			}
-			return nil, errors.New(resp.Error)
+	if req.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.ExpiresAt); err == nil {
+			pbReq.ExpiresAt = timestamppb.New(t)
 		}
-		return &CreateKeyResponse{
-			RawToken:   resp.RawToken,
-			KeyID:      resp.KeyID,
-			TokenHash:  resp.TokenHash,
-			HashPrefix: resp.HashPrefix,
-			IssuedAt:   resp.IssuedAt,
-		}, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
+	if req.IssuedAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.IssuedAt); err == nil {
+			pbReq.IssuedAt = timestamppb.New(t)
+		}
+	}
+	resp, err := kc.CreateKey(ctx, pbReq)
+	if err != nil {
+		return nil, translateGRPCError(err)
+	}
+	out := &CreateKeyResponse{
+		RawToken:   resp.RawToken,
+		KeyID:      resp.KeyId,
+		TokenHash:  resp.TokenHash,
+		HashPrefix: resp.HashPrefix,
+	}
+	if resp.IssuedAt != nil {
+		out.IssuedAt = resp.IssuedAt.AsTime().UTC().Format(time.RFC3339)
+	}
+	return out, nil
 }
-
-// ── RequestDelete ─────────────────────────────────────────────────────────────
 
 func (s *syncServiceImpl) RequestDelete(ctx context.Context, name string) error {
-	id, ch, err := s.sendFrame(protocol.Frame{
-		Type: protocol.FrameKeyDelete,
-		Name: name,
-	})
+	kc, _, conn := s.currentClients()
+	if conn == nil {
+		return ErrSyncNotConnected
+	}
+	_, err := kc.DeleteKey(ctx, &syncv1.DeleteKeyRequest{KeyId: name})
 	if err != nil {
-		return err
+		return translateGRPCError(err)
 	}
-	defer s.pending.Delete(id)
-
-	select {
-	case resp := <-ch:
-		if !resp.OK {
-			if resp.HTTPStatus != 0 {
-				return &protocol.HTTPError{Status: resp.HTTPStatus, Message: resp.Error}
-			}
-			return errors.New(resp.Error)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return nil
 }
-
-// ── RequestTemplateCreate ─────────────────────────────────────────────────────
 
 func (s *syncServiceImpl) RequestTemplateCreate(ctx context.Context, raw json.RawMessage) error {
-	id, ch, err := s.sendFrame(protocol.Frame{
-		Type:         protocol.FrameTemplateCreate,
-		TemplateFull: raw,
-	})
+	_, tc, conn := s.currentClients()
+	if conn == nil {
+		return ErrSyncNotConnected
+	}
+	_, err := tc.CreateTemplate(ctx, &syncv1.CreateTemplateRequest{TemplateJson: raw})
 	if err != nil {
-		return err
+		return translateGRPCError(err)
 	}
-	defer s.pending.Delete(id)
-
-	select {
-	case resp := <-ch:
-		if !resp.OK {
-			if resp.HTTPStatus != 0 {
-				return &protocol.HTTPError{Status: resp.HTTPStatus, Message: resp.Error}
-			}
-			return errors.New(resp.Error)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return nil
 }
-
-// ── RequestTemplateUpdate ─────────────────────────────────────────────────────
 
 func (s *syncServiceImpl) RequestTemplateUpdate(ctx context.Context, raw json.RawMessage) error {
-	id, ch, err := s.sendFrame(protocol.Frame{
-		Type:         protocol.FrameTemplateUpdate,
-		TemplateFull: raw,
-	})
+	_, tc, conn := s.currentClients()
+	if conn == nil {
+		return ErrSyncNotConnected
+	}
+	_, err := tc.UpdateTemplate(ctx, &syncv1.UpdateTemplateRequest{TemplateJson: raw})
 	if err != nil {
-		return err
+		return translateGRPCError(err)
 	}
-	defer s.pending.Delete(id)
-
-	select {
-	case resp := <-ch:
-		if !resp.OK {
-			if resp.HTTPStatus != 0 {
-				return &protocol.HTTPError{Status: resp.HTTPStatus, Message: resp.Error}
-			}
-			return errors.New(resp.Error)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return nil
 }
-
-// ── RequestTemplateDelete ─────────────────────────────────────────────────────
 
 func (s *syncServiceImpl) RequestTemplateDelete(ctx context.Context, name string) error {
-	id, ch, err := s.sendFrame(protocol.Frame{
-		Type: protocol.FrameTemplateDelete,
-		Name: name,
-	})
-	if err != nil {
-		return err
+	_, tc, conn := s.currentClients()
+	if conn == nil {
+		return ErrSyncNotConnected
 	}
-	defer s.pending.Delete(id)
+	_, err := tc.DeleteTemplate(ctx, &syncv1.DeleteTemplateRequest{Name: name})
+	if err != nil {
+		return translateGRPCError(err)
+	}
+	return nil
+}
 
-	select {
-	case resp := <-ch:
-		if !resp.OK {
-			if resp.HTTPStatus != 0 {
-				return &protocol.HTTPError{Status: resp.HTTPStatus, Message: resp.Error}
+// ── Watch goroutines: consume server-streams, apply to local state ───────────
+
+func (s *syncServiceImpl) runWatchKeys(ctx context.Context, connID uint64) {
+	s.mu.RLock()
+	kc := s.keyClient
+	s.mu.RUnlock()
+	if kc == nil {
+		return
+	}
+	stream, err := kc.WatchKeys(ctx, &syncv1.WatchKeysRequest{})
+	if err != nil {
+		s.log.Error(err, "WatchKeys subscribe failed", "connID", connID)
+		return
+	}
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if !errors.Is(err, io.EOF) && status.Code(err) != codes.Canceled {
+				s.log.Error(err, "WatchKeys recv error", "connID", connID)
 			}
-			return errors.New(resp.Error)
+			return
 		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+		s.dispatchKeyEvent(ctx, ev)
 	}
 }
 
-// ── HandleIncoming ────────────────────────────────────────────────────────────
-
-func (s *syncServiceImpl) HandleIncoming(ctx context.Context, event SyncEvent) error {
-	switch event.Type {
-	case FrameKeyCreateResp, FrameKeyDeleteResp:
-		if v, ok := s.pending.Load(event.ID); ok {
-			entry := v.(*pendingEntry)
-			entry.ch <- event
-		}
-
-	case FrameKeySync:
-		return s.applyKeySync(ctx, event)
-
-	case FrameKeyDeleteSync:
-		if event.Name == "" {
-			return nil
-		}
-		if err := s.store.Delete(ctx, event.Name); err != nil {
-			// Ignore not-found; we may have never had this key.
-			if !errors.Is(err, apikey.ErrTokenNotFound) {
-				s.log.Error(err, "failed to delete key from sync", "name", event.Name)
+func (s *syncServiceImpl) dispatchKeyEvent(ctx context.Context, ev *syncv1.KeyEvent) {
+	switch k := ev.Kind.(type) {
+	case *syncv1.KeyEvent_Snapshot:
+		for _, item := range k.Snapshot.Items {
+			if err := s.applyKeyUpsert(ctx, item); err != nil {
+				s.log.Error(err, "key snapshot apply error", "secretName", item.SecretName)
 			}
 		}
+	case *syncv1.KeyEvent_Upsert:
+		if err := s.applyKeyUpsert(ctx, k.Upsert); err != nil {
+			s.log.Error(err, "key upsert apply error", "secretName", k.Upsert.SecretName)
+		}
+	case *syncv1.KeyEvent_Delete:
+		if k.Delete.SecretName == "" {
+			return
+		}
+		if err := s.store.Delete(ctx, k.Delete.SecretName); err != nil &&
+			!errors.Is(err, apikey.ErrTokenNotFound) {
+			s.log.Error(err, "failed to delete key from sync", "name", k.Delete.SecretName)
+		}
+	}
+}
 
-	case FrameKeySnapshot:
-		for _, item := range event.Items {
-			if err := s.applyKeySync(ctx, item); err != nil {
-				s.log.Error(err, "snapshot apply error", "name", item.Name)
+func (s *syncServiceImpl) applyKeyUpsert(ctx context.Context, m *syncv1.APIKeyMetadata) error {
+	if m == nil || m.TokenHash == "" || m.HashPrefix == "" {
+		return nil
+	}
+	meta := apikey.KeyMetadata{
+		Namespace:   m.Namespace,
+		Role:        m.Role,
+		User:        m.User,
+		Team:        m.Team,
+		QuotaURL:    m.QuotaUrl,
+		Description: m.Description,
+		RawToken:    m.RawToken,
+	}
+	if m.IssuedAt != nil {
+		meta.IssuedAt = m.IssuedAt.AsTime()
+	}
+	if m.ExpiresAt != nil {
+		meta.ExpiresAt = m.ExpiresAt.AsTime()
+	}
+	return s.store.CreateFromHash(ctx, meta, m.TokenHash, m.HashPrefix)
+}
+
+func (s *syncServiceImpl) runWatchTemplates(ctx context.Context, connID uint64) {
+	s.mu.RLock()
+	tc := s.tmplClient
+	s.mu.RUnlock()
+	if tc == nil {
+		return
+	}
+	stream, err := tc.WatchTemplates(ctx, &syncv1.WatchTemplatesRequest{})
+	if err != nil {
+		s.log.Error(err, "WatchTemplates subscribe failed", "connID", connID)
+		return
+	}
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if !errors.Is(err, io.EOF) && status.Code(err) != codes.Canceled {
+				s.log.Error(err, "WatchTemplates recv error", "connID", connID)
 			}
+			return
 		}
+		s.dispatchTemplateEvent(ctx, ev)
+	}
+}
 
-	// ── Template frames ───────────────────────────────────────────────────────
-
-	case FrameTemplateCreateResp, FrameTemplateUpdateResp, FrameTemplateDeleteResp:
-		if v, ok := s.pending.Load(event.ID); ok {
-			entry := v.(*pendingEntry)
-			entry.ch <- event
-		}
-
-	case FrameTemplateSync:
-		return s.applyTemplateSync(ctx, event)
-
-	case FrameTemplateDeleteSync:
-		return s.applyTemplateDelete(ctx, event)
-
-	case FrameTemplateSnapshot:
-		for _, item := range event.Items {
-			if err := s.applyTemplateSync(ctx, item); err != nil {
-				s.log.Error(err, "template snapshot apply error", "templateFull", string(item.TemplateFull))
+func (s *syncServiceImpl) dispatchTemplateEvent(ctx context.Context, ev *syncv1.TemplateEvent) {
+	switch k := ev.Kind.(type) {
+	case *syncv1.TemplateEvent_Snapshot:
+		// Apply each item; afterwards strip the "global" label off any
+		// locally-cached template that the Hub no longer knows about.
+		knownNames := make(map[string]struct{}, len(k.Snapshot.TemplateJsons))
+		for _, raw := range k.Snapshot.TemplateJsons {
+			tmpl, err := jsonToTemplate(raw)
+			if err != nil || tmpl == nil {
+				s.log.Error(err, "template snapshot decode error")
+				continue
+			}
+			knownNames[tmpl.Name] = struct{}{}
+			if appErr := s.applyTemplate(ctx, tmpl); appErr != nil {
+				s.log.Error(errors.New(appErr.Message), "template snapshot apply error", "name", tmpl.Name)
 			}
 		}
 		if s.templateSvc != nil {
-			knownNames := make(map[string]struct{}, len(event.Items))
-			for _, item := range event.Items {
-				tmpl, err := frameToTemplate(item)
-				if err != nil || tmpl == nil {
-					continue
-				}
-				knownNames[tmpl.Name] = struct{}{}
-			}
 			if appErr := s.templateSvc.StripStaleGlobalLabels(ctx, knownNames); appErr != nil {
-				s.log.Error(errors.New(appErr.Message), "failed to strip stale global labels")
+				s.log.Error(errors.New(appErr.Message), "strip stale global labels failed")
 			}
 		}
-
-	// ── ClusterConfig frames ──────────────────────────────────────────────────
-
-	case FrameClusterConfigSync, FrameClusterConfigSnapshot:
-		return s.applyClusterConfig(ctx, event)
-	}
-	return nil
-}
-
-// applyKeySync writes a single key_sync item to the local key store.
-func (s *syncServiceImpl) applyKeySync(ctx context.Context, e SyncEvent) error {
-	if e.TokenHash == "" || e.HashPrefix == "" {
-		return nil
-	}
-
-	meta := apikey.KeyMetadata{
-		Namespace:   e.Namespace,
-		Role:        e.Role,
-		User:        e.User,
-		Team:        e.Team,
-		QuotaURL:    e.QuotaURL,
-		Description: e.Description,
-		RawToken:    e.RawToken,
-	}
-	if e.IssuedAt != "" {
-		if t, err := time.Parse(time.RFC3339, e.IssuedAt); err == nil {
-			meta.IssuedAt = t
+	case *syncv1.TemplateEvent_Upsert:
+		tmpl, err := jsonToTemplate(k.Upsert.TemplateJson)
+		if err != nil || tmpl == nil {
+			s.log.Error(err, "template upsert decode error")
+			return
+		}
+		if appErr := s.applyTemplate(ctx, tmpl); appErr != nil {
+			s.log.Error(errors.New(appErr.Message), "template upsert apply error", "name", tmpl.Name)
+		}
+	case *syncv1.TemplateEvent_Delete:
+		if k.Delete.Name == "" || s.templateSvc == nil {
+			return
+		}
+		if appErr := s.templateSvc.Delete(ctx, k.Delete.Name); appErr != nil &&
+			appErr.Code != domain.ErrCodeNotFound {
+			s.log.Error(errors.New(appErr.Message), "template delete apply error", "name", k.Delete.Name)
 		}
 	}
-	if e.ExpiresAt != "" {
-		if t, err := time.Parse(time.RFC3339, e.ExpiresAt); err == nil {
-			meta.ExpiresAt = t
-		}
-	}
-
-	return s.store.CreateFromHash(ctx, meta, e.TokenHash, e.HashPrefix)
 }
 
-// applyTemplateSync writes a single template_sync item to the local template service.
-func (s *syncServiceImpl) applyTemplateSync(ctx context.Context, e SyncEvent) error {
+func (s *syncServiceImpl) applyTemplate(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) *domain.AppError {
 	if s.templateSvc == nil {
 		return nil
 	}
-	tmpl, err := frameToTemplate(e)
+	return s.templateSvc.CreateOrUpdate(ctx, tmpl)
+}
+
+func (s *syncServiceImpl) runWatchClusterConfig(ctx context.Context, connID uint64) {
+	s.mu.RLock()
+	cc := s.configClient
+	s.mu.RUnlock()
+	if cc == nil {
+		return
+	}
+	stream, err := cc.WatchClusterConfig(ctx, &syncv1.WatchClusterConfigRequest{})
 	if err != nil {
-		return fmt.Errorf("applyTemplateSync: %w", err)
+		s.log.Error(err, "WatchClusterConfig subscribe failed", "connID", connID)
+		return
 	}
-	if tmpl == nil {
-		// Graceful skip: TemplateFull was empty (e.g. during a rolling upgrade).
-		return nil
-	}
-	if appErr := s.templateSvc.CreateOrUpdate(ctx, tmpl); appErr != nil {
-		return fmt.Errorf("applyTemplateSync CreateOrUpdate %q: %s", tmpl.Name, appErr.Message)
-	}
-	s.log.Info("synced template", "name", tmpl.Name)
-	return nil
-}
-
-// applyTemplateDelete deletes a template locally on receipt of a template_delete_sync frame.
-func (s *syncServiceImpl) applyTemplateDelete(ctx context.Context, e SyncEvent) error {
-	if s.templateSvc == nil {
-		return nil
-	}
-	if e.Name == "" {
-		return nil
-	}
-	if appErr := s.templateSvc.Delete(ctx, e.Name); appErr != nil {
-		// Ignore not-found — we may have never had this template.
-		if appErr.Code == domain.ErrCodeNotFound {
-			return nil
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if !errors.Is(err, io.EOF) && status.Code(err) != codes.Canceled {
+				s.log.Error(err, "WatchClusterConfig recv error", "connID", connID)
+			}
+			return
 		}
-		return fmt.Errorf("applyTemplateDelete %q: %s", e.Name, appErr.Message)
+		s.applyClusterConfigEvent(ctx, ev)
 	}
-	s.log.Info("deleted template from sync", "name", e.Name)
-	return nil
 }
 
-// frameToTemplate converts a protocol.Frame carrying a TemplateFull field into a
-// *agentsv1alpha1.SandboxTemplate ready for CreateOrUpdate.
-// Returns nil (no error) when TemplateFull is empty, allowing graceful skip
-// during rolling upgrades where an older ws-proxy may not populate the field.
-func frameToTemplate(e protocol.Frame) (*agentsv1alpha1.SandboxTemplate, error) {
-	if len(e.TemplateFull) == 0 {
-		return nil, nil // graceful skip: upgrade window or empty frame
+func (s *syncServiceImpl) applyClusterConfigEvent(ctx context.Context, ev *syncv1.ClusterConfigEvent) {
+	if ev == nil || ev.Snapshot == nil {
+		s.log.Info("cluster_config event: empty snapshot, skipping")
+		return
 	}
-	var tmpl agentsv1alpha1.SandboxTemplate
-	if err := json.Unmarshal(e.TemplateFull, &tmpl); err != nil {
-		return nil, fmt.Errorf("unmarshal full SandboxTemplate: %w", err)
-	}
-	return &tmpl, nil
-}
+	cfg := protoToClusterConfig(ev.Snapshot)
 
-// applyClusterConfig processes a cluster_config_sync or cluster_config_snapshot
-// frame from ws-proxy. It deserialises the full ClusterConfig snapshot and
-// forwards it to the ClusterConfigSink (typically a ConfigMapWriter) for
-// persistence.
-//
-// Safety rules:
-//   - Missing/empty ConfigSnapshot → no-op (never clears existing config).
-//   - Malformed snapshot → error returned to the caller; sink left untouched.
-//   - Zero-valued snapshot (no clusters, no host aliases) → treated as a
-//     transient empty push and skipped, mirroring the pre-snapshot behaviour.
-func (s *syncServiceImpl) applyClusterConfig(ctx context.Context, event SyncEvent) error {
-	if len(event.ConfigSnapshot) == 0 {
-		s.log.Info("cluster_config_sync: empty snapshot, skipping update")
-		return nil
-	}
-
-	var cfg cluster.ClusterConfig
-	if err := json.Unmarshal(event.ConfigSnapshot, &cfg); err != nil {
-		s.log.Error(err, "cluster_config_sync: failed to unmarshal snapshot")
-		return err
-	}
-
-	// Drop clusters without an ID defensively; do not drop the whole batch.
+	// Defensive: drop entries with empty IDs but keep the rest.
 	valid := cfg.Clusters[:0]
 	for i, e := range cfg.Clusters {
 		if e.ID == "" {
-			s.log.Info("cluster_config_sync: entry has empty ID, skipping", "index", i)
+			s.log.Info("cluster_config: entry has empty ID, skipping", "index", i)
 			continue
 		}
 		valid = append(valid, e)
@@ -585,52 +503,119 @@ func (s *syncServiceImpl) applyClusterConfig(ctx context.Context, event SyncEven
 	cfg.Clusters = valid
 
 	if len(cfg.Clusters) == 0 && len(cfg.HostAliases) == 0 {
-		s.log.Info("cluster_config_sync: snapshot carries no actionable data, skipping")
-		return nil
+		s.log.Info("cluster_config: snapshot carries no actionable data, skipping")
+		return
 	}
-
 	if s.clusterSink == nil {
-		return nil
+		return
 	}
-
 	if err := s.clusterSink.ApplyClusterConfig(ctx, cfg); err != nil {
-		s.log.Error(err, "cluster_config_sync: failed to apply cluster config")
-		return err
+		s.log.Error(err, "cluster_config: apply failed")
 	}
-
-	return nil
 }
 
-// ── internal helpers ──────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
-// sendFrame writes a protocol.Frame to the WS connection and registers a
-// pending channel for the response. Returns the correlationID and channel.
-func (s *syncServiceImpl) sendFrame(frame protocol.Frame) (string, chan protocol.Frame, error) {
-	s.mu.RLock()
-	conn := s.conn
-	s.mu.RUnlock()
-	if conn == nil {
-		s.log.Info("sendFrame: no active ws-proxy connection", "frameType", string(frame.Type))
-		return "", nil, ErrSyncNotConnected
+// jsonToTemplate decodes a JSON-encoded SandboxTemplate sent over the wire.
+// Returns (nil, nil) for an empty body so a transient empty event during a
+// rolling upgrade does not look like an error.
+func jsonToTemplate(raw []byte) (*agentsv1alpha1.SandboxTemplate, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
-
-	id := newCorrelationID()
-	frame.ID = id
-
-	ch := make(chan protocol.Frame, 1)
-	s.pending.Store(id, &pendingEntry{ch: ch})
-
-	s.mu.RLock()
-	activeConn := s.conn
-	s.mu.RUnlock()
-	if activeConn == nil {
-		s.pending.Delete(id)
-		return "", nil, ErrSyncNotConnected
+	var tmpl agentsv1alpha1.SandboxTemplate
+	if err := json.Unmarshal(raw, &tmpl); err != nil {
+		return nil, fmt.Errorf("unmarshal SandboxTemplate: %w", err)
 	}
+	return &tmpl, nil
+}
 
-	if err := activeConn.WriteJSON(frame); err != nil {
-		s.pending.Delete(id)
-		return "", nil, err
+// translateGRPCError maps a gRPC status into the *SyncHTTPError contract that
+// upstream handlers expect, preserving the existing HTTP status table used by
+// pkg/apiserver/handlers/server.go and apikey_service.go.
+func translateGRPCError(err error) error {
+	if err == nil {
+		return nil
 	}
-	return id, ch, nil
+	st, ok := status.FromError(err)
+	if !ok {
+		return err
+	}
+	httpStatus := grpcCodeToHTTP(st.Code())
+	if httpStatus == 0 {
+		return err
+	}
+	return &SyncHTTPError{Status: httpStatus, Message: st.Message()}
+}
+
+// grpcCodeToHTTP mirrors the table used by the v1 protocol.Frame wire format
+// so existing translation logic in handlers/server.go (200/400/404/409/429/503)
+// works unchanged.
+func grpcCodeToHTTP(c codes.Code) int {
+	switch c {
+	case codes.OK:
+		return 200
+	case codes.InvalidArgument:
+		return 400
+	case codes.NotFound:
+		return 404
+	case codes.AlreadyExists:
+		return 409
+	case codes.ResourceExhausted:
+		return 429
+	case codes.Unavailable:
+		return 503
+	case codes.Unauthenticated:
+		return 401
+	case codes.PermissionDenied:
+		return 403
+	case codes.DeadlineExceeded:
+		return 504
+	default:
+		return 500
+	}
+}
+
+// protoToClusterConfig translates a proto ClusterConfig into the in-memory
+// cluster.ClusterConfig type. Mirrors syncmgr/grpc_convert.go on the Hub side.
+func protoToClusterConfig(p *syncv1.ClusterConfig) cluster.ClusterConfig {
+	out := cluster.ClusterConfig{
+		Clusters:    make([]cluster.ClusterEntry, 0, len(p.Clusters)),
+		HostAliases: make([]corev1.HostAlias, 0, len(p.HostAliases)),
+	}
+	for _, c := range p.Clusters {
+		entry := cluster.ClusterEntry{
+			ID:       c.Id,
+			Name:     c.Name,
+			URL:      c.Url,
+			Selector: c.Selector,
+			Headers:  c.Headers,
+			Visible:  c.Visible,
+		}
+		if c.Gateway != nil {
+			entry.Gateway = &cluster.GatewayConfig{
+				NativeURL:     c.Gateway.NativeUrl,
+				E2BURL:        c.Gateway.E2BUrl,
+				DataURL:       c.Gateway.DataUrl,
+				Headers:       c.Gateway.Headers,
+				NativeHeaders: c.Gateway.NativeHeaders,
+				E2BHeaders:    c.Gateway.E2BHeaders,
+				DataHeaders:   c.Gateway.DataHeaders,
+			}
+		}
+		for _, r := range c.Registries {
+			entry.Registries = append(entry.Registries, cluster.RegistryEntry{
+				Host: r.Host,
+				Type: r.Type,
+			})
+		}
+		out.Clusters = append(out.Clusters, entry)
+	}
+	for _, ha := range p.HostAliases {
+		out.HostAliases = append(out.HostAliases, corev1.HostAlias{
+			IP:        ha.Ip,
+			Hostnames: append([]string(nil), ha.Hostnames...),
+		})
+	}
+	return out
 }

@@ -24,7 +24,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/gorilla/websocket"
+	"google.golang.org/grpc"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
@@ -240,11 +240,8 @@ type stubSyncService struct {
 	deleteErr  error
 }
 
-func (s *stubSyncService) OnConnect(_ *websocket.Conn) uint64 { return 0 }
-func (s *stubSyncService) OnDisconnect(_ uint64)              {}
-func (s *stubSyncService) HandleIncoming(_ context.Context, _ service.SyncEvent) error {
-	return nil
-}
+func (s *stubSyncService) OnConnect(_ *grpc.ClientConn) uint64 { return 0 }
+func (s *stubSyncService) OnDisconnect(_ uint64)               {}
 func (s *stubSyncService) RequestCreate(_ context.Context, _ service.CreateKeyRequest) (*service.CreateKeyResponse, error) {
 	return s.createResp, s.createErr
 }

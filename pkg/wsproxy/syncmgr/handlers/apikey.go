@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scitix/agent-sandbox/pkg/api/protocol"
 	nativegen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
@@ -141,9 +140,7 @@ func (s *Server) CreateApiKey(
 
 	createdMeta, _ := deps.KeyStore.Get(ctx, keyID)
 	if createdMeta != nil {
-		syncF := metaToFrame(*createdMeta)
-		syncF.Type = protocol.FrameKeySync
-		s.m.Broadcast(syncF)
+		s.m.BroadcastKeyMeta(*createdMeta)
 	}
 
 	return wsproxygen.CreateApiKey201JSONResponse{
@@ -190,9 +187,7 @@ func (s *Server) importApiKey(
 	keyID := "agentbox-apikey-" + *body.HashPrefix
 	createdMeta, _ := deps.KeyStore.Get(ctx, keyID)
 	if createdMeta != nil {
-		syncF := metaToFrame(*createdMeta)
-		syncF.Type = protocol.FrameKeySync
-		s.m.Broadcast(syncF)
+		s.m.BroadcastKeyMeta(*createdMeta)
 	}
 
 	return wsproxygen.CreateApiKey201JSONResponse{
@@ -223,7 +218,7 @@ func (s *Server) DeleteApiKey(
 		log.Printf("syncManager: api-key delete error: %v", err)
 		return wsproxygen.DeleteApiKey503JSONResponse{Error: "failed to delete key"}, nil
 	}
-	s.m.Broadcast(protocol.Frame{Type: protocol.FrameKeyDeleteSync, Name: request.Name})
+	s.m.BroadcastKeyDelete(request.Name)
 	return wsproxygen.DeleteApiKey204Response{}, nil
 }
 
@@ -262,35 +257,4 @@ func keyMetasToGenItems(metas []apikey.KeyMetadata) []nativegen.APIKeyItem {
 		items = append(items, item)
 	}
 	return items
-}
-
-// metaToFrame converts a KeyMetadata to a protocol.Frame for key_sync / key_snapshot items.
-// Mirrors syncmgr.metaToFrame; duplicated here to avoid cross-package unexported access.
-func metaToFrame(meta apikey.KeyMetadata) protocol.Frame {
-	f := protocol.Frame{
-		TokenHash:   meta.TokenHash,
-		Namespace:   meta.Namespace,
-		Role:        meta.Role,
-		User:        meta.User,
-		Team:        meta.Team,
-		QuotaURL:    meta.QuotaURL,
-		Description: meta.Description,
-		RawToken:    meta.RawToken,
-	}
-	if !meta.IssuedAt.IsZero() {
-		f.IssuedAt = meta.IssuedAt.UTC().Format(time.RFC3339)
-	}
-	if !meta.ExpiresAt.IsZero() {
-		f.ExpiresAt = meta.ExpiresAt.UTC().Format(time.RFC3339)
-	}
-	shortName := meta.KeyID
-	if i := strings.LastIndex(meta.KeyID, "/"); i >= 0 {
-		shortName = meta.KeyID[i+1:]
-	}
-	f.Name = shortName
-	const prefix = "agentbox-apikey-"
-	if strings.HasPrefix(shortName, prefix) {
-		f.HashPrefix = shortName[len(prefix):]
-	}
-	return f
 }

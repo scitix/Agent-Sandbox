@@ -24,7 +24,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/scitix/agent-sandbox/pkg/api/protocol"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 )
 
@@ -121,12 +120,9 @@ func (m *SyncManager) handleInternalCreate(c *gin.Context) {
 	}
 
 	createdMeta, _ := m.deps.KeyStore.Get(ctx, keyID)
-	syncF := protocol.Frame{Type: protocol.FrameKeySync}
 	if createdMeta != nil {
-		syncF = metaToFrame(*createdMeta)
-		syncF.Type = protocol.FrameKeySync
+		m.broadcastKeyUpsert(metaToProto(*createdMeta))
 	}
-	m.broadcast(syncF)
 
 	c.JSON(http.StatusCreated, internalCreateResponse{
 		RawToken:   rawToken,
@@ -186,12 +182,9 @@ func (m *SyncManager) handleInternalImport(c *gin.Context, req internalCreateReq
 	keyID := "agentbox-apikey-" + req.HashPrefix
 
 	createdMeta, _ := m.deps.KeyStore.Get(ctx, keyID)
-	syncF := protocol.Frame{Type: protocol.FrameKeySync}
 	if createdMeta != nil {
-		syncF = metaToFrame(*createdMeta)
-		syncF.Type = protocol.FrameKeySync
+		m.broadcastKeyUpsert(metaToProto(*createdMeta))
 	}
-	m.broadcast(syncF)
 
 	c.JSON(http.StatusCreated, internalCreateResponse{
 		RawToken:   "",
@@ -221,7 +214,7 @@ func (m *SyncManager) handleInternalDelete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete key"})
 		return
 	}
-	m.broadcast(protocol.Frame{Type: protocol.FrameKeyDeleteSync, Name: name})
+	m.broadcastKeyDelete(name)
 	c.Status(http.StatusNoContent)
 }
 
@@ -247,16 +240,6 @@ func (m *SyncManager) handleInternalList(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": metas})
-}
-
-func (m *SyncManager) handleInternalBroadcast(c *gin.Context) {
-	var frame protocol.Frame
-	if err := json.NewDecoder(c.Request.Body).Decode(&frame); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
-		return
-	}
-	m.broadcast(frame)
-	c.Status(http.StatusNoContent)
 }
 
 // ── Cluster status / heartbeat endpoints ─────────────────────────────────────

@@ -296,7 +296,8 @@ gen-internal-proto: ## Generate Go/gRPC code from pkg/proto/ (internal Controlle
 		--proto_path=pkg/proto \
 		--go_out=. --go_opt=module=github.com/scitix/agent-sandbox \
 		--go-grpc_out=. --go-grpc_opt=module=github.com/scitix/agent-sandbox \
-		pkg/proto/sandbox/ctrlplane/v1/ctrlplane.proto
+		pkg/proto/sandbox/ctrlplane/v1/ctrlplane.proto \
+		pkg/proto/sandbox/sync/v1/sync.proto
 	@echo "Internal proto code regenerated alongside the .proto file."
 
 .PHONY: gen-all-api

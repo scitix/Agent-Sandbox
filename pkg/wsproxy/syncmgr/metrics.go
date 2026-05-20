@@ -49,12 +49,21 @@ var (
 		Help: "Total number of sync WebSocket disconnections from Worker clusters.",
 	}, []string{"cluster"})
 
-	// WSSyncFramesTotal counts sync protocol frames sent/received,
-	// partitioned by cluster and direction (tx/rx).
-	WSSyncFramesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "agentbox_wsproxy_sync_frames_total",
-		Help: "Total number of sync protocol frames sent (tx) or received (rx).",
-	}, []string{"cluster", "direction"})
+	// WSSyncEventsTotal counts proto events emitted to Worker streams,
+	// partitioned by cluster and kind (key_upsert / key_delete /
+	// template_upsert / template_delete / cluster_config).
+	WSSyncEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_wsproxy_sync_events_total",
+		Help: "Total number of proto sync events emitted to Worker streams.",
+	}, []string{"cluster", "kind"})
+
+	// WSSyncEventsDroppedTotal counts events that could not be enqueued onto
+	// a cluster's broadcast channel because the buffer was full. A non-zero
+	// value indicates the Worker is slow to consume; investigate.
+	WSSyncEventsDroppedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_wsproxy_sync_events_dropped_total",
+		Help: "Total number of sync events dropped because the per-cluster broadcast buffer was full.",
+	}, []string{"cluster", "kind"})
 
 	// WSSyncPingFailuresTotal counts Ping write failures (connection likely dead).
 	WSSyncPingFailuresTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -78,7 +87,8 @@ func init() {
 		WSSyncConnectionsActive,
 		WSSyncReconnectsTotal,
 		WSSyncDisconnectsTotal,
-		WSSyncFramesTotal,
+		WSSyncEventsTotal,
+		WSSyncEventsDroppedTotal,
 		WSSyncPingFailuresTotal,
 	)
 }

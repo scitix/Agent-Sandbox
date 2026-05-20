@@ -23,7 +23,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	"github.com/scitix/agent-sandbox/pkg/api/protocol"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	nativegen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
@@ -189,7 +188,7 @@ func (s *Server) AdminDeleteSandboxTemplate(
 		}
 		return wsproxygen.AdminDeleteSandboxTemplate503JSONResponse{Error: appErr.Message}, nil
 	}
-	s.m.Broadcast(protocol.Frame{Type: protocol.FrameTemplateDeleteSync, Name: request.Name})
+	s.m.BroadcastTemplateDelete(request.Name)
 	return wsproxygen.AdminDeleteSandboxTemplate204Response{}, nil
 }
 
@@ -235,5 +234,5 @@ func (s *Server) broadcastDomainTemplate(result *domain.SandboxTemplate) {
 		log.Printf("syncManager: failed to marshal CrdYaml JSON for broadcast: %v", err)
 		return
 	}
-	s.m.Broadcast(protocol.Frame{Type: protocol.FrameTemplateSync, TemplateFull: raw})
+	s.m.BroadcastTemplateUpsert(raw)
 }
