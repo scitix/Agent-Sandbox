@@ -22,10 +22,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	pkgmetrics "github.com/scitix/agent-sandbox/pkg/metrics"
 )
 
@@ -81,15 +82,39 @@ func emitSandboxStopMetrics(pod *corev1.Pod, stopReason, claimedAt, startedAt, t
 	pkgmetrics.SandboxRunningDuration.With(labels).Observe(terminatedTs.Sub(startedTs).Seconds())
 }
 
-// sandboxRecordFromPod constructs a terminal domain.Sandbox from a pod's labels/annotations.
+// setRecycledAtNow stamps the recycled-at field of a sandbox record with the
+// current UTC wall-clock time. Convenience wrapper around the *time.Time
+// pointer required by gen.Sandbox.
+func setRecycledAtNow(sb *gen.Sandbox) {
+	t := time.Now().UTC()
+	sb.RecycledAt = &t
+}
+
+// formatRFC3339Ptr renders a *time.Time as an RFC3339 string, or empty when nil.
+func formatRFC3339Ptr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+// sandboxRecordFromPod constructs a terminal gen.Sandbox from a pod's labels/annotations.
 // CPU and Memory are computed by SandboxBaseFromPod from container resource requests/limits.
-func sandboxRecordFromPod(pod *corev1.Pod, status, terminatedAt, failureReason string, exitCode *int32, failureMessage string) domain.Sandbox {
+func sandboxRecordFromPod(pod *corev1.Pod, status, terminatedAt, failureReason string, exitCode *int32, failureMessage string) gen.Sandbox {
 	sb := SandboxBaseFromPod(pod)
-	sb.Status = status
-	sb.TerminatedAt = terminatedAt
-	sb.FailureReason = failureReason
+	sb.Status = gen.SandboxStatus(status)
+	if terminatedAt != "" {
+		if t, err := time.Parse(time.RFC3339, terminatedAt); err == nil {
+			sb.TerminatedAt = &t
+		}
+	}
+	if failureReason != "" {
+		sb.FailureReason = ptr.To(failureReason)
+	}
 	sb.ExitCode = exitCode
-	sb.FailureMessage = failureMessage
+	if failureMessage != "" {
+		sb.FailureMessage = ptr.To(failureMessage)
+	}
 	return sb
 }
 

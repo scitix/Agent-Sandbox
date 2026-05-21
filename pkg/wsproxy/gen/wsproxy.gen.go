@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/oapi-codegen/runtime"
 	strictgin "github.com/oapi-codegen/runtime/strictmiddleware/gin"
-
 	externalRef0 "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
 
@@ -35,9 +34,6 @@ type CreateAPIKeyRequest struct {
 
 	// Namespace Import mode: original namespace.
 	Namespace *string `json:"namespace,omitempty"`
-
-	// QuotaURL Import mode: quota URL.
-	QuotaURL *string `json:"quotaURL,omitempty"`
 
 	// Team Import mode: original team.
 	Team *string `json:"team,omitempty"`
@@ -69,7 +65,7 @@ type ImageDataset struct {
 	Tags           *[]string          `json:"tags,omitempty"`
 }
 
-// ListAPIKeysResult defines model for ListAPIKeysResult.
+// ListAPIKeysResult List of API key objects. Returned in full — the endpoint does not paginate.
 type ListAPIKeysResult = externalRef0.ListAPIKeysResult
 
 // ListSandboxTemplatesResult defines model for ListSandboxTemplatesResult.

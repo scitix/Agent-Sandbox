@@ -1214,9 +1214,6 @@ components:
           description: >
             Original issue timestamp (import mode). Used to preserve the
             original creation time. Ignored when tokenHash is not provided.
-        quotaURL:
-          type: string
-          description: Quota URL associated with the key (import mode).
 
     CreateAPIKeyResult:
       type: object
@@ -1265,9 +1262,6 @@ components:
         role:
           type: string
           description: "Role granted by this key (e.g. tenant, admin)."
-        quotaURL:
-          type: string
-          description: "Quota URL associated with the key (populated in import mode)."
         description:
           type: string
           description: "Human-readable description of the key."
@@ -1312,23 +1306,10 @@ components:
           description: "Result of the delete operation (e.g. Deleted)."
 
     ListAPIKeysResult:
-      type: object
-      required: [items, total, limit, offset]
-      properties:
-        items:
-          type: array
-          description: "Page of API key objects."
-          items:
-            $ref: '#/components/schemas/APIKeyItem'
-        total:
-          type: integer
-          description: "Total number of API keys matching the query (before pagination)."
-        limit:
-          type: integer
-          description: "Maximum number of items requested per page."
-        offset:
-          type: integer
-          description: "Number of items skipped before this page."
+      type: array
+      description: "List of API key objects. Returned in full — the endpoint does not paginate."
+      items:
+        $ref: '#/components/schemas/APIKeyItem'
 
     # =========================================================
     # Quota

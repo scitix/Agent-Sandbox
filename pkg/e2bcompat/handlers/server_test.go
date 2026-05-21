@@ -20,6 +20,7 @@ import (
 	"time"
 
 	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 )
@@ -27,13 +28,13 @@ import (
 // mockSandboxService captures the CreateSandboxInput for assertion.
 type mockSandboxService struct {
 	service.SandboxService
-	lastInput apidomain.CreateSandboxInput
+	lastInput service.CreateSandboxInput
 }
 
-func (m *mockSandboxService) Create(_ context.Context, input apidomain.CreateSandboxInput) (*apidomain.Sandbox, *apidomain.AppError) {
+func (m *mockSandboxService) Create(_ context.Context, input service.CreateSandboxInput) (*gen.Sandbox, *apidomain.AppError) {
 	m.lastInput = input
-	return &apidomain.Sandbox{
-		SandboxID: "sbx-test",
+	return &gen.Sandbox{
+		SandboxId: "sbx-test",
 		PoolName:  input.PoolName,
 		Namespace: input.Namespace,
 		Status:    "Running",

@@ -22,12 +22,23 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
+
+func mustParseTime(t *testing.T, s string) time.Time {
+	t.Helper()
+	v, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return v
+}
 
 const (
 	testPoolName  = "pool-a"
@@ -139,7 +150,7 @@ func TestSandboxService_Create_NoIdlePods(t *testing.T) {
 	pool := makePool("pool-a", "tenant-a")
 	svc := newTestSandboxService(t, pool)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:       "pool-a",
 		Namespace:      "tenant-a",
 		Image:          "busybox:1.37",
@@ -158,7 +169,7 @@ func TestSandboxService_Create_Success(t *testing.T) {
 	pod := makeIdlePod("pod-a", "tenant-a", "pool-a")
 	svc := newTestSandboxService(t, pool, pod)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:  "pool-a",
 		Namespace: "tenant-a",
 		Image:     "busybox:1.37",
@@ -166,7 +177,7 @@ func TestSandboxService_Create_Success(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.SandboxID == "" {
+	if result.SandboxId == "" {
 		t.Fatal("expected sandbox ID to be set")
 	}
 	if result.Namespace != "tenant-a" {
@@ -180,7 +191,7 @@ func TestSandboxService_Create_Success(t *testing.T) {
 func TestSandboxService_Create_PoolNotFound(t *testing.T) {
 	svc := newTestSandboxService(t)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:  "nonexistent",
 		Namespace: "tenant-a",
 	})
@@ -271,8 +282,8 @@ func TestSandboxService_Delete_Success(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.SandboxID != sandboxID {
-		t.Fatalf("expected sandboxID %s, got %s", sandboxID, result.SandboxID)
+	if result.SandboxId != sandboxID {
+		t.Fatalf("expected sandboxID %s, got %s", sandboxID, result.SandboxId)
 	}
 	if result.PoolName != testPoolName {
 		t.Fatalf("expected poolName pool-a, got %s", result.PoolName)
@@ -296,17 +307,17 @@ func TestSandboxService_List_MergesActiveAndHistory(t *testing.T) {
 	pod := makeRunningPod("pod-active", "tenant-a", "pool-a", "sbx-active")
 
 	testStore := newTestStore(t)
-	_ = testStore.Save(domain.Sandbox{
-		SandboxID: "sbx-history",
+	_ = testStore.Save(gen.Sandbox{
+		SandboxId: "sbx-history",
 		Namespace: "tenant-a",
 		PoolName:  "pool-a",
 		PodName:   "pod-old",
-		Status:    "Completed",
-		ClaimedAt: "2026-01-01T08:00:00Z",
+		Status:    gen.SandboxStatus("Completed"),
+		ClaimedAt: mustParseTime(t, "2026-01-01T08:00:00Z"),
 	})
 
 	svc := newTestSandboxServiceWithStore(t, testStore, pool, pod)
-	result, appErr := svc.List(context.Background(), domain.ListSandboxesFilter{
+	result, appErr := svc.List(context.Background(), SandboxListFilter{
 		Namespace: "tenant-a",
 	})
 	if appErr != nil {
@@ -319,7 +330,7 @@ func TestSandboxService_List_MergesActiveAndHistory(t *testing.T) {
 	// Verify both sandboxes are present
 	ids := map[string]bool{}
 	for _, sb := range result.Items {
-		ids[sb.SandboxID] = true
+		ids[sb.SandboxId] = true
 	}
 	if !ids["sbx-active"] {
 		t.Fatal("expected sbx-active in results")
@@ -333,13 +344,13 @@ func TestSandboxService_List_Pagination(t *testing.T) {
 	testStore := newTestStore(t)
 	// Insert 5 historical records with distinct claimedAt times
 	for i := range 5 {
-		claimedAt := time.Date(2026, 1, 1, i, 0, 0, 0, time.UTC).Format(time.RFC3339)
-		_ = testStore.Save(domain.Sandbox{
-			SandboxID: fmt.Sprintf("sbx-%d", i),
+		claimedAt := time.Date(2026, 1, 1, i, 0, 0, 0, time.UTC)
+		_ = testStore.Save(gen.Sandbox{
+			SandboxId: fmt.Sprintf("sbx-%d", i),
 			Namespace: "tenant-a",
 			PoolName:  "pool-a",
 			PodName:   fmt.Sprintf("pod-%d", i),
-			Status:    "Completed",
+			Status:    gen.SandboxStatus("Completed"),
 			ClaimedAt: claimedAt,
 		})
 	}
@@ -348,7 +359,7 @@ func TestSandboxService_List_Pagination(t *testing.T) {
 	svc := newTestSandboxServiceWithStore(t, testStore, pool)
 
 	// First page
-	result, appErr := svc.List(context.Background(), domain.ListSandboxesFilter{
+	result, appErr := svc.List(context.Background(), SandboxListFilter{
 		Namespace: "tenant-a",
 		Limit:     2,
 		Offset:    0,
@@ -364,7 +375,7 @@ func TestSandboxService_List_Pagination(t *testing.T) {
 	}
 
 	// Second page
-	result2, appErr2 := svc.List(context.Background(), domain.ListSandboxesFilter{
+	result2, appErr2 := svc.List(context.Background(), SandboxListFilter{
 		Namespace: "tenant-a",
 		Limit:     2,
 		Offset:    2,
@@ -380,7 +391,7 @@ func TestSandboxService_List_Pagination(t *testing.T) {
 	}
 
 	// Last page (1 remaining)
-	result3, appErr3 := svc.List(context.Background(), domain.ListSandboxesFilter{
+	result3, appErr3 := svc.List(context.Background(), SandboxListFilter{
 		Namespace: "tenant-a",
 		Limit:     2,
 		Offset:    4,
@@ -395,28 +406,28 @@ func TestSandboxService_List_Pagination(t *testing.T) {
 
 func TestSandboxService_List_StatusFilter(t *testing.T) {
 	testStore := newTestStore(t)
-	_ = testStore.Save(domain.Sandbox{
-		SandboxID: "sbx-failed",
+	_ = testStore.Save(gen.Sandbox{
+		SandboxId: "sbx-failed",
 		Namespace: "tenant-a",
 		PoolName:  "pool-a",
 		PodName:   "pod-failed",
-		Status:    "Failed",
-		ClaimedAt: "2026-01-01T09:00:00Z",
+		Status:    gen.SandboxStatus("Failed"),
+		ClaimedAt: mustParseTime(t, "2026-01-01T09:00:00Z"),
 	})
-	_ = testStore.Save(domain.Sandbox{
-		SandboxID: "sbx-completed",
+	_ = testStore.Save(gen.Sandbox{
+		SandboxId: "sbx-completed",
 		Namespace: "tenant-a",
 		PoolName:  "pool-a",
 		PodName:   "pod-completed",
-		Status:    "Completed",
-		ClaimedAt: "2026-01-01T08:00:00Z",
+		Status:    gen.SandboxStatus("Completed"),
+		ClaimedAt: mustParseTime(t, "2026-01-01T08:00:00Z"),
 	})
 
 	pool := makePool("pool-a", "tenant-a")
 	svc := newTestSandboxServiceWithStore(t, testStore, pool)
 
 	// Filter by single status
-	result, appErr := svc.List(context.Background(), domain.ListSandboxesFilter{
+	result, appErr := svc.List(context.Background(), SandboxListFilter{
 		Namespace: "tenant-a",
 		Status:    "Failed",
 	})
@@ -426,12 +437,12 @@ func TestSandboxService_List_StatusFilter(t *testing.T) {
 	if result.Total != 1 {
 		t.Fatalf("expected 1 failed sandbox, got %d", result.Total)
 	}
-	if result.Items[0].SandboxID != "sbx-failed" {
-		t.Fatalf("expected sbx-failed, got %s", result.Items[0].SandboxID)
+	if result.Items[0].SandboxId != "sbx-failed" {
+		t.Fatalf("expected sbx-failed, got %s", result.Items[0].SandboxId)
 	}
 
 	// Filter by comma-separated multi-value status
-	result2, appErr2 := svc.List(context.Background(), domain.ListSandboxesFilter{
+	result2, appErr2 := svc.List(context.Background(), SandboxListFilter{
 		Namespace: "tenant-a",
 		Status:    "Failed,Completed",
 	})
@@ -446,15 +457,16 @@ func TestSandboxService_List_StatusFilter(t *testing.T) {
 func TestSandboxService_Get_FallsBackToHistory(t *testing.T) {
 	testStore := newTestStore(t)
 	exitCode := int32(137)
-	_ = testStore.Save(domain.Sandbox{
-		SandboxID:     "sbx-old",
+	terminatedAtV := mustParseTime(t, "2026-01-01T10:30:00Z")
+	_ = testStore.Save(gen.Sandbox{
+		SandboxId:     "sbx-old",
 		Namespace:     "tenant-a",
 		PoolName:      "pool-a",
 		PodName:       "pod-old",
-		Status:        "Failed",
-		ClaimedAt:     "2026-01-01T10:00:00Z",
-		TerminatedAt:  "2026-01-01T10:30:00Z",
-		FailureReason: "OOMKilled",
+		Status:        gen.SandboxStatus("Failed"),
+		ClaimedAt:     mustParseTime(t, "2026-01-01T10:00:00Z"),
+		TerminatedAt:  &terminatedAtV,
+		FailureReason: ptr.To("OOMKilled"),
 		ExitCode:      &exitCode,
 	})
 
@@ -471,8 +483,8 @@ func TestSandboxService_Get_FallsBackToHistory(t *testing.T) {
 	if sb.Status != "Failed" {
 		t.Fatalf("expected Failed status, got %s", sb.Status)
 	}
-	if sb.FailureReason != "OOMKilled" {
-		t.Fatalf("expected OOMKilled, got %s", sb.FailureReason)
+	if sb.FailureReason == nil || *sb.FailureReason != "OOMKilled" {
+		t.Fatalf("expected OOMKilled, got %v", sb.FailureReason)
 	}
 	if sb.ExitCode == nil || *sb.ExitCode != 137 {
 		t.Fatalf("expected exitCode 137, got %v", sb.ExitCode)
@@ -518,7 +530,7 @@ func TestSandboxService_Create_NoIdlePods_WithStoppingDetail(t *testing.T) {
 	client := cb.WithObjects(pool).Build()
 	svc := NewSandboxService(client, nil, nil, nil, "http://gateway.example.com", "", nil, nil)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:       "pool-a",
 		Namespace:      "tenant-a",
 		Image:          "busybox:1.37",
@@ -558,7 +570,7 @@ func TestSandboxService_Create_BuildsEndpoints(t *testing.T) {
 	}
 	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil, nil)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:  "pool-a",
 		Namespace: "tenant-a",
 		Image:     "busybox:1.37",
@@ -566,16 +578,16 @@ func TestSandboxService_Create_BuildsEndpoints(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if len(result.Endpoints) == 0 {
+	if result.Endpoints == nil || len(*result.Endpoints) == 0 {
 		t.Fatal("expected non-empty endpoints when gatewayBaseURL is set")
 	}
-	ep, ok := result.Endpoints["swerex"]
+	ep, ok := (*result.Endpoints)["swerex"]
 	if !ok {
 		t.Fatal("expected 'swerex' key in endpoints")
 	}
 	expectedPrefix := "http://gw.example.com/sandboxes/"
-	if len(ep.URL) < len(expectedPrefix) || ep.URL[:len(expectedPrefix)] != expectedPrefix {
-		t.Fatalf("expected endpoint URL to start with %s, got %s", expectedPrefix, ep.URL)
+	if len(ep.Url) < len(expectedPrefix) || ep.Url[:len(expectedPrefix)] != expectedPrefix {
+		t.Fatalf("expected endpoint URL to start with %s, got %s", expectedPrefix, ep.Url)
 	}
 }
 
@@ -593,15 +605,15 @@ func TestSandboxService_Get_BuildsEndpoints(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if len(result.Endpoints) == 0 {
+	if result.Endpoints == nil || len(*result.Endpoints) == 0 {
 		t.Fatal("expected non-empty endpoints when gatewayBaseURL is set")
 	}
-	ep, ok := result.Endpoints["swerex"]
+	ep, ok := (*result.Endpoints)["swerex"]
 	if !ok {
 		t.Fatal("expected 'swerex' key in endpoints")
 	}
-	if !containsSubstr(ep.URL, sandboxID) {
-		t.Fatalf("expected endpoint URL to contain sandboxID %s, got %s", sandboxID, ep.URL)
+	if !containsSubstr(ep.Url, sandboxID) {
+		t.Fatalf("expected endpoint URL to contain sandboxID %s, got %s", sandboxID, ep.Url)
 	}
 }
 
@@ -634,8 +646,8 @@ func TestSandboxService_Delete_SetsStopAnnotations(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.SandboxID != sandboxID {
-		t.Fatalf("expected sandboxID %s, got %s", sandboxID, result.SandboxID)
+	if result.SandboxId != sandboxID {
+		t.Fatalf("expected sandboxID %s, got %s", sandboxID, result.SandboxId)
 	}
 
 	// Pod should be in Stopping phase.
@@ -718,7 +730,7 @@ func TestList_PodWithStatusDetail(t *testing.T) {
 	pool := makePool(testPoolName, testNamespace)
 	svc := newTestSandboxService(t, pool, pod)
 
-	result, appErr := svc.List(context.Background(), domain.ListSandboxesFilter{Namespace: testNamespace})
+	result, appErr := svc.List(context.Background(), SandboxListFilter{Namespace: testNamespace})
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
@@ -726,9 +738,9 @@ func TestList_PodWithStatusDetail(t *testing.T) {
 		t.Fatal("expected at least one sandbox")
 	}
 
-	var found *domain.Sandbox
+	var found *gen.Sandbox
 	for i := range result.Items {
-		if result.Items[i].SandboxID == "sbx-detail-1" {
+		if result.Items[i].SandboxId == "sbx-detail-1" {
 			found = &result.Items[i]
 			break
 		}
@@ -739,8 +751,8 @@ func TestList_PodWithStatusDetail(t *testing.T) {
 	if found.StatusDetail == nil {
 		t.Fatal("expected StatusDetail to be populated")
 	}
-	if found.StatusDetail.Reason != "ImagePullBackOff" {
-		t.Errorf("reason = %q, want %q", found.StatusDetail.Reason, "ImagePullBackOff")
+	if found.StatusDetail.Reason == nil || *found.StatusDetail.Reason != "ImagePullBackOff" {
+		t.Errorf("reason = %v, want %q", found.StatusDetail.Reason, "ImagePullBackOff")
 	}
 }
 
@@ -752,14 +764,14 @@ func TestList_PodWithoutStatusDetail(t *testing.T) {
 	pool := makePool(testPoolName, testNamespace)
 	svc := newTestSandboxService(t, pool, pod)
 
-	result, appErr := svc.List(context.Background(), domain.ListSandboxesFilter{Namespace: testNamespace})
+	result, appErr := svc.List(context.Background(), SandboxListFilter{Namespace: testNamespace})
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
 
-	var found *domain.Sandbox
+	var found *gen.Sandbox
 	for i := range result.Items {
-		if result.Items[i].SandboxID == "sbx-nodetail-1" {
+		if result.Items[i].SandboxId == "sbx-nodetail-1" {
 			found = &result.Items[i]
 			break
 		}
@@ -771,8 +783,8 @@ func TestList_PodWithoutStatusDetail(t *testing.T) {
 	if found.StatusDetail == nil {
 		t.Fatal("expected StatusDetail to be populated for a starting pod")
 	}
-	if found.StatusDetail.Reason != "Pulling" {
-		t.Errorf("reason = %q, want %q", found.StatusDetail.Reason, "Pulling")
+	if found.StatusDetail.Reason == nil || *found.StatusDetail.Reason != "Pulling" {
+		t.Errorf("reason = %v, want %q", found.StatusDetail.Reason, "Pulling")
 	}
 }
 
@@ -789,11 +801,11 @@ func TestGet_PodWithStatusDetail(t *testing.T) {
 	if sb.StatusDetail == nil {
 		t.Fatal("expected StatusDetail to be populated")
 	}
-	if sb.StatusDetail.Reason != "ErrImagePull" {
-		t.Errorf("reason = %q, want %q", sb.StatusDetail.Reason, "ErrImagePull")
+	if sb.StatusDetail.Reason == nil || *sb.StatusDetail.Reason != "ErrImagePull" {
+		t.Errorf("reason = %v, want %q", sb.StatusDetail.Reason, "ErrImagePull")
 	}
-	if sb.StatusDetail.Message != "no such image" {
-		t.Errorf("message = %q, want %q", sb.StatusDetail.Message, "no such image")
+	if sb.StatusDetail.Message == nil || *sb.StatusDetail.Message != "no such image" {
+		t.Errorf("message = %v, want %q", sb.StatusDetail.Message, "no such image")
 	}
 }
 
@@ -823,11 +835,11 @@ func TestBuildEndpoints_WithLogDir(t *testing.T) {
 	if !ok {
 		t.Fatal("envd endpoint not found")
 	}
-	if ep.URL != "http://gw.example.com/sandboxes/sb-abc/49983" {
-		t.Errorf("URL: got %s", ep.URL)
+	if ep.Url != "http://gw.example.com/sandboxes/sb-abc/49983" {
+		t.Errorf("URL: got %s", ep.Url)
 	}
-	if ep.LogDir != "/tmp/envd.log" {
-		t.Errorf("LogDir: want /tmp/envd.log, got %s", ep.LogDir)
+	if ep.LogDir == nil || *ep.LogDir != "/tmp/envd.log" {
+		t.Errorf("LogDir: want /tmp/envd.log, got %v", ep.LogDir)
 	}
 }
 
@@ -852,8 +864,8 @@ func TestBuildEndpoints_WithoutLogDir(t *testing.T) {
 	if !ok {
 		t.Fatal("swerex endpoint not found")
 	}
-	if ep.LogDir != "" {
-		t.Errorf("LogDir: want empty, got %q", ep.LogDir)
+	if ep.LogDir != nil && *ep.LogDir != "" {
+		t.Errorf("LogDir: want empty, got %q", *ep.LogDir)
 	}
 }
 
@@ -917,11 +929,14 @@ func TestIsReady_NoReadinessProbe_DefaultsReady(t *testing.T) {
 	if !result.Ready {
 		t.Errorf("expected ready=true, got false; endpoints=%v", result.Endpoints)
 	}
-	ep, ok := result.Endpoints["envd"]
+	if result.Endpoints == nil {
+		t.Fatal("Endpoints is nil")
+	}
+	ep, ok := (*result.Endpoints)["envd"]
 	if !ok {
 		t.Fatal("envd not in result endpoints")
 	}
-	if !ep.Ready {
+	if ep.Ready == nil || !*ep.Ready {
 		t.Errorf("envd should be ready (no probe configured)")
 	}
 }
@@ -1009,7 +1024,7 @@ func TestCreate_StartupTimeoutAnnotationWritten(t *testing.T) {
 	pod := makeIdlePod("pod-a", "tenant-a", "pool-a")
 	svc := newTestSandboxService(t, pool, pod)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:  "pool-a",
 		Namespace: "tenant-a",
 		Image:     "busybox:1.37",
@@ -1033,7 +1048,7 @@ func TestCreate_StartupTimeoutAnnotationWritten(t *testing.T) {
 	// annotation is written inside Create(), so if the pod was updated without error
 	// the annotation path executed. We trust TestCreate_IdleTimeoutAnnotationFromPoolDefault
 	// below for full annotation validation since it shares the same code path.
-	if result.SandboxID == "" {
+	if result.SandboxId == "" {
 		t.Fatal("expected non-empty sandbox ID")
 	}
 }
@@ -1046,7 +1061,7 @@ func TestCreate_IdleTimeoutAnnotationFromPoolDefault(t *testing.T) {
 	pod := makeIdlePod("pod-a", "tenant-a", "pool-a")
 	svc := newTestSandboxService(t, pool, pod)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:  "pool-a",
 		Namespace: "tenant-a",
 		Image:     "busybox:1.37",
@@ -1059,7 +1074,7 @@ func TestCreate_IdleTimeoutAnnotationFromPoolDefault(t *testing.T) {
 		t.Fatal("expected result, got nil")
 	}
 	// The annotation value should be "1800" (30 minutes in seconds).
-	if result.SandboxID == "" {
+	if result.SandboxId == "" {
 		t.Fatal("expected non-empty sandbox ID")
 	}
 }
@@ -1072,7 +1087,7 @@ func TestCreate_IdleTimeoutAnnotationRequestTakesPriority(t *testing.T) {
 	pod := makeIdlePod("pod-a", "tenant-a", "pool-a")
 	svc := newTestSandboxService(t, pool, pod)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateSandboxInput{
+	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:    "pool-a",
 		Namespace:   "tenant-a",
 		Image:       "busybox:1.37",
@@ -1084,7 +1099,7 @@ func TestCreate_IdleTimeoutAnnotationRequestTakesPriority(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected result, got nil")
 	}
-	if result.SandboxID == "" {
+	if result.SandboxId == "" {
 		t.Fatal("expected non-empty sandbox ID")
 	}
 }
@@ -1146,7 +1161,7 @@ func TestResolveContainerImages_RewritesInputImage(t *testing.T) {
 	pool := makePool(testPoolName, testNamespace)
 	svc := newTestSandboxServiceWithRegistry(t, newTwoClusterStore(), pool)
 
-	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+	imgs, err := svc.resolveContainerImages(pool, CreateSandboxInput{
 		Image: "us-docker.pkg.dev/myproject/myimage:v1.0",
 	})
 	if err != nil {
@@ -1164,7 +1179,7 @@ func TestResolveContainerImages_RewritesContainerImages(t *testing.T) {
 	svc := newTestSandboxServiceWithRegistry(t, newTwoClusterStore(), pool)
 
 	containerName := pool.Spec.Template.Spec.Containers[0].Name
-	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+	imgs, err := svc.resolveContainerImages(pool, CreateSandboxInput{
 		ContainerImages: map[string]string{
 			containerName: "us-docker.pkg.dev/myproject/myimage:v1.0",
 		},
@@ -1183,7 +1198,7 @@ func TestResolveContainerImages_NoRewriteForPublicRegistry(t *testing.T) {
 	pool := makePool(testPoolName, testNamespace)
 	svc := newTestSandboxServiceWithRegistry(t, newTwoClusterStore(), pool)
 
-	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+	imgs, err := svc.resolveContainerImages(pool, CreateSandboxInput{
 		Image: "ghcr.io/org/myimage:v1.0",
 	})
 	if err != nil {
@@ -1199,7 +1214,7 @@ func TestResolveContainerImages_NoRegistryStore(t *testing.T) {
 	pool := makePool(testPoolName, testNamespace)
 	svc := newTestSandboxServiceWithRegistry(t, nil, pool)
 
-	imgs, err := svc.resolveContainerImages(pool, domain.CreateSandboxInput{
+	imgs, err := svc.resolveContainerImages(pool, CreateSandboxInput{
 		Image: "us-docker.pkg.dev/myproject/myimage:v1.0",
 	})
 	if err != nil {

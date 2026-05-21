@@ -27,11 +27,11 @@ import (
 
 // APIKeyService defines business operations for API key management.
 type APIKeyService interface {
-	Create(ctx context.Context, input domain.CreateAPIKeyInput) (*domain.APIKeyResult, *domain.AppError)
-	List(ctx context.Context) (*domain.ListAPIKeysResult, *domain.AppError)
-	ListByTeamAndUser(ctx context.Context, team, user string) (*domain.ListAPIKeysResult, *domain.AppError)
-	Get(ctx context.Context, keyID string) (*domain.APIKeyItem, *domain.AppError)
-	Delete(ctx context.Context, input domain.DeleteAPIKeyInput) *domain.AppError
+	Create(ctx context.Context, input CreateAPIKeyInput) (*APIKeyResult, *domain.AppError)
+	List(ctx context.Context) ([]APIKeyItem, *domain.AppError)
+	ListByTeamAndUser(ctx context.Context, team, user string) ([]APIKeyItem, *domain.AppError)
+	Get(ctx context.Context, keyID string) (*APIKeyItem, *domain.AppError)
+	Delete(ctx context.Context, keyID string) *domain.AppError
 	// Promote elevates a locally-created key to a global key by syncing it
 	// through the ws-proxy manager to all Worker clusters.
 	Promote(ctx context.Context, keyID string) *domain.AppError
@@ -57,7 +57,7 @@ func NewAPIKeyServiceWithSync(store apikey.KeyStore, syncSvc SyncService) APIKey
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
-func (s *k8sAPIKeyService) Create(ctx context.Context, input domain.CreateAPIKeyInput) (*domain.APIKeyResult, *domain.AppError) {
+func (s *k8sAPIKeyService) Create(ctx context.Context, input CreateAPIKeyInput) (*APIKeyResult, *domain.AppError) {
 	if s.store == nil {
 		return nil, domain.NewServiceUnavailable("api key store is disabled")
 	}
@@ -107,7 +107,7 @@ func (s *k8sAPIKeyService) Create(ctx context.Context, input domain.CreateAPIKey
 			issuedAt = time.Now().UTC()
 		}
 
-		meta := domain.KeyMetadata{
+		meta := KeyMetadata{
 			KeyID:       resp.KeyID,
 			Namespace:   input.Namespace,
 			Role:        apikey.RoleTenant,
@@ -117,7 +117,7 @@ func (s *k8sAPIKeyService) Create(ctx context.Context, input domain.CreateAPIKey
 			IssuedAt:    issuedAt,
 			ExpiresAt:   input.ExpiresAt,
 		}
-		return &domain.APIKeyResult{
+		return &APIKeyResult{
 			RawToken:    resp.RawToken,
 			KeyMetadata: meta,
 		}, nil
@@ -140,7 +140,7 @@ func (s *k8sAPIKeyService) Create(ctx context.Context, input domain.CreateAPIKey
 	}
 
 	meta.KeyID = keyID
-	return &domain.APIKeyResult{
+	return &APIKeyResult{
 		RawToken:    rawToken,
 		KeyMetadata: keyMetadataFromAPIKey(meta),
 	}, nil
@@ -148,7 +148,7 @@ func (s *k8sAPIKeyService) Create(ctx context.Context, input domain.CreateAPIKey
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
-func (s *k8sAPIKeyService) List(ctx context.Context) (*domain.ListAPIKeysResult, *domain.AppError) {
+func (s *k8sAPIKeyService) List(ctx context.Context) ([]APIKeyItem, *domain.AppError) {
 	if s.store == nil {
 		return nil, domain.NewServiceUnavailable("api key store is disabled")
 	}
@@ -158,9 +158,9 @@ func (s *k8sAPIKeyService) List(ctx context.Context) (*domain.ListAPIKeysResult,
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 
-	items := make([]domain.APIKeyItem, 0, len(metas))
+	items := make([]APIKeyItem, 0, len(metas))
 	for _, m := range metas {
-		items = append(items, domain.APIKeyItem{
+		items = append(items, APIKeyItem{
 			KeyMetadata: keyMetadataFromAPIKey(m),
 			ShortName:   shortName(m.KeyID),
 		})
@@ -177,12 +177,12 @@ func (s *k8sAPIKeyService) List(ctx context.Context) (*domain.ListAPIKeysResult,
 		return items[i].IssuedAt.Before(items[j].IssuedAt)
 	})
 
-	return &domain.ListAPIKeysResult{Items: items}, nil
+	return items, nil
 }
 
 // ── ListByTeamAndUser ────────────────────────────────────────────────────────
 
-func (s *k8sAPIKeyService) ListByTeamAndUser(ctx context.Context, team, user string) (*domain.ListAPIKeysResult, *domain.AppError) {
+func (s *k8sAPIKeyService) ListByTeamAndUser(ctx context.Context, team, user string) ([]APIKeyItem, *domain.AppError) {
 	if s.store == nil {
 		return nil, domain.NewServiceUnavailable("api key store is disabled")
 	}
@@ -192,19 +192,19 @@ func (s *k8sAPIKeyService) ListByTeamAndUser(ctx context.Context, team, user str
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 
-	items := make([]domain.APIKeyItem, 0, len(metas))
+	items := make([]APIKeyItem, 0, len(metas))
 	for _, m := range metas {
-		items = append(items, domain.APIKeyItem{
+		items = append(items, APIKeyItem{
 			KeyMetadata: keyMetadataFromAPIKey(m),
 			ShortName:   shortName(m.KeyID),
 		})
 	}
-	return &domain.ListAPIKeysResult{Items: items}, nil
+	return items, nil
 }
 
 // ── Get ───────────────────────────────────────────────────────────────────────
 
-func (s *k8sAPIKeyService) Get(ctx context.Context, keyID string) (*domain.APIKeyItem, *domain.AppError) {
+func (s *k8sAPIKeyService) Get(ctx context.Context, keyID string) (*APIKeyItem, *domain.AppError) {
 	if s.store == nil {
 		return nil, domain.NewServiceUnavailable("api key store is disabled")
 	}
@@ -217,7 +217,7 @@ func (s *k8sAPIKeyService) Get(ctx context.Context, keyID string) (*domain.APIKe
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 
-	return &domain.APIKeyItem{
+	return &APIKeyItem{
 		KeyMetadata: keyMetadataFromAPIKey(*m),
 		ShortName:   shortName(m.KeyID),
 	}, nil
@@ -225,14 +225,14 @@ func (s *k8sAPIKeyService) Get(ctx context.Context, keyID string) (*domain.APIKe
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 
-func (s *k8sAPIKeyService) Delete(ctx context.Context, input domain.DeleteAPIKeyInput) *domain.AppError {
+func (s *k8sAPIKeyService) Delete(ctx context.Context, keyID string) *domain.AppError {
 	if s.store == nil {
 		return domain.NewServiceUnavailable("api key store is disabled")
 	}
 
 	// WS-forwarding mode: delegate to master via SyncService.
 	if s.syncSvc != nil {
-		err := s.syncSvc.RequestDelete(ctx, input.KeyID)
+		err := s.syncSvc.RequestDelete(ctx, keyID)
 		if err != nil {
 			if errors.Is(err, ErrSyncNotConnected) {
 				return domain.NewServiceUnavailable("global key manager unavailable")
@@ -249,7 +249,7 @@ func (s *k8sAPIKeyService) Delete(ctx context.Context, input domain.DeleteAPIKey
 	}
 
 	// Local mode.
-	if err := s.store.Delete(ctx, input.KeyID); err != nil {
+	if err := s.store.Delete(ctx, keyID); err != nil {
 		if err == apikey.ErrTokenNotFound {
 			return domain.NewNotFound("api key not found")
 		}
@@ -331,15 +331,17 @@ func (s *k8sAPIKeyService) Promote(ctx context.Context, keyID string) *domain.Ap
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// keyMetadataFromAPIKey converts apikey.KeyMetadata to domain.KeyMetadata.
-func keyMetadataFromAPIKey(m apikey.KeyMetadata) domain.KeyMetadata {
-	return domain.KeyMetadata{
+// keyMetadataFromAPIKey copies fields from the storage shape (apikey.KeyMetadata)
+// into the service-layer KeyMetadata. The QuotaURL field is intentionally dropped
+// here — it is preserved at the storage layer (for sync propagation) but is not
+// exposed through the service surface anymore.
+func keyMetadataFromAPIKey(m apikey.KeyMetadata) KeyMetadata {
+	return KeyMetadata{
 		KeyID:       m.KeyID,
 		Namespace:   m.Namespace,
 		Role:        m.Role,
 		User:        m.User,
 		Team:        m.Team,
-		QuotaURL:    m.QuotaURL,
 		Description: m.Description,
 		IssuedAt:    m.IssuedAt,
 		ExpiresAt:   m.ExpiresAt,
@@ -359,7 +361,7 @@ func shortName(keyID string) string {
 // createFromHash handles import mode: writes a key using the provided
 // token hash (idempotent via CreateFromHash). This is used for migrating
 // existing keys from Worker clusters to the Manager.
-func (s *k8sAPIKeyService) createFromHash(ctx context.Context, input domain.CreateAPIKeyInput) (*domain.APIKeyResult, *domain.AppError) {
+func (s *k8sAPIKeyService) createFromHash(ctx context.Context, input CreateAPIKeyInput) (*APIKeyResult, *domain.AppError) {
 	issuedAt := input.IssuedAt
 	if issuedAt.IsZero() {
 		issuedAt = time.Now().UTC()
@@ -370,7 +372,6 @@ func (s *k8sAPIKeyService) createFromHash(ctx context.Context, input domain.Crea
 		User:        strings.TrimSpace(input.User),
 		Team:        strings.TrimSpace(input.Team),
 		Description: strings.TrimSpace(input.Description),
-		QuotaURL:    strings.TrimSpace(input.QuotaURL),
 		Role:        apikey.RoleTenant,
 		IssuedAt:    issuedAt,
 		ExpiresAt:   input.ExpiresAt,
@@ -383,7 +384,7 @@ func (s *k8sAPIKeyService) createFromHash(ctx context.Context, input domain.Crea
 	secretName := "agentbox-apikey-" + input.HashPrefix
 	meta.KeyID = secretName
 
-	return &domain.APIKeyResult{
+	return &APIKeyResult{
 		RawToken:    "", // import mode: raw token is not available
 		KeyMetadata: keyMetadataFromAPIKey(meta),
 	}, nil

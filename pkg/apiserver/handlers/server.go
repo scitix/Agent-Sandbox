@@ -26,11 +26,9 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/yaml"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
@@ -150,189 +148,6 @@ func derefString(s *string) string {
 	return *s
 }
 
-// sandboxToGen converts a domain.Sandbox to the generated gen.Sandbox type.
-func sandboxToGen(s *domain.Sandbox) gen.Sandbox {
-	sb := gen.Sandbox{
-		SandboxId: s.SandboxID,
-		Namespace: s.Namespace,
-		PoolName:  s.PoolName,
-		PodName:   s.PodName,
-		Status:    gen.SandboxStatus(s.Status),
-		Cpu:       ptr.To(s.CPU),
-		Memory:    ptr.To(s.Memory),
-	}
-	if s.FailureReason != "" {
-		sb.FailureReason = ptr.To(s.FailureReason)
-	}
-	if s.FailureMessage != "" {
-		sb.FailureMessage = ptr.To(s.FailureMessage)
-	}
-	if s.ExitCode != nil {
-		sb.ExitCode = s.ExitCode
-	}
-	if len(s.ContainerImages) > 0 {
-		sb.ContainerImages = &s.ContainerImages
-	}
-	if len(s.Metadata) > 0 {
-		sb.Metadata = &s.Metadata
-	}
-	if len(s.Endpoints) > 0 {
-		eps := make(map[string]gen.SandboxEndpoint, len(s.Endpoints))
-		for name, ep := range s.Endpoints {
-			e := gen.SandboxEndpoint{Url: ep.URL}
-			if ep.LogDir != "" {
-				e.LogDir = &ep.LogDir
-			}
-			eps[name] = e
-		}
-		sb.Endpoints = &eps
-	}
-	if s.ClaimedAt != "" {
-		if t, err := time.Parse(time.RFC3339, s.ClaimedAt); err == nil {
-			sb.ClaimedAt = t
-		}
-	}
-	if s.StartedAt != "" {
-		if t, err := time.Parse(time.RFC3339, s.StartedAt); err == nil {
-			sb.StartedAt = &t
-		}
-	}
-	if s.TerminatedAt != "" {
-		if t, err := time.Parse(time.RFC3339, s.TerminatedAt); err == nil {
-			sb.TerminatedAt = &t
-		}
-	}
-	if s.RecycledAt != "" {
-		if t, err := time.Parse(time.RFC3339, s.RecycledAt); err == nil {
-			sb.RecycledAt = &t
-		}
-	}
-	if s.StatusDetail != nil {
-		sd := gen.SandboxStatusDetail{
-			Reason:  ptr.To(s.StatusDetail.Reason),
-			Message: ptr.To(s.StatusDetail.Message),
-		}
-		if s.StatusDetail.LastUpdatedTime != "" {
-			if t, err := time.Parse(time.RFC3339, s.StatusDetail.LastUpdatedTime); err == nil {
-				sd.LastUpdatedTime = &t
-			}
-		}
-		sb.StatusDetail = &sd
-	}
-	if s.Team != "" {
-		sb.Team = &s.Team
-	}
-	if s.User != "" {
-		sb.User = &s.User
-	}
-	if s.NodeName != "" {
-		sb.NodeName = &s.NodeName
-	}
-	if s.ContainerID != "" {
-		sb.ContainerId = &s.ContainerID
-	}
-	if s.DurationSeconds != nil {
-		sb.DurationSeconds = s.DurationSeconds
-	}
-	return sb
-}
-
-// poolToGen converts a domain.SandboxPool to the generated gen.SandboxPool type.
-func poolToGen(sp *domain.SandboxPool) gen.SandboxPool {
-	spec := gen.SandboxPoolSpec{
-		Replicas: sp.Spec.Replicas,
-	}
-	if sp.Spec.MinReplicas != nil {
-		spec.MinReplicas = sp.Spec.MinReplicas
-	}
-	if sp.Spec.MaxReplicas != nil {
-		spec.MaxReplicas = sp.Spec.MaxReplicas
-	}
-	if sp.Spec.TemplateName != "" {
-		spec.TemplateName = ptr.To(sp.Spec.TemplateName)
-	}
-	if sp.Spec.Autoscaling != nil {
-		spec.Autoscaling = autoscalingToGen(sp.Spec.Autoscaling)
-	}
-	if sp.Spec.DefaultStartupTimeout != nil {
-		s := sp.Spec.DefaultStartupTimeout.Duration.String()
-		spec.DefaultStartupTimeout = &s
-	}
-	if sp.Spec.DefaultIdleTimeout != nil {
-		s := sp.Spec.DefaultIdleTimeout.Duration.String()
-		spec.DefaultIdleTimeout = &s
-	}
-
-	status := gen.SandboxPoolStatus{
-		IdleReplicas:            ptr.To(sp.Status.IdleReplicas),
-		UnavailableIdleReplicas: ptr.To(sp.Status.UnavailableIdleReplicas),
-		RunningReplicas:         ptr.To(sp.Status.RunningReplicas),
-		StartingReplicas:        ptr.To(sp.Status.StartingReplicas),
-		StoppingReplicas:        ptr.To(sp.Status.StoppingReplicas),
-		FailedReplicas:          ptr.To(sp.Status.FailedReplicas),
-	}
-	if sp.Status.Phase != "" {
-		phase := gen.SandboxPoolStatusPhase(sp.Status.Phase)
-		status.Phase = &phase
-	}
-
-	specYaml := embeddedTemplateToYAML(sp.Spec.EmbeddedSandboxTemplate)
-	result := gen.SandboxPool{
-		Name:            sp.Name,
-		Namespace:       sp.Namespace,
-		Spec:            spec,
-		Status:          status,
-		Cpu:             ptr.To(sp.CPU),
-		Memory:          ptr.To(sp.Memory),
-		Team:            ptr.To(sp.Team),
-		User:            ptr.To(sp.User),
-		TemplateVersion: ptr.To(sp.TemplateVersion),
-		SpecYaml:        ptr.To(specYaml),
-		PoolDocs:        ptr.To(sp.PoolDocs),
-	}
-	if sp.Overrides != nil {
-		result.Overrides = &gen.PoolTemplateOverrides{}
-		if sp.Overrides.Image != "" {
-			result.Overrides.Image = &sp.Overrides.Image
-		}
-		if sp.Overrides.ResourceMultiplier > 1 {
-			result.Overrides.ResourceMultiplier = &sp.Overrides.ResourceMultiplier
-		}
-	}
-	if sp.CreatedAt != "" {
-		if t, err := time.Parse(time.RFC3339, sp.CreatedAt); err == nil {
-			result.CreatedAt = &t
-		}
-	}
-	return result
-}
-
-// autoscalingToGen converts a CRD PoolAutoscalingSpec to the generated gen type.
-func autoscalingToGen(a *agentsv1alpha1.PoolAutoscalingSpec) *gen.PoolAutoscalingSpec {
-	if a == nil {
-		return nil
-	}
-	result := &gen.PoolAutoscalingSpec{
-		Enabled: &a.Enabled,
-	}
-	if a.ScaleUpPolicy != nil {
-		mode := gen.PoolScaleUpPolicyMode(a.ScaleUpPolicy.Mode)
-		result.ScaleUpPolicy = &gen.PoolScaleUpPolicy{
-			Mode:                 &mode,
-			CooldownSeconds:      &a.ScaleUpPolicy.CooldownSeconds,
-			IdleThresholdSeconds: &a.ScaleUpPolicy.IdleThresholdSeconds,
-		}
-	}
-	if a.ScaleDownPolicy != nil {
-		result.ScaleDownPolicy = &gen.PoolScaleDownPolicy{
-			IdleTimeoutSeconds:      &a.ScaleDownPolicy.IdleTimeoutSeconds,
-			StabilizationSeconds:    &a.ScaleDownPolicy.StabilizationSeconds,
-			ProtectionWindowSeconds: &a.ScaleDownPolicy.ProtectionWindowSeconds,
-		}
-	}
-	return result
-}
-
 // genToAutoscaling converts a generated gen.PoolAutoscalingSpec to the CRD type.
 func genToAutoscaling(a *gen.PoolAutoscalingSpec) *agentsv1alpha1.PoolAutoscalingSpec {
 	if a == nil {
@@ -369,35 +184,21 @@ func genToAutoscaling(a *gen.PoolAutoscalingSpec) *agentsv1alpha1.PoolAutoscalin
 	return result
 }
 
-// embeddedTemplateToYAML serializes the EmbeddedSandboxTemplate fields (idleImage, runtimes,
-// reservation, template) to a YAML string for use in the SyncTemplate diff view.
-// Returns an empty string if marshalling fails.
-func embeddedTemplateToYAML(emb agentsv1alpha1.EmbeddedSandboxTemplate) string {
-	type diffable struct {
-		IdleImage string                              `json:"idleImage,omitempty"`
-		Runtimes  []agentsv1alpha1.SandboxRuntimeSpec `json:"runtimes,omitempty"`
-		Template  *corev1.PodTemplateSpec             `json:"template,omitempty"`
+// templateToSummary converts a gen.SandboxTemplate (full) to gen.SandboxTemplateSummary
+// (omits docs / crdYaml, derives hasDocs).
+func templateToSummary(t *gen.SandboxTemplate) gen.SandboxTemplateSummary {
+	summary := gen.SandboxTemplateSummary{
+		Name:        t.Name,
+		Version:     t.Version,
+		Description: t.Description,
+		Cpu:         t.Cpu,
+		Memory:      t.Memory,
+		SyncSource:  t.SyncSource,
+		CreatedAt:   t.CreatedAt,
 	}
-	d := diffable{
-		IdleImage: emb.IdleImage,
-		Runtimes:  emb.Runtimes,
-		Template:  emb.Template,
-	}
-	b, err := yaml.Marshal(d)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
-// templateToGen converts a domain.SandboxTemplate to the generated gen.SandboxTemplate type.
-func templateToGen(t *domain.SandboxTemplate) gen.SandboxTemplate {
-	return service.TemplateToGen(t)
-}
-
-// templateToSummaryGen converts a domain.SandboxTemplate to the lightweight gen.SandboxTemplateSummary type.
-func templateToSummaryGen(t *domain.SandboxTemplate) gen.SandboxTemplateSummary {
-	return service.TemplateToSummaryGen(t)
+	hasDocs := t.Docs != nil && strings.TrimSpace(*t.Docs) != ""
+	summary.HasDocs = &hasDocs
+	return summary
 }
 
 // parseCRDJSON deserialises a complete SandboxTemplate CRD JSON string into an
@@ -413,9 +214,9 @@ func parseCRDJSON(jsonStr string) (*agentsv1alpha1.SandboxTemplate, error) {
 	return &tmpl, nil
 }
 
-// toCreatePoolInput converts a gen.CreateSandboxPoolRequest to a domain.CreateSandboxPoolInput.
+// toCreatePoolInput converts a gen.CreateSandboxPoolRequest to a service.CreateSandboxPoolInput.
 // Returns an error if any duration field contains an invalid value.
-func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (domain.CreateSandboxPoolInput, error) { //nolint:gocyclo
+func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (service.CreateSandboxPoolInput, error) { //nolint:gocyclo
 	spec := agentsv1alpha1.SandboxPoolSpec{}
 	if req.Spec != nil {
 		spec = agentsv1alpha1.SandboxPoolSpec{
@@ -435,14 +236,14 @@ func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (
 		if req.Spec.DefaultStartupTimeout != nil && *req.Spec.DefaultStartupTimeout != "" {
 			d, err := time.ParseDuration(*req.Spec.DefaultStartupTimeout)
 			if err != nil || d <= 0 {
-				return domain.CreateSandboxPoolInput{}, fmt.Errorf("defaultStartupTimeout must be a positive duration string (e.g. '2m')")
+				return service.CreateSandboxPoolInput{}, fmt.Errorf("defaultStartupTimeout must be a positive duration string (e.g. '2m')")
 			}
 			spec.DefaultStartupTimeout = &metav1.Duration{Duration: d}
 		}
 		if req.Spec.DefaultIdleTimeout != nil && *req.Spec.DefaultIdleTimeout != "" {
 			d, err := time.ParseDuration(*req.Spec.DefaultIdleTimeout)
 			if err != nil || d <= 0 {
-				return domain.CreateSandboxPoolInput{}, fmt.Errorf("defaultIdleTimeout must be a positive duration string (e.g. '30m')")
+				return service.CreateSandboxPoolInput{}, fmt.Errorf("defaultIdleTimeout must be a positive duration string (e.g. '30m')")
 			}
 			spec.DefaultIdleTimeout = &metav1.Duration{Duration: d}
 		}
@@ -468,7 +269,7 @@ func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (
 		spec.TemplateName = templateName
 	}
 
-	input := domain.CreateSandboxPoolInput{
+	input := service.CreateSandboxPoolInput{
 		Name:         req.Name,
 		Namespace:    auth.Namespace,
 		TemplateName: templateName,
@@ -483,39 +284,34 @@ func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (
 		input.Annotations = *req.Annotations
 	}
 	if req.Overrides != nil {
-		ov := &domain.PoolTemplateOverrides{}
-		if req.Overrides.Image != nil {
-			ov.Image = *req.Overrides.Image
-		}
-		if req.Overrides.ResourceMultiplier != nil {
-			ov.ResourceMultiplier = *req.Overrides.ResourceMultiplier
-		}
 		// Only attach if at least one override is non-trivial.
 		// resourceMultiplier==1 and image=="" are no-ops; skip them so the service
 		// never sees an Overrides pointer for purely default values.
-		if ov.Image != "" || ov.ResourceMultiplier > 1 {
-			input.Overrides = ov
+		hasImage := req.Overrides.Image != nil && *req.Overrides.Image != ""
+		hasMultiplier := req.Overrides.ResourceMultiplier != nil && *req.Overrides.ResourceMultiplier > 1
+		if hasImage || hasMultiplier {
+			input.Overrides = req.Overrides
 		}
 	}
 	if req.ImagePullSecret != nil && len(req.ImagePullSecret.Registries) > 0 {
-		regs := make([]domain.RegistryCredential, 0, len(req.ImagePullSecret.Registries))
+		regs := make([]gen.RegistryCredential, 0, len(req.ImagePullSecret.Registries))
 		for i, r := range req.ImagePullSecret.Registries {
 			if strings.TrimSpace(r.Registry) == "" {
-				return domain.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].registry is required", i)
+				return service.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].registry is required", i)
 			}
 			if r.Username == "" {
-				return domain.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].username is required", i)
+				return service.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].username is required", i)
 			}
 			if r.Password == "" {
-				return domain.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].password is required", i)
+				return service.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].password is required", i)
 			}
-			regs = append(regs, domain.RegistryCredential{
+			regs = append(regs, gen.RegistryCredential{
 				Registry: strings.TrimSpace(r.Registry),
 				Username: r.Username,
 				Password: r.Password,
 			})
 		}
-		input.ImagePullSecret = &domain.ImagePullSecretInput{Registries: regs}
+		input.ImagePullSecret = &gen.ImagePullSecretInput{Registries: regs}
 	}
 	return input, nil
 }
@@ -560,7 +356,7 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 		return nil, nil
 	}
 
-	input := domain.CreateSandboxInput{
+	input := service.CreateSandboxInput{
 		ClusterID: parsed.ClusterID,
 		PoolName:  parsed.PoolName,
 		Namespace: auth.Namespace,
@@ -617,7 +413,7 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 			return gen.CreateSandbox500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.CreateSandbox201JSONResponse{Sandbox: sandboxToGen(result)}, nil
+	return gen.CreateSandbox201JSONResponse{Sandbox: *result}, nil
 }
 
 func (s *Server) ListSandboxes(ctx context.Context, req gen.ListSandboxesRequestObject) (gen.ListSandboxesResponseObject, error) {
@@ -630,7 +426,7 @@ func (s *Server) ListSandboxes(ctx context.Context, req gen.ListSandboxesRequest
 	if req.Params.Offset != nil {
 		offset = *req.Params.Offset
 	}
-	filter := domain.ListSandboxesFilter{
+	filter := service.SandboxListFilter{
 		Namespace: auth.Namespace,
 		Team:      auth.Team,
 		User:      auth.User,
@@ -649,12 +445,8 @@ func (s *Server) ListSandboxes(ctx context.Context, req gen.ListSandboxesRequest
 		return gen.ListSandboxes500JSONResponse(errResp(ctx, appErr)), nil
 	}
 
-	items := make([]gen.Sandbox, 0, len(result.Items))
-	for i := range result.Items {
-		items = append(items, sandboxToGen(&result.Items[i]))
-	}
 	return gen.ListSandboxes200JSONResponse{
-		Items:  items,
+		Items:  result.Items,
 		Total:  result.Total,
 		Limit:  limit,
 		Offset: offset,
@@ -675,29 +467,18 @@ func (s *Server) GetSandbox(ctx context.Context, req gen.GetSandboxRequestObject
 		}
 		return gen.GetSandbox500JSONResponse(errResp(ctx, appErr)), nil
 	}
-	return gen.GetSandbox200JSONResponse{Sandbox: sandboxToGen(result)}, nil
+	return gen.GetSandbox200JSONResponse{Sandbox: *result}, nil
 }
 
 func (s *Server) GetSandboxLogs(ctx context.Context, req gen.GetSandboxLogsRequestObject) (gen.GetSandboxLogsResponseObject, error) {
 	auth := authFrom(ctx)
-	opts := domain.GetLogsOptions{}
-	if req.Params.Container != nil {
-		opts.Container = *req.Params.Container
-	}
-	if req.Params.Lines != nil {
-		opts.Lines = *req.Params.Lines
-	}
-	if req.Params.Source != nil {
-		opts.Source = *req.Params.Source
-	}
-
 	// Cross-cluster forwarding.
 	if cID, _ := cluster.SplitSandboxID(req.SandboxId); s.isCrossCluster(cID) {
 		s.forwarder.Forward(httpctx.GinFromCtx(ctx), cID, service.URLKindNative, nil)
 		return nil, nil
 	}
 
-	result, appErr := s.sandbox.GetLogs(ctx, auth.Namespace, req.SandboxId, opts)
+	result, appErr := s.sandbox.GetLogs(ctx, auth.Namespace, req.SandboxId, req.Params)
 	if appErr != nil {
 		if appErr.Code == domain.ErrCodeNotFound {
 			return gen.GetSandboxLogs404JSONResponse(errResp(ctx, appErr)), nil
@@ -708,35 +489,7 @@ func (s *Server) GetSandboxLogs(ctx context.Context, req gen.GetSandboxLogsReque
 		return gen.GetSandboxLogs500JSONResponse(errResp(ctx, appErr)), nil
 	}
 
-	entries := make([]gen.SandboxLogEntry, 0, len(result.Entries))
-	for _, e := range result.Entries {
-		entry := gen.SandboxLogEntry{
-			Container: e.Container,
-			Log:       e.Log,
-		}
-		if !e.Timestamp.IsZero() {
-			t := e.Timestamp
-			entry.Timestamp = &t
-		}
-		entries = append(entries, entry)
-	}
-
-	resp := gen.SandboxLogsResult{
-		SandboxId: result.SandboxID,
-		Namespace: result.Namespace,
-		PodName:   ptr.To(result.PodName),
-		Entries:   entries,
-		Truncated: false,
-		Source:    gen.SandboxLogsResultSource(result.Source),
-	}
-	if result.TotalBytes > 0 {
-		resp.TotalBytes = &result.TotalBytes
-	}
-	if result.RuntimeName != "" {
-		resp.RuntimeName = &result.RuntimeName
-	}
-
-	return gen.GetSandboxLogs200JSONResponse(resp), nil
+	return gen.GetSandboxLogs200JSONResponse(*result), nil
 }
 
 func (s *Server) DeleteSandbox(ctx context.Context, req gen.DeleteSandboxRequestObject) (gen.DeleteSandboxResponseObject, error) {
@@ -754,7 +507,7 @@ func (s *Server) DeleteSandbox(ctx context.Context, req gen.DeleteSandboxRequest
 		return gen.DeleteSandbox500JSONResponse(errResp(ctx, appErr)), nil
 	}
 	return gen.DeleteSandbox202JSONResponse{
-		SandboxId: result.SandboxID,
+		SandboxId: result.SandboxId,
 		Namespace: result.Namespace,
 		PoolName:  result.PoolName,
 		PodName:   result.PodName,
@@ -840,7 +593,7 @@ func (s *Server) CreateSandboxPool(ctx context.Context, req gen.CreateSandboxPoo
 		if apiKeyErr != nil {
 			return gen.CreateSandboxPool500JSONResponse(errResp(ctx, apiKeyErr)), nil
 		}
-		if keys == nil || len(keys.Items) == 0 {
+		if len(keys) == 0 {
 			apiKeyAppErr := domain.NewAPIKeyRequired(
 				"no API key found for this user; please create one on the API Keys page before creating a SandboxPool",
 			)
@@ -867,7 +620,7 @@ func (s *Server) CreateSandboxPool(ctx context.Context, req gen.CreateSandboxPoo
 			return gen.CreateSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.CreateSandboxPool201JSONResponse{Template: poolToGen(result)}, nil
+	return gen.CreateSandboxPool201JSONResponse{Template: *result}, nil
 }
 
 func (s *Server) ListSandboxPools(ctx context.Context, _ gen.ListSandboxPoolsRequestObject) (gen.ListSandboxPoolsResponseObject, error) {
@@ -876,13 +629,9 @@ func (s *Server) ListSandboxPools(ctx context.Context, _ gen.ListSandboxPoolsReq
 	if appErr != nil {
 		return gen.ListSandboxPools500JSONResponse(errResp(ctx, appErr)), nil
 	}
-	payloads := make([]gen.SandboxPool, 0, len(items))
-	for i := range items {
-		payloads = append(payloads, poolToGen(&items[i]))
-	}
 	return gen.ListSandboxPools200JSONResponse{
-		Items:  payloads,
-		Total:  len(payloads),
+		Items:  items,
+		Total:  len(items),
 		Limit:  0,
 		Offset: 0,
 	}, nil
@@ -902,7 +651,7 @@ func (s *Server) GetSandboxPool(ctx context.Context, req gen.GetSandboxPoolReque
 	// snippet. When the raw docs reference ${apiKey} and the user has no key
 	// with a recoverable plaintext token, return API_KEY_REQUIRED (422) so the
 	// frontend can guide them to the API Keys page.
-	rendered, renderErr := s.renderPoolDocs(ctx, result.PoolDocs, result.Name, s.forwarder.LocalClusterID(), auth)
+	rendered, renderErr := s.renderPoolDocs(ctx, derefString(result.PoolDocs), result.Name, s.forwarder.LocalClusterID(), auth)
 	if renderErr != nil {
 		switch renderErr.Code {
 		case domain.ErrCodeUnprocessableEntity:
@@ -911,9 +660,13 @@ func (s *Server) GetSandboxPool(ctx context.Context, req gen.GetSandboxPoolReque
 			return gen.GetSandboxPool500JSONResponse(errResp(ctx, renderErr)), nil
 		}
 	}
-	result.PoolDocs = rendered
+	if rendered != "" {
+		result.PoolDocs = ptr.To(rendered)
+	} else {
+		result.PoolDocs = nil
+	}
 
-	return gen.GetSandboxPool200JSONResponse{Template: poolToGen(result)}, nil
+	return gen.GetSandboxPool200JSONResponse{Template: *result}, nil
 }
 
 func (s *Server) UpdateSandboxPool(ctx context.Context, req gen.UpdateSandboxPoolRequestObject) (gen.UpdateSandboxPoolResponseObject, error) {
@@ -928,7 +681,7 @@ func (s *Server) UpdateSandboxPool(ctx context.Context, req gen.UpdateSandboxPoo
 		return gen.UpdateSandboxPool400JSONResponse{Error: "at least one of replicas, minReplicas, maxReplicas, overrides.image, autoscaling, or podCreationImagePolicy is required"}, nil
 	}
 	auth := authFrom(ctx)
-	input := domain.UpdateSandboxPoolInput{
+	input := service.UpdateSandboxPoolInput{
 		Name:        req.Name,
 		Namespace:   auth.Namespace,
 		Replicas:    req.Body.Replicas,
@@ -958,7 +711,7 @@ func (s *Server) UpdateSandboxPool(ctx context.Context, req gen.UpdateSandboxPoo
 			return gen.UpdateSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.UpdateSandboxPool200JSONResponse{Template: poolToGen(result)}, nil
+	return gen.UpdateSandboxPool200JSONResponse{Template: *result}, nil
 }
 
 func (s *Server) DeleteSandboxPool(ctx context.Context, req gen.DeleteSandboxPoolRequestObject) (gen.DeleteSandboxPoolResponseObject, error) {
@@ -979,10 +732,7 @@ func (s *Server) DeleteSandboxPool(ctx context.Context, req gen.DeleteSandboxPoo
 
 func (s *Server) SyncSandboxPoolTemplate(ctx context.Context, req gen.SyncSandboxPoolTemplateRequestObject) (gen.SyncSandboxPoolTemplateResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.pool.SyncTemplate(ctx, domain.SyncSandboxPoolTemplateInput{
-		Name:      req.Name,
-		Namespace: auth.Namespace,
-	})
+	result, appErr := s.pool.SyncTemplate(ctx, auth.Namespace, req.Name)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -993,15 +743,12 @@ func (s *Server) SyncSandboxPoolTemplate(ctx context.Context, req gen.SyncSandbo
 			return gen.SyncSandboxPoolTemplate500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.SyncSandboxPoolTemplate200JSONResponse{Template: poolToGen(result)}, nil
+	return gen.SyncSandboxPoolTemplate200JSONResponse{Template: *result}, nil
 }
 
 func (s *Server) PreviewSyncSandboxPoolTemplate(ctx context.Context, req gen.PreviewSyncSandboxPoolTemplateRequestObject) (gen.PreviewSyncSandboxPoolTemplateResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.pool.SyncTemplatePreview(ctx, domain.SyncSandboxPoolTemplateInput{
-		Name:      req.Name,
-		Namespace: auth.Namespace,
-	})
+	result, appErr := s.pool.SyncTemplatePreview(ctx, auth.Namespace, req.Name)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -1031,7 +778,7 @@ func (s *Server) ListSandboxTemplates(ctx context.Context, _ gen.ListSandboxTemp
 	}
 	payloads := make([]gen.SandboxTemplateSummary, 0, len(items))
 	for i := range items {
-		payloads = append(payloads, templateToSummaryGen(&items[i]))
+		payloads = append(payloads, templateToSummary(&items[i]))
 	}
 	return gen.ListSandboxTemplates200JSONResponse{
 		Items:  payloads,
@@ -1051,8 +798,13 @@ func (s *Server) GetSandboxTemplate(ctx context.Context, req gen.GetSandboxTempl
 		}
 		return gen.GetSandboxTemplate500JSONResponse(errResp(ctx, appErr)), nil
 	}
-	result.Docs = renderTemplateDocs(result.Docs, s.forwarder.LocalClusterID())
-	return gen.GetSandboxTemplate200JSONResponse{Template: templateToGen(result)}, nil
+	if result.Docs != nil {
+		rendered := renderTemplateDocs(*result.Docs, s.forwarder.LocalClusterID())
+		result.Docs = ptr.To(rendered)
+	} else {
+		result.Docs = ptr.To(renderTemplateDocs("", s.forwarder.LocalClusterID()))
+	}
+	return gen.GetSandboxTemplate200JSONResponse{Template: *result}, nil
 }
 
 func (s *Server) AdminCreateSandboxTemplate(ctx context.Context, req gen.AdminCreateSandboxTemplateRequestObject) (gen.AdminCreateSandboxTemplateResponseObject, error) {
@@ -1087,7 +839,7 @@ func (s *Server) AdminCreateSandboxTemplate(ctx context.Context, req gen.AdminCr
 				Template: gen.SandboxTemplate{Name: tmplObj.Name},
 			}, nil
 		}
-		return gen.AdminCreateSandboxTemplate201JSONResponse{Template: templateToGen(result)}, nil
+		return gen.AdminCreateSandboxTemplate201JSONResponse{Template: *result}, nil
 	}
 
 	result, appErr := s.template.Create(ctx, tmplObj)
@@ -1101,7 +853,7 @@ func (s *Server) AdminCreateSandboxTemplate(ctx context.Context, req gen.AdminCr
 			return gen.AdminCreateSandboxTemplate500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.AdminCreateSandboxTemplate201JSONResponse{Template: templateToGen(result)}, nil
+	return gen.AdminCreateSandboxTemplate201JSONResponse{Template: *result}, nil
 }
 
 func (s *Server) AdminUpdateSandboxTemplate(ctx context.Context, req gen.AdminUpdateSandboxTemplateRequestObject) (gen.AdminUpdateSandboxTemplateResponseObject, error) {
@@ -1132,7 +884,7 @@ func (s *Server) AdminUpdateSandboxTemplate(ctx context.Context, req gen.AdminUp
 				Template: gen.SandboxTemplate{Name: req.Name},
 			}, nil
 		}
-		return gen.AdminUpdateSandboxTemplate200JSONResponse{Template: templateToGen(result)}, nil
+		return gen.AdminUpdateSandboxTemplate200JSONResponse{Template: *result}, nil
 	}
 
 	result, appErr := s.template.Update(ctx, tmplObj)
@@ -1148,7 +900,7 @@ func (s *Server) AdminUpdateSandboxTemplate(ctx context.Context, req gen.AdminUp
 			return gen.AdminUpdateSandboxTemplate500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.AdminUpdateSandboxTemplate200JSONResponse{Template: templateToGen(result)}, nil
+	return gen.AdminUpdateSandboxTemplate200JSONResponse{Template: *result}, nil
 }
 
 func (s *Server) AdminDeleteSandboxTemplate(ctx context.Context, req gen.AdminDeleteSandboxTemplateRequestObject) (gen.AdminDeleteSandboxTemplateResponseObject, error) {
@@ -1163,7 +915,7 @@ func (s *Server) AdminDeleteSandboxTemplate(ctx context.Context, req gen.AdminDe
 			}
 			return gen.AdminDeleteSandboxTemplate500JSONResponse(errResp(ctx, getErr)), nil
 		}
-		if tmpl.SyncSource == agentsv1alpha1.LabelSyncSourceGlobal {
+		if derefString(tmpl.SyncSource) == agentsv1alpha1.LabelSyncSourceGlobal {
 			if syncErr := s.sync.RequestTemplateDelete(ctx, req.Name); syncErr != nil {
 				return templateSyncErrToDeleteResp(req.Name, syncErr), nil
 			}
@@ -1197,7 +949,7 @@ func (s *Server) AdminListSandboxTemplates(ctx context.Context, req gen.AdminLis
 	}
 	payloads := make([]gen.SandboxTemplateSummary, 0, len(items))
 	for i := range items {
-		payloads = append(payloads, templateToSummaryGen(&items[i]))
+		payloads = append(payloads, templateToSummary(&items[i]))
 	}
 	return gen.AdminListSandboxTemplates200JSONResponse{
 		Items:  payloads,
@@ -1288,45 +1040,12 @@ func (s *Server) ListQuotas(ctx context.Context, _ gen.ListQuotasRequestObject) 
 	if appErr != nil {
 		return gen.ListQuotas500JSONResponse(errResp(ctx, appErr)), nil
 	}
-	items := make([]gen.Quota, 0, len(quotas))
-	for i := range quotas {
-		items = append(items, domainQuotaToGen(&quotas[i]))
-	}
 	return gen.ListQuotas200JSONResponse{
-		Items:  items,
-		Total:  len(items),
+		Items:  quotas,
+		Total:  len(quotas),
 		Limit:  0,
 		Offset: 0,
 	}, nil
-}
-
-func domainQuotaToGen(q *domain.QuotaInfo) gen.Quota {
-	label := q.QuotaURL
-	if label == "" {
-		label = q.Name
-	}
-	quota := gen.Quota{
-		Name:     q.Name,
-		QuotaUrl: q.QuotaURL,
-		Queue:    q.Queue,
-		PoolName: ptr.To(q.PoolName),
-		Label:    label,
-		Team:     ptr.To(q.Team),
-		User:     ptr.To(q.User),
-	}
-	if len(q.Resources) > 0 {
-		quota.Resources = &q.Resources
-	}
-	if len(q.Used) > 0 {
-		quota.Used = &q.Used
-	}
-	if len(q.Reserved) > 0 {
-		quota.Reserved = &q.Reserved
-	}
-	if len(q.Free) > 0 {
-		quota.Free = &q.Free
-	}
-	return quota
 }
 
 // ---------------------------------------------------------------------------
@@ -1339,7 +1058,7 @@ func (s *Server) SelfCreateAPIKey(ctx context.Context, req gen.SelfCreateAPIKeyR
 	}
 	auth := authFrom(ctx)
 
-	input := domain.CreateAPIKeyInput{
+	input := service.CreateAPIKeyInput{
 		Namespace:   auth.Namespace,
 		User:        auth.User,
 		Team:        auth.Team,
@@ -1374,37 +1093,11 @@ func (s *Server) SelfCreateAPIKey(ctx context.Context, req gen.SelfCreateAPIKeyR
 
 func (s *Server) SelfListAPIKeys(ctx context.Context, _ gen.SelfListAPIKeysRequestObject) (gen.SelfListAPIKeysResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
+	keys, appErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
 	if appErr != nil {
 		return gen.SelfListAPIKeys503JSONResponse(errResp(ctx, appErr)), nil
 	}
-
-	items := make([]gen.APIKeyItem, 0, len(result.Items))
-	for _, item := range result.Items {
-		r := gen.APIKeyItem{
-			KeyId:       item.ShortName,
-			User:        ptr.To(item.User),
-			Team:        ptr.To(item.Team),
-			Role:        item.Role,
-			QuotaURL:    ptr.To(item.QuotaURL),
-			Description: ptr.To(item.Description),
-			IssuedAt:    item.IssuedAt,
-			SyncSource:  ptr.To(item.SyncSource),
-		}
-		if !item.ExpiresAt.IsZero() {
-			r.ExpiresAt = &item.ExpiresAt
-		}
-		if item.RawToken != "" {
-			r.RawToken = ptr.To(item.RawToken)
-		}
-		items = append(items, r)
-	}
-	return gen.SelfListAPIKeys200JSONResponse{
-		Items:  items,
-		Total:  len(items),
-		Limit:  0,
-		Offset: 0,
-	}, nil
+	return gen.SelfListAPIKeys200JSONResponse(apiKeyItemsToGen(keys)), nil
 }
 
 func (s *Server) SelfDeleteAPIKey(ctx context.Context, req gen.SelfDeleteAPIKeyRequestObject) (gen.SelfDeleteAPIKeyResponseObject, error) {
@@ -1424,7 +1117,7 @@ func (s *Server) SelfDeleteAPIKey(ctx context.Context, req gen.SelfDeleteAPIKeyR
 		return gen.SelfDeleteAPIKey403JSONResponse{Error: "forbidden: you can only delete your own api keys"}, nil
 	}
 
-	appErr = s.apikey.Delete(ctx, domain.DeleteAPIKeyInput{KeyID: req.Name})
+	appErr = s.apikey.Delete(ctx, req.Name)
 	if appErr != nil {
 		if appErr.Code == domain.ErrCodeNotFound {
 			return gen.SelfDeleteAPIKey404JSONResponse(errResp(ctx, appErr)), nil
@@ -1453,14 +1146,13 @@ func (s *Server) createAPIKeyInternal(ctx context.Context, body *gen.CreateAPIKe
 		namespace = auth.Namespace
 	}
 
-	input := domain.CreateAPIKeyInput{
+	input := service.CreateAPIKeyInput{
 		Namespace:   namespace,
 		User:        derefString(body.User),
 		Team:        derefString(body.Team),
 		Description: derefString(body.Description),
 		TokenHash:   derefString(body.TokenHash),
 		HashPrefix:  derefString(body.HashPrefix),
-		QuotaURL:    derefString(body.QuotaURL),
 	}
 	if body.ExpiresAt != nil {
 		if !body.ExpiresAt.After(time.Now()) {
@@ -1493,18 +1185,22 @@ func (s *Server) createAPIKeyInternal(ctx context.Context, body *gen.CreateAPIKe
 }
 
 func (s *Server) ListAPIKeys(ctx context.Context, req gen.ListAPIKeysRequestObject) (gen.ListAPIKeysResponseObject, error) {
-	result, appErr := s.apikey.List(ctx)
+	keys, appErr := s.apikey.List(ctx)
 	if appErr != nil {
 		return gen.ListAPIKeys503JSONResponse(errResp(ctx, appErr)), nil
 	}
-	items := make([]gen.APIKeyItem, 0, len(result.Items))
-	for _, item := range result.Items {
+	return gen.ListAPIKeys200JSONResponse(apiKeyItemsToGen(keys)), nil
+}
+
+// apiKeyItemsToGen projects the service-layer APIKeyItem slice into the wire shape.
+func apiKeyItemsToGen(items []service.APIKeyItem) []gen.APIKeyItem {
+	out := make([]gen.APIKeyItem, 0, len(items))
+	for _, item := range items {
 		r := gen.APIKeyItem{
 			KeyId:       item.ShortName,
 			User:        ptr.To(item.User),
 			Team:        ptr.To(item.Team),
 			Role:        item.Role,
-			QuotaURL:    ptr.To(item.QuotaURL),
 			Description: ptr.To(item.Description),
 			IssuedAt:    item.IssuedAt,
 			SyncSource:  ptr.To(item.SyncSource),
@@ -1515,18 +1211,13 @@ func (s *Server) ListAPIKeys(ctx context.Context, req gen.ListAPIKeysRequestObje
 		if item.RawToken != "" {
 			r.RawToken = ptr.To(item.RawToken)
 		}
-		items = append(items, r)
+		out = append(out, r)
 	}
-	return gen.ListAPIKeys200JSONResponse{
-		Items:  items,
-		Total:  len(items),
-		Limit:  0,
-		Offset: 0,
-	}, nil
+	return out
 }
 
 func (s *Server) DeleteAPIKey(ctx context.Context, req gen.DeleteAPIKeyRequestObject) (gen.DeleteAPIKeyResponseObject, error) {
-	appErr := s.apikey.Delete(ctx, domain.DeleteAPIKeyInput{KeyID: req.Name})
+	appErr := s.apikey.Delete(ctx, req.Name)
 	if appErr != nil {
 		if appErr.Code == domain.ErrCodeNotFound {
 			return gen.DeleteAPIKey404JSONResponse(errResp(ctx, appErr)), nil
@@ -1584,7 +1275,7 @@ func (s *Server) ListNamespaces(ctx context.Context, _ gen.ListNamespacesRequest
 // ---------------------------------------------------------------------------
 
 func (s *Server) AdminGetSandboxStatistics(ctx context.Context, _ gen.AdminGetSandboxStatisticsRequestObject) (gen.AdminGetSandboxStatisticsResponseObject, error) {
-	result, appErr := s.sandbox.List(ctx, domain.ListSandboxesFilter{Namespace: "", Limit: 0})
+	result, appErr := s.sandbox.List(ctx, service.SandboxListFilter{Namespace: "", Limit: 0})
 	if appErr != nil {
 		return gen.AdminGetSandboxStatistics500JSONResponse(errResp(ctx, appErr)), nil
 	}
@@ -1594,7 +1285,7 @@ func (s *Server) AdminGetSandboxStatistics(ctx context.Context, _ gen.AdminGetSa
 		ByNamespace: make(map[string]int),
 	}
 	for _, sb := range result.Items {
-		stats.ByStatus[sb.Status]++
+		stats.ByStatus[string(sb.Status)]++
 		stats.ByNamespace[sb.Namespace]++
 	}
 	return gen.AdminGetSandboxStatistics200JSONResponse{Statistics: stats}, nil
@@ -1613,9 +1304,15 @@ func (s *Server) AdminGetSandboxPoolStatistics(ctx context.Context, _ gen.AdminG
 	for _, pool := range items {
 		stats.ByNamespace[pool.Namespace]++
 		stats.TotalReplicas += int(pool.Spec.Replicas)
-		stats.TotalIdleReplicas += int(pool.Status.IdleReplicas)
-		stats.TotalRunningReplicas += int(pool.Status.RunningReplicas)
-		stats.TotalFailedReplicas += int(pool.Status.FailedReplicas)
+		if pool.Status.IdleReplicas != nil {
+			stats.TotalIdleReplicas += int(*pool.Status.IdleReplicas)
+		}
+		if pool.Status.RunningReplicas != nil {
+			stats.TotalRunningReplicas += int(*pool.Status.RunningReplicas)
+		}
+		if pool.Status.FailedReplicas != nil {
+			stats.TotalFailedReplicas += int(*pool.Status.FailedReplicas)
+		}
 	}
 	return gen.AdminGetSandboxPoolStatistics200JSONResponse{Statistics: stats}, nil
 }
@@ -1626,7 +1323,7 @@ func (s *Server) AdminGetSandboxPoolStatistics(ctx context.Context, _ gen.AdminG
 
 func (s *Server) GetUserSandboxStatistics(ctx context.Context, _ gen.GetUserSandboxStatisticsRequestObject) (gen.GetUserSandboxStatisticsResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.sandbox.List(ctx, domain.ListSandboxesFilter{Namespace: auth.Namespace, Limit: 0})
+	result, appErr := s.sandbox.List(ctx, service.SandboxListFilter{Namespace: auth.Namespace, Limit: 0})
 	if appErr != nil {
 		return gen.GetUserSandboxStatistics500JSONResponse(errResp(ctx, appErr)), nil
 	}
@@ -1636,7 +1333,7 @@ func (s *Server) GetUserSandboxStatistics(ctx context.Context, _ gen.GetUserSand
 		ByStatus:  make(map[string]int),
 	}
 	for _, sb := range result.Items {
-		stats.ByStatus[sb.Status]++
+		stats.ByStatus[string(sb.Status)]++
 	}
 	return gen.GetUserSandboxStatistics200JSONResponse{Statistics: stats}, nil
 }
@@ -1646,18 +1343,12 @@ func (s *Server) ExecSandboxCommand(ctx context.Context, req gen.ExecSandboxComm
 	if req.Body == nil || strings.TrimSpace(req.Body.Command) == "" {
 		return gen.ExecSandboxCommand400JSONResponse{Error: "command is required"}, nil
 	}
-	input := domain.ExecCommandInput{
-		Command: req.Body.Command,
-	}
-	if req.Body.TimeoutSeconds != nil {
-		input.TimeoutSeconds = *req.Body.TimeoutSeconds
-	}
 	// Cross-cluster forwarding.
 	if cID, _ := cluster.SplitSandboxID(req.SandboxId); s.isCrossCluster(cID) {
 		s.forwarder.Forward(httpctx.GinFromCtx(ctx), cID, service.URLKindNative, jsonBody(req.Body))
 		return nil, nil
 	}
-	result, appErr := s.sandbox.ExecCommand(ctx, auth.Namespace, req.SandboxId, input)
+	result, appErr := s.sandbox.ExecCommand(ctx, auth.Namespace, req.SandboxId, *req.Body)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -1692,33 +1383,13 @@ func (s *Server) IsSandboxReady(ctx context.Context, req gen.IsSandboxReadyReque
 	return readinessToResponse(result), nil
 }
 
-// readinessToResponse converts a domain.SandboxReadinessResult to the appropriate
-// gen.IsSandboxReadyResponseObject.
-func readinessToResponse(result *domain.SandboxReadinessResult) gen.IsSandboxReadyResponseObject {
-	eps := make(map[string]struct {
-		Message *string `json:"message,omitempty"`
-		Ready   *bool   `json:"ready,omitempty"`
-	}, len(result.Endpoints))
-	for name, ep := range result.Endpoints {
-		ready := ep.Ready
-		e := struct {
-			Message *string `json:"message,omitempty"`
-			Ready   *bool   `json:"ready,omitempty"`
-		}{Ready: &ready}
-		if ep.Message != "" {
-			e.Message = &ep.Message
-		}
-		eps[name] = e
-	}
-	resp := gen.SandboxReadinessResult{
-		SandboxId: result.SandboxID,
-		Ready:     result.Ready,
-		Endpoints: &eps,
-	}
+// readinessToResponse picks the appropriate gen.IsSandboxReadyResponseObject
+// based on the readiness result.
+func readinessToResponse(result *gen.SandboxReadinessResult) gen.IsSandboxReadyResponseObject {
 	if result.Ready {
-		return gen.IsSandboxReady200JSONResponse(resp)
+		return gen.IsSandboxReady200JSONResponse(*result)
 	}
-	return gen.IsSandboxReady503JSONResponse(resp)
+	return gen.IsSandboxReady503JSONResponse(*result)
 }
 
 // ListClusters returns the gateway's cluster catalog so SDK/CLI callers can
@@ -1728,13 +1399,5 @@ func (s *Server) ListClusters(ctx context.Context, _ gen.ListClustersRequestObje
 	if appErr != nil {
 		return gen.ListClusters500JSONResponse(errResp(ctx, appErr)), nil
 	}
-	items := make([]gen.ClusterSummary, 0, len(list))
-	for _, c := range list {
-		items = append(items, gen.ClusterSummary{
-			Id:    c.ID,
-			Name:  ptr.To(c.Name),
-			Local: c.Local,
-		})
-	}
-	return gen.ListClusters200JSONResponse(gen.ListClustersResult{Clusters: items}), nil
+	return gen.ListClusters200JSONResponse(gen.ListClustersResult{Clusters: list}), nil
 }

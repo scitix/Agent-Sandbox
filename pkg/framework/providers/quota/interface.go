@@ -18,12 +18,8 @@ import (
 	"context"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
-
-// QuotaInfo is re-exported from the domain package to keep callers decoupled
-// from the service layer. When the Scitix implementation is extracted this
-// remains the stable type.
-type QuotaInfo = domain.QuotaInfo
 
 // Provider exposes read-only access to quota information.
 //
@@ -38,5 +34,9 @@ type Provider interface {
 	// ListForUser returns all quotas visible to the (user, team) pair.
 	// Returns (nil, nil) when the provider is disabled or the user has no
 	// visible quotas; returns an AppError only on transient/system failures.
-	ListForUser(ctx context.Context, user, team string) ([]QuotaInfo, *domain.AppError)
+	//
+	// Implementations are responsible for populating the wire-shape fields
+	// of each gen.Quota, including the required `Label` field (typically
+	// derived from QuotaUrl, falling back to Name).
+	ListForUser(ctx context.Context, user, team string) ([]gen.Quota, *domain.AppError)
 }

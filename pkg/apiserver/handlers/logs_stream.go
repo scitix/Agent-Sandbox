@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
 
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 )
@@ -258,16 +259,19 @@ func findLiveSandboxPod(ctx context.Context, sandboxSvc service.SandboxService, 
 	if appErr != nil {
 		return "", "", fmt.Errorf("sandbox not found: %s", appErr.Message)
 	}
-	if result.Status == "Completed" || result.Status == "Failed" || result.Status == "Canceled" {
+	switch result.Status {
+	case gen.SandboxStatusCompleted, gen.SandboxStatusFailed, gen.SandboxStatusCanceled:
 		return "", "", fmt.Errorf("sandbox is terminated")
 	}
 	if result.PodName == "" {
 		return "", "", fmt.Errorf("sandbox has no pod")
 	}
 	// Pick the first container name from ContainerImages (sandbox pods typically have one main container).
-	for name := range result.ContainerImages {
-		containerName = name
-		break
+	if result.ContainerImages != nil {
+		for name := range *result.ContainerImages {
+			containerName = name
+			break
+		}
 	}
 	return result.PodName, containerName, nil
 }
@@ -371,10 +375,14 @@ func streamRuntimeLogsToWriter(
 
 	// Look up logDir from sandbox endpoints.
 	logDir := ""
-	for name, ep := range result.Endpoints {
-		if name == runtimeName {
-			logDir = ep.LogDir
-			break
+	if result.Endpoints != nil {
+		for name, ep := range *result.Endpoints {
+			if name == runtimeName {
+				if ep.LogDir != nil {
+					logDir = *ep.LogDir
+				}
+				break
+			}
 		}
 	}
 	if logDir == "" {
@@ -420,7 +428,11 @@ func streamRuntimeLogsToWriter(
 		return
 	}
 
-	lineWriter := newNdjsonLineWriter(w, runtimeName, result.PodName, result.Namespace, result.NodeName)
+	nodeName := ""
+	if result.NodeName != nil {
+		nodeName = *result.NodeName
+	}
+	lineWriter := newNdjsonLineWriter(w, runtimeName, result.PodName, result.Namespace, nodeName)
 
 	// StreamWithContext blocks until the command completes or the context is canceled (frontend disconnects).
 	streamErr := executor.StreamWithContext(ctx, remotecommand.StreamOptions{

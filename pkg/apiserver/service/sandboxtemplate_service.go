@@ -22,16 +22,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
@@ -48,14 +49,14 @@ func isVersionNotIncreasing(err error) bool {
 type SandboxTemplateService interface {
 	// List returns templates visible to the caller (auth). isAdmin=true bypasses
 	// visibility filtering and returns all templates.
-	List(ctx context.Context, auth domain.AuthInfo, isAdmin bool) ([]domain.SandboxTemplate, *domain.AppError)
+	List(ctx context.Context, auth domain.AuthInfo, isAdmin bool) ([]gen.SandboxTemplate, *domain.AppError)
 	// Get returns a single template if it is visible to the caller. isAdmin=true
 	// bypasses visibility filtering. Returns ErrCodeNotFound when the template
 	// does not exist or the caller cannot see it (to avoid leaking names).
-	Get(ctx context.Context, name string, auth domain.AuthInfo, isAdmin bool) (*domain.SandboxTemplate, *domain.AppError)
+	Get(ctx context.Context, name string, auth domain.AuthInfo, isAdmin bool) (*gen.SandboxTemplate, *domain.AppError)
 	// Admin only:
-	Create(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*domain.SandboxTemplate, *domain.AppError)
-	Update(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*domain.SandboxTemplate, *domain.AppError)
+	Create(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*gen.SandboxTemplate, *domain.AppError)
+	Update(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*gen.SandboxTemplate, *domain.AppError)
 	Delete(ctx context.Context, name string) *domain.AppError
 	// CreateOrUpdate upserts a SandboxTemplate. It is used by SyncService to apply
 	// sync events from ws-proxy. The operation is idempotent: if the template already
@@ -78,12 +79,12 @@ func NewSandboxTemplateService(c client.Client) SandboxTemplateService {
 	return &k8sSandboxTemplateService{client: c}
 }
 
-func (s *k8sSandboxTemplateService) List(ctx context.Context, auth domain.AuthInfo, isAdmin bool) ([]domain.SandboxTemplate, *domain.AppError) {
+func (s *k8sSandboxTemplateService) List(ctx context.Context, auth domain.AuthInfo, isAdmin bool) ([]gen.SandboxTemplate, *domain.AppError) {
 	list := &agentsv1alpha1.SandboxTemplateList{}
 	if err := s.client.List(ctx, list); err != nil {
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	items := make([]domain.SandboxTemplate, 0, len(list.Items))
+	items := make([]gen.SandboxTemplate, 0, len(list.Items))
 	for i := range list.Items {
 		if isAdmin || isVisible(list.Items[i].Spec.Visibility, auth) {
 			items = append(items, templateFromCRD(ctx, &list.Items[i]))
@@ -96,7 +97,7 @@ func (s *k8sSandboxTemplateService) List(ctx context.Context, auth domain.AuthIn
 	return items, nil
 }
 
-func (s *k8sSandboxTemplateService) Get(ctx context.Context, name string, auth domain.AuthInfo, isAdmin bool) (*domain.SandboxTemplate, *domain.AppError) {
+func (s *k8sSandboxTemplateService) Get(ctx context.Context, name string, auth domain.AuthInfo, isAdmin bool) (*gen.SandboxTemplate, *domain.AppError) {
 	tmpl := &agentsv1alpha1.SandboxTemplate{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: name}, tmpl); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -112,7 +113,7 @@ func (s *k8sSandboxTemplateService) Get(ctx context.Context, name string, auth d
 	return &result, nil
 }
 
-func (s *k8sSandboxTemplateService) Create(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*domain.SandboxTemplate, *domain.AppError) {
+func (s *k8sSandboxTemplateService) Create(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*gen.SandboxTemplate, *domain.AppError) {
 	obj := tmpl.DeepCopy()
 	obj.ResourceVersion = ""
 	if err := s.client.Create(ctx, obj); err != nil {
@@ -125,7 +126,7 @@ func (s *k8sSandboxTemplateService) Create(ctx context.Context, tmpl *agentsv1al
 	return &result, nil
 }
 
-func (s *k8sSandboxTemplateService) Update(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*domain.SandboxTemplate, *domain.AppError) {
+func (s *k8sSandboxTemplateService) Update(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) (*gen.SandboxTemplate, *domain.AppError) {
 	// Semver validation is done once upfront (before any retries) since it only
 	// depends on the caller-supplied input, not on the current object state.
 	newVer := tmpl.Spec.Version
@@ -170,7 +171,7 @@ func (s *k8sSandboxTemplateService) Update(ctx context.Context, tmpl *agentsv1al
 	}
 
 	// Retry-on-conflict path: no resourceVersion supplied (e.g. ws-proxy broadcast).
-	var result domain.SandboxTemplate
+	var result gen.SandboxTemplate
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		base := &agentsv1alpha1.SandboxTemplate{}
 		if err := s.client.Get(ctx, client.ObjectKey{Name: tmpl.Name}, base); err != nil {
@@ -285,33 +286,31 @@ func (s *k8sSandboxTemplateService) StripStaleGlobalLabels(ctx context.Context, 
 // private helpers
 // ---------------------------------------------------------------------------
 
-func templateFromCRD(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) domain.SandboxTemplate {
-	dt := domain.SandboxTemplate{
+func templateFromCRD(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) gen.SandboxTemplate {
+	createdAt := tmpl.CreationTimestamp.Time
+	result := gen.SandboxTemplate{
 		Name:        tmpl.Name,
-		Version:     tmpl.Spec.Version,
-		Description: tmpl.Spec.Description,
-		SyncSource:  tmpl.Labels["agentbox.io/sync-source"],
-		Docs:        tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey],
-		CreatedAt:   tmpl.CreationTimestamp.Format(time.RFC3339),
-	}
-	for _, r := range tmpl.Spec.Runtimes {
-		dt.RuntimeNames = append(dt.RuntimeNames, r.Name)
+		Version:     ptr.To(tmpl.Spec.Version),
+		Description: ptr.To(tmpl.Spec.Description),
+		SyncSource:  ptr.To(tmpl.Labels[agentsv1alpha1.LabelSyncSource]),
+		Docs:        ptr.To(tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]),
+		CreatedAt:   &createdAt,
 	}
 	if tmpl.Spec.Template != nil {
 		cpu, memory, err := utilresource.SumContainerResources(tmpl.Spec.Template)
 		if err != nil {
 			log.FromContext(ctx).V(1).Info("failed to compute template resources", "template", tmpl.Name, "error", err)
 		} else {
-			dt.CPU = cpu.String()
-			dt.Memory = memory.String()
+			result.Cpu = ptr.To(cpu.String())
+			result.Memory = ptr.To(memory.String())
 		}
 	}
 	stripped := tmpl.DeepCopy()
 	stripped.ManagedFields = nil
 	if b, err := yaml.Marshal(stripped); err == nil {
-		dt.CrdYaml = string(b)
+		result.CrdYaml = ptr.To(string(b))
 	}
-	return dt
+	return result
 }
 
 // isVisible reports whether the caller (auth) satisfies the template's visibility rules.

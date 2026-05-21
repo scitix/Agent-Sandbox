@@ -69,36 +69,50 @@ go test -tags=e2e ./test/e2e/ -v -ginkgo.v --ginkgo.focus="xxx"  # Run a single 
 
 ### API Field Addition SOP
 
-> **Lesson learned**: Fields have repeatedly been defined in OpenAPI + domain models but omitted from conversion functions like `sandboxToGen()` / `poolToGen()`, causing the frontend to receive no data. **Every new field must go through the full chain below.**
+The native API surface uses the generated `pkg/apiserver/gen` types directly as the single
+externally-visible model. The service layer reads CRDs, projects them straight into
+`gen.*` shapes, and the handler returns those untouched. There is no separate "domain"
+mirror of wire fields, so the chain is shorter than it used to be.
 
 Using Sandbox as an example, the complete change path for adding a field:
 
 ```
-openapi.yaml          ← 1. Define field schema
+openapi.yaml                     ← 1. Define field schema
     ↓ make gen-all-api
-gen/agentbox.gen.go   ← 2. Auto-generated (do not edit manually)
-domain/sandbox.go     ← 3. Add domain field + json tag
-sandbox_pod.go        ← 4. Extract field value from Pod → domain
-sandbox_service.go    ← 5. Confirm List/Get logic passes the field through
-handlers/server.go    ← 6. ⚠️ Assign domain → gen in sandboxToGen() (most often missed!)
-e2bcompat/convert.go  ← 7. If E2B compat is needed, add metadata mapping
+gen/agentbox.gen.go              ← 2. Auto-generated (do not edit manually)
+controllers/.../sandbox_pod.go   ← 3. Populate field in SandboxBaseFromPod / CaptureSandboxStopRecord
+service/sandbox_service.go       ← 4. Ensure the field survives Create/Get/List/Delete paths
+e2bcompat/domain/convert.go      ← 5. (Optional) map into the E2B compatibility shape
 ```
 
-**Step-by-step checklist** (none can be skipped):
+**Step-by-step checklist** (skip step 5 only when E2B compatibility isn't needed):
 
 | # | File | Action | Verify |
 |---|------|--------|--------|
 | 1 | `pkg/openapi/native/openapi.yaml` | Add field definition to schema | `make gen-all-api` succeeds |
 | 2 | `pkg/apiserver/gen/agentbox.gen.go` | Auto-generated; confirm new field exists | grep new field name |
-| 3 | `pkg/apiserver/domain/sandbox.go` | Add field + `json:"xxx,omitempty"` tag | compiles |
-| 4 | `pkg/controllers/sandboxpool/sandbox_pod.go` | Extract value in `SandboxBaseFromPod()` | unit test |
-| 5 | `pkg/apiserver/service/sandbox_service.go` | Confirm `sandboxFromPod()` / `List()` don't drop the field | code review |
-| 6 | **`pkg/apiserver/handlers/server.go`** | **Add `domain → gen` assignment in `sandboxToGen()`** | `go build` + API test |
-| 7 | `pkg/e2bcompat/domain/convert.go` | If E2B needed, add metadata mapping | E2B API test |
+| 3 | `pkg/controllers/sandboxpool/sandbox_pod.go` | Set the field on the `gen.Sandbox` returned by `SandboxBaseFromPod()` / `CaptureSandboxStopRecord()` | unit test |
+| 4 | `pkg/apiserver/service/sandbox_service.go` | Make sure live (Create/Get/List) and historical (store) paths populate the field | unit test + API test |
+| 5 | `pkg/e2bcompat/domain/convert.go` | If E2B needed, read from the `gen.Sandbox` argument and map into the E2B shape | E2B API test |
 
-> **SandboxPool fields follow the same pattern**: update `poolToGen()` accordingly.
->
-> **Core principle**: A field travels through 3 transformation layers from K8s Pod to HTTP response (Pod → domain → gen). **Each layer must explicitly pass the field**; it is never inherited automatically.
+> **SandboxPool / SandboxTemplate fields follow the same pattern**: edit `poolToGen()` /
+> `templateFromCRD()` in `pkg/apiserver/service/` (they are the only place the projection
+> happens; the handler simply forwards the gen value).
+
+### Where types live
+
+| Type kind | Location | Examples |
+|-----------|----------|----------|
+| Wire shapes (HTTP request/response) | `pkg/apiserver/gen/` | `gen.Sandbox`, `gen.SandboxPool`, `gen.Quota`, `gen.APIKeyItem`, `gen.PoolTemplateOverrides` (the caller-supplied subset) |
+| Service input wrappers, return shapes | `pkg/apiserver/service/` | `CreateSandboxInput`, `CreateSandboxPoolInput`, `UpdateSandboxPoolInput`, `SandboxListFilter`, `ExecTokenInfo`, `APIKeyItem`/`KeyMetadata`/`CreateAPIKeyInput`/`APIKeyResult`, `PoolTemplateOverrides` (annotation-storage shape with `ImagePullSecretName`) |
+| Annotation/state bookkeeping shared with controllers | `pkg/controllers/sandboxpool/poststarthooks/` | `Action`, `ExecAction`, `HTTPPostAction` |
+| Internal cross-package primitives | `pkg/apiserver/domain/` | `AppError` + error detail types, `AuthInfo` |
+
+> **`pkg/apiserver/domain/` is now intentionally tiny (≈200 LOC across `auth.go` and
+> `errors.go`).** Wire mirrors that used to live there have all been collapsed onto `gen.*`;
+> internal inputs/results moved to `pkg/apiserver/service/`. Anything tempting to add back
+> into `domain/` should first look like a `gen.*` type or move into the service package as
+> a parsed input.
 
 ---
 

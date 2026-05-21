@@ -22,10 +22,11 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"strings"
+
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	nativegen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	wsproxygen "github.com/scitix/agent-sandbox/pkg/wsproxy/gen"
@@ -52,7 +53,7 @@ func (s *Server) ListSandboxTemplates(
 
 	summaries := make([]nativegen.SandboxTemplateSummary, len(items))
 	for i := range items {
-		summaries[i] = service.TemplateToSummaryGen(&items[i])
+		summaries[i] = templateToSummary(&items[i])
 	}
 	total := len(summaries)
 	return wsproxygen.ListSandboxTemplates200JSONResponse{
@@ -84,8 +85,7 @@ func (s *Server) GetSandboxTemplate(
 		return wsproxygen.GetSandboxTemplate503JSONResponse{Error: appErr.Message}, nil
 	}
 
-	genTmpl := service.TemplateToGen(tmpl)
-	return wsproxygen.GetSandboxTemplate200JSONResponse{Template: genTmpl}, nil
+	return wsproxygen.GetSandboxTemplate200JSONResponse{Template: *tmpl}, nil
 }
 
 // ── AdminCreateSandboxTemplate ───────────────────────────────────────────────
@@ -122,8 +122,7 @@ func (s *Server) AdminCreateSandboxTemplate(
 	}
 
 	s.broadcastDomainTemplate(result)
-	genTmpl := service.TemplateToGen(result)
-	return wsproxygen.AdminCreateSandboxTemplate201JSONResponse{Template: genTmpl}, nil
+	return wsproxygen.AdminCreateSandboxTemplate201JSONResponse{Template: *result}, nil
 }
 
 // ── AdminUpdateSandboxTemplate ───────────────────────────────────────────────
@@ -163,8 +162,7 @@ func (s *Server) AdminUpdateSandboxTemplate(
 	}
 
 	s.broadcastDomainTemplate(result)
-	genTmpl := service.TemplateToGen(result)
-	return wsproxygen.AdminUpdateSandboxTemplate200JSONResponse{Template: genTmpl}, nil
+	return wsproxygen.AdminUpdateSandboxTemplate200JSONResponse{Template: *result}, nil
 }
 
 // ── AdminDeleteSandboxTemplate ───────────────────────────────────────────────
@@ -219,13 +217,13 @@ func appErrStatus(appErr *domain.AppError) int {
 	return int(appErr.Code)
 }
 
-func (s *Server) broadcastDomainTemplate(result *domain.SandboxTemplate) {
-	if result.CrdYaml == "" {
+func (s *Server) broadcastDomainTemplate(result *nativegen.SandboxTemplate) {
+	if result.CrdYaml == nil || *result.CrdYaml == "" {
 		log.Printf("syncManager: template %q has empty CrdYaml, skipping broadcast", result.Name)
 		return
 	}
 	var obj any
-	if err := yaml.Unmarshal([]byte(result.CrdYaml), &obj); err != nil {
+	if err := yaml.Unmarshal([]byte(*result.CrdYaml), &obj); err != nil {
 		log.Printf("syncManager: failed to unmarshal CrdYaml for broadcast: %v", err)
 		return
 	}
@@ -235,4 +233,20 @@ func (s *Server) broadcastDomainTemplate(result *domain.SandboxTemplate) {
 		return
 	}
 	s.m.BroadcastTemplateUpsert(raw)
+}
+
+// templateToSummary projects a gen.SandboxTemplate to gen.SandboxTemplateSummary.
+func templateToSummary(t *nativegen.SandboxTemplate) nativegen.SandboxTemplateSummary {
+	summary := nativegen.SandboxTemplateSummary{
+		Name:        t.Name,
+		Version:     t.Version,
+		Description: t.Description,
+		Cpu:         t.Cpu,
+		Memory:      t.Memory,
+		SyncSource:  t.SyncSource,
+		CreatedAt:   t.CreatedAt,
+	}
+	hasDocs := t.Docs != nil && strings.TrimSpace(*t.Docs) != ""
+	summary.HasDocs = &hasDocs
+	return summary
 }

@@ -31,6 +31,15 @@ import (
 
 const testTemplateVersion = "1.0.1"
 
+// derefStr returns the string value of *s, or "" when nil. Test-only helper for
+// gen.* pointer fields.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func newTestSandboxTemplateService(t *testing.T, objs ...any) SandboxTemplateService {
 	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
@@ -136,14 +145,14 @@ func TestSandboxTemplateService_Get_Success(t *testing.T) {
 	if result.Name != "tmpl-a" {
 		t.Fatalf("expected name tmpl-a, got %s", result.Name)
 	}
-	if result.Version != "v1.2.3" {
-		t.Fatalf("expected version v1.2.3, got %s", result.Version)
+	if derefStr(result.Version) != "v1.2.3" {
+		t.Fatalf("expected version v1.2.3, got %v", result.Version)
 	}
-	if result.Description != "A useful template" {
-		t.Fatalf("expected description 'A useful template', got %s", result.Description)
+	if derefStr(result.Description) != "A useful template" {
+		t.Fatalf("expected description 'A useful template', got %v", result.Description)
 	}
-	if !strings.Contains(result.CrdYaml, "busybox:1.36") {
-		t.Fatalf("expected crdYaml to contain busybox:1.36, got: %s", result.CrdYaml)
+	if !strings.Contains(derefStr(result.CrdYaml), "busybox:1.36") {
+		t.Fatalf("expected crdYaml to contain busybox:1.36, got: %v", result.CrdYaml)
 	}
 }
 
@@ -177,8 +186,8 @@ func TestSandboxTemplateService_Create_Success(t *testing.T) {
 	if result.Name != "new-template" {
 		t.Fatalf("expected name new-template, got %s", result.Name)
 	}
-	if result.Version != "v0.1.0" {
-		t.Fatalf("expected version v0.1.0, got %s", result.Version)
+	if derefStr(result.Version) != "v0.1.0" {
+		t.Fatalf("expected version v0.1.0, got %v", result.Version)
 	}
 
 	// Verify it can be retrieved
@@ -186,8 +195,8 @@ func TestSandboxTemplateService_Create_Success(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("get after create: %v", appErr)
 	}
-	if !strings.Contains(fetched.CrdYaml, "alpine:3.18") {
-		t.Fatalf("expected crdYaml to contain alpine:3.18, got: %s", fetched.CrdYaml)
+	if !strings.Contains(derefStr(fetched.CrdYaml), "alpine:3.18") {
+		t.Fatalf("expected crdYaml to contain alpine:3.18, got: %v", fetched.CrdYaml)
 	}
 }
 
@@ -553,8 +562,8 @@ func TestUpdate_VersionHigherThanCurrent_Success(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.Version != testTemplateVersion {
-		t.Fatalf("expected version %s, got %s", testTemplateVersion, result.Version)
+	if derefStr(result.Version) != testTemplateVersion {
+		t.Fatalf("expected version %s, got %v", testTemplateVersion, result.Version)
 	}
 }
 
@@ -579,8 +588,8 @@ func TestUpdate_EmptyVersion_NoValidation(t *testing.T) {
 		t.Fatalf("unexpected error for empty version: %v", appErr)
 	}
 	// Version becomes empty (spec is replaced)
-	if result.Version != "" {
-		t.Fatalf("expected empty version, got %s", result.Version)
+	if derefStr(result.Version) != "" {
+		t.Fatalf("expected empty version, got %v", result.Version)
 	}
 }
 
@@ -601,8 +610,8 @@ func TestSandboxTemplateService_CreateOrUpdate_Create(t *testing.T) {
 	if getErr != nil {
 		t.Fatalf("Get() after CreateOrUpdate error: %v", getErr)
 	}
-	if got.Version != "1.0.0" {
-		t.Errorf("Version = %q, want %q", got.Version, "1.0.0")
+	if derefStr(got.Version) != "1.0.0" {
+		t.Errorf("Version = %v, want %q", got.Version, "1.0.0")
 	}
 }
 
@@ -623,11 +632,11 @@ func TestSandboxTemplateService_CreateOrUpdate_Update(t *testing.T) {
 	if getErr != nil {
 		t.Fatalf("Get() after CreateOrUpdate error: %v", getErr)
 	}
-	if got.Version != "2.0.0" {
-		t.Errorf("Version = %q, want %q", got.Version, "2.0.0")
+	if derefStr(got.Version) != "2.0.0" {
+		t.Errorf("Version = %v, want %q", got.Version, "2.0.0")
 	}
-	if got.Description != "updated description" {
-		t.Errorf("Description = %q, want %q", got.Description, "updated description")
+	if derefStr(got.Description) != "updated description" {
+		t.Errorf("Description = %v, want %q", got.Description, "updated description")
 	}
 }
 
@@ -670,7 +679,7 @@ func TestUpdate_OptimisticLock_HappyPath(t *testing.T) {
 		t.Fatalf("get: %v", appErr)
 	}
 
-	rv := extractResourceVersion(t, got.CrdYaml)
+	rv := extractResourceVersion(t, derefStr(got.CrdYaml))
 
 	result, appErr := svc.Update(context.Background(), ptr.To(agentsv1alpha1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{
@@ -688,13 +697,13 @@ func TestUpdate_OptimisticLock_HappyPath(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("Update with resourceVersion: %v", appErr)
 	}
-	if result.Version != testTemplateVersion {
-		t.Fatalf("expected version %s, got %s", testTemplateVersion, result.Version)
+	if derefStr(result.Version) != testTemplateVersion {
+		t.Fatalf("expected version %s, got %v", testTemplateVersion, result.Version)
 	}
-	if result.Description != "updated via optimistic lock" {
-		t.Fatalf("expected updated description, got %s", result.Description)
+	if derefStr(result.Description) != "updated via optimistic lock" {
+		t.Fatalf("expected updated description, got %v", result.Description)
 	}
-	if !strings.Contains(result.CrdYaml, "busybox:1.37") {
+	if !strings.Contains(derefStr(result.CrdYaml), "busybox:1.37") {
 		t.Fatalf("crdYaml should contain busybox:1.37")
 	}
 }
@@ -711,11 +720,11 @@ func TestUpdate_OptimisticLock_AnnotationsPreserved(t *testing.T) {
 		t.Fatalf("get: %v", appErr)
 	}
 	// crdYaml must contain the annotation.
-	if !strings.Contains(got.CrdYaml, "original docs") {
-		t.Fatalf("crdYaml should contain the docs annotation, got: %s", got.CrdYaml)
+	if !strings.Contains(derefStr(got.CrdYaml), "original docs") {
+		t.Fatalf("crdYaml should contain the docs annotation, got: %v", got.CrdYaml)
 	}
 
-	rv := extractResourceVersion(t, got.CrdYaml)
+	rv := extractResourceVersion(t, derefStr(got.CrdYaml))
 
 	// Update: pass back the same annotation via the parsed object.
 	_, appErr = svc.Update(context.Background(), ptr.To(agentsv1alpha1.SandboxTemplate{
@@ -740,8 +749,8 @@ func TestUpdate_OptimisticLock_AnnotationsPreserved(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("get after update: %v", appErr)
 	}
-	if !strings.Contains(after.CrdYaml, "original docs") {
-		t.Fatalf("annotation lost after update; crdYaml: %s", after.CrdYaml)
+	if !strings.Contains(derefStr(after.CrdYaml), "original docs") {
+		t.Fatalf("annotation lost after update; crdYaml: %v", after.CrdYaml)
 	}
 }
 
@@ -751,7 +760,7 @@ func TestUpdate_OptimisticLock_StaleRV_ReturnsConflict(t *testing.T) {
 
 	// First update bumps the resourceVersion.
 	got, _ := svc.Get(context.Background(), "tmpl-stale", domain.AuthInfo{}, true)
-	rv := extractResourceVersion(t, got.CrdYaml)
+	rv := extractResourceVersion(t, derefStr(got.CrdYaml))
 
 	_, _ = svc.Update(context.Background(), ptr.To(agentsv1alpha1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "tmpl-stale", ResourceVersion: rv},
@@ -794,8 +803,8 @@ func TestUpdate_NoRV_UsesRetryPath(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("Update (no-RV path): %v", appErr)
 	}
-	if result.Version != "1.0.1" {
-		t.Fatalf("expected 1.0.1, got %s", result.Version)
+	if derefStr(result.Version) != "1.0.1" {
+		t.Fatalf("expected 1.0.1, got %v", result.Version)
 	}
 }
 
@@ -813,16 +822,17 @@ func TestGet_CrdYaml_ContainsExpectedFields(t *testing.T) {
 		t.Fatalf("get: %v", appErr)
 	}
 
-	if got.CrdYaml == "" {
+	crdYaml := derefStr(got.CrdYaml)
+	if crdYaml == "" {
 		t.Fatal("crdYaml should not be empty")
 	}
 	for _, want := range []string{"tmpl-yaml", "2.3.4", "busybox:1.36", "hello docs"} {
-		if !strings.Contains(got.CrdYaml, want) {
-			t.Errorf("crdYaml missing %q; got:\n%s", want, got.CrdYaml)
+		if !strings.Contains(crdYaml, want) {
+			t.Errorf("crdYaml missing %q; got:\n%s", want, crdYaml)
 		}
 	}
 	// managedFields must be stripped
-	if strings.Contains(got.CrdYaml, "managedFields") {
+	if strings.Contains(crdYaml, "managedFields") {
 		t.Error("crdYaml should not contain managedFields")
 	}
 }
@@ -836,7 +846,7 @@ func TestGet_CrdYaml_ContainsResourceVersion(t *testing.T) {
 		t.Fatalf("get: %v", appErr)
 	}
 
-	rv := extractResourceVersion(t, got.CrdYaml)
+	rv := extractResourceVersion(t, derefStr(got.CrdYaml))
 	if rv == "" {
 		t.Fatal("crdYaml should include a non-empty resourceVersion")
 	}

@@ -67,7 +67,7 @@ func TestApplyPoolTemplateOverrides_NilOverrides(t *testing.T) {
 
 func TestApplyPoolTemplateOverrides_ImageOnly(t *testing.T) {
 	tmpl := makeEmbeddedTmpl("base:v1", "500m", "4Gi")
-	ov := &domain.PoolTemplateOverrides{Image: "custom:v99"}
+	ov := &PoolTemplateOverrides{Image: "custom:v99"}
 	if err := applyPoolTemplateOverrides(&tmpl, ov); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestApplyPoolTemplateOverrides_ImageOnly(t *testing.T) {
 
 func TestApplyPoolTemplateOverrides_ResourceMultiplierX2(t *testing.T) {
 	tmpl := makeEmbeddedTmpl("base:v1", "500m", "4Gi")
-	ov := &domain.PoolTemplateOverrides{ResourceMultiplier: 2}
+	ov := &PoolTemplateOverrides{ResourceMultiplier: 2}
 	if err := applyPoolTemplateOverrides(&tmpl, ov); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestApplyPoolTemplateOverrides_DifferentRequestsAndLimits(t *testing.T) {
 			Spec: corev1.PodSpec{Containers: []corev1.Container{c}},
 		},
 	}
-	ov := &domain.PoolTemplateOverrides{ResourceMultiplier: 2}
+	ov := &PoolTemplateOverrides{ResourceMultiplier: 2}
 	if err := applyPoolTemplateOverrides(&tmpl, ov); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestApplyPoolTemplateOverrides_NoCPUResources_Returns400(t *testing.T) {
 			Spec: corev1.PodSpec{Containers: []corev1.Container{c}},
 		},
 	}
-	ov := &domain.PoolTemplateOverrides{ResourceMultiplier: 2}
+	ov := &PoolTemplateOverrides{ResourceMultiplier: 2}
 	appErr := applyPoolTemplateOverrides(&tmpl, ov)
 	if appErr == nil {
 		t.Fatal("expected error for missing CPU resources, got nil")
@@ -162,7 +162,7 @@ func TestApplyPoolTemplateOverrides_NoMemoryResources_Returns400(t *testing.T) {
 			Spec: corev1.PodSpec{Containers: []corev1.Container{c}},
 		},
 	}
-	ov := &domain.PoolTemplateOverrides{ResourceMultiplier: 2}
+	ov := &PoolTemplateOverrides{ResourceMultiplier: 2}
 	appErr := applyPoolTemplateOverrides(&tmpl, ov)
 	if appErr == nil {
 		t.Fatal("expected error for missing memory resources, got nil")
@@ -174,7 +174,7 @@ func TestApplyPoolTemplateOverrides_NoMemoryResources_Returns400(t *testing.T) {
 
 func TestApplyPoolTemplateOverrides_ImageAndMultiplier(t *testing.T) {
 	tmpl := makeEmbeddedTmpl("base:v1", "500m", "2Gi")
-	ov := &domain.PoolTemplateOverrides{
+	ov := &PoolTemplateOverrides{
 		Image:              "new-img:latest",
 		ResourceMultiplier: 2,
 	}
@@ -191,7 +191,7 @@ func TestApplyPoolTemplateOverrides_ImageAndMultiplier(t *testing.T) {
 
 func TestApplyPoolTemplateOverrides_InvalidImageReference_Returns400(t *testing.T) {
 	tmpl := makeEmbeddedTmpl("base:v1", "500m", "4Gi")
-	ov := &domain.PoolTemplateOverrides{Image: "INVALID@@IMAGE"}
+	ov := &PoolTemplateOverrides{Image: "INVALID@@IMAGE"}
 	appErr := applyPoolTemplateOverrides(&tmpl, ov)
 	if appErr == nil {
 		t.Fatal("expected error for invalid image reference, got nil")
@@ -207,7 +207,7 @@ func TestApplyPoolTemplateOverrides_ImageOverrideWithNoContainers_Returns400(t *
 			Spec: corev1.PodSpec{Containers: []corev1.Container{}},
 		},
 	}
-	ov := &domain.PoolTemplateOverrides{Image: "custom:v1"}
+	ov := &PoolTemplateOverrides{Image: "custom:v1"}
 	appErr := applyPoolTemplateOverrides(&tmpl, ov)
 	if appErr == nil {
 		t.Fatal("expected error for empty containers, got nil")

@@ -18,7 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	"k8s.io/utils/ptr"
+
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
 
 const (
@@ -36,21 +38,30 @@ func newTestStore(t *testing.T) SandboxStore {
 	return s
 }
 
-func makeRecord(namespace, sandboxID, poolName, status, claimedAt string) domain.Sandbox {
-	return domain.Sandbox{
-		SandboxID: sandboxID,
+func mustParseRFC3339(t *testing.T, s string) time.Time {
+	t.Helper()
+	v, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return v
+}
+
+func makeRecord(t *testing.T, namespace, sandboxID, poolName, status, claimedAt string) gen.Sandbox {
+	return gen.Sandbox{
+		SandboxId: sandboxID,
 		Namespace: namespace,
 		PoolName:  poolName,
 		PodName:   "pod-" + sandboxID,
-		Status:    status,
-		ClaimedAt: claimedAt,
+		Status:    gen.SandboxStatus(status),
+		ClaimedAt: mustParseRFC3339(t, claimedAt),
 	}
 }
 
 func TestSandboxStore_SaveAndGet(t *testing.T) {
 	s := newTestStore(t)
 
-	record := makeRecord("tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T10:00:00Z")
+	record := makeRecord(t, "tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T10:00:00Z")
 	if err := s.Save(record); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -62,10 +73,10 @@ func TestSandboxStore_SaveAndGet(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected record, got nil")
 	}
-	if got.SandboxID != testSandboxID001 {
-		t.Fatalf("expected sandboxID sbx-001, got %s", got.SandboxID)
+	if got.SandboxId != testSandboxID001 {
+		t.Fatalf("expected sandboxID sbx-001, got %s", got.SandboxId)
 	}
-	if got.Status != testStatusCompleted {
+	if string(got.Status) != testStatusCompleted {
 		t.Fatalf("expected status Completed, got %s", got.Status)
 	}
 	if got.PoolName != "pool-a" {
@@ -100,7 +111,7 @@ func TestSandboxStore_ListEmpty(t *testing.T) {
 func TestSandboxStore_ListSingle(t *testing.T) {
 	s := newTestStore(t)
 
-	record := makeRecord("tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T10:00:00Z")
+	record := makeRecord(t, "tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T10:00:00Z")
 	if err := s.Save(record); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -112,22 +123,22 @@ func TestSandboxStore_ListSingle(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(records))
 	}
-	if records[0].SandboxID != testSandboxID001 {
-		t.Fatalf("expected sbx-001, got %s", records[0].SandboxID)
+	if records[0].SandboxId != testSandboxID001 {
+		t.Fatalf("expected sbx-001, got %s", records[0].SandboxId)
 	}
 }
 
 func TestSandboxStore_ListMultipleSortedByClaimedAtDesc(t *testing.T) {
 	s := newTestStore(t)
 
-	records := []domain.Sandbox{
-		makeRecord("tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T08:00:00Z"),
-		makeRecord("tenant-a", "sbx-002", "pool-a", "Failed", "2026-01-01T10:00:00Z"),
-		makeRecord("tenant-a", "sbx-003", "pool-a", "Completed", "2026-01-01T09:00:00Z"),
+	records := []gen.Sandbox{
+		makeRecord(t, "tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T08:00:00Z"),
+		makeRecord(t, "tenant-a", "sbx-002", "pool-a", "Failed", "2026-01-01T10:00:00Z"),
+		makeRecord(t, "tenant-a", "sbx-003", "pool-a", "Completed", "2026-01-01T09:00:00Z"),
 	}
 	for _, r := range records {
 		if err := s.Save(r); err != nil {
-			t.Fatalf("save %s: %v", r.SandboxID, err)
+			t.Fatalf("save %s: %v", r.SandboxId, err)
 		}
 	}
 
@@ -142,8 +153,8 @@ func TestSandboxStore_ListMultipleSortedByClaimedAtDesc(t *testing.T) {
 	// Should be sorted desc: sbx-002 (10:00) > sbx-003 (09:00) > sbx-001 (08:00)
 	expectedOrder := []string{"sbx-002", "sbx-003", "sbx-001"}
 	for i, expectedID := range expectedOrder {
-		if got[i].SandboxID != expectedID {
-			t.Errorf("position %d: expected %s, got %s", i, expectedID, got[i].SandboxID)
+		if got[i].SandboxId != expectedID {
+			t.Errorf("position %d: expected %s, got %s", i, expectedID, got[i].SandboxId)
 		}
 	}
 }
@@ -151,10 +162,10 @@ func TestSandboxStore_ListMultipleSortedByClaimedAtDesc(t *testing.T) {
 func TestSandboxStore_NamespaceIsolation(t *testing.T) {
 	s := newTestStore(t)
 
-	if err := s.Save(makeRecord("tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T10:00:00Z")); err != nil {
+	if err := s.Save(makeRecord(t, "tenant-a", "sbx-001", "pool-a", "Completed", "2026-01-01T10:00:00Z")); err != nil {
 		t.Fatalf("save tenant-a: %v", err)
 	}
-	if err := s.Save(makeRecord("tenant-b", "sbx-002", "pool-b", "Failed", "2026-01-01T10:00:00Z")); err != nil {
+	if err := s.Save(makeRecord(t, "tenant-b", "sbx-002", "pool-b", "Failed", "2026-01-01T10:00:00Z")); err != nil {
 		t.Fatalf("save tenant-b: %v", err)
 	}
 
@@ -165,8 +176,8 @@ func TestSandboxStore_NamespaceIsolation(t *testing.T) {
 	if len(recordsA) != 1 {
 		t.Fatalf("expected 1 record for tenant-a, got %d", len(recordsA))
 	}
-	if recordsA[0].SandboxID != testSandboxID001 {
-		t.Fatalf("expected sbx-001 for tenant-a, got %s", recordsA[0].SandboxID)
+	if recordsA[0].SandboxId != testSandboxID001 {
+		t.Fatalf("expected sbx-001 for tenant-a, got %s", recordsA[0].SandboxId)
 	}
 
 	recordsB, err := s.List("tenant-b")
@@ -176,22 +187,23 @@ func TestSandboxStore_NamespaceIsolation(t *testing.T) {
 	if len(recordsB) != 1 {
 		t.Fatalf("expected 1 record for tenant-b, got %d", len(recordsB))
 	}
-	if recordsB[0].SandboxID != "sbx-002" {
-		t.Fatalf("expected sbx-002 for tenant-b, got %s", recordsB[0].SandboxID)
+	if recordsB[0].SandboxId != "sbx-002" {
+		t.Fatalf("expected sbx-002 for tenant-b, got %s", recordsB[0].SandboxId)
 	}
 }
 
 func TestSandboxStore_SaveOverwrite(t *testing.T) {
 	s := newTestStore(t)
 
-	record := makeRecord("tenant-a", "sbx-001", "pool-a", "Running", "2026-01-01T10:00:00Z")
+	record := makeRecord(t, "tenant-a", "sbx-001", "pool-a", "Running", "2026-01-01T10:00:00Z")
 	if err := s.Save(record); err != nil {
 		t.Fatalf("save first: %v", err)
 	}
 
 	// Overwrite with updated status
-	record.Status = "Completed"
-	record.TerminatedAt = "2026-01-01T11:00:00Z"
+	record.Status = gen.SandboxStatus("Completed")
+	terminatedAt := mustParseRFC3339(t, "2026-01-01T11:00:00Z")
+	record.TerminatedAt = &terminatedAt
 	if err := s.Save(record); err != nil {
 		t.Fatalf("save second: %v", err)
 	}
@@ -200,11 +212,11 @@ func TestSandboxStore_SaveOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Status != testStatusCompleted {
+	if string(got.Status) != testStatusCompleted {
 		t.Fatalf("expected Completed after overwrite, got %s", got.Status)
 	}
-	if got.TerminatedAt != "2026-01-01T11:00:00Z" {
-		t.Fatalf("expected terminatedAt to be set, got %s", got.TerminatedAt)
+	if got.TerminatedAt == nil || !got.TerminatedAt.Equal(terminatedAt) {
+		t.Fatalf("expected terminatedAt %v, got %v", terminatedAt, got.TerminatedAt)
 	}
 }
 
@@ -216,7 +228,7 @@ func TestSandboxStore_ShortTTLExpiry(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	record := makeRecord("tenant-a", "sbx-ttl", "pool-a", "Completed", "2026-01-01T10:00:00Z")
+	record := makeRecord(t, "tenant-a", "sbx-ttl", "pool-a", "Completed", "2026-01-01T10:00:00Z")
 	if err := s.Save(record); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -246,17 +258,18 @@ func TestSandboxStore_HistoricalFields(t *testing.T) {
 	s := newTestStore(t)
 
 	exitCode := int32(137)
-	record := domain.Sandbox{
-		SandboxID:      "sbx-oom",
+	terminatedAt := mustParseRFC3339(t, "2026-01-01T10:30:00Z")
+	record := gen.Sandbox{
+		SandboxId:      "sbx-oom",
 		Namespace:      "tenant-a",
 		PoolName:       "pool-a",
 		PodName:        "pod-abc",
-		Status:         "Failed",
-		ClaimedAt:      "2026-01-01T10:00:00Z",
-		TerminatedAt:   "2026-01-01T10:30:00Z",
-		FailureReason:  "OOMKilled",
+		Status:         gen.SandboxStatus("Failed"),
+		ClaimedAt:      mustParseRFC3339(t, "2026-01-01T10:00:00Z"),
+		TerminatedAt:   &terminatedAt,
+		FailureReason:  ptr.To("OOMKilled"),
 		ExitCode:       &exitCode,
-		FailureMessage: "container was OOM-killed",
+		FailureMessage: ptr.To("container was OOM-killed"),
 	}
 	if err := s.Save(record); err != nil {
 		t.Fatalf("save: %v", err)
@@ -269,13 +282,13 @@ func TestSandboxStore_HistoricalFields(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected record")
 	}
-	if got.FailureReason != "OOMKilled" {
-		t.Fatalf("expected OOMKilled, got %s", got.FailureReason)
+	if got.FailureReason == nil || *got.FailureReason != "OOMKilled" {
+		t.Fatalf("expected OOMKilled, got %v", got.FailureReason)
 	}
 	if got.ExitCode == nil || *got.ExitCode != 137 {
 		t.Fatalf("expected exitCode 137, got %v", got.ExitCode)
 	}
-	if got.TerminatedAt != "2026-01-01T10:30:00Z" {
-		t.Fatalf("expected terminatedAt, got %s", got.TerminatedAt)
+	if got.TerminatedAt == nil || !got.TerminatedAt.Equal(terminatedAt) {
+		t.Fatalf("expected terminatedAt %v, got %v", terminatedAt, got.TerminatedAt)
 	}
 }

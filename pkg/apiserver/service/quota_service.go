@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
 
@@ -31,7 +32,7 @@ type QuotaService interface {
 	// ListForUser returns all quotas matching the given user and team. When
 	// the underlying provider is disabled the result is an empty list, not
 	// an error — callers should treat that as "feature unavailable".
-	ListForUser(ctx context.Context, user, team string) ([]domain.QuotaInfo, *domain.AppError)
+	ListForUser(ctx context.Context, user, team string) ([]gen.Quota, *domain.AppError)
 }
 
 type providerBackedQuotaService struct {
@@ -48,6 +49,6 @@ func NewQuotaServiceFromProvider(p quotaplugin.Provider) QuotaService {
 	return &providerBackedQuotaService{p: p}
 }
 
-func (s *providerBackedQuotaService) ListForUser(ctx context.Context, user, team string) ([]domain.QuotaInfo, *domain.AppError) {
+func (s *providerBackedQuotaService) ListForUser(ctx context.Context, user, team string) ([]gen.Quota, *domain.AppError) {
 	return s.p.ListForUser(ctx, user, team)
 }

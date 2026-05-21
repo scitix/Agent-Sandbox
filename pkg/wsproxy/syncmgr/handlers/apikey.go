@@ -61,13 +61,7 @@ func (s *Server) ListMyApiKeys(
 	}
 
 	items := keyMetasToGenItems(metas)
-	total := len(items)
-	return wsproxygen.ListMyApiKeys200JSONResponse{
-		Items:  items,
-		Total:  total,
-		Limit:  0,
-		Offset: 0,
-	}, nil
+	return wsproxygen.ListMyApiKeys200JSONResponse(items), nil
 }
 
 // ── CreateApiKey ─────────────────────────────────────────────────────────────
@@ -174,7 +168,6 @@ func (s *Server) importApiKey(
 		Team:        derefStr(body.Team),
 		Role:        apikey.RoleTenant,
 		Description: derefStr(body.Description),
-		QuotaURL:    derefStr(body.QuotaURL),
 		IssuedAt:    issuedAt,
 		ExpiresAt:   expiresAt,
 	}
@@ -243,7 +236,6 @@ func keyMetasToGenItems(metas []apikey.KeyMetadata) []nativegen.APIKeyItem {
 			User:        &m.User,
 			Team:        &m.Team,
 			Role:        m.Role,
-			QuotaURL:    &m.QuotaURL,
 			Description: &m.Description,
 			IssuedAt:    m.IssuedAt,
 			SyncSource:  &m.SyncSource,

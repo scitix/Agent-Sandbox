@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package domain provides E2B-compatible domain conversion utilities.
-// It maps AgentBox domain models directly to E2B generated types.
+// Package domain provides E2B-compatible conversion utilities.
+// It maps AgentBox native API models directly to E2B generated types.
 package domain
 
 import (
@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
@@ -42,9 +42,9 @@ const (
 	EnvdVersion = "0.1.0"
 )
 
-// ToE2BSandbox converts an AgentBox domain.Sandbox + SandboxPool directly to an e2bgen.Sandbox.
+// ToE2BSandbox converts a native gen.Sandbox + SandboxPool directly to an e2bgen.Sandbox.
 // gatewayDomain is the gateway domain name used to build connection URLs.
-func ToE2BSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool, gatewayDomain string) e2bgen.Sandbox {
+func ToE2BSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool, gatewayDomain string) e2bgen.Sandbox {
 	var domainPtr *string
 	if gatewayDomain != "" {
 		d := gatewayDomain
@@ -56,7 +56,7 @@ func ToE2BSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool, gatew
 
 	return e2bgen.Sandbox{
 		TemplateID:         poolNameFromSandbox(sb, pool),
-		SandboxID:          sb.SandboxID,
+		SandboxID:          sb.SandboxId,
 		ClientID:           sb.Namespace,
 		TrafficAccessToken: &emptyToken,
 		Domain:             domainPtr,
@@ -64,23 +64,21 @@ func ToE2BSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool, gatew
 	}
 }
 
-// ToE2BSandboxDetail converts an AgentBox domain.Sandbox + SandboxPool to an e2bgen.SandboxDetail.
+// ToE2BSandboxDetail converts a native gen.Sandbox + SandboxPool to an e2bgen.SandboxDetail.
 // gatewayDomain is the gateway domain name used to build connection URLs.
-func ToE2BSandboxDetail(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool, gatewayDomain string) e2bgen.SandboxDetail {
+func ToE2BSandboxDetail(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool, gatewayDomain string) e2bgen.SandboxDetail {
 	cpuCount, memoryMB := extractResourcesFromPool(pool)
-	state := e2bgen.SandboxState(SandboxStateFromStatus(sb.Status))
+	state := e2bgen.SandboxState(SandboxStateFromStatus(string(sb.Status)))
 
 	endAtStr := ""
-	if sb.ClaimedAt != "" && pool != nil {
+	if !sb.ClaimedAt.IsZero() && pool != nil {
 		endAtStr = computeEndAt(sb, pool)
 	}
 
 	now := time.Now()
 	startedAt := now
-	if sb.StartedAt != "" {
-		if t, err := time.Parse(time.RFC3339, sb.StartedAt); err == nil {
-			startedAt = t
-		}
+	if sb.StartedAt != nil {
+		startedAt = *sb.StartedAt
 	}
 	endAt := now.Add(5 * time.Minute)
 	if endAtStr != "" {
@@ -97,12 +95,14 @@ func ToE2BSandboxDetail(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool,
 
 	var metadata *e2bgen.SandboxMetadata
 	merged := make(map[string]string)
-	maps.Copy(merged, sb.Metadata)
-	if sb.NodeName != "" {
-		merged["agentbox.nodeName"] = sb.NodeName
+	if sb.Metadata != nil {
+		maps.Copy(merged, *sb.Metadata)
 	}
-	if sb.ContainerID != "" {
-		merged["agentbox.containerId"] = sb.ContainerID
+	if sb.NodeName != nil && *sb.NodeName != "" {
+		merged["agentbox.nodeName"] = *sb.NodeName
+	}
+	if sb.ContainerId != nil && *sb.ContainerId != "" {
+		merged["agentbox.containerId"] = *sb.ContainerId
 	}
 	if len(merged) > 0 {
 		m := e2bgen.SandboxMetadata(merged)
@@ -110,7 +110,7 @@ func ToE2BSandboxDetail(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool,
 	}
 
 	return e2bgen.SandboxDetail{
-		SandboxID:   sb.SandboxID,
+		SandboxID:   sb.SandboxId,
 		TemplateID:  poolNameFromSandbox(sb, pool),
 		ClientID:    sb.Namespace,
 		StartedAt:   startedAt,
@@ -125,21 +125,19 @@ func ToE2BSandboxDetail(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool,
 	}
 }
 
-// ToE2BListedSandbox converts an AgentBox domain.Sandbox directly to an e2bgen.ListedSandbox.
-func ToE2BListedSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool) e2bgen.ListedSandbox {
+// ToE2BListedSandbox converts a native gen.Sandbox directly to an e2bgen.ListedSandbox.
+func ToE2BListedSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) e2bgen.ListedSandbox {
 	cpuCount, memoryMB := extractResourcesFromPool(pool)
-	state := e2bgen.SandboxState(SandboxStateFromStatus(sb.Status))
+	state := e2bgen.SandboxState(SandboxStateFromStatus(string(sb.Status)))
 
 	endAtStr := ""
-	if sb.ClaimedAt != "" && pool != nil {
+	if !sb.ClaimedAt.IsZero() && pool != nil {
 		endAtStr = computeEndAt(sb, pool)
 	}
 
 	startedAt := time.Now()
-	if sb.StartedAt != "" {
-		if t, err := time.Parse(time.RFC3339, sb.StartedAt); err == nil {
-			startedAt = t
-		}
+	if sb.StartedAt != nil {
+		startedAt = *sb.StartedAt
 	}
 	endAt := startedAt.Add(5 * time.Minute)
 	if endAtStr != "" {
@@ -150,12 +148,14 @@ func ToE2BListedSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool)
 
 	var metadata *e2bgen.SandboxMetadata
 	merged := make(map[string]string)
-	maps.Copy(merged, sb.Metadata)
-	if sb.NodeName != "" {
-		merged["agentbox.nodeName"] = sb.NodeName
+	if sb.Metadata != nil {
+		maps.Copy(merged, *sb.Metadata)
 	}
-	if sb.ContainerID != "" {
-		merged["agentbox.containerId"] = sb.ContainerID
+	if sb.NodeName != nil && *sb.NodeName != "" {
+		merged["agentbox.nodeName"] = *sb.NodeName
+	}
+	if sb.ContainerId != nil && *sb.ContainerId != "" {
+		merged["agentbox.containerId"] = *sb.ContainerId
 	}
 	if len(merged) > 0 {
 		m := e2bgen.SandboxMetadata(merged)
@@ -163,7 +163,7 @@ func ToE2BListedSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool)
 	}
 
 	return e2bgen.ListedSandbox{
-		SandboxID:   sb.SandboxID,
+		SandboxID:   sb.SandboxId,
 		TemplateID:  poolNameFromSandbox(sb, pool),
 		ClientID:    sb.Namespace,
 		StartedAt:   startedAt,
@@ -225,7 +225,7 @@ func SandboxStateFromStatus(status string) string {
 }
 
 // poolNameFromSandbox returns the pool name, preferring the pool object if available.
-func poolNameFromSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool) string {
+func poolNameFromSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) string {
 	if pool != nil {
 		return pool.Name
 	}
@@ -248,17 +248,8 @@ func extractResourcesFromPool(pool *agentsv1alpha1.SandboxPool) (cpuCount int32,
 
 // computeEndAt calculates endAt from claimedAt + idle-timeout annotation.
 // Returns empty string if timeout cannot be determined.
-func computeEndAt(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool) string {
-	// Prefer sandbox's own idle-timeout (set at claim time in annotations)
-	// We check pool annotations as a fallback (there's no per-sandbox annotation in pool)
-	// The idle-timeout is stored in the sandbox pod annotation, but we only have the domain model here.
-	// For now we try to get it from pool annotations as a default timeout hint.
-	if pool == nil || sb.ClaimedAt == "" {
-		return ""
-	}
-
-	claimedAt, err := time.Parse(time.RFC3339, sb.ClaimedAt)
-	if err != nil {
+func computeEndAt(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) string {
+	if pool == nil || sb.ClaimedAt.IsZero() {
 		return ""
 	}
 
@@ -276,7 +267,7 @@ func computeEndAt(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool) strin
 		return ""
 	}
 
-	endAt := claimedAt.Add(time.Duration(timeoutSecs) * time.Second)
+	endAt := sb.ClaimedAt.Add(time.Duration(timeoutSecs) * time.Second)
 	return endAt.UTC().Format(time.RFC3339)
 }
 

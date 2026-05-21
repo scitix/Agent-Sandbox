@@ -635,20 +635,20 @@ func TestSyncInplaceUpdatePhases_StoppingToIdle_WritesStoreRecord(t *testing.T) 
 	if record == nil {
 		t.Fatal("expected Completed record in store after Stopping→Idle")
 	}
-	if record.Status != string(agentsv1alpha1.SandboxStopReasonCompleted) {
+	if string(record.Status) != string(agentsv1alpha1.SandboxStopReasonCompleted) {
 		t.Fatalf("expected status Completed, got %s", record.Status)
 	}
-	if record.TerminatedAt != terminatedAt {
-		t.Fatalf("expected terminatedAt %s, got %s", terminatedAt, record.TerminatedAt)
+	if record.TerminatedAt == nil || record.TerminatedAt.Format(time.RFC3339) != terminatedAt {
+		t.Fatalf("expected terminatedAt %s, got %v", terminatedAt, record.TerminatedAt)
 	}
-	if record.ClaimedAt != claimedAt {
-		t.Fatalf("expected claimedAt %s, got %s", claimedAt, record.ClaimedAt)
+	if record.ClaimedAt.Format(time.RFC3339) != claimedAt {
+		t.Fatalf("expected claimedAt %s, got %s", claimedAt, record.ClaimedAt.Format(time.RFC3339))
 	}
-	if record.ContainerImages["sandbox"] != "sandbox:v1" {
-		t.Fatalf("expected container image sandbox:v1, got %q", record.ContainerImages["sandbox"])
+	if record.ContainerImages == nil || (*record.ContainerImages)["sandbox"] != "sandbox:v1" {
+		t.Fatalf("expected container image sandbox:v1, got %v", record.ContainerImages)
 	}
-	if record.ContainerID != "containerd://stopping-pod-cid" {
-		t.Fatalf("expected containerID containerd://stopping-pod-cid, got %q", record.ContainerID)
+	if record.ContainerId == nil || *record.ContainerId != "containerd://stopping-pod-cid" {
+		t.Fatalf("expected containerID containerd://stopping-pod-cid, got %v", record.ContainerId)
 	}
 }
 
@@ -1047,7 +1047,7 @@ func TestSyncRestartedRunningPods_TerminatingPod_StoreWrittenNoRecycle(t *testin
 	if record == nil {
 		t.Fatal("expected Failed record in store for terminating pod")
 	}
-	if record.Status != string(agentsv1alpha1.SandboxStopReasonFailed) {
+	if string(record.Status) != string(agentsv1alpha1.SandboxStopReasonFailed) {
 		t.Fatalf("expected status Failed, got %s", record.Status)
 	}
 
@@ -1116,17 +1116,17 @@ func TestSyncDeletingPods_TerminatingStoppingPod_StoreWrittenAndFinalizerRemoved
 	if record == nil {
 		t.Fatal("expected terminal record for terminating stopping pod")
 	}
-	if record.Status != "Released" {
+	if string(record.Status) != "Released" {
 		t.Fatalf("expected Released status, got %s", record.Status)
 	}
-	if record.TerminatedAt != "2026-04-14T11:45:00Z" {
-		t.Fatalf("expected terminatedAt from annotation, got %s", record.TerminatedAt)
+	if record.TerminatedAt == nil || record.TerminatedAt.Format(time.RFC3339) != "2026-04-14T11:45:00Z" {
+		t.Fatalf("expected terminatedAt from annotation, got %v", record.TerminatedAt)
 	}
-	if record.ContainerImages["sandbox"] != "sandbox:v2" {
-		t.Fatalf("expected running image snapshot sandbox:v2, got %q", record.ContainerImages["sandbox"])
+	if record.ContainerImages == nil || (*record.ContainerImages)["sandbox"] != "sandbox:v2" {
+		t.Fatalf("expected running image snapshot sandbox:v2, got %v", record.ContainerImages)
 	}
-	if record.ContainerID != "containerd://stopping-term-cid" {
-		t.Fatalf("expected containerID containerd://stopping-term-cid, got %q", record.ContainerID)
+	if record.ContainerId == nil || *record.ContainerId != "containerd://stopping-term-cid" {
+		t.Fatalf("expected containerID containerd://stopping-term-cid, got %v", record.ContainerId)
 	}
 
 	stored := &corev1.Pod{}
@@ -1208,14 +1208,14 @@ func TestSyncFailedPods_EvictedStoppingPod_Deleted(t *testing.T) {
 	if record == nil {
 		t.Fatal("expected Failed record in store for evicted pod")
 	}
-	if record.Status != string(agentsv1alpha1.SandboxStopReasonFailed) {
+	if string(record.Status) != string(agentsv1alpha1.SandboxStopReasonFailed) {
 		t.Fatalf("expected status Failed, got %s", record.Status)
 	}
-	if record.FailureReason != "Evicted" {
-		t.Fatalf("expected failureReason Evicted, got %s", record.FailureReason)
+	if record.FailureReason == nil || *record.FailureReason != "Evicted" {
+		t.Fatalf("expected failureReason Evicted, got %v", record.FailureReason)
 	}
-	if record.TerminatedAt != terminatedAt {
-		t.Fatalf("expected terminatedAt from annotation %s, got %s", terminatedAt, record.TerminatedAt)
+	if record.TerminatedAt == nil || record.TerminatedAt.Format(time.RFC3339) != terminatedAt {
+		t.Fatalf("expected terminatedAt from annotation %s, got %v", terminatedAt, record.TerminatedAt)
 	}
 }
 

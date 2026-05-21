@@ -20,18 +20,23 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
-const (
-	testReasonImagePullBackOff = "ImagePullBackOff"
-	testReasonOOMKilled        = "OOMKilled"
-)
-
 func newTestSandboxPoolService(t *testing.T, objs ...any) SandboxPoolService {
+	t.Helper()
+	svc, _ := newTestSandboxPoolServiceWithClient(t, objs...)
+	return svc
+}
+
+func newTestSandboxPoolServiceWithClient(t *testing.T, objs ...any) (SandboxPoolService, client.Client) {
 	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
 	if err != nil {
@@ -47,7 +52,20 @@ func newTestSandboxPoolService(t *testing.T, objs ...any) SandboxPoolService {
 			cb = cb.WithObjects(v)
 		}
 	}
-	return NewSandboxPoolService(cb.Build(), nil, nil)
+	cli := cb.Build()
+	return NewSandboxPoolService(cli, nil, nil), cli
+}
+
+// fetchCRDPool reads the underlying CRD from the test client so tests can
+// verify CRD-spec fields that are no longer exposed via gen.SandboxPool.
+// Tests in this file all use namespace "default".
+func fetchCRDPool(t *testing.T, cli client.Client, name string) *agentsv1alpha1.SandboxPool {
+	t.Helper()
+	p := &agentsv1alpha1.SandboxPool{}
+	if err := cli.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: name}, p); err != nil {
+		t.Fatalf("get pool default/%s: %v", name, err)
+	}
+	return p
 }
 
 func makePoolObj(name string, replicas int32) *agentsv1alpha1.SandboxPool {
@@ -67,62 +85,6 @@ func makePoolObj(name string, replicas int32) *agentsv1alpha1.SandboxPool {
 	}
 }
 
-// makePodForPool creates a pod owned by the given pool with the specified phase.
-func makePodForPool(name, poolName, phase, namespace string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				agentsv1alpha1.SandboxPoolLabelKey:  poolName,
-				agentsv1alpha1.SandboxPhaseLabelKey: phase,
-			},
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "sandbox", Image: "myrepo/myimage:v1"}},
-		},
-	}
-}
-
-// makeStartingPodForPool creates a Starting pod with ImagePullBackOff container status.
-func makeStartingPodForPool(name, poolName, namespace string) *corev1.Pod {
-	pod := makePodForPool(name, poolName, agentsv1alpha1.SandboxPhaseStarting, namespace)
-	pod.Status.ContainerStatuses = []corev1.ContainerStatus{
-		{
-			Name:  "sandbox",
-			Image: "myrepo/myimage:v1",
-			State: corev1.ContainerState{
-				Waiting: &corev1.ContainerStateWaiting{
-					Reason:  testReasonImagePullBackOff,
-					Message: "back-off pulling image",
-				},
-			},
-		},
-	}
-	return pod
-}
-
-// makeFailedPodForPool creates a Failed pod with OOMKilled status.
-func makeFailedPodForPool(name, poolName, namespace string) *corev1.Pod {
-	pod := makePodForPool(name, poolName, agentsv1alpha1.SandboxPhaseFailed, namespace)
-	pod.Status = corev1.PodStatus{
-		Phase:  corev1.PodFailed,
-		Reason: testReasonOOMKilled,
-		ContainerStatuses: []corev1.ContainerStatus{
-			{
-				Name: "sandbox",
-				State: corev1.ContainerState{
-					Terminated: &corev1.ContainerStateTerminated{
-						Reason:   "OOMKilled",
-						ExitCode: 137,
-					},
-				},
-			},
-		},
-	}
-	return pod
-}
-
 // ---------------------------------------------------------------------------
 // existing CRUD tests (unchanged)
 // ---------------------------------------------------------------------------
@@ -131,7 +93,7 @@ func TestSandboxPoolService_Create_DuplicateName(t *testing.T) {
 	existing := makePoolObj("pool-a", 1)
 	svc := newTestSandboxPoolService(t, existing)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateSandboxPoolInput{
+	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
 		Name:      "pool-a",
 		Namespace: "default",
 		Spec: agentsv1alpha1.SandboxPoolSpec{
@@ -155,7 +117,7 @@ func TestSandboxPoolService_Create_IdleImageValidation(t *testing.T) {
 	svc := newTestSandboxPoolService(t)
 
 	// Missing idleImage
-	_, appErr := svc.Create(context.Background(), domain.CreateSandboxPoolInput{
+	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
 		Name:      "pool-no-idle",
 		Namespace: "default",
 		Spec: agentsv1alpha1.SandboxPoolSpec{
@@ -177,7 +139,7 @@ func TestSandboxPoolService_Create_IdleImageValidation(t *testing.T) {
 	}
 
 	// IdleImage same as container image
-	_, appErr = svc.Create(context.Background(), domain.CreateSandboxPoolInput{
+	_, appErr = svc.Create(context.Background(), CreateSandboxPoolInput{
 		Name:      "pool-same-image",
 		Namespace: "default",
 		Spec: agentsv1alpha1.SandboxPoolSpec{
@@ -219,7 +181,7 @@ func TestSandboxPoolService_Update_Replicas(t *testing.T) {
 	svc := newTestSandboxPoolService(t, pool)
 
 	replicas := int32(5)
-	result, appErr := svc.Update(context.Background(), domain.UpdateSandboxPoolInput{
+	result, appErr := svc.Update(context.Background(), UpdateSandboxPoolInput{
 		Name:      "pool-a",
 		Namespace: "default",
 		Replicas:  &replicas,
@@ -280,9 +242,9 @@ func makeTemplateForPool(name, version string) *agentsv1alpha1.SandboxTemplate {
 
 func TestSandboxPoolService_Create_FromTemplate(t *testing.T) {
 	tmpl := makeTemplateForPool("bench-template", "v1.0.0")
-	svc := newTestSandboxPoolService(t, tmpl)
+	svc, cli := newTestSandboxPoolServiceWithClient(t, tmpl)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateSandboxPoolInput{
+	result, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
 		Name:         "pool-from-template",
 		Namespace:    "default",
 		TemplateName: "bench-template",
@@ -296,26 +258,28 @@ func TestSandboxPoolService_Create_FromTemplate(t *testing.T) {
 	if result.Name != "pool-from-template" {
 		t.Fatalf("expected name pool-from-template, got %s", result.Name)
 	}
-	if result.Spec.IdleImage != "template-idle:latest" {
-		t.Fatalf("expected idleImage from template 'template-idle:latest', got %s", result.Spec.IdleImage)
-	}
-	if len(result.Spec.Template.Spec.Containers) == 0 {
-		t.Fatal("expected containers from template")
-	}
-	if result.Spec.Template.Spec.Containers[0].Image != "template-base:latest" {
-		t.Fatalf("expected container image 'template-base:latest', got %s",
-			result.Spec.Template.Spec.Containers[0].Image)
-	}
 	if result.Spec.Replicas != 3 {
 		t.Fatalf("expected replicas 3, got %d", result.Spec.Replicas)
+	}
+
+	crd := fetchCRDPool(t, cli, "pool-from-template")
+	if crd.Spec.IdleImage != "template-idle:latest" {
+		t.Fatalf("expected idleImage from template 'template-idle:latest', got %s", crd.Spec.IdleImage)
+	}
+	if len(crd.Spec.Template.Spec.Containers) == 0 {
+		t.Fatal("expected containers from template")
+	}
+	if crd.Spec.Template.Spec.Containers[0].Image != "template-base:latest" {
+		t.Fatalf("expected container image 'template-base:latest', got %s",
+			crd.Spec.Template.Spec.Containers[0].Image)
 	}
 }
 
 func TestSandboxPoolService_Create_FromTemplate_WithOverride(t *testing.T) {
 	tmpl := makeTemplateForPool("base-template", "v1.0.0")
-	svc := newTestSandboxPoolService(t, tmpl)
+	svc, cli := newTestSandboxPoolServiceWithClient(t, tmpl)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateSandboxPoolInput{
+	result, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
 		Name:         "pool-override",
 		Namespace:    "default",
 		TemplateName: "base-template",
@@ -326,18 +290,19 @@ func TestSandboxPoolService_Create_FromTemplate_WithOverride(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.Spec.IdleImage != "template-idle:latest" {
-		t.Fatalf("expected idleImage from template 'template-idle:latest', got %s", result.Spec.IdleImage)
-	}
 	if result.Spec.Replicas != 2 {
 		t.Fatalf("expected replicas 2, got %d", result.Spec.Replicas)
+	}
+	crd := fetchCRDPool(t, cli, "pool-override")
+	if crd.Spec.IdleImage != "template-idle:latest" {
+		t.Fatalf("expected idleImage from template 'template-idle:latest', got %s", crd.Spec.IdleImage)
 	}
 }
 
 func TestSandboxPoolService_Create_TemplateNotFound(t *testing.T) {
 	svc := newTestSandboxPoolService(t)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateSandboxPoolInput{
+	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
 		Name:         "pool-missing-tmpl",
 		Namespace:    "default",
 		TemplateName: "does-not-exist",
@@ -350,172 +315,6 @@ func TestSandboxPoolService_Create_TemplateNotFound(t *testing.T) {
 	}
 	if appErr.Code != domain.ErrCodeNotFound {
 		t.Fatalf("expected ErrCodeNotFound, got %d", appErr.Code)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// diagnostic tests: List returns pod-YAML-only diagnostics
-// ---------------------------------------------------------------------------
-
-func TestSandboxPoolService_List_NoDiagnosticsForIdlePods(t *testing.T) {
-	pool := makePoolObj("pool-a", 2)
-	idlePod := makePodForPool("pod-idle", "pool-a", agentsv1alpha1.SandboxPhaseIdle, "default")
-	svc := newTestSandboxPoolService(t, pool, idlePod)
-
-	items, appErr := svc.List(context.Background(), "default", "", "")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 pool, got %d", len(items))
-	}
-	if len(items[0].PodDiagnostics) != 0 {
-		t.Errorf("expected no diagnostics for idle pod, got %d", len(items[0].PodDiagnostics))
-	}
-}
-
-func TestSandboxPoolService_List_DiagnosticsForStartingPod(t *testing.T) {
-	pool := makePoolObj("pool-a", 2)
-	startingPod := makeStartingPodForPool("pod-starting", "pool-a", "default")
-	svc := newTestSandboxPoolService(t, pool, startingPod)
-
-	items, appErr := svc.List(context.Background(), "default", "", "")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 pool, got %d", len(items))
-	}
-	diags := items[0].PodDiagnostics
-	if len(diags) != 1 {
-		t.Fatalf("expected 1 diagnostic, got %d", len(diags))
-	}
-	d := diags[0]
-	if d.PodName != "pod-starting" {
-		t.Errorf("PodName = %q, want %q", d.PodName, "pod-starting")
-	}
-	if d.Phase != agentsv1alpha1.SandboxPhaseStarting {
-		t.Errorf("Phase = %q, want %q", d.Phase, agentsv1alpha1.SandboxPhaseStarting)
-	}
-	if d.Reason != testReasonImagePullBackOff {
-		t.Errorf("Reason = %q, want %q", d.Reason, testReasonImagePullBackOff)
-	}
-	if d.Message == "" {
-		t.Error("expected non-empty Message")
-	}
-	// List must NOT populate Events (no clientset)
-	if len(d.Events) != 0 {
-		t.Errorf("List should not populate Events, got %d", len(d.Events))
-	}
-}
-
-func TestSandboxPoolService_List_DiagnosticsForFailedPod(t *testing.T) {
-	pool := makePoolObj("pool-a", 3)
-	failedPod := makeFailedPodForPool("pod-failed", "pool-a", "default")
-	svc := newTestSandboxPoolService(t, pool, failedPod)
-
-	items, appErr := svc.List(context.Background(), "default", "", "")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if len(items[0].PodDiagnostics) != 1 {
-		t.Fatalf("expected 1 diagnostic, got %d", len(items[0].PodDiagnostics))
-	}
-	d := items[0].PodDiagnostics[0]
-	if d.Phase != agentsv1alpha1.SandboxPhaseFailed {
-		t.Errorf("Phase = %q, want %q", d.Phase, agentsv1alpha1.SandboxPhaseFailed)
-	}
-	if d.Reason != testReasonOOMKilled {
-		t.Errorf("Reason = %q, want %q", d.Reason, testReasonOOMKilled)
-	}
-}
-
-func TestSandboxPoolService_List_MultiplePools_DiagnosticsIsolated(t *testing.T) {
-	poolA := makePoolObj("pool-a", 2)
-	poolB := makePoolObj("pool-b", 2)
-	startingPod := makeStartingPodForPool("pod-starting", "pool-a", "default")
-	idlePodB := makePodForPool("pod-idle-b", "pool-b", agentsv1alpha1.SandboxPhaseIdle, "default")
-	svc := newTestSandboxPoolService(t, poolA, poolB, startingPod, idlePodB)
-
-	items, appErr := svc.List(context.Background(), "default", "", "")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 pools, got %d", len(items))
-	}
-	byName := make(map[string]domain.SandboxPool, 2)
-	for _, item := range items {
-		byName[item.Name] = item
-	}
-	if len(byName["pool-a"].PodDiagnostics) != 1 {
-		t.Errorf("pool-a: expected 1 diagnostic, got %d", len(byName["pool-a"].PodDiagnostics))
-	}
-	if len(byName["pool-b"].PodDiagnostics) != 0 {
-		t.Errorf("pool-b: expected 0 diagnostics, got %d", len(byName["pool-b"].PodDiagnostics))
-	}
-}
-
-// ---------------------------------------------------------------------------
-// diagnostic tests: Get returns diagnostics from Pod YAML (Events empty without clientset)
-// ---------------------------------------------------------------------------
-
-func TestSandboxPoolService_Get_DiagnosticsFromPodYAML(t *testing.T) {
-	pool := makePoolObj("pool-a", 2)
-	startingPod := makeStartingPodForPool("pod-starting", "pool-a", "default")
-	svc := newTestSandboxPoolService(t, pool, startingPod)
-
-	result, appErr := svc.Get(context.Background(), "default", "pool-a")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if len(result.PodDiagnostics) != 1 {
-		t.Fatalf("expected 1 diagnostic, got %d", len(result.PodDiagnostics))
-	}
-	d := result.PodDiagnostics[0]
-	if d.PodName != "pod-starting" {
-		t.Errorf("PodName = %q, want %q", d.PodName, "pod-starting")
-	}
-	if d.Reason != testReasonImagePullBackOff {
-		t.Errorf("Reason = %q, want %q", d.Reason, testReasonImagePullBackOff)
-	}
-}
-
-func TestSandboxPoolService_Get_NoDiagnosticsForHealthyPool(t *testing.T) {
-	pool := makePoolObj("pool-a", 2)
-	idlePod1 := makePodForPool("pod-idle-1", "pool-a", agentsv1alpha1.SandboxPhaseIdle, "default")
-	idlePod2 := makePodForPool("pod-idle-2", "pool-a", agentsv1alpha1.SandboxPhaseIdle, "default")
-	svc := newTestSandboxPoolService(t, pool, idlePod1, idlePod2)
-
-	result, appErr := svc.Get(context.Background(), "default", "pool-a")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if len(result.PodDiagnostics) != 0 {
-		t.Errorf("expected no diagnostics for healthy pool, got %d", len(result.PodDiagnostics))
-	}
-}
-
-func TestSandboxPoolService_Get_EventsEmptyWithoutClientset(t *testing.T) {
-	pool := makePoolObj("pool-a", 2)
-	failedPod := makeFailedPodForPool("pod-failed", "pool-a", "default")
-	// clientset is nil (passed nil above)
-	svc := newTestSandboxPoolService(t, pool, failedPod)
-
-	result, appErr := svc.Get(context.Background(), "default", "pool-a")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if len(result.PodDiagnostics) != 1 {
-		t.Fatalf("expected 1 diagnostic, got %d", len(result.PodDiagnostics))
-	}
-	d := result.PodDiagnostics[0]
-	if d.Reason != testReasonOOMKilled {
-		t.Errorf("Reason = %q, want %q", d.Reason, testReasonOOMKilled)
-	}
-	// Without a clientset, Events should be empty
-	if len(d.Events) != 0 {
-		t.Errorf("expected no Events without clientset, got %d", len(d.Events))
 	}
 }
 
@@ -553,25 +352,23 @@ func TestSyncTemplate_UpdatesEmbeddedSpec(t *testing.T) {
 		},
 	}
 
-	svc := newTestSandboxPoolService(t, pool, tmpl)
+	svc, cli := newTestSandboxPoolServiceWithClient(t, pool, tmpl)
 
-	result, appErr := svc.SyncTemplate(context.Background(), domain.SyncSandboxPoolTemplateInput{
-		Name:      "pool-a",
-		Namespace: "default",
-	})
+	result, appErr := svc.SyncTemplate(context.Background(), "default", "pool-a")
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.Spec.IdleImage != "pause:3.10" {
-		t.Errorf("IdleImage = %q, want %q", result.Spec.IdleImage, "pause:3.10")
-	}
 	// TemplateVersion should be updated to template's current version
-	if result.TemplateVersion != "1.1.0" {
-		t.Errorf("TemplateVersion = %q, want %q", result.TemplateVersion, "1.1.0")
+	if result.TemplateVersion == nil || *result.TemplateVersion != "1.1.0" {
+		t.Errorf("TemplateVersion = %v, want %q", result.TemplateVersion, "1.1.0")
 	}
 	// Replicas must not change
 	if result.Spec.Replicas != 3 {
 		t.Errorf("Replicas = %d, want 3", result.Spec.Replicas)
+	}
+	crd := fetchCRDPool(t, cli, "pool-a")
+	if crd.Spec.IdleImage != "pause:3.10" {
+		t.Errorf("IdleImage = %q, want %q", crd.Spec.IdleImage, "pause:3.10")
 	}
 }
 
@@ -580,10 +377,7 @@ func TestSyncTemplate_NoTemplateAnnotation_Returns400(t *testing.T) {
 	pool := makePoolObj("pool-no-template", 2)
 	svc := newTestSandboxPoolService(t, pool)
 
-	_, appErr := svc.SyncTemplate(context.Background(), domain.SyncSandboxPoolTemplateInput{
-		Name:      "pool-no-template",
-		Namespace: "default",
-	})
+	_, appErr := svc.SyncTemplate(context.Background(), "default", "pool-no-template")
 	if appErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -595,10 +389,7 @@ func TestSyncTemplate_NoTemplateAnnotation_Returns400(t *testing.T) {
 func TestSyncTemplate_PoolNotFound_Returns404(t *testing.T) {
 	svc := newTestSandboxPoolService(t)
 
-	_, appErr := svc.SyncTemplate(context.Background(), domain.SyncSandboxPoolTemplateInput{
-		Name:      "nonexistent-pool",
-		Namespace: "default",
-	})
+	_, appErr := svc.SyncTemplate(context.Background(), "default", "nonexistent-pool")
 	if appErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -611,7 +402,7 @@ func TestSandboxPoolService_Update_InvalidImage_Returns400(t *testing.T) {
 	pool := makePoolObj("pool-a", 1)
 	svc := newTestSandboxPoolService(t, pool)
 
-	_, appErr := svc.Update(context.Background(), domain.UpdateSandboxPoolInput{
+	_, appErr := svc.Update(context.Background(), UpdateSandboxPoolInput{
 		Name:          "pool-a",
 		Namespace:     "default",
 		OverrideImage: "INVALID@@IMAGE",
@@ -626,9 +417,9 @@ func TestSandboxPoolService_Update_InvalidImage_Returns400(t *testing.T) {
 
 func TestSandboxPoolService_Update_ValidImage(t *testing.T) {
 	pool := makePoolObj("pool-a", 1)
-	svc := newTestSandboxPoolService(t, pool)
+	svc, cli := newTestSandboxPoolServiceWithClient(t, pool)
 
-	result, appErr := svc.Update(context.Background(), domain.UpdateSandboxPoolInput{
+	_, appErr := svc.Update(context.Background(), UpdateSandboxPoolInput{
 		Name:          "pool-a",
 		Namespace:     "default",
 		OverrideImage: "ghcr.io/org/repo:v2.0.0",
@@ -636,8 +427,9 @@ func TestSandboxPoolService_Update_ValidImage(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.Spec.Template.Spec.Containers[0].Image != "ghcr.io/org/repo:v2.0.0" {
-		t.Fatalf("expected image ghcr.io/org/repo:v2.0.0, got %s", result.Spec.Template.Spec.Containers[0].Image)
+	crd := fetchCRDPool(t, cli, "pool-a")
+	if crd.Spec.Template.Spec.Containers[0].Image != "ghcr.io/org/repo:v2.0.0" {
+		t.Fatalf("expected image ghcr.io/org/repo:v2.0.0, got %s", crd.Spec.Template.Spec.Containers[0].Image)
 	}
 }
 
@@ -645,15 +437,15 @@ func TestSandboxPoolService_Create_FromTemplate_InvalidOverrideImage(t *testing.
 	tmpl := makeTemplateForPool("base-template", "v1.0.0")
 	svc := newTestSandboxPoolService(t, tmpl)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateSandboxPoolInput{
+	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
 		Name:         "pool-bad-image",
 		Namespace:    "default",
 		TemplateName: "base-template",
 		Spec: agentsv1alpha1.SandboxPoolSpec{
 			Replicas: 1,
 		},
-		Overrides: &domain.PoolTemplateOverrides{
-			Image: "INVALID@@IMAGE",
+		Overrides: &gen.PoolTemplateOverrides{
+			Image: ptr.To("INVALID@@IMAGE"),
 		},
 	})
 	if appErr == nil {
@@ -669,10 +461,7 @@ func TestSyncTemplate_TemplateNotFound_Returns404(t *testing.T) {
 	pool := makePoolObjWithTemplateAnnotation("pool-orphan", "deleted-template", "1.0.0", 2)
 	svc := newTestSandboxPoolService(t, pool)
 
-	_, appErr := svc.SyncTemplate(context.Background(), domain.SyncSandboxPoolTemplateInput{
-		Name:      "pool-orphan",
-		Namespace: "default",
-	})
+	_, appErr := svc.SyncTemplate(context.Background(), "default", "pool-orphan")
 	if appErr == nil {
 		t.Fatal("expected error, got nil")
 	}

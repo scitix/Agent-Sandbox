@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 )
 
@@ -30,7 +31,7 @@ type ClusterService interface {
 	// empty the result is a single-entry list containing the local cluster, or an
 	// empty slice when neither is configured. The list is a defensive copy; the
 	// caller may mutate it freely.
-	List(ctx context.Context) ([]domain.ClusterSummary, *domain.AppError)
+	List(ctx context.Context) ([]gen.ClusterSummary, *domain.AppError)
 }
 
 type clusterService struct {
@@ -45,19 +46,23 @@ func NewClusterService(store *cluster.Store, localClusterID string) ClusterServi
 	return &clusterService{store: store, localClusterID: localClusterID}
 }
 
-func (s *clusterService) List(_ context.Context) ([]domain.ClusterSummary, *domain.AppError) {
+func (s *clusterService) List(_ context.Context) ([]gen.ClusterSummary, *domain.AppError) {
 	var entries []cluster.ClusterEntry
 	if s.store != nil {
 		entries = s.store.All()
 	}
 
-	byID := make(map[string]domain.ClusterSummary, len(entries)+1)
+	byID := make(map[string]gen.ClusterSummary, len(entries)+1)
 	for _, e := range entries {
-		byID[e.ID] = domain.ClusterSummary{
-			ID:    e.ID,
-			Name:  e.Name,
+		entry := gen.ClusterSummary{
+			Id:    e.ID,
 			Local: e.ID == s.localClusterID,
 		}
+		if e.Name != "" {
+			n := e.Name
+			entry.Name = &n
+		}
+		byID[e.ID] = entry
 	}
 
 	// Always surface the local cluster, even if the config-map-backed store
@@ -68,18 +73,19 @@ func (s *clusterService) List(_ context.Context) ([]domain.ClusterSummary, *doma
 			existing.Local = true
 			byID[s.localClusterID] = existing
 		} else {
-			byID[s.localClusterID] = domain.ClusterSummary{
-				ID:    s.localClusterID,
-				Name:  s.localClusterID,
+			n := s.localClusterID
+			byID[s.localClusterID] = gen.ClusterSummary{
+				Id:    s.localClusterID,
+				Name:  &n,
 				Local: true,
 			}
 		}
 	}
 
-	out := make([]domain.ClusterSummary, 0, len(byID))
+	out := make([]gen.ClusterSummary, 0, len(byID))
 	for _, v := range byID {
 		out = append(out, v)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
 	return out, nil
 }

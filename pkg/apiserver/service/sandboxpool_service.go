@@ -22,7 +22,6 @@ import (
 	"maps"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,12 +29,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	"github.com/scitix/agent-sandbox/pkg/utils/dockerconfig"
@@ -55,17 +56,17 @@ func imagePullSecretName(poolName string) string {
 
 // SandboxPoolService defines business operations for SandboxPools.
 type SandboxPoolService interface {
-	Create(ctx context.Context, input domain.CreateSandboxPoolInput) (*domain.SandboxPool, *domain.AppError)
-	List(ctx context.Context, namespace, team, user string) ([]domain.SandboxPool, *domain.AppError)
-	Get(ctx context.Context, namespace, name string) (*domain.SandboxPool, *domain.AppError)
-	Update(ctx context.Context, input domain.UpdateSandboxPoolInput) (*domain.SandboxPool, *domain.AppError)
-	Delete(ctx context.Context, namespace, name string) (*domain.DeleteSandboxPoolResult, *domain.AppError)
+	Create(ctx context.Context, input CreateSandboxPoolInput) (*gen.SandboxPool, *domain.AppError)
+	List(ctx context.Context, namespace, team, user string) ([]gen.SandboxPool, *domain.AppError)
+	Get(ctx context.Context, namespace, name string) (*gen.SandboxPool, *domain.AppError)
+	Update(ctx context.Context, input UpdateSandboxPoolInput) (*gen.SandboxPool, *domain.AppError)
+	Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxPoolResult, *domain.AppError)
 	// SyncTemplate re-reads the pool's source SandboxTemplate and patches the pool's EmbeddedSandboxTemplate.
 	// Does not change replicas. Returns error if pool has no templateName annotation.
-	SyncTemplate(ctx context.Context, input domain.SyncSandboxPoolTemplateInput) (*domain.SandboxPool, *domain.AppError)
+	SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxPool, *domain.AppError)
 	// SyncTemplatePreview dry-runs SyncTemplate: returns what the EmbeddedSandboxTemplate would look like
 	// after applying all overrides, without writing to Kubernetes.
-	SyncTemplatePreview(ctx context.Context, input domain.SyncSandboxPoolTemplateInput) (*domain.SyncTemplatePreviewResult, *domain.AppError)
+	SyncTemplatePreview(ctx context.Context, namespace, name string) (*gen.SyncTemplatePreviewResult, *domain.AppError)
 }
 
 type k8sSandboxPoolService struct {
@@ -85,7 +86,7 @@ func NewSandboxPoolService(c client.Client, clientset kubernetes.Interface, plug
 	}
 }
 
-func (s *k8sSandboxPoolService) Create(ctx context.Context, input domain.CreateSandboxPoolInput) (*domain.SandboxPool, *domain.AppError) {
+func (s *k8sSandboxPoolService) Create(ctx context.Context, input CreateSandboxPoolInput) (*gen.SandboxPool, *domain.AppError) {
 	// 0. Pre-check: verify name does not already exist to avoid orphan side-effects (e.g. reservations)
 	existing := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: input.Name, Namespace: input.Namespace}, existing); err == nil {
@@ -114,8 +115,9 @@ func (s *k8sSandboxPoolService) Create(ctx context.Context, input domain.CreateS
 		}
 		input.Spec.EmbeddedSandboxTemplate = tmpl.Spec.EmbeddedSandboxTemplate
 		// Apply caller-supplied overrides on top of the copied template.
-		if input.Overrides != nil {
-			if appErr := applyPoolTemplateOverrides(&input.Spec.EmbeddedSandboxTemplate, input.Overrides); appErr != nil {
+		overrides := overridesFromGen(input.Overrides)
+		if overrides != nil {
+			if appErr := applyPoolTemplateOverrides(&input.Spec.EmbeddedSandboxTemplate, overrides); appErr != nil {
 				return nil, appErr
 			}
 		}
@@ -132,7 +134,7 @@ func (s *k8sSandboxPoolService) Create(ctx context.Context, input domain.CreateS
 		// what the Template's own annotations contain.
 		input.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = tmpl.Name
 		input.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] = tmpl.Spec.Version
-		persistPoolTemplateOverridesInAnnotations(input.Annotations, input.Overrides)
+		persistPoolTemplateOverridesInAnnotations(input.Annotations, overrides)
 	} else if input.Spec.Template == nil {
 		return nil, domain.NewBadRequest("either templateName or spec.template is required")
 	}
@@ -165,7 +167,7 @@ func (s *k8sSandboxPoolService) Create(ctx context.Context, input domain.CreateS
 		}
 		existing := mustPoolTemplateOverridesFromAnnotations(pool.Annotations)
 		if existing == nil {
-			existing = &domain.PoolTemplateOverrides{}
+			existing = &PoolTemplateOverrides{}
 		}
 		existing.ImagePullSecretName = secretName
 		persistPoolTemplateOverridesInAnnotations(pool.Annotations, existing)
@@ -202,13 +204,13 @@ func (s *k8sSandboxPoolService) Create(ctx context.Context, input domain.CreateS
 		}
 	}
 
-	result := poolToDomain(ctx, pool, nil, nil)
+	result := poolToGen(ctx, pool, nil)
 	return &result, nil
 }
 
 // createImagePullSecret materialises the given credentials as a kubernetes.io/dockerconfigjson
 // Secret named ips-{poolName}, with OwnerReference pointing at the pool.
-func (s *k8sSandboxPoolService) createImagePullSecret(ctx context.Context, pool *agentsv1alpha1.SandboxPool, input *domain.ImagePullSecretInput) *domain.AppError {
+func (s *k8sSandboxPoolService) createImagePullSecret(ctx context.Context, pool *agentsv1alpha1.SandboxPool, input *gen.ImagePullSecretInput) *domain.AppError {
 	creds := make([]dockerconfig.RegistryCredential, 0, len(input.Registries))
 	for _, r := range input.Registries {
 		creds = append(creds, dockerconfig.RegistryCredential{
@@ -291,7 +293,7 @@ func (s *k8sSandboxPoolService) buildAvailableTemplatesDetail(ctx context.Contex
 // List returns all SandboxPools in the given namespace, with per-pod diagnostics
 // derived from Pod YAML only (no Kubernetes Events API calls).
 // When team and user are non-empty, only pools with matching labels are returned.
-func (s *k8sSandboxPoolService) List(ctx context.Context, namespace, team, user string) ([]domain.SandboxPool, *domain.AppError) {
+func (s *k8sSandboxPoolService) List(ctx context.Context, namespace, team, user string) ([]gen.SandboxPool, *domain.AppError) {
 	listOpts := []client.ListOption{client.InNamespace(namespace)}
 	if team != "" && user != "" {
 		listOpts = append(listOpts, client.MatchingLabels{
@@ -304,11 +306,10 @@ func (s *k8sSandboxPoolService) List(ctx context.Context, namespace, team, user 
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 
-	items := make([]domain.SandboxPool, 0, len(poolList.Items))
+	items := make([]gen.SandboxPool, 0, len(poolList.Items))
 	for i := range poolList.Items {
 		p := &poolList.Items[i]
-		diags := s.listDiagnosticsFromPodYAML(ctx, p)
-		items = append(items, poolToDomain(ctx, p, diags, nil))
+		items = append(items, poolToGen(ctx, p, nil))
 	}
 	// Sort by name for consistent ordering (especially important for tests)
 	sort.Slice(items, func(i, j int) bool {
@@ -317,9 +318,8 @@ func (s *k8sSandboxPoolService) List(ctx context.Context, namespace, team, user 
 	return items, nil
 }
 
-// Get returns a single SandboxPool with detailed per-pod diagnostics including
-// all relevant Kubernetes Warning events for Starting/Failed pods.
-func (s *k8sSandboxPoolService) Get(ctx context.Context, namespace, name string) (*domain.SandboxPool, *domain.AppError) {
+// Get returns a single SandboxPool.
+func (s *k8sSandboxPoolService) Get(ctx context.Context, namespace, name string) (*gen.SandboxPool, *domain.AppError) {
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pool); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -327,8 +327,6 @@ func (s *k8sSandboxPoolService) Get(ctx context.Context, namespace, name string)
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-
-	diags := s.getDiagnosticsWithEvents(ctx, pool)
 
 	var tmpl *agentsv1alpha1.SandboxTemplate
 	if templateName := pool.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey]; templateName != "" {
@@ -338,11 +336,11 @@ func (s *k8sSandboxPoolService) Get(ctx context.Context, namespace, name string)
 		}
 	}
 
-	result := poolToDomain(ctx, pool, diags, tmpl)
+	result := poolToGen(ctx, pool, tmpl)
 	return &result, nil
 }
 
-func (s *k8sSandboxPoolService) Update(ctx context.Context, input domain.UpdateSandboxPoolInput) (*domain.SandboxPool, *domain.AppError) {
+func (s *k8sSandboxPoolService) Update(ctx context.Context, input UpdateSandboxPoolInput) (*gen.SandboxPool, *domain.AppError) {
 	key := client.ObjectKey{Namespace: input.Namespace, Name: input.Name}
 
 	if input.OverrideImage != "" {
@@ -375,7 +373,7 @@ func (s *k8sSandboxPoolService) Update(ctx context.Context, input domain.UpdateS
 			p.Spec.Template.Spec.Containers[0].Image = input.OverrideImage
 			existing := mustPoolTemplateOverridesFromAnnotations(p.Annotations)
 			if existing == nil {
-				existing = &domain.PoolTemplateOverrides{}
+				existing = &PoolTemplateOverrides{}
 			}
 			existing.Image = input.OverrideImage
 			persistPoolTemplateOverridesInAnnotations(p.Annotations, existing)
@@ -442,17 +440,17 @@ func (s *k8sSandboxPoolService) Update(ctx context.Context, input domain.UpdateS
 		return nil, domain.NewInternal(retryErr.Error(), retryErr)
 	}
 
-	result := poolToDomain(ctx, pool, nil, nil)
+	result := poolToGen(ctx, pool, nil)
 	return &result, nil
 }
 
-func (s *k8sSandboxPoolService) SyncTemplate(ctx context.Context, input domain.SyncSandboxPoolTemplateInput) (*domain.SandboxPool, *domain.AppError) {
+func (s *k8sSandboxPoolService) SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxPool, *domain.AppError) {
 	// Resolve the template name from the pool once upfront — if the pool doesn't
 	// exist or has no templateName annotation we can fail fast before any retries.
 	pool := &agentsv1alpha1.SandboxPool{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: input.Namespace, Name: input.Name}, pool); err != nil {
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pool); err != nil {
 		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", input.Name))
+			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", name))
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
@@ -470,10 +468,10 @@ func (s *k8sSandboxPoolService) SyncTemplate(ctx context.Context, input domain.S
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 
-	var result domain.SandboxPool
+	var result gen.SandboxPool
 	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &agentsv1alpha1.SandboxPool{}
-		if err := s.client.Get(ctx, client.ObjectKey{Namespace: input.Namespace, Name: input.Name}, current); err != nil {
+		if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, current); err != nil {
 			return err
 		}
 
@@ -506,12 +504,12 @@ func (s *k8sSandboxPoolService) SyncTemplate(ctx context.Context, input domain.S
 		if err := s.client.Patch(ctx, updated, patch); err != nil {
 			return err
 		}
-		result = poolToDomain(ctx, updated, nil, nil)
+		result = poolToGen(ctx, updated, nil)
 		return nil
 	})
 	if retryErr != nil {
 		if k8serrors.IsNotFound(retryErr) {
-			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", input.Name))
+			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", name))
 		}
 		if isBadRequest(retryErr) {
 			return nil, domain.NewBadRequest(strings.TrimSuffix(retryErr.Error(), ": "+errBadRequest.Error()))
@@ -522,11 +520,11 @@ func (s *k8sSandboxPoolService) SyncTemplate(ctx context.Context, input domain.S
 	return &result, nil
 }
 
-func (s *k8sSandboxPoolService) SyncTemplatePreview(ctx context.Context, input domain.SyncSandboxPoolTemplateInput) (*domain.SyncTemplatePreviewResult, *domain.AppError) {
+func (s *k8sSandboxPoolService) SyncTemplatePreview(ctx context.Context, namespace, name string) (*gen.SyncTemplatePreviewResult, *domain.AppError) {
 	pool := &agentsv1alpha1.SandboxPool{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: input.Namespace, Name: input.Name}, pool); err != nil {
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pool); err != nil {
 		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", input.Name))
+			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", name))
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
@@ -565,13 +563,13 @@ func (s *k8sSandboxPoolService) SyncTemplatePreview(ctx context.Context, input d
 		return nil, domain.NewInternal("marshal preview: "+err.Error(), err)
 	}
 
-	return &domain.SyncTemplatePreviewResult{
+	return &gen.SyncTemplatePreviewResult{
 		SpecYaml: string(b),
 		Version:  tmpl.Spec.Version,
 	}, nil
 }
 
-func (s *k8sSandboxPoolService) Delete(ctx context.Context, namespace, name string) (*domain.DeleteSandboxPoolResult, *domain.AppError) {
+func (s *k8sSandboxPoolService) Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxPoolResult, *domain.AppError) {
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pool); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -589,69 +587,10 @@ func (s *k8sSandboxPoolService) Delete(ctx context.Context, namespace, name stri
 		return nil, domain.NewInternal(fmt.Sprintf("failed to delete pool: %v", err), err)
 	}
 
-	return &domain.DeleteSandboxPoolResult{
+	return &gen.DeleteSandboxPoolResult{
 		Name:      pool.Name,
 		Namespace: pool.Namespace,
 	}, nil
-}
-
-// ---------------------------------------------------------------------------
-// diagnostic helpers
-// ---------------------------------------------------------------------------
-
-// listDiagnosticsFromPodYAML lists all Starting/Failed pods for a pool and
-// builds diagnostics from Pod YAML only (no Events API calls).
-func (s *k8sSandboxPoolService) listDiagnosticsFromPodYAML(ctx context.Context, pool *agentsv1alpha1.SandboxPool) []domain.PodDiagnostic {
-	pods, err := indexer.ListPodsBySandboxPool(ctx, s.client, pool.Namespace, pool.Name)
-	if err != nil {
-		return nil
-	}
-	var diags []domain.PodDiagnostic
-	for i := range pods {
-		d := sandboxpool.BuildSandboxStatusDetailFromPod(&pods[i])
-		if d == nil {
-			continue
-		}
-		diags = append(diags, domain.PodDiagnostic{
-			PodName: d.PodName,
-			Phase:   d.Phase,
-			Reason:  d.Reason,
-			Message: d.Message,
-		})
-	}
-	return diags
-}
-
-// getDiagnosticsWithEvents lists all Starting/Failed pods for a pool, builds
-// diagnostics from Pod YAML and also fetches Warning events from the K8s API.
-func (s *k8sSandboxPoolService) getDiagnosticsWithEvents(ctx context.Context, pool *agentsv1alpha1.SandboxPool) []domain.PodDiagnostic {
-	pods, err := indexer.ListPodsBySandboxPool(ctx, s.client, pool.Namespace, pool.Name)
-	if err != nil {
-		return nil
-	}
-	var diags []domain.PodDiagnostic
-	for i := range pods {
-		d := sandboxpool.BuildPodStatusDetailWithEvents(ctx, s.clientset, &pods[i])
-		if d == nil {
-			continue
-		}
-		dd := domain.PodDiagnostic{
-			PodName: d.PodName,
-			Phase:   d.Phase,
-			Reason:  d.Reason,
-			Message: d.Message,
-		}
-		for _, e := range d.Events {
-			dd.Events = append(dd.Events, domain.PodDiagnosticEvent{
-				Reason:        e.Reason,
-				Message:       e.Message,
-				LastTimestamp: e.LastTimestamp,
-				Count:         e.Count,
-			})
-		}
-		diags = append(diags, dd)
-	}
-	return diags
 }
 
 // ---------------------------------------------------------------------------
@@ -666,37 +605,138 @@ func isBadRequest(err error) bool {
 	return errors.Is(err, errBadRequest)
 }
 
-func poolToDomain(ctx context.Context, pool *agentsv1alpha1.SandboxPool, diags []domain.PodDiagnostic, tmpl *agentsv1alpha1.SandboxTemplate) domain.SandboxPool {
-	dp := domain.SandboxPool{
+// poolToGen converts a CRD SandboxPool (plus optional source template) to the gen
+// wire shape. The CRD spec is intentionally not exposed; instead we project the
+// fields the API documents (replicas, autoscaling, default timeouts, template
+// reference, computed CPU/Memory, SpecYaml for diff) into gen.SandboxPool.
+func poolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agentsv1alpha1.SandboxTemplate) gen.SandboxPool {
+	spec := gen.SandboxPoolSpec{
+		Replicas: pool.Spec.Replicas,
+	}
+	if pool.Spec.MinReplicas != nil {
+		spec.MinReplicas = pool.Spec.MinReplicas
+	}
+	if pool.Spec.MaxReplicas != nil {
+		spec.MaxReplicas = pool.Spec.MaxReplicas
+	}
+	if pool.Spec.TemplateName != "" {
+		spec.TemplateName = ptr.To(pool.Spec.TemplateName)
+	}
+	if pool.Spec.Autoscaling != nil {
+		spec.Autoscaling = autoscalingToGen(pool.Spec.Autoscaling)
+	}
+	if pool.Spec.DefaultStartupTimeout != nil {
+		spec.DefaultStartupTimeout = ptr.To(pool.Spec.DefaultStartupTimeout.Duration.String())
+	}
+	if pool.Spec.DefaultIdleTimeout != nil {
+		spec.DefaultIdleTimeout = ptr.To(pool.Spec.DefaultIdleTimeout.Duration.String())
+	}
+	if pool.Spec.PodCreationImagePolicy != "" {
+		policy := gen.SandboxPoolSpecPodCreationImagePolicy(pool.Spec.PodCreationImagePolicy)
+		spec.PodCreationImagePolicy = &policy
+	}
+
+	status := gen.SandboxPoolStatus{
+		IdleReplicas:            ptr.To(pool.Status.IdleReplicas),
+		UnavailableIdleReplicas: ptr.To(pool.Status.UnavailableIdleReplicas),
+		RunningReplicas:         ptr.To(pool.Status.RunningReplicas),
+		StartingReplicas:        ptr.To(pool.Status.StartingReplicas),
+		StoppingReplicas:        ptr.To(pool.Status.StoppingReplicas),
+		FailedReplicas:          ptr.To(pool.Status.FailedReplicas),
+	}
+	if pool.Status.Phase != "" {
+		phase := gen.SandboxPoolStatusPhase(pool.Status.Phase)
+		status.Phase = &phase
+	}
+
+	specYaml := embeddedTemplateToYAML(pool.Spec.EmbeddedSandboxTemplate)
+	createdAt := pool.CreationTimestamp.UTC()
+	result := gen.SandboxPool{
 		Name:            pool.Name,
 		Namespace:       pool.Namespace,
-		Spec:            pool.Spec,
-		Status:          pool.Status,
-		Overrides:       mustPoolTemplateOverridesFromAnnotations(pool.Annotations),
-		PodDiagnostics:  diags,
-		Team:            pool.Labels[agentsv1alpha1.LabelTeam],
-		User:            pool.Labels[agentsv1alpha1.LabelUser],
-		TemplateVersion: pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey],
-		CreatedAt:       pool.CreationTimestamp.UTC().Format(time.RFC3339),
+		Spec:            spec,
+		Status:          status,
+		Team:            ptr.To(pool.Labels[agentsv1alpha1.LabelTeam]),
+		User:            ptr.To(pool.Labels[agentsv1alpha1.LabelUser]),
+		TemplateVersion: ptr.To(pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey]),
+		SpecYaml:        ptr.To(specYaml),
+		CreatedAt:       &createdAt,
+	}
+	if overrides := mustPoolTemplateOverridesFromAnnotations(pool.Annotations); overrides != nil {
+		result.Overrides = &gen.PoolTemplateOverrides{}
+		if overrides.Image != "" {
+			result.Overrides.Image = &overrides.Image
+		}
+		if overrides.ResourceMultiplier > 1 {
+			result.Overrides.ResourceMultiplier = &overrides.ResourceMultiplier
+		}
 	}
 	if tmpl != nil {
-		dp.PoolDocs = tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]
+		if v := tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]; v != "" {
+			result.PoolDocs = ptr.To(v)
+		}
 	}
 	if pool.Spec.Template != nil {
 		cpu, memory, err := utilresource.SumContainerResources(pool.Spec.Template)
 		if err != nil {
 			log.FromContext(ctx).V(1).Info("failed to compute pool resources", "pool", pool.Name, "error", err)
 		} else {
-			dp.CPU = cpu.String()
-			dp.Memory = memory.String()
+			result.Cpu = ptr.To(cpu.String())
+			result.Memory = ptr.To(memory.String())
 		}
 	}
+	return result
+}
 
-	return dp
+// autoscalingToGen converts a CRD PoolAutoscalingSpec to the generated gen type.
+func autoscalingToGen(a *agentsv1alpha1.PoolAutoscalingSpec) *gen.PoolAutoscalingSpec {
+	if a == nil {
+		return nil
+	}
+	result := &gen.PoolAutoscalingSpec{
+		Enabled: &a.Enabled,
+	}
+	if a.ScaleUpPolicy != nil {
+		mode := gen.PoolScaleUpPolicyMode(a.ScaleUpPolicy.Mode)
+		result.ScaleUpPolicy = &gen.PoolScaleUpPolicy{
+			Mode:                 &mode,
+			CooldownSeconds:      &a.ScaleUpPolicy.CooldownSeconds,
+			IdleThresholdSeconds: &a.ScaleUpPolicy.IdleThresholdSeconds,
+		}
+	}
+	if a.ScaleDownPolicy != nil {
+		result.ScaleDownPolicy = &gen.PoolScaleDownPolicy{
+			IdleTimeoutSeconds:      &a.ScaleDownPolicy.IdleTimeoutSeconds,
+			StabilizationSeconds:    &a.ScaleDownPolicy.StabilizationSeconds,
+			ProtectionWindowSeconds: &a.ScaleDownPolicy.ProtectionWindowSeconds,
+		}
+	}
+	return result
+}
+
+// embeddedTemplateToYAML serializes the EmbeddedSandboxTemplate fields (idleImage, runtimes,
+// reservation, template) to a YAML string for use in the SyncTemplate diff view.
+// Returns an empty string if marshalling fails.
+func embeddedTemplateToYAML(emb agentsv1alpha1.EmbeddedSandboxTemplate) string {
+	type diffable struct {
+		IdleImage string                              `json:"idleImage,omitempty"`
+		Runtimes  []agentsv1alpha1.SandboxRuntimeSpec `json:"runtimes,omitempty"`
+		Template  *corev1.PodTemplateSpec             `json:"template,omitempty"`
+	}
+	d := diffable{
+		IdleImage: emb.IdleImage,
+		Runtimes:  emb.Runtimes,
+		Template:  emb.Template,
+	}
+	b, err := yaml.Marshal(d)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // buildPoolFromInput constructs a minimal SandboxPool from the given input.
-func buildPoolFromInput(input domain.CreateSandboxPoolInput) *agentsv1alpha1.SandboxPool {
+func buildPoolFromInput(input CreateSandboxPoolInput) *agentsv1alpha1.SandboxPool {
 	pool := &agentsv1alpha1.SandboxPool{}
 	pool.Name = input.Name
 	pool.Namespace = input.Namespace
@@ -768,7 +808,7 @@ func validatePoolSpec(spec *agentsv1alpha1.SandboxPoolSpec) *domain.AppError {
 // themselves are not persisted.
 func applyPoolTemplateOverrides(
 	tmpl *agentsv1alpha1.EmbeddedSandboxTemplate,
-	overrides *domain.PoolTemplateOverrides,
+	overrides *PoolTemplateOverrides,
 ) *domain.AppError {
 	if overrides == nil {
 		return nil
@@ -812,7 +852,7 @@ func applyPoolTemplateOverrides(
 	return nil
 }
 
-func persistPoolTemplateOverridesInAnnotations(annotations map[string]string, overrides *domain.PoolTemplateOverrides) {
+func persistPoolTemplateOverridesInAnnotations(annotations map[string]string, overrides *PoolTemplateOverrides) {
 	if annotations == nil {
 		return
 	}
@@ -827,12 +867,12 @@ func persistPoolTemplateOverridesInAnnotations(annotations map[string]string, ov
 	annotations[agentsv1alpha1.SandboxPoolOverridesAnnotationKey] = string(data)
 }
 
-func poolTemplateOverridesFromAnnotations(annotations map[string]string) (*domain.PoolTemplateOverrides, *domain.AppError) {
+func poolTemplateOverridesFromAnnotations(annotations map[string]string) (*PoolTemplateOverrides, *domain.AppError) {
 	raw, ok := annotations[agentsv1alpha1.SandboxPoolOverridesAnnotationKey]
 	if !ok || strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
-	overrides := &domain.PoolTemplateOverrides{}
+	overrides := &PoolTemplateOverrides{}
 	if err := json.Unmarshal([]byte(raw), overrides); err != nil {
 		return nil, domain.NewBadRequest(fmt.Sprintf("invalid pool overrides annotation: %v", err))
 	}
@@ -842,7 +882,7 @@ func poolTemplateOverridesFromAnnotations(annotations map[string]string) (*domai
 	return overrides, nil
 }
 
-func mustPoolTemplateOverridesFromAnnotations(annotations map[string]string) *domain.PoolTemplateOverrides {
+func mustPoolTemplateOverridesFromAnnotations(annotations map[string]string) *PoolTemplateOverrides {
 	overrides, err := poolTemplateOverridesFromAnnotations(annotations)
 	if err != nil {
 		return nil

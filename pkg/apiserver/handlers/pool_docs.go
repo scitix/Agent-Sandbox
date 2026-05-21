@@ -43,12 +43,10 @@ func (s *Server) renderPoolDocs(ctx context.Context, raw, poolName, clusterID st
 		if appErr != nil {
 			return "", appErr
 		}
-		if keys != nil {
-			for _, k := range keys.Items {
-				if k.RawToken != "" {
-					apiKeyValue = k.RawToken
-					break
-				}
+		for _, k := range keys {
+			if k.RawToken != "" {
+				apiKeyValue = k.RawToken
+				break
 			}
 		}
 		if apiKeyValue == "" {

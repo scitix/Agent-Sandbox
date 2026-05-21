@@ -86,7 +86,7 @@ func (r *SandboxPoolReconciler) syncDeletingPods(ctx context.Context, pods []cor
 
 				if r.SandboxStore != nil {
 					record := sandboxRecordFromPod(pod, "Failed", terminatedAt, failureReason, nil, failureMessage)
-					record.RecycledAt = time.Now().UTC().Format(time.RFC3339)
+					setRecycledAtNow(&record)
 					if err := r.SandboxStore.Save(record); err != nil {
 						klog.ErrorS(err, "Failed to write Failed record for terminating pod",
 							"namespace", pod.Namespace, "name", pod.Name)
@@ -104,19 +104,23 @@ func (r *SandboxPoolReconciler) syncDeletingPods(ctx context.Context, pods []cor
 
 			if sandboxID := pod.Labels[agentsv1alpha1.SandboxIDLabelKey]; sandboxID != "" {
 				record := CaptureSandboxStopRecord(pod)
-				if record.TerminatedAt == "" {
-					record.TerminatedAt = pod.DeletionTimestamp.UTC().Format(time.RFC3339)
+				if record.TerminatedAt == nil {
+					t := pod.DeletionTimestamp.UTC()
+					record.TerminatedAt = &t
 				}
 
 				if r.SandboxStore != nil {
-					record.RecycledAt = time.Now().UTC().Format(time.RFC3339)
+					setRecycledAtNow(&record)
 					if err := r.SandboxStore.Save(record); err != nil {
 						klog.ErrorS(err, "Failed to write terminal record for terminating stopping pod",
 							"namespace", pod.Namespace, "name", pod.Name)
 					}
 				}
 
-				emitSandboxStopMetrics(pod, record.Status, record.ClaimedAt, record.StartedAt, record.TerminatedAt)
+				emitSandboxStopMetrics(pod, string(record.Status),
+					record.ClaimedAt.Format(time.RFC3339),
+					formatRFC3339Ptr(record.StartedAt),
+					formatRFC3339Ptr(record.TerminatedAt))
 			}
 		}
 
@@ -178,7 +182,7 @@ func (r *SandboxPoolReconciler) syncFailedPods(ctx context.Context, pods []corev
 
 			if r.SandboxStore != nil {
 				record := sandboxRecordFromPod(pod, string(agentsv1alpha1.SandboxStopReasonFailed), terminatedAt, failureReason, nil, pod.Status.Message)
-				record.RecycledAt = time.Now().UTC().Format(time.RFC3339)
+				setRecycledAtNow(&record)
 				if err := r.SandboxStore.Save(record); err != nil {
 					klog.ErrorS(err, "Failed to write store record for failed pod",
 						"namespace", pod.Namespace, "name", pod.Name)
@@ -270,22 +274,25 @@ func (r *SandboxPoolReconciler) syncInplaceUpdatePhases(ctx context.Context, san
 
 				recycledAt := time.Now().UTC()
 
-				if ts, parseErr := time.Parse(time.RFC3339, record.TerminatedAt); parseErr == nil {
+				if record.TerminatedAt != nil {
 					pkgmetrics.SandboxRecycleDuration.With(prometheus.Labels{
 						"namespace": podSnap.Namespace,
 						"pool":      podSnap.Labels[agentsv1alpha1.SandboxPoolLabelKey],
 						"team":      podSnap.Labels[agentsv1alpha1.LabelTeam],
 						"user":      podSnap.Labels[agentsv1alpha1.LabelUser],
-					}).Observe(recycledAt.Sub(ts).Seconds())
+					}).Observe(recycledAt.Sub(*record.TerminatedAt).Seconds())
 				}
 
-				if r.SandboxStore != nil && record.SandboxID != "" {
-					record.RecycledAt = recycledAt.Format(time.RFC3339)
+				if r.SandboxStore != nil && record.SandboxId != "" {
+					record.RecycledAt = &recycledAt
 					if err := r.SandboxStore.Save(record); err != nil {
 						klog.ErrorS(err, "writeDeferredStoreRecord: failed to save sandbox record",
-							"namespace", podSnap.Namespace, "name", podSnap.Name, "sandboxID", record.SandboxID)
+							"namespace", podSnap.Namespace, "name", podSnap.Name, "sandboxID", record.SandboxId)
 					}
-					emitSandboxStopMetrics(podSnap, record.Status, record.ClaimedAt, record.StartedAt, record.TerminatedAt)
+					emitSandboxStopMetrics(podSnap, string(record.Status),
+						record.ClaimedAt.Format(time.RFC3339),
+						formatRFC3339Ptr(record.StartedAt),
+						formatRFC3339Ptr(record.TerminatedAt))
 				}
 
 				mu.Lock()
@@ -299,7 +306,7 @@ func (r *SandboxPoolReconciler) syncInplaceUpdatePhases(ctx context.Context, san
 				notifyPools = append(notifyPools, notifyEntry{
 					namespace:  podSnap.Namespace,
 					poolName:   podSnap.Labels[agentsv1alpha1.SandboxPoolLabelKey],
-					sandboxID:  record.SandboxID,
+					sandboxID:  record.SandboxId,
 					notifyIdle: r.IdleNotifier != nil,
 				})
 				mu.Unlock()

@@ -31,7 +31,9 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 	e2bdomain "github.com/scitix/agent-sandbox/pkg/e2bcompat/domain"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -159,20 +161,20 @@ func (s *Server) loadPoolMap(ctx context.Context, namespace string) map[string]*
 	return m
 }
 
-// domainSandboxToE2BSandbox converts an AgentBox domain Sandbox to an E2B Sandbox response.
-func (s *Server) domainSandboxToE2BSandbox(ctx context.Context, sb *apidomain.Sandbox, namespace string) e2bgen.Sandbox {
+// domainSandboxToE2BSandbox converts a native gen.Sandbox to an E2B Sandbox response.
+func (s *Server) domainSandboxToE2BSandbox(ctx context.Context, sb *gen.Sandbox, namespace string) e2bgen.Sandbox {
 	pool := s.loadPool(ctx, namespace, sb.PoolName)
 	return e2bdomain.ToE2BSandbox(sb, pool, s.gatewayDomain)
 }
 
-// domainSandboxToSandboxDetail converts a domain Sandbox to an E2B SandboxDetail.
-func (s *Server) domainSandboxToSandboxDetail(ctx context.Context, sb *apidomain.Sandbox, namespace string) e2bgen.SandboxDetail {
+// domainSandboxToSandboxDetail converts a native gen.Sandbox to an E2B SandboxDetail.
+func (s *Server) domainSandboxToSandboxDetail(ctx context.Context, sb *gen.Sandbox, namespace string) e2bgen.SandboxDetail {
 	pool := s.loadPool(ctx, namespace, sb.PoolName)
 	return e2bdomain.ToE2BSandboxDetail(sb, pool, s.gatewayDomain)
 }
 
-// domainSandboxToListedSandbox converts a domain Sandbox to an E2B ListedSandbox.
-func domainSandboxToListedSandbox(sb *apidomain.Sandbox, pool *agentsv1alpha1.SandboxPool) e2bgen.ListedSandbox {
+// domainSandboxToListedSandbox converts a native gen.Sandbox to an E2B ListedSandbox.
+func domainSandboxToListedSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) e2bgen.ListedSandbox {
 	return e2bdomain.ToE2BListedSandbox(sb, pool)
 }
 
@@ -208,7 +210,7 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	}
 
 	auth := authFrom(ctx)
-	input := apidomain.CreateSandboxInput{
+	input := service.CreateSandboxInput{
 		ClusterID: parsed.ClusterID,
 		PoolName:  parsed.PoolName,
 		Namespace: auth.Namespace,
@@ -232,8 +234,8 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 		}
 	}
 	if req.Body.EnvVars != nil && len(*req.Body.EnvVars) > 0 {
-		input.PostStartHooks = []apidomain.PostStartHookAction{{
-			HTTPPost: &apidomain.HTTPPostHookAction{
+		input.PostStartHooks = []poststarthooks.Action{{
+			HTTPPost: &poststarthooks.HTTPPostAction{
 				Port: 49983,
 				Path: "/init",
 				Body: map[string]any{
@@ -278,7 +280,7 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 
 func (s *Server) GetSandboxes(ctx context.Context, _ e2bgen.GetSandboxesRequestObject) (e2bgen.GetSandboxesResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.sandbox.List(ctx, apidomain.ListSandboxesFilter{
+	result, appErr := s.sandbox.List(ctx, service.SandboxListFilter{
 		Namespace: auth.Namespace,
 		Team:      auth.Team,
 		User:      auth.User,
@@ -470,13 +472,13 @@ func poolToE2BTemplate(pool *agentsv1alpha1.SandboxPool) e2bgen.Template {
 
 func (s *Server) GetApiKeys(ctx context.Context, _ e2bgen.GetApiKeysRequestObject) (e2bgen.GetApiKeysResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
+	items, appErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
 	if appErr != nil {
 		return e2bgen.GetApiKeys500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespAppErr(ctx, appErr))}, nil
 	}
 
-	keys := make(e2bgen.GetApiKeys200JSONResponse, 0, len(result.Items))
-	for _, item := range result.Items {
+	keys := make(e2bgen.GetApiKeys200JSONResponse, 0, len(items))
+	for _, item := range items {
 		k := e2bgen.TeamAPIKey{
 			Name:      item.Description,
 			CreatedAt: item.IssuedAt,
@@ -496,7 +498,7 @@ func (s *Server) PostApiKeys(ctx context.Context, req e2bgen.PostApiKeysRequestO
 	}
 
 	auth := authFrom(ctx)
-	result, appErr := s.apikey.Create(ctx, apidomain.CreateAPIKeyInput{
+	result, appErr := s.apikey.Create(ctx, service.CreateAPIKeyInput{
 		Namespace:   auth.Namespace,
 		User:        auth.User,
 		Team:        auth.Team,
@@ -519,7 +521,7 @@ func (s *Server) PostApiKeys(ctx context.Context, req e2bgen.PostApiKeysRequestO
 }
 
 func (s *Server) DeleteApiKeysApiKeyID(ctx context.Context, req e2bgen.DeleteApiKeysApiKeyIDRequestObject) (e2bgen.DeleteApiKeysApiKeyIDResponseObject, error) {
-	appErr := s.apikey.Delete(ctx, apidomain.DeleteAPIKeyInput{KeyID: req.ApiKeyID})
+	appErr := s.apikey.Delete(ctx, req.ApiKeyID)
 	if appErr != nil {
 		if appErr.Code == apidomain.ErrCodeNotFound {
 			return e2bgen.DeleteApiKeysApiKeyID404JSONResponse{N404JSONResponse: e2bgen.N404JSONResponse(errRespCode(404, appErr.Message))}, nil

@@ -17,28 +17,30 @@ package sandboxpool
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
-// SandboxBaseFromPod populates the fields of a domain.Sandbox that are common
+// SandboxBaseFromPod populates the fields of a gen.Sandbox that are common
 // to both live (API) and historical (store) representations of a sandbox:
 //
-//   - Identity: SandboxID, Namespace, PoolName, PodName
+//   - Identity: SandboxId, Namespace, PoolName, PodName
 //   - Ownership: Team, User
 //   - Timing: ClaimedAt, StartedAt
 //   - Content: ContainerImages (from pod.Spec), Metadata (parsed from annotation JSON)
-//   - Resources: CPU, Memory (summed from container requests/limits; zero if not set)
+//   - Resources: Cpu, Memory (summed from container requests/limits; zero if not set)
 //
 // Callers set Status and any terminal fields (TerminatedAt, FailureReason, etc.) after
 // calling this function. When a running-images annotation snapshot is available (Stopping
 // path), the caller may overwrite ContainerImages with that pre-release value.
-func SandboxBaseFromPod(pod *corev1.Pod) domain.Sandbox {
+func SandboxBaseFromPod(pod *corev1.Pod) gen.Sandbox {
 	containerImages := make(map[string]string, len(pod.Spec.Containers))
 	for _, c := range pod.Spec.Containers {
 		containerImages[c.Name] = c.Image
@@ -50,25 +52,46 @@ func SandboxBaseFromPod(pod *corev1.Pod) domain.Sandbox {
 		memStr = memQ.String()
 	}
 
-	return domain.Sandbox{
-		SandboxID:       pod.Labels[agentsv1alpha1.SandboxIDLabelKey],
-		Namespace:       pod.Namespace,
-		PoolName:        pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
-		PodName:         pod.Name,
-		NodeName:        pod.Spec.NodeName,
-		Team:            pod.Labels[agentsv1alpha1.LabelTeam],
-		User:            pod.Labels[agentsv1alpha1.LabelUser],
-		ClaimedAt:       pod.Annotations[agentsv1alpha1.SandboxClaimedAtAnnotationKey],
-		StartedAt:       pod.Annotations[agentsv1alpha1.SandboxStartedAtAnnotationKey],
-		ContainerImages: containerImages,
-		ContainerID:     extractContainerID(pod),
-		Metadata:        parsePodMetadata(pod),
-		CPU:             cpuStr,
-		Memory:          memStr,
+	sb := gen.Sandbox{
+		SandboxId: pod.Labels[agentsv1alpha1.SandboxIDLabelKey],
+		Namespace: pod.Namespace,
+		PoolName:  pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
+		PodName:   pod.Name,
+		Cpu:       ptr.To(cpuStr),
+		Memory:    ptr.To(memStr),
 	}
+	if v := pod.Spec.NodeName; v != "" {
+		sb.NodeName = ptr.To(v)
+	}
+	if v := pod.Labels[agentsv1alpha1.LabelTeam]; v != "" {
+		sb.Team = ptr.To(v)
+	}
+	if v := pod.Labels[agentsv1alpha1.LabelUser]; v != "" {
+		sb.User = ptr.To(v)
+	}
+	if v := pod.Annotations[agentsv1alpha1.SandboxClaimedAtAnnotationKey]; v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			sb.ClaimedAt = t
+		}
+	}
+	if v := pod.Annotations[agentsv1alpha1.SandboxStartedAtAnnotationKey]; v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			sb.StartedAt = &t
+		}
+	}
+	if len(containerImages) > 0 {
+		sb.ContainerImages = &containerImages
+	}
+	if id := extractContainerID(pod); id != "" {
+		sb.ContainerId = ptr.To(id)
+	}
+	if md := parsePodMetadata(pod); len(md) > 0 {
+		sb.Metadata = &md
+	}
+	return sb
 }
 
-// CaptureSandboxStopRecord builds a terminal domain.Sandbox for a pod that is
+// CaptureSandboxStopRecord builds a terminal gen.Sandbox for a pod that is
 // transitioning through the Stopping phase. It must be called BEFORE
 // MarkUpdateCompleted so that stop-metadata annotations are still present.
 //
@@ -77,7 +100,7 @@ func SandboxBaseFromPod(pod *corev1.Pod) domain.Sandbox {
 //
 // The running-images annotation snapshot is used for ContainerImages when
 // available, falling back to pod.Spec images.
-func CaptureSandboxStopRecord(pod *corev1.Pod) domain.Sandbox {
+func CaptureSandboxStopRecord(pod *corev1.Pod) gen.Sandbox {
 	sb := SandboxBaseFromPod(pod)
 
 	// Override ContainerImages with the pre-release snapshot stored in the
@@ -86,20 +109,30 @@ func CaptureSandboxStopRecord(pod *corev1.Pod) domain.Sandbox {
 	if raw := pod.Annotations[agentsv1alpha1.SandboxRunningImagesAnnotationKey]; raw != "" {
 		images := map[string]string{}
 		if err := json.Unmarshal([]byte(raw), &images); err == nil && len(images) > 0 {
-			sb.ContainerImages = images
+			sb.ContainerImages = &images
 		}
 	}
 
 	// Override ContainerID with the persisted annotation snapshot when the live
 	// extraction (via inplace-update-state) returned empty — this happens after
 	// the in-place update clears StableContainerStatuses.
-	if sb.ContainerID == "" {
-		sb.ContainerID = pod.Annotations[agentsv1alpha1.SandboxContainerIDAnnotationKey]
+	if sb.ContainerId == nil || *sb.ContainerId == "" {
+		if v := pod.Annotations[agentsv1alpha1.SandboxContainerIDAnnotationKey]; v != "" {
+			sb.ContainerId = ptr.To(v)
+		}
 	}
 
-	sb.TerminatedAt = pod.Annotations[agentsv1alpha1.SandboxTerminatedAtAnnotationKey]
-	sb.FailureReason = pod.Annotations[agentsv1alpha1.SandboxFailureReasonAnnotationKey]
-	sb.FailureMessage = pod.Annotations[agentsv1alpha1.SandboxFailureMessageAnnotationKey]
+	if v := pod.Annotations[agentsv1alpha1.SandboxTerminatedAtAnnotationKey]; v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			sb.TerminatedAt = &t
+		}
+	}
+	if v := pod.Annotations[agentsv1alpha1.SandboxFailureReasonAnnotationKey]; v != "" {
+		sb.FailureReason = ptr.To(v)
+	}
+	if v := pod.Annotations[agentsv1alpha1.SandboxFailureMessageAnnotationKey]; v != "" {
+		sb.FailureMessage = ptr.To(v)
+	}
 
 	// Parse exit code annotation.
 	if raw := pod.Annotations[agentsv1alpha1.SandboxExitCodeAnnotationKey]; raw != "" {
@@ -110,14 +143,15 @@ func CaptureSandboxStopRecord(pod *corev1.Pod) domain.Sandbox {
 	}
 
 	// Resolve stop reason, defaulting for pre-annotation pods.
-	sb.Status = pod.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey]
-	if sb.Status == "" {
-		if sb.StartedAt == "" {
-			sb.Status = "Canceled"
+	status := pod.Annotations[agentsv1alpha1.SandboxStopReasonAnnotationKey]
+	if status == "" {
+		if sb.StartedAt == nil {
+			status = "Canceled"
 		} else {
-			sb.Status = "Completed"
+			status = "Completed"
 		}
 	}
+	sb.Status = gen.SandboxStatus(status)
 
 	return sb
 }

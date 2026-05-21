@@ -40,8 +40,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"k8s.io/utils/ptr"
+
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/schedule"
@@ -52,34 +55,47 @@ import (
 
 // ListSandboxesResult wraps the paginated result and total count for List operations.
 type ListSandboxesResult struct {
-	Items []domain.Sandbox
+	Items []gen.Sandbox
 	Total int
+}
+
+// SandboxListFilter is the service-side projection of gen.ListSandboxesParams: the
+// (often pointer-typed) query params are dereferenced and combined with the
+// auth-derived namespace/team/user.
+type SandboxListFilter struct {
+	Namespace string
+	PoolName  string
+	Status    string // comma-separated multi-value supported (e.g. "Running,Failed")
+	Team      string // when non-empty, only return sandboxes with this team label
+	User      string // when non-empty, only return sandboxes with this user label
+	Limit     int    // default 20, max 100; 0 means no limit
+	Offset    int
 }
 
 // SandboxService defines business operations for sandboxes.
 type SandboxService interface {
-	Create(ctx context.Context, input domain.CreateSandboxInput) (*domain.Sandbox, *domain.AppError)
-	List(ctx context.Context, filter domain.ListSandboxesFilter) (*ListSandboxesResult, *domain.AppError)
-	Get(ctx context.Context, namespace, sandboxID string) (*domain.Sandbox, *domain.AppError)
-	Delete(ctx context.Context, namespace, sandboxID string) (*domain.DeleteSandboxResult, *domain.AppError)
+	Create(ctx context.Context, input CreateSandboxInput) (*gen.Sandbox, *domain.AppError)
+	List(ctx context.Context, filter SandboxListFilter) (*ListSandboxesResult, *domain.AppError)
+	Get(ctx context.Context, namespace, sandboxID string) (*gen.Sandbox, *domain.AppError)
+	Delete(ctx context.Context, namespace, sandboxID string) (*gen.DeleteSandboxResult, *domain.AppError)
 	// SetTimeout updates the idle timeout annotation on the sandbox pod.
 	// A timeout of 0 removes the annotation (no expiry).
 	SetTimeout(ctx context.Context, namespace, sandboxID string, timeout time.Duration) *domain.AppError
 	// GetLogs retrieves logs for a sandbox. For active sandboxes it fetches live
 	// logs from the K8s API; for runtime sources it reads the log file via exec.
-	GetLogs(ctx context.Context, namespace, sandboxID string, opts domain.GetLogsOptions) (*domain.SandboxLogs, *domain.AppError)
+	GetLogs(ctx context.Context, namespace, sandboxID string, params gen.GetSandboxLogsParams) (*gen.SandboxLogsResult, *domain.AppError)
 	// CreateExecToken generates a single-use exec token (TTL 30 s) for the given sandbox.
 	// The sandbox must be in the Running phase.
 	CreateExecToken(ctx context.Context, namespace, sandboxID string) (string, *domain.AppError)
 	// ValidateExecToken validates and consumes the token.
 	// Returns ExecTokenInfo on success, or a 401 AppError if the token is invalid / expired.
-	ValidateExecToken(tokenStr string) (*domain.ExecTokenInfo, *domain.AppError)
+	ValidateExecToken(tokenStr string) (*ExecTokenInfo, *domain.AppError)
 	// ExecCommand runs a one-shot command inside the sandbox pod (non-interactive, no TTY).
 	// The sandbox must be in Running phase. clientset must be non-nil.
-	ExecCommand(ctx context.Context, namespace, sandboxID string, input domain.ExecCommandInput) (*domain.ExecCommandResult, *domain.AppError)
+	ExecCommand(ctx context.Context, namespace, sandboxID string, req gen.ExecCommandRequest) (*gen.ExecCommandResult, *domain.AppError)
 	// IsReady checks if all runtime readiness probes for a sandbox pass.
 	// If a runtime has no ReadinessProbe configured, it is considered ready.
-	IsReady(ctx context.Context, namespace, sandboxID string) (*domain.SandboxReadinessResult, *domain.AppError)
+	IsReady(ctx context.Context, namespace, sandboxID string) (*gen.SandboxReadinessResult, *domain.AppError)
 }
 
 type k8sSandboxService struct {
@@ -241,7 +257,7 @@ func (s *k8sSandboxService) buildAvailablePoolsDetail(ctx context.Context, names
 	}
 }
 
-func (s *k8sSandboxService) Create(ctx context.Context, input domain.CreateSandboxInput) (*domain.Sandbox, *domain.AppError) {
+func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput) (*gen.Sandbox, *domain.AppError) { //nolint:gocyclo // claim path branches by metric outcome; restructuring would obscure ordering
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: input.Namespace, Name: input.PoolName}, pool); err != nil {
 		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
@@ -507,10 +523,12 @@ func (s *k8sSandboxService) Create(ctx context.Context, input domain.CreateSandb
 	// prefix the returned sandbox ID so that subsequent data-plane requests
 	// carry the cluster info for routing. Same-cluster requests return a plain UUID.
 	if input.ClusterID != "" {
-		result.SandboxID = s.prefixSandboxID(result.SandboxID)
+		result.SandboxId = s.prefixSandboxID(result.SandboxId)
 	}
-	result.Endpoints = buildEndpoints(pool, result.SandboxID, s.gatewayBaseURL)
-	if result.SandboxID == "" {
+	if eps := buildEndpoints(pool, result.SandboxId, s.gatewayBaseURL); len(eps) > 0 {
+		result.Endpoints = &eps
+	}
+	if result.SandboxId == "" {
 		// Should never happen since we set the label before claiming, but guard against it just in case.
 		klog.ErrorS(nil, "claimed pod is missing sandbox ID label", "namespace", pod.Namespace, "name", pod.Name)
 		return nil, domain.NewInternal("claimed pod is missing sandbox ID label", nil)
@@ -520,10 +538,10 @@ func (s *k8sSandboxService) Create(ctx context.Context, input domain.CreateSandb
 	// without waiting for its informer cache to observe the sandbox-id label.
 	// On push failure, fall back to a single 500 ms probe — the informer
 	// almost always catches up within that window. On happy path, no probe.
-	pushErr := s.pushRouteToExtProc(ctx, result.SandboxID, pod)
+	pushErr := s.pushRouteToExtProc(ctx, result.SandboxId, pod)
 	if pushErr != nil {
 		klog.InfoS("Create: ExtProc push failed, running fallback endpoint probe",
-			"sandboxID", result.SandboxID, "error", pushErr)
+			"sandboxID", result.SandboxId, "error", pushErr)
 		s.probeEndpointReady(ctx, pool, result.Endpoints)
 	}
 
@@ -552,12 +570,14 @@ func (s *k8sSandboxService) Create(ctx context.Context, input domain.CreateSandb
 	}
 
 	// Populate CPU/Memory from pool spec
-	result.CPU, result.Memory = computePoolResources(ctx, pool)
+	cpu, memory := computePoolResources(ctx, pool)
+	result.Cpu = ptr.To(cpu)
+	result.Memory = ptr.To(memory)
 	result.DurationSeconds = computeSandboxDuration(&result, time.Now())
 	return &result, nil
 }
 
-func (s *k8sSandboxService) List(ctx context.Context, filter domain.ListSandboxesFilter) (*ListSandboxesResult, *domain.AppError) {
+func (s *k8sSandboxService) List(ctx context.Context, filter SandboxListFilter) (*ListSandboxesResult, *domain.AppError) {
 	// Step 1: Fetch active pods from K8s, filtered by team/user if provided
 	pods, err := sandboxpool.ListClaimedPodsWithFilter(ctx, s.client, filter.Namespace, filter.Team, filter.User)
 	if err != nil {
@@ -576,17 +596,21 @@ func (s *k8sSandboxService) List(ctx context.Context, filter domain.ListSandboxe
 	}
 
 	// Build a dedup map keyed by sandboxID; K8s records take precedence
-	byID := make(map[string]domain.Sandbox, len(pods))
+	byID := make(map[string]gen.Sandbox, len(pods))
 	for i := range pods {
 		sb := sandboxFromPod(&pods[i])
 		// Build endpoints for active sandboxes
 		if pool, ok := poolMap[sb.PoolName]; ok {
 			if s.gatewayBaseURL != "" {
-				sb.Endpoints = buildEndpoints(pool, sb.SandboxID, s.gatewayBaseURL)
+				if eps := buildEndpoints(pool, sb.SandboxId, s.gatewayBaseURL); len(eps) > 0 {
+					sb.Endpoints = &eps
+				}
 			}
-			sb.CPU, sb.Memory = computePoolResources(ctx, pool)
+			cpu, memory := computePoolResources(ctx, pool)
+			sb.Cpu = ptr.To(cpu)
+			sb.Memory = ptr.To(memory)
 		}
-		byID[sb.SandboxID] = sb
+		byID[sb.SandboxId] = sb
 	}
 
 	// Step 2: Merge historical records from the store (if configured)
@@ -596,15 +620,15 @@ func (s *k8sSandboxService) List(ctx context.Context, filter domain.ListSandboxe
 			return nil, domain.NewInternal(storeErr.Error(), storeErr)
 		}
 		for _, r := range histRecords {
-			if _, exists := byID[r.SandboxID]; !exists {
+			if _, exists := byID[r.SandboxId]; !exists {
 				// Post-filter historical records by team/user when requested.
-				if filter.Team != "" && r.Team != filter.Team {
+				if filter.Team != "" && (r.Team == nil || *r.Team != filter.Team) {
 					continue
 				}
-				if filter.User != "" && r.User != filter.User {
+				if filter.User != "" && (r.User == nil || *r.User != filter.User) {
 					continue
 				}
-				byID[r.SandboxID] = r
+				byID[r.SandboxId] = r
 			}
 		}
 	}
@@ -612,13 +636,13 @@ func (s *k8sSandboxService) List(ctx context.Context, filter domain.ListSandboxe
 	// Step 3: Build slice, apply filters
 	now := time.Now()
 	statusSet := parseStatusSet(filter.Status)
-	all := make([]domain.Sandbox, 0, len(byID))
+	all := make([]gen.Sandbox, 0, len(byID))
 	for _, sb := range byID {
 		if filter.PoolName != "" && sb.PoolName != filter.PoolName {
 			continue
 		}
 		if len(statusSet) > 0 {
-			if _, ok := statusSet[sb.Status]; !ok {
+			if _, ok := statusSet[string(sb.Status)]; !ok {
 				continue
 			}
 		}
@@ -629,12 +653,10 @@ func (s *k8sSandboxService) List(ctx context.Context, filter domain.ListSandboxe
 	// Step 4: Sort by claimedAt descending (most recent first)
 	// If claimedAt is same, then sort by sandboxID for consistent ordering
 	sort.Slice(all, func(i, j int) bool {
-		ti, _ := time.Parse(time.RFC3339, all[i].ClaimedAt)
-		tj, _ := time.Parse(time.RFC3339, all[j].ClaimedAt)
-		if ti.Equal(tj) {
-			return all[i].SandboxID < all[j].SandboxID
+		if all[i].ClaimedAt.Equal(all[j].ClaimedAt) {
+			return all[i].SandboxId < all[j].SandboxId
 		}
-		return ti.After(tj)
+		return all[i].ClaimedAt.After(all[j].ClaimedAt)
 	})
 
 	total := len(all)
@@ -654,7 +676,7 @@ func (s *k8sSandboxService) List(ctx context.Context, filter domain.ListSandboxe
 	return &ListSandboxesResult{Items: all, Total: total}, nil
 }
 
-func (s *k8sSandboxService) Get(ctx context.Context, namespace, sandboxID string) (*domain.Sandbox, *domain.AppError) {
+func (s *k8sSandboxService) Get(ctx context.Context, namespace, sandboxID string) (*gen.Sandbox, *domain.AppError) {
 	rawID := s.stripSandboxID(sandboxID)
 	pod, err := sandboxpool.FindClaimedPodBySandboxID(ctx, s.client, namespace, rawID)
 	if err != nil {
@@ -681,16 +703,20 @@ func (s *k8sSandboxService) Get(ctx context.Context, namespace, sandboxID string
 		pool := &agentsv1alpha1.SandboxPool{}
 		if getErr := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: poolName}, pool); getErr == nil {
 			if s.gatewayBaseURL != "" {
-				result.Endpoints = buildEndpoints(pool, result.SandboxID, s.gatewayBaseURL)
+				if eps := buildEndpoints(pool, result.SandboxId, s.gatewayBaseURL); len(eps) > 0 {
+					result.Endpoints = &eps
+				}
 			}
-			result.CPU, result.Memory = computePoolResources(ctx, pool)
+			cpu, memory := computePoolResources(ctx, pool)
+			result.Cpu = ptr.To(cpu)
+			result.Memory = ptr.To(memory)
 		}
 	}
 	result.DurationSeconds = computeSandboxDuration(&result, time.Now())
 	return &result, nil
 }
 
-func (s *k8sSandboxService) Delete(ctx context.Context, namespace, sandboxID string) (*domain.DeleteSandboxResult, *domain.AppError) {
+func (s *k8sSandboxService) Delete(ctx context.Context, namespace, sandboxID string) (*gen.DeleteSandboxResult, *domain.AppError) {
 	rawID := s.stripSandboxID(sandboxID)
 	pod, err := sandboxpool.FindClaimedPodBySandboxID(ctx, s.client, namespace, rawID)
 	if err != nil {
@@ -733,8 +759,8 @@ func (s *k8sSandboxService) Delete(ctx context.Context, namespace, sandboxID str
 		status = "Stopping"
 	}
 
-	return &domain.DeleteSandboxResult{
-		SandboxID: sandboxID,
+	return &gen.DeleteSandboxResult{
+		SandboxId: sandboxID,
 		Namespace: pod.Namespace,
 		PoolName:  pool.Name,
 		PodName:   pod.Name,
@@ -746,7 +772,7 @@ func (s *k8sSandboxService) Delete(ctx context.Context, namespace, sandboxID str
 // private helpers
 // ---------------------------------------------------------------------------
 
-func (s *k8sSandboxService) resolveContainerImages(pool *agentsv1alpha1.SandboxPool, input domain.CreateSandboxInput) (map[string]string, error) {
+func (s *k8sSandboxService) resolveContainerImages(pool *agentsv1alpha1.SandboxPool, input CreateSandboxInput) (map[string]string, error) {
 	// Validate caller-supplied images before proceeding.
 	if input.Image != "" {
 		if err := ValidateContainerImage(input.Image); err != nil {
@@ -816,14 +842,14 @@ func (s *k8sSandboxService) resolveContainerImages(pool *agentsv1alpha1.SandboxP
 	return containerImages, nil
 }
 
-func sandboxFromPod(pod *corev1.Pod) domain.Sandbox {
+func sandboxFromPod(pod *corev1.Pod) gen.Sandbox {
 	sb := sandboxpool.SandboxBaseFromPod(pod)
-	sb.Status = sandboxStatusFromPod(pod)
+	sb.Status = gen.SandboxStatus(sandboxStatusFromPod(pod))
 	// Derive live diagnostic info from Pod YAML (no annotation cache needed).
 	if d := sandboxpool.BuildSandboxStatusDetailFromPod(pod); d != nil {
-		sb.StatusDetail = &agentsv1alpha1.SandboxStatusDetail{
-			Reason:  d.Reason,
-			Message: d.Message,
+		sb.StatusDetail = &gen.SandboxStatusDetail{
+			Reason:  ptr.To(d.Reason),
+			Message: ptr.To(d.Message),
 		}
 	}
 	return sb
@@ -832,28 +858,22 @@ func sandboxFromPod(pod *corev1.Pod) domain.Sandbox {
 // computeSandboxDuration returns the sandbox's wall-clock duration in seconds, or nil when
 // the duration is not meaningful (Starting, Canceled, Pending, Stopping, or missing startedAt).
 // now is passed in so List() can capture it once and reuse across all sandboxes.
-func computeSandboxDuration(sb *domain.Sandbox, now time.Time) *int64 {
-	switch strings.ToLower(sb.Status) {
+func computeSandboxDuration(sb *gen.Sandbox, now time.Time) *int64 {
+	switch strings.ToLower(string(sb.Status)) {
 	case "running", "failed", "completed", "released":
 	default:
 		return nil
 	}
-	if sb.StartedAt == "" {
+	if sb.StartedAt == nil {
 		return nil
 	}
-	startedAt, err := time.Parse(time.RFC3339, sb.StartedAt)
-	if err != nil {
-		return nil
-	}
+	startedAt := *sb.StartedAt
 	end := now
-	if strings.ToLower(sb.Status) != "running" {
-		if sb.TerminatedAt == "" {
+	if strings.ToLower(string(sb.Status)) != "running" {
+		if sb.TerminatedAt == nil {
 			return nil
 		}
-		end, err = time.Parse(time.RFC3339, sb.TerminatedAt)
-		if err != nil {
-			return nil
-		}
+		end = *sb.TerminatedAt
 	}
 	d := max(int64(end.Sub(startedAt).Seconds()), 0)
 	return &d
@@ -925,21 +945,22 @@ func parseStatusSet(status string) map[string]struct{} {
 
 // buildEndpoints builds a map of runtime name → SandboxEndpoint for the given sandbox.
 // Returns nil if gatewayBaseURL is empty or no runtimes with ports are defined.
-func buildEndpoints(pool *agentsv1alpha1.SandboxPool, sandboxID, gatewayBaseURL string) map[string]domain.SandboxEndpoint {
+func buildEndpoints(pool *agentsv1alpha1.SandboxPool, sandboxID, gatewayBaseURL string) map[string]gen.SandboxEndpoint {
 	if gatewayBaseURL == "" || len(pool.Spec.Runtimes) == 0 {
 		return nil
 	}
-	endpoints := make(map[string]domain.SandboxEndpoint, len(pool.Spec.Runtimes))
+	endpoints := make(map[string]gen.SandboxEndpoint, len(pool.Spec.Runtimes))
 	for _, rt := range pool.Spec.Runtimes {
 		if rt.Port == nil {
 			continue
 		}
 		url := fmt.Sprintf("%s/sandboxes/%s/%d",
 			strings.TrimRight(gatewayBaseURL, "/"), sandboxID, *rt.Port)
-		endpoints[rt.Name] = domain.SandboxEndpoint{
-			URL:    url,
-			LogDir: rt.LogDir,
+		ep := gen.SandboxEndpoint{Url: url}
+		if rt.LogDir != "" {
+			ep.LogDir = ptr.To(rt.LogDir)
 		}
+		endpoints[rt.Name] = ep
 	}
 	if len(endpoints) == 0 {
 		return nil
@@ -972,11 +993,23 @@ func buildPoolStatusDetail(ctx context.Context, c client.Client, pool *agentsv1a
 	}
 }
 
-func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID string, opts domain.GetLogsOptions) (*domain.SandboxLogs, *domain.AppError) {
+func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID string, params gen.GetSandboxLogsParams) (*gen.SandboxLogsResult, *domain.AppError) {
 	sandboxID = s.stripSandboxID(sandboxID)
+	container := ""
+	if params.Container != nil {
+		container = *params.Container
+	}
+	lines := 0
+	if params.Lines != nil {
+		lines = *params.Lines
+	}
+	source := ""
+	if params.Source != nil {
+		source = *params.Source
+	}
 	// If a runtime source is requested, fetch runtime log file via exec.
-	if opts.Source != "" && opts.Source != "stdout" {
-		return s.getRuntimeLogs(ctx, namespace, sandboxID, opts.Source, opts.Lines)
+	if source != "" && source != "stdout" {
+		return s.getRuntimeLogs(ctx, namespace, sandboxID, source, lines)
 	}
 
 	// Live logs: sandbox must be active (pod found and not terminated).
@@ -990,31 +1023,31 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 
 	if s.clientset == nil {
 		// Live logs not available without a clientset.
-		return &domain.SandboxLogs{
-			SandboxID: sandboxID,
+		return &gen.SandboxLogsResult{
+			SandboxId: sandboxID,
 			Namespace: namespace,
-			PodName:   pod.Name,
+			PodName:   ptr.To(pod.Name),
 			Entries:   nil,
-			Source:    "live",
+			Source:    gen.SandboxLogsResultSource("live"),
 		}, nil
 	}
 
 	logOpts := &corev1.PodLogOptions{
-		Container:  opts.Container,
+		Container:  container,
 		Timestamps: true,
 	}
-	if opts.Lines > 0 {
-		n := int64(opts.Lines)
+	if lines > 0 {
+		n := int64(lines)
 		logOpts.TailLines = &n
 	}
 
 	// Collect logs from the requested container(s).
-	var entries []domain.SandboxLogEntry
+	var entries []gen.SandboxLogEntry
 	var totalBytes int64
 	containersToFetch := pod.Spec.Containers
-	if opts.Container != "" {
+	if container != "" {
 		for _, c := range pod.Spec.Containers {
-			if c.Name == opts.Container {
+			if c.Name == container {
 				containersToFetch = []corev1.Container{c}
 				break
 			}
@@ -1033,17 +1066,17 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 			if line == "" {
 				continue
 			}
-			entries = append(entries, domain.SandboxLogEntry{Container: c.Name, Log: line})
+			entries = append(entries, gen.SandboxLogEntry{Container: c.Name, Log: line})
 		}
 	}
 
-	return &domain.SandboxLogs{
-		SandboxID:  sandboxID,
+	return &gen.SandboxLogsResult{
+		SandboxId:  sandboxID,
 		Namespace:  namespace,
-		PodName:    pod.Name,
+		PodName:    ptr.To(pod.Name),
 		Entries:    entries,
-		TotalBytes: totalBytes,
-		Source:     "live",
+		TotalBytes: &totalBytes,
+		Source:     gen.SandboxLogsResultSource("live"),
 	}, nil
 }
 
@@ -1069,7 +1102,7 @@ func splitLogLines(raw []byte) []string {
 
 // getRuntimeLogs reads a runtime's log file from inside the pod via exec.
 // runtimeName is the name of the runtime (e.g. "envd"); lines limits the output (0 = all).
-func (s *k8sSandboxService) getRuntimeLogs(ctx context.Context, namespace, sandboxID, runtimeName string, lines int) (*domain.SandboxLogs, *domain.AppError) {
+func (s *k8sSandboxService) getRuntimeLogs(ctx context.Context, namespace, sandboxID, runtimeName string, lines int) (*gen.SandboxLogsResult, *domain.AppError) {
 	// Runtime logs are only available for active (Running) sandboxes.
 	pod, err := sandboxpool.FindClaimedPodBySandboxID(ctx, s.client, namespace, sandboxID)
 	if err != nil {
@@ -1099,9 +1132,10 @@ func (s *k8sSandboxService) getRuntimeLogs(ctx context.Context, namespace, sandb
 		cmd = fmt.Sprintf("cat %s 2>/dev/null || true", logDir)
 	}
 
-	result, appErr := s.ExecCommand(ctx, namespace, sandboxID, domain.ExecCommandInput{
+	timeout := 30
+	result, appErr := s.ExecCommand(ctx, namespace, sandboxID, gen.ExecCommandRequest{
 		Command:        cmd,
-		TimeoutSeconds: 30,
+		TimeoutSeconds: &timeout,
 	})
 	if appErr != nil {
 		return nil, appErr
@@ -1109,24 +1143,24 @@ func (s *k8sSandboxService) getRuntimeLogs(ctx context.Context, namespace, sandb
 
 	// Parse output: each line becomes a SandboxLogEntry (no timestamp).
 	rawLines := strings.Split(strings.TrimRight(result.Stdout, "\n"), "\n")
-	entries := make([]domain.SandboxLogEntry, 0, len(rawLines))
+	entries := make([]gen.SandboxLogEntry, 0, len(rawLines))
 	for _, line := range rawLines {
 		if line == "" {
 			continue
 		}
-		entries = append(entries, domain.SandboxLogEntry{
+		entries = append(entries, gen.SandboxLogEntry{
 			Container: runtimeName,
 			Log:       line,
 		})
 	}
 
-	return &domain.SandboxLogs{
-		SandboxID:   sandboxID,
+	return &gen.SandboxLogsResult{
+		SandboxId:   sandboxID,
 		Namespace:   namespace,
-		PodName:     pod.Name,
+		PodName:     ptr.To(pod.Name),
 		Entries:     entries,
-		Source:      "runtime",
-		RuntimeName: runtimeName,
+		Source:      gen.SandboxLogsResultSource("runtime"),
+		RuntimeName: ptr.To(runtimeName),
 	}, nil
 }
 
@@ -1236,7 +1270,7 @@ func (s *k8sSandboxService) CreateExecToken(ctx context.Context, namespace, sand
 
 // ValidateExecToken validates and consumes the token.
 // Returns ExecTokenInfo on success, or a domain.AppError (Unauthorized) if invalid/expired.
-func (s *k8sSandboxService) ValidateExecToken(tokenStr string) (*domain.ExecTokenInfo, *domain.AppError) {
+func (s *k8sSandboxService) ValidateExecToken(tokenStr string) (*ExecTokenInfo, *domain.AppError) {
 	info := s.execTokens.Consume(tokenStr)
 	if info == nil {
 		return nil, domain.NewUnauthorized("exec token is invalid or has expired")
@@ -1251,7 +1285,7 @@ const (
 
 // ExecCommand runs a one-shot command inside the sandbox pod (non-interactive, no TTY).
 // The sandbox must be in Running phase. clientset and restConfig must be non-nil.
-func (s *k8sSandboxService) ExecCommand(ctx context.Context, namespace, sandboxID string, input domain.ExecCommandInput) (*domain.ExecCommandResult, *domain.AppError) {
+func (s *k8sSandboxService) ExecCommand(ctx context.Context, namespace, sandboxID string, req gen.ExecCommandRequest) (*gen.ExecCommandResult, *domain.AppError) {
 	pod, err := sandboxpool.FindClaimedPodBySandboxID(ctx, s.client, namespace, s.stripSandboxID(sandboxID))
 	if err != nil {
 		if errors.Is(err, sandboxpool.ErrSandboxNotFound) {
@@ -1268,7 +1302,10 @@ func (s *k8sSandboxService) ExecCommand(ctx context.Context, namespace, sandboxI
 	}
 
 	// Compute timeout: clamp to [1, 300], default 30
-	timeoutSec := input.TimeoutSeconds
+	timeoutSec := 0
+	if req.TimeoutSeconds != nil {
+		timeoutSec = *req.TimeoutSeconds
+	}
 	if timeoutSec <= 0 {
 		timeoutSec = execCommandDefaultTimeout
 	} else if timeoutSec > execCommandMaxTimeout {
@@ -1291,7 +1328,7 @@ func (s *k8sSandboxService) ExecCommand(ctx context.Context, namespace, sandboxI
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: container,
-			Command:   []string{"sh", "-c", input.Command},
+			Command:   []string{"sh", "-c", req.Command},
 			Stdin:     false,
 			Stdout:    true,
 			Stderr:    true,
@@ -1324,7 +1361,7 @@ func (s *k8sSandboxService) ExecCommand(ctx context.Context, namespace, sandboxI
 		}
 	}
 
-	return &domain.ExecCommandResult{
+	return &gen.ExecCommandResult{
 		ExitCode: exitCode,
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
@@ -1334,7 +1371,7 @@ func (s *k8sSandboxService) ExecCommand(ctx context.Context, namespace, sandboxI
 // IsReady checks if all runtime readiness probes for a sandbox pass.
 // If a runtime has no ReadinessProbe configured, it is considered ready.
 // Only HTTPGet probes are supported; TCPSocket and Exec probes are skipped (considered ready).
-func (s *k8sSandboxService) IsReady(ctx context.Context, namespace, sandboxID string) (*domain.SandboxReadinessResult, *domain.AppError) {
+func (s *k8sSandboxService) IsReady(ctx context.Context, namespace, sandboxID string) (*gen.SandboxReadinessResult, *domain.AppError) {
 	// Retrieve the sandbox to verify it exists and get endpoints.
 	sb, appErr := s.Get(ctx, namespace, sandboxID)
 	if appErr != nil {
@@ -1342,19 +1379,28 @@ func (s *k8sSandboxService) IsReady(ctx context.Context, namespace, sandboxID st
 	}
 
 	// If sandbox is not Running, it's not ready.
-	if sb.Status != "Running" {
-		result := &domain.SandboxReadinessResult{
-			SandboxID: sandboxID,
-			Ready:     false,
-			Endpoints: make(map[string]domain.EndpointReadiness),
-		}
-		for name := range sb.Endpoints {
-			result.Endpoints[name] = domain.EndpointReadiness{
-				Ready:   false,
-				Message: fmt.Sprintf("sandbox is in %s phase, not Running", sb.Status),
+	if string(sb.Status) != "Running" {
+		endpoints := make(map[string]struct {
+			Message *string `json:"message,omitempty"`
+			Ready   *bool   `json:"ready,omitempty"`
+		})
+		msg := fmt.Sprintf("sandbox is in %s phase, not Running", sb.Status)
+		if sb.Endpoints != nil {
+			for name := range *sb.Endpoints {
+				endpoints[name] = struct {
+					Message *string `json:"message,omitempty"`
+					Ready   *bool   `json:"ready,omitempty"`
+				}{
+					Message: ptr.To(msg),
+					Ready:   ptr.To(false),
+				}
 			}
 		}
-		return result, nil
+		return &gen.SandboxReadinessResult{
+			SandboxId: sandboxID,
+			Ready:     false,
+			Endpoints: &endpoints,
+		}, nil
 	}
 
 	// Load the pool to get runtime ReadinessProbe configurations.
@@ -1374,37 +1420,49 @@ func (s *k8sSandboxService) IsReady(ctx context.Context, namespace, sandboxID st
 		probeByRuntime[rt.Name] = rt.ReadinessProbe
 	}
 
-	result := &domain.SandboxReadinessResult{
-		SandboxID: sandboxID,
-		Ready:     true,
-		Endpoints: make(map[string]domain.EndpointReadiness, len(sb.Endpoints)),
+	endpoints := make(map[string]struct {
+		Message *string `json:"message,omitempty"`
+		Ready   *bool   `json:"ready,omitempty"`
+	})
+	overall := true
+	if sb.Endpoints != nil {
+		for name, ep := range *sb.Endpoints {
+			probe := probeByRuntime[name]
+			if probe == nil || probe.HTTPGet == nil {
+				// No probe configured or non-HTTP probe — default to ready.
+				endpoints[name] = struct {
+					Message *string `json:"message,omitempty"`
+					Ready   *bool   `json:"ready,omitempty"`
+				}{Ready: ptr.To(true)}
+				continue
+			}
+
+			// Build the probe URL from the endpoint URL + probe path.
+			probeURL := ep.Url
+			if probe.HTTPGet.Path != "" {
+				probeURL = strings.TrimRight(ep.Url, "/") + "/" + strings.TrimLeft(probe.HTTPGet.Path, "/")
+			}
+
+			ready, msg := s.checkHTTPProbe(ctx, probeURL)
+			entry := struct {
+				Message *string `json:"message,omitempty"`
+				Ready   *bool   `json:"ready,omitempty"`
+			}{Ready: ptr.To(ready)}
+			if msg != "" {
+				entry.Message = ptr.To(msg)
+			}
+			endpoints[name] = entry
+			if !ready {
+				overall = false
+			}
+		}
 	}
 
-	for name, ep := range sb.Endpoints {
-		probe := probeByRuntime[name]
-		if probe == nil || probe.HTTPGet == nil {
-			// No probe configured or non-HTTP probe — default to ready.
-			result.Endpoints[name] = domain.EndpointReadiness{Ready: true}
-			continue
-		}
-
-		// Build the probe URL from the endpoint URL + probe path.
-		probeURL := ep.URL
-		if probe.HTTPGet.Path != "" {
-			probeURL = strings.TrimRight(ep.URL, "/") + "/" + strings.TrimLeft(probe.HTTPGet.Path, "/")
-		}
-
-		ready, msg := s.checkHTTPProbe(ctx, probeURL)
-		result.Endpoints[name] = domain.EndpointReadiness{
-			Ready:   ready,
-			Message: msg,
-		}
-		if !ready {
-			result.Ready = false
-		}
-	}
-
-	return result, nil
+	return &gen.SandboxReadinessResult{
+		SandboxId: sandboxID,
+		Ready:     overall,
+		Endpoints: &endpoints,
+	}, nil
 }
 
 // checkHTTPProbe performs a single HTTP GET probe and returns (ready, message).
@@ -1481,11 +1539,11 @@ func (s *k8sSandboxService) pushRouteToExtProc(ctx context.Context, prefixedSand
 // the probe is only a fallback guard, not a real readiness check. The
 // endpoint probe only makes sense when a gateway base URL is configured and
 // the pool has at least one endpoint.
-func (s *k8sSandboxService) probeEndpointReady(ctx context.Context, pool *agentsv1alpha1.SandboxPool, endpoints map[string]domain.SandboxEndpoint) {
-	if s.gatewayBaseURL == "" || len(endpoints) == 0 || pool == nil || len(pool.Spec.Runtimes) == 0 {
+func (s *k8sSandboxService) probeEndpointReady(ctx context.Context, pool *agentsv1alpha1.SandboxPool, endpoints *map[string]gen.SandboxEndpoint) {
+	if s.gatewayBaseURL == "" || endpoints == nil || len(*endpoints) == 0 || pool == nil || len(pool.Spec.Runtimes) == 0 {
 		return
 	}
-	endpoint, ok := endpoints[pool.Spec.Runtimes[0].Name]
+	endpoint, ok := (*endpoints)[pool.Spec.Runtimes[0].Name]
 	if !ok {
 		return
 	}
@@ -1497,7 +1555,7 @@ func (s *k8sSandboxService) probeEndpointReady(ctx context.Context, pool *agents
 	defer ticker.Stop()
 
 	for {
-		if endpointReady(probeCtx, s.httpClient, endpoint.URL) {
+		if endpointReady(probeCtx, s.httpClient, endpoint.Url) {
 			return
 		}
 		select {

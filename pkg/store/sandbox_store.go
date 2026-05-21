@@ -22,7 +22,7 @@ import (
 
 	"github.com/tidwall/buntdb"
 
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
 
 const defaultTTL = 24 * time.Hour
@@ -30,11 +30,11 @@ const defaultTTL = 24 * time.Hour
 // SandboxStore is the interface for persisting historical Sandbox records.
 type SandboxStore interface {
 	// Save persists a sandbox with the configured TTL.
-	Save(sandbox domain.Sandbox) error
+	Save(sandbox gen.Sandbox) error
 	// Get retrieves a sandbox by namespace+sandboxID. Returns nil, nil if not found.
-	Get(namespace, sandboxID string) (*domain.Sandbox, error)
+	Get(namespace, sandboxID string) (*gen.Sandbox, error)
 	// List returns all sandboxes for the given namespace, sorted by claimedAt desc.
-	List(namespace string) ([]domain.Sandbox, error)
+	List(namespace string) ([]gen.Sandbox, error)
 	// Close closes the underlying store.
 	Close() error
 }
@@ -68,16 +68,17 @@ func storeKey(namespace, sandboxID string) string {
 	return namespace + "/" + sandboxID
 }
 
-// Save persists a domain.Sandbox with the configured TTL.
-// Runtime-only fields (Endpoints, StatusDetail) are excluded via json:"-" tags on domain.Sandbox.
-func (s *buntdbSandboxStore) Save(sandbox domain.Sandbox) error {
+// Save persists a gen.Sandbox with the configured TTL. Runtime-only fields
+// (Endpoints, StatusDetail, DurationSeconds) on a historical record are
+// expected to be unset by the writer; they are serialized as-is.
+func (s *buntdbSandboxStore) Save(sandbox gen.Sandbox) error {
 	data, err := json.Marshal(sandbox)
 	if err != nil {
 		return err
 	}
 
 	return s.db.Update(func(tx *buntdb.Tx) error {
-		key := storeKey(sandbox.Namespace, sandbox.SandboxID)
+		key := storeKey(sandbox.Namespace, sandbox.SandboxId)
 		_, _, err := tx.Set(key, string(data), &buntdb.SetOptions{
 			Expires: true,
 			TTL:     s.ttl,
@@ -86,9 +87,9 @@ func (s *buntdbSandboxStore) Save(sandbox domain.Sandbox) error {
 	})
 }
 
-// Get retrieves a domain.Sandbox by namespace+sandboxID. Returns nil, nil if not found.
-func (s *buntdbSandboxStore) Get(namespace, sandboxID string) (*domain.Sandbox, error) {
-	var result *domain.Sandbox
+// Get retrieves a gen.Sandbox by namespace+sandboxID. Returns nil, nil if not found.
+func (s *buntdbSandboxStore) Get(namespace, sandboxID string) (*gen.Sandbox, error) {
+	var result *gen.Sandbox
 
 	err := s.db.View(func(tx *buntdb.Tx) error {
 		key := storeKey(namespace, sandboxID)
@@ -100,7 +101,7 @@ func (s *buntdbSandboxStore) Get(namespace, sandboxID string) (*domain.Sandbox, 
 			return err
 		}
 
-		var sb domain.Sandbox
+		var sb gen.Sandbox
 		if err := json.Unmarshal([]byte(val), &sb); err != nil {
 			return err
 		}
@@ -112,9 +113,9 @@ func (s *buntdbSandboxStore) Get(namespace, sandboxID string) (*domain.Sandbox, 
 }
 
 // List returns all sandboxes for the given namespace, sorted by claimedAt descending.
-func (s *buntdbSandboxStore) List(namespace string) ([]domain.Sandbox, error) {
+func (s *buntdbSandboxStore) List(namespace string) ([]gen.Sandbox, error) {
 	prefix := namespace + "/"
-	var sandboxes []domain.Sandbox
+	var sandboxes []gen.Sandbox
 
 	err := s.db.View(func(tx *buntdb.Tx) error {
 		return tx.AscendKeys(prefix+"*", func(key, val string) bool {
@@ -123,7 +124,7 @@ func (s *buntdbSandboxStore) List(namespace string) ([]domain.Sandbox, error) {
 				return true
 			}
 
-			var sb domain.Sandbox
+			var sb gen.Sandbox
 			if err := json.Unmarshal([]byte(val), &sb); err != nil {
 				return true // skip malformed records
 			}
@@ -137,9 +138,7 @@ func (s *buntdbSandboxStore) List(namespace string) ([]domain.Sandbox, error) {
 
 	// Sort by claimedAt descending (most recent first)
 	sort.Slice(sandboxes, func(i, j int) bool {
-		ti, _ := time.Parse(time.RFC3339, sandboxes[i].ClaimedAt)
-		tj, _ := time.Parse(time.RFC3339, sandboxes[j].ClaimedAt)
-		return ti.After(tj)
+		return sandboxes[i].ClaimedAt.After(sandboxes[j].ClaimedAt)
 	})
 
 	return sandboxes, nil

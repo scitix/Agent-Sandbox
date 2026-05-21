@@ -17,9 +17,16 @@ package service
 import (
 	"sync"
 	"time"
-
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 )
+
+// ExecTokenInfo carries the information stored in an exec token.
+// It is returned by ValidateExecToken after successful token validation.
+type ExecTokenInfo struct {
+	SandboxID  string
+	Namespace  string
+	PodName    string
+	Containers []string
+}
 
 const (
 	execTokenTTL     = 30 * time.Second
@@ -56,7 +63,7 @@ func (s *execTokenStore) Set(token string, rec ExecTokenRecord) {
 
 // Consume validates and atomically removes the token. Returns nil if the token
 // is missing or expired.
-func (s *execTokenStore) Consume(token string) *domain.ExecTokenInfo {
+func (s *execTokenStore) Consume(token string) *ExecTokenInfo {
 	val, loaded := s.m.LoadAndDelete(token)
 	if !loaded {
 		return nil
@@ -65,7 +72,7 @@ func (s *execTokenStore) Consume(token string) *domain.ExecTokenInfo {
 	if time.Now().After(rec.ExpiresAt) {
 		return nil
 	}
-	return &domain.ExecTokenInfo{
+	return &ExecTokenInfo{
 		SandboxID:  rec.SandboxID,
 		Namespace:  rec.Namespace,
 		PodName:    rec.PodName,

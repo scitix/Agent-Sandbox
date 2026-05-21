@@ -35,8 +35,36 @@ import (
 	"k8s.io/klog/v2"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 )
+
+// Action describes a single action to execute after a sandbox becomes Running.
+// Exactly one of Exec or HTTPPost should be set (mirrors k8s ProbeHandler style).
+// The action is serialized as JSON to the SandboxPostStartHooksAnnotationKey pod
+// annotation at claim time, then consumed here when the pod reaches Running.
+type Action struct {
+	// Exec runs a shell command inside the sandbox container.
+	Exec *ExecAction `json:"exec,omitempty"`
+	// HTTPPost sends a POST request to an in-sandbox HTTP endpoint via the gateway.
+	HTTPPost *HTTPPostAction `json:"httpPost,omitempty"`
+}
+
+// ExecAction runs a command inside the sandbox container.
+type ExecAction struct {
+	// Command is passed to sh -c inside the first container.
+	Command string `json:"command"`
+}
+
+// HTTPPostAction sends a POST to a port/path inside the sandbox, routed through the gateway.
+type HTTPPostAction struct {
+	// Port is the target port of the in-sandbox service (required).
+	Port int32 `json:"port"`
+	// Path is the request path, e.g. "/init".
+	Path string `json:"path"`
+	// Body is an arbitrary JSON object serialized as the request body.
+	Body map[string]any `json:"body,omitempty"`
+	// Headers are extra HTTP headers to include (e.g. for authentication).
+	Headers map[string]string `json:"headers,omitempty"`
+}
 
 // defaultBackoff retries a hook roughly 5 times over ~20 seconds.
 //
@@ -79,7 +107,7 @@ func (r *Runner) OnSandboxReady(ctx context.Context, pod *corev1.Pod) {
 		return
 	}
 
-	var hooks []apidomain.PostStartHookAction
+	var hooks []Action
 	if err := json.Unmarshal([]byte(raw), &hooks); err != nil {
 		klog.ErrorS(err, "poststarthooks: failed to decode hooks annotation",
 			"pod", klog.KObj(pod))
@@ -109,7 +137,7 @@ func (r *Runner) OnSandboxReady(ctx context.Context, pod *corev1.Pod) {
 	}
 }
 
-func (r *Runner) executeHook(ctx context.Context, pod *corev1.Pod, sandboxID string, hook apidomain.PostStartHookAction) error {
+func (r *Runner) executeHook(ctx context.Context, pod *corev1.Pod, sandboxID string, hook Action) error {
 	switch {
 	case hook.Exec != nil:
 		return r.execHook(ctx, pod, hook.Exec)
@@ -121,7 +149,7 @@ func (r *Runner) executeHook(ctx context.Context, pod *corev1.Pod, sandboxID str
 }
 
 // execHook runs a shell command inside the sandbox's first container.
-func (r *Runner) execHook(ctx context.Context, pod *corev1.Pod, action *apidomain.ExecHookAction) error {
+func (r *Runner) execHook(ctx context.Context, pod *corev1.Pod, action *ExecAction) error {
 	if r.clientset == nil || r.restConfig == nil {
 		return fmt.Errorf("exec hook skipped: kubernetes clientset or rest config not configured")
 	}
@@ -164,7 +192,7 @@ func (r *Runner) execHook(ctx context.Context, pod *corev1.Pod, action *apidomai
 }
 
 // httpPostHook sends a POST request through the gateway to an in-sandbox HTTP endpoint.
-func (r *Runner) httpPostHook(ctx context.Context, sandboxID string, action *apidomain.HTTPPostHookAction) error {
+func (r *Runner) httpPostHook(ctx context.Context, sandboxID string, action *HTTPPostAction) error {
 	if r.gatewayBaseURL == "" {
 		return fmt.Errorf("http-post hook skipped: gateway base URL not configured")
 	}

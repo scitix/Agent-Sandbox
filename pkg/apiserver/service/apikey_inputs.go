@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package service
 
 import "time"
 
-// KeyMetadata holds the full metadata for an API key, mirroring what is
-// stored in the backing Kubernetes Secret.
+// KeyMetadata is the service-layer view of an API key's stored metadata. It is
+// kept distinct from `apikey.KeyMetadata` (the K8s-Secret storage shape) so the
+// service can evolve its presentation independently of the storage utility.
 type KeyMetadata struct {
 	// KeyID is the fully qualified secret identifier: "<namespace>/<name>".
 	KeyID       string
@@ -25,7 +26,6 @@ type KeyMetadata struct {
 	Role        string
 	User        string
 	Team        string
-	QuotaURL    string
 	Description string
 	IssuedAt    time.Time
 	ExpiresAt   time.Time // zero value means no expiry
@@ -50,7 +50,6 @@ type CreateAPIKeyInput struct {
 	TokenHash  string
 	HashPrefix string
 	IssuedAt   time.Time // preserve original issue time (import mode)
-	QuotaURL   string
 }
 
 // APIKeyResult is the result of a successful Create operation.
@@ -65,15 +64,4 @@ type APIKeyItem struct {
 	KeyMetadata
 	// ShortName is the Kubernetes Secret name (without namespace prefix).
 	ShortName string
-}
-
-// ListAPIKeysResult is the result of a List operation.
-type ListAPIKeysResult struct {
-	Items []APIKeyItem
-}
-
-// DeleteAPIKeyInput identifies which key to delete.
-type DeleteAPIKeyInput struct {
-	// KeyID is the secret name (without namespace prefix).
-	KeyID string
 }

@@ -77,9 +77,6 @@ components:
         team:
           type: string
           description: "Import mode: original team."
-        quotaURL:
-          type: string
-          description: "Import mode: quota URL."
 
     # ── Images Catalog schemas ───────────────────────────────────────────────
     ImageDataset:

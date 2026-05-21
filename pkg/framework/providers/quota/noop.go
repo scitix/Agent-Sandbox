@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/framework"
 )
 
@@ -41,6 +42,6 @@ func init() { Register(NoopName, NoopFactory) }
 
 func (Noop) Enabled() bool { return false }
 
-func (Noop) ListForUser(_ context.Context, _, _ string) ([]QuotaInfo, *domain.AppError) {
+func (Noop) ListForUser(_ context.Context, _, _ string) ([]gen.Quota, *domain.AppError) {
 	return nil, nil
 }

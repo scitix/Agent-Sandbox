@@ -25,29 +25,29 @@ import (
 // stubAPIKeyService implements just the ListByTeamAndUser method used by
 // renderPoolDocs. Other methods panic so any unexpected call is caught.
 type stubAPIKeyService struct {
-	items   []domain.APIKeyItem
+	items   []service.APIKeyItem
 	listErr *domain.AppError
 }
 
 var _ service.APIKeyService = (*stubAPIKeyService)(nil)
 
-func (s *stubAPIKeyService) ListByTeamAndUser(context.Context, string, string) (*domain.ListAPIKeysResult, *domain.AppError) {
+func (s *stubAPIKeyService) ListByTeamAndUser(context.Context, string, string) ([]service.APIKeyItem, *domain.AppError) {
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	return &domain.ListAPIKeysResult{Items: s.items}, nil
+	return s.items, nil
 }
 
-func (s *stubAPIKeyService) Create(context.Context, domain.CreateAPIKeyInput) (*domain.APIKeyResult, *domain.AppError) {
+func (s *stubAPIKeyService) Create(context.Context, service.CreateAPIKeyInput) (*service.APIKeyResult, *domain.AppError) {
 	panic("not implemented")
 }
-func (s *stubAPIKeyService) List(context.Context) (*domain.ListAPIKeysResult, *domain.AppError) {
+func (s *stubAPIKeyService) List(context.Context) ([]service.APIKeyItem, *domain.AppError) {
 	panic("not implemented")
 }
-func (s *stubAPIKeyService) Get(context.Context, string) (*domain.APIKeyItem, *domain.AppError) {
+func (s *stubAPIKeyService) Get(context.Context, string) (*service.APIKeyItem, *domain.AppError) {
 	panic("not implemented")
 }
-func (s *stubAPIKeyService) Delete(context.Context, domain.DeleteAPIKeyInput) *domain.AppError {
+func (s *stubAPIKeyService) Delete(context.Context, string) *domain.AppError {
 	panic("not implemented")
 }
 func (s *stubAPIKeyService) Promote(context.Context, string) *domain.AppError {
@@ -71,8 +71,8 @@ func TestRenderPoolDocs_EmptyRaw(t *testing.T) {
 
 func TestRenderPoolDocs_SubstitutesAllVariables(t *testing.T) {
 	stub := &stubAPIKeyService{
-		items: []domain.APIKeyItem{
-			{KeyMetadata: domain.KeyMetadata{RawToken: "agbx_newkey"}},
+		items: []service.APIKeyItem{
+			{KeyMetadata: service.KeyMetadata{RawToken: "agbx_newkey"}},
 		},
 	}
 	s := newTestServer(stub)
@@ -89,10 +89,10 @@ func TestRenderPoolDocs_SubstitutesAllVariables(t *testing.T) {
 
 func TestRenderPoolDocs_PicksFirstKeyWithRawToken(t *testing.T) {
 	stub := &stubAPIKeyService{
-		items: []domain.APIKeyItem{
-			{KeyMetadata: domain.KeyMetadata{RawToken: ""}},              // legacy, skipped
-			{KeyMetadata: domain.KeyMetadata{RawToken: "agbx_winner"}},   // picked
-			{KeyMetadata: domain.KeyMetadata{RawToken: "agbx_runnerup"}}, // ignored
+		items: []service.APIKeyItem{
+			{KeyMetadata: service.KeyMetadata{RawToken: ""}},              // legacy, skipped
+			{KeyMetadata: service.KeyMetadata{RawToken: "agbx_winner"}},   // picked
+			{KeyMetadata: service.KeyMetadata{RawToken: "agbx_runnerup"}}, // ignored
 		},
 	}
 	s := newTestServer(stub)
@@ -107,8 +107,8 @@ func TestRenderPoolDocs_PicksFirstKeyWithRawToken(t *testing.T) {
 
 func TestRenderPoolDocs_NoUsableKeyReturnsAPIKeyRequired(t *testing.T) {
 	stub := &stubAPIKeyService{
-		items: []domain.APIKeyItem{
-			{KeyMetadata: domain.KeyMetadata{RawToken: ""}}, // legacy only
+		items: []service.APIKeyItem{
+			{KeyMetadata: service.KeyMetadata{RawToken: ""}}, // legacy only
 		},
 	}
 	s := newTestServer(stub)

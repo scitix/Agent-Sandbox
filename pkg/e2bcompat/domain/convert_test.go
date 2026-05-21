@@ -16,13 +16,14 @@ package domain
 
 import (
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
 
 func makeTestPool(name, namespace string, cpuMillis, memoryMiB int64) *agentsv1alpha1.SandboxPool { //nolint:unparam
@@ -76,11 +77,11 @@ func TestToE2BSandbox_StateMapping(t *testing.T) {
 	pool := makeTestPool("pool-a", "test-ns", 2000, 4096)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			sb := &apidomain.Sandbox{
-				SandboxID: "sbx-001",
+			sb := &gen.Sandbox{
+				SandboxId: "sbx-001",
 				Namespace: "test-ns",
 				PoolName:  "pool-a",
-				Status:    tc.status,
+				Status:    gen.SandboxStatus(tc.status),
 			}
 			// ToE2BSandbox returns a Sandbox (no state field); use ToE2BSandboxDetail for state
 			detail := ToE2BSandboxDetail(sb, pool, "example.com")
@@ -95,8 +96,8 @@ func TestToE2BSandboxDetail_ResourceExtraction(t *testing.T) {
 	// 2000 milliCPU = 2 CPU, 4096 MiB memory
 	pool := makeTestPool("pool-a", "test-ns", 2000, 4096)
 
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		Namespace: "test-ns",
 		PoolName:  "pool-a",
 		Status:    "Running",
@@ -113,8 +114,8 @@ func TestToE2BSandboxDetail_ResourceExtraction(t *testing.T) {
 
 func TestToE2BSandbox_DomainField(t *testing.T) {
 	pool := makeTestPool("pool-a", "test-ns", 1000, 2048)
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		PoolName:  "pool-a",
 		Status:    "Running",
 	}
@@ -137,8 +138,8 @@ func TestToE2BSandbox_DomainField(t *testing.T) {
 
 func TestToE2BSandbox_TrafficAccessTokenNotNil(t *testing.T) {
 	pool := makeTestPool("pool-a", "test-ns", 1000, 2048)
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		PoolName:  "pool-a",
 		Status:    "Running",
 	}
@@ -151,8 +152,8 @@ func TestToE2BSandbox_TrafficAccessTokenNotNil(t *testing.T) {
 
 func TestToE2BSandbox_EnvdVersion(t *testing.T) {
 	pool := makeTestPool("pool-a", "test-ns", 1000, 2048)
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		PoolName:  "pool-a",
 		Status:    "Running",
 	}
@@ -164,8 +165,8 @@ func TestToE2BSandbox_EnvdVersion(t *testing.T) {
 }
 
 func TestToE2BSandbox_NilPool(t *testing.T) {
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		PoolName:  "pool-a",
 		Namespace: "test-ns",
 		Status:    "Running",
@@ -182,8 +183,8 @@ func TestToE2BSandbox_NilPool(t *testing.T) {
 }
 
 func TestToE2BSandboxDetail_NilPool(t *testing.T) {
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		PoolName:  "pool-a",
 		Namespace: "test-ns",
 		Status:    "Running",
@@ -217,13 +218,15 @@ func TestToE2BTemplate(t *testing.T) {
 
 func TestToE2BListedSandbox(t *testing.T) {
 	pool := makeTestPool("pool-a", "test-ns", 2000, 4096)
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	startedAt, _ := time.Parse(time.RFC3339, "2026-03-22T10:00:00Z")
+	metadata := map[string]string{"key": "value"}
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		PoolName:  "pool-a",
 		Namespace: "test-ns",
 		Status:    "Running",
-		StartedAt: "2026-03-22T10:00:00Z",
-		Metadata:  map[string]string{"key": "value"},
+		StartedAt: &startedAt,
+		Metadata:  &metadata,
 	}
 
 	result := ToE2BListedSandbox(sb, pool)
@@ -286,8 +289,8 @@ func TestToE2BTemplate_Names(t *testing.T) {
 // TestToE2BListedSandbox_NilMetadata verifies nil metadata when sandbox has none.
 func TestToE2BListedSandbox_NilMetadata(t *testing.T) {
 	pool := makeTestPool("pool-a", "test-ns", 2000, 4096)
-	sb := &apidomain.Sandbox{
-		SandboxID: "sbx-001",
+	sb := &gen.Sandbox{
+		SandboxId: "sbx-001",
 		PoolName:  "pool-a",
 		Namespace: "test-ns",
 		Status:    "Running",

@@ -48,7 +48,7 @@ func TestAPIKeyService_Create_Local(t *testing.T) {
 	ks := newFakeAPIKeyStore(t)
 	svc := service.NewAPIKeyService(ks)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateAPIKeyInput{
+	result, appErr := svc.Create(context.Background(), service.CreateAPIKeyInput{
 		Namespace:   "ns-a",
 		User:        "alice",
 		Team:        "eng",
@@ -67,7 +67,7 @@ func TestAPIKeyService_Create_Local(t *testing.T) {
 
 func TestAPIKeyService_Create_StoreNil(t *testing.T) {
 	svc := service.NewAPIKeyService(nil)
-	_, appErr := svc.Create(context.Background(), domain.CreateAPIKeyInput{})
+	_, appErr := svc.Create(context.Background(), service.CreateAPIKeyInput{})
 	if appErr == nil {
 		t.Fatal("Create() expected appErr, got nil")
 	}
@@ -82,12 +82,12 @@ func TestAPIKeyService_List(t *testing.T) {
 	ctx := context.Background()
 
 	for range 3 {
-		_, appErr := svc.Create(ctx, domain.CreateAPIKeyInput{Namespace: "ns-list", User: "bob", Team: "eng"})
+		_, appErr := svc.Create(ctx, service.CreateAPIKeyInput{Namespace: "ns-list", User: "bob", Team: "eng"})
 		if appErr != nil {
 			t.Fatalf("Create() appErr = %v", appErr)
 		}
 	}
-	_, appErr := svc.Create(ctx, domain.CreateAPIKeyInput{Namespace: "other-ns", User: "carol", Team: "sci"})
+	_, appErr := svc.Create(ctx, service.CreateAPIKeyInput{Namespace: "other-ns", User: "carol", Team: "sci"})
 	if appErr != nil {
 		t.Fatalf("Create() appErr = %v", appErr)
 	}
@@ -97,8 +97,8 @@ func TestAPIKeyService_List(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("List() appErr = %v", appErr)
 	}
-	if len(result.Items) != 4 {
-		t.Errorf("List() = %d items, want 4", len(result.Items))
+	if len(result) != 4 {
+		t.Errorf("List() = %d items, want 4", len(result))
 	}
 }
 
@@ -109,16 +109,16 @@ func TestAPIKeyService_ListByTeamAndUser(t *testing.T) {
 
 	// Create keys for different team/user combos.
 	for range 2 {
-		_, appErr := svc.Create(ctx, domain.CreateAPIKeyInput{User: "alice", Team: "eng"})
+		_, appErr := svc.Create(ctx, service.CreateAPIKeyInput{User: "alice", Team: "eng"})
 		if appErr != nil {
 			t.Fatalf("Create() appErr = %v", appErr)
 		}
 	}
-	_, appErr := svc.Create(ctx, domain.CreateAPIKeyInput{User: "bob", Team: "eng"})
+	_, appErr := svc.Create(ctx, service.CreateAPIKeyInput{User: "bob", Team: "eng"})
 	if appErr != nil {
 		t.Fatalf("Create() appErr = %v", appErr)
 	}
-	_, appErr = svc.Create(ctx, domain.CreateAPIKeyInput{User: "carol", Team: "sci"})
+	_, appErr = svc.Create(ctx, service.CreateAPIKeyInput{User: "carol", Team: "sci"})
 	if appErr != nil {
 		t.Fatalf("Create() appErr = %v", appErr)
 	}
@@ -128,8 +128,8 @@ func TestAPIKeyService_ListByTeamAndUser(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("ListByTeamAndUser(eng, '') appErr = %v", appErr)
 	}
-	if len(result.Items) != 3 {
-		t.Errorf("ListByTeamAndUser(eng, '') = %d items, want 3", len(result.Items))
+	if len(result) != 3 {
+		t.Errorf("ListByTeamAndUser(eng, '') = %d items, want 3", len(result))
 	}
 
 	// Filter by team + user.
@@ -137,8 +137,8 @@ func TestAPIKeyService_ListByTeamAndUser(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("ListByTeamAndUser(eng, alice) appErr = %v", appErr)
 	}
-	if len(result.Items) != 2 {
-		t.Errorf("ListByTeamAndUser(eng, alice) = %d items, want 2", len(result.Items))
+	if len(result) != 2 {
+		t.Errorf("ListByTeamAndUser(eng, alice) = %d items, want 2", len(result))
 	}
 
 	// Filter by user only.
@@ -146,8 +146,8 @@ func TestAPIKeyService_ListByTeamAndUser(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("ListByTeamAndUser('', carol) appErr = %v", appErr)
 	}
-	if len(result.Items) != 1 {
-		t.Errorf("ListByTeamAndUser('', carol) = %d items, want 1", len(result.Items))
+	if len(result) != 1 {
+		t.Errorf("ListByTeamAndUser('', carol) = %d items, want 1", len(result))
 	}
 
 	// No filter = all keys.
@@ -155,8 +155,8 @@ func TestAPIKeyService_ListByTeamAndUser(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("ListByTeamAndUser('', '') appErr = %v", appErr)
 	}
-	if len(result.Items) != 4 {
-		t.Errorf("ListByTeamAndUser('', '') = %d items, want 4", len(result.Items))
+	if len(result) != 4 {
+		t.Errorf("ListByTeamAndUser('', '') = %d items, want 4", len(result))
 	}
 }
 
@@ -165,7 +165,7 @@ func TestAPIKeyService_Get(t *testing.T) {
 	svc := service.NewAPIKeyService(ks)
 	ctx := context.Background()
 
-	created, appErr := svc.Create(ctx, domain.CreateAPIKeyInput{
+	created, appErr := svc.Create(ctx, service.CreateAPIKeyInput{
 		Namespace: "ns-get", User: "dan", Team: "ops",
 	})
 	if appErr != nil {
@@ -199,12 +199,12 @@ func TestAPIKeyService_Delete(t *testing.T) {
 	svc := service.NewAPIKeyService(ks)
 	ctx := context.Background()
 
-	created, appErr := svc.Create(ctx, domain.CreateAPIKeyInput{Namespace: "ns-del", User: "eve"})
+	created, appErr := svc.Create(ctx, service.CreateAPIKeyInput{Namespace: "ns-del", User: "eve"})
 	if appErr != nil {
 		t.Fatalf("Create() appErr = %v", appErr)
 	}
 
-	appErr = svc.Delete(ctx, domain.DeleteAPIKeyInput{KeyID: created.KeyID})
+	appErr = svc.Delete(ctx, created.KeyID)
 	if appErr != nil {
 		t.Fatalf("Delete() appErr = %v", appErr)
 	}
@@ -222,7 +222,7 @@ func TestAPIKeyService_Delete_NotFound(t *testing.T) {
 	ks := newFakeAPIKeyStore(t)
 	svc := service.NewAPIKeyService(ks)
 
-	appErr := svc.Delete(context.Background(), domain.DeleteAPIKeyInput{KeyID: "agentbox-apikey-nosuch"})
+	appErr := svc.Delete(context.Background(), "agentbox-apikey-nosuch")
 	if appErr == nil {
 		t.Fatal("Delete() expected appErr, got nil")
 	}
@@ -275,7 +275,7 @@ func TestAPIKeyService_Create_SyncMode_Success(t *testing.T) {
 	}
 	svc := service.NewAPIKeyServiceWithSync(ks, stub)
 
-	result, appErr := svc.Create(context.Background(), domain.CreateAPIKeyInput{
+	result, appErr := svc.Create(context.Background(), service.CreateAPIKeyInput{
 		Namespace: "ns-sync", User: "frank",
 	})
 	if appErr != nil {
@@ -291,7 +291,7 @@ func TestAPIKeyService_Create_SyncMode_NotConnected(t *testing.T) {
 	stub := &stubSyncService{createErr: service.ErrSyncNotConnected}
 	svc := service.NewAPIKeyServiceWithSync(ks, stub)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateAPIKeyInput{
+	_, appErr := svc.Create(context.Background(), service.CreateAPIKeyInput{
 		Namespace: "ns-sync", User: "grace",
 	})
 	if appErr == nil {
@@ -309,7 +309,7 @@ func TestAPIKeyService_Create_SyncMode_QuotaExceeded(t *testing.T) {
 	}
 	svc := service.NewAPIKeyServiceWithSync(ks, stub)
 
-	_, appErr := svc.Create(context.Background(), domain.CreateAPIKeyInput{
+	_, appErr := svc.Create(context.Background(), service.CreateAPIKeyInput{
 		Namespace: "ns-quota", User: "henry",
 	})
 	if appErr == nil {
@@ -325,7 +325,7 @@ func TestAPIKeyService_Delete_SyncMode_Success(t *testing.T) {
 	stub := &stubSyncService{deleteErr: nil}
 	svc := service.NewAPIKeyServiceWithSync(ks, stub)
 
-	appErr := svc.Delete(context.Background(), domain.DeleteAPIKeyInput{KeyID: "agentbox-apikey-somekey"})
+	appErr := svc.Delete(context.Background(), "agentbox-apikey-somekey")
 	if appErr != nil {
 		t.Fatalf("Delete() appErr = %v", appErr)
 	}
@@ -336,7 +336,7 @@ func TestAPIKeyService_Delete_SyncMode_NotConnected(t *testing.T) {
 	stub := &stubSyncService{deleteErr: service.ErrSyncNotConnected}
 	svc := service.NewAPIKeyServiceWithSync(ks, stub)
 
-	appErr := svc.Delete(context.Background(), domain.DeleteAPIKeyInput{KeyID: "agentbox-apikey-somekey"})
+	appErr := svc.Delete(context.Background(), "agentbox-apikey-somekey")
 	if appErr == nil {
 		t.Fatal("Delete() expected appErr, got nil")
 	}
@@ -352,7 +352,7 @@ func TestAPIKeyService_Delete_SyncMode_NotFound(t *testing.T) {
 	}
 	svc := service.NewAPIKeyServiceWithSync(ks, stub)
 
-	appErr := svc.Delete(context.Background(), domain.DeleteAPIKeyInput{KeyID: "agentbox-apikey-somekey"})
+	appErr := svc.Delete(context.Background(), "agentbox-apikey-somekey")
 	if appErr == nil {
 		t.Fatal("Delete() expected appErr, got nil")
 	}
