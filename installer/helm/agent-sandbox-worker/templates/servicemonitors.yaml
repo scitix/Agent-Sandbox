@@ -3,10 +3,11 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "agent-sandbox-worker.fullname" . }}-controller-metrics-monitor
+  name: {{ default (printf "%s-controller-metrics-monitor" (include "agent-sandbox-worker.fullname" .)) .Values.metrics.controllerMonitorName }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    {{- include "agent-sandbox-worker.controllerSelectorLabels" . | nindent 4 }}
 spec:
   endpoints:
     - interval: 15s
@@ -23,10 +24,11 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "agent-sandbox-worker.fullname" . }}-extproc-metrics-monitor
+  name: {{ default (printf "%s-extproc-metrics-monitor" (include "agent-sandbox-worker.fullname" .)) .Values.metrics.extprocMonitorName }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 4 }}
 spec:
   endpoints:
     - interval: 5s

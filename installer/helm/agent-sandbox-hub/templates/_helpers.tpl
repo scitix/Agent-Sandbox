@@ -2,14 +2,24 @@
 Expand the name of the chart.
 */}}
 {{- define "agent-sandbox-hub.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- .Chart.Name | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
+
+The release name is the canonical prefix. fullnameOverride is the escape hatch
+when you need a name that doesn't match the release. Examples:
+  helm install agent-sandbox-hub ./...    → agent-sandbox-hub-*
+  helm install agentbox-dashboard ./...   → agentbox-dashboard-*
+  helm install foo ./... --set fullnameOverride=bar → bar-*
 */}}
 {{- define "agent-sandbox-hub.fullname" -}}
-{{- default .Chart.Name .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- if .Values.fullnameOverride -}}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end }}
 
 {{/*

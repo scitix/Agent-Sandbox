@@ -1,0 +1,12 @@
+{{- if .Values.extensionsConfig.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ default (printf "%s-extensions-config" (include "agent-sandbox-worker.fullname" .)) .Values.extensionsConfig.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+data:
+  extensions.yaml: |
+{{ .Values.extensionsConfig.content | default "" | indent 4 }}
+{{- end }}

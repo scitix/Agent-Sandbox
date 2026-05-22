@@ -26,9 +26,40 @@ crds:
   create: true
 
 # ---------------------------------------------------------------------------
+# Namespace
+# ---------------------------------------------------------------------------
+# By default we assume the Helm release's --namespace is created out-of-band
+# (or `helm install --create-namespace`). Set namespace.create to true if you
+# want the chart to ship a Namespace resource — useful when generating a
+# single-file installer applied via `kubectl apply -f`.
+namespace:
+  create: false
+
+# ---------------------------------------------------------------------------
+# Optional ConfigMap: extensions
+# ---------------------------------------------------------------------------
+# Renders the agentbox-extensions-config ConfigMap consumed by the controller's
+# --extension-config flag. Disabled by default — most users mount this from a
+# separate, hand-managed ConfigMap.
+extensionsConfig:
+  create: false
+  # name defaults to "<fullname>-extensions-config" when empty.
+  name: ""
+  # content is the verbatim body of the extensions.yaml entry. Indented by 4
+  # spaces inside the ConfigMap. Empty means an empty extensions.yaml.
+  content: ""
+
+# ---------------------------------------------------------------------------
 # Controller (sandbox operator + API server)
 # ---------------------------------------------------------------------------
 controller:
+  # appName is the value placed in app.kubernetes.io/name for the controller
+  # Deployment + its Services + ServiceMonitor. Empty means "use the chart
+  # name" (current behavior). Override when migrating from a non-Helm install
+  # whose existing Deployment selector is pinned to a different value
+  # (Deployment.spec.selector is immutable, so this must match exactly).
+  appName: ""
+
   image:
     repository: ghcr.io/scitix/agent-sandbox-controller
     tag: latest
@@ -49,6 +80,17 @@ controller:
   # e2bDomain is the hostname used for E2B-compatible API responses.
   # Defaults to the in-cluster data-plane service hostname.
   e2bDomain: ""
+
+  # Service names exposed by the controller. Defaults are the historical names
+  # since the chart's inception; existing installs keep working unchanged.
+  # Override only when your environment needs a different name (e.g. to avoid a
+  # collision, or to align with org naming conventions). Hub clusters[].url and
+  # SDK env vars (E2B_DOMAIN / E2B_API_URL) reference these names externally —
+  # if you change them, repoint those consumers too.
+  services:
+    apiName: ""        # default: agent-sandbox-api
+    metricsName: ""    # default: agent-sandbox-controller-metrics
+    e2bName: ""        # default: agent-sandbox-e2b-api
 
   # Secrets for the controller
   secrets:
@@ -77,6 +119,12 @@ controller:
 # ExtProc (Envoy External Processor + data-plane manager)
 # ---------------------------------------------------------------------------
 extproc:
+  # appName is the value placed in app.kubernetes.io/name for the extproc
+  # Deployment + data-plane Service + extproc ServiceMonitor. Empty means
+  # "<controller appName>-extproc" (current behavior). Same migration caveat
+  # as controller.appName: matching the existing selector is mandatory.
+  appName: ""
+
   image:
     repository: ghcr.io/scitix/agent-sandbox-envoyextproc
     tag: latest
@@ -87,6 +135,11 @@ extproc:
       repository: envoyproxy/envoy
       tag: v1.37.0
       pullPolicy: IfNotPresent
+
+  # Service name exposed by the data-plane (extproc + Envoy). Default is the
+  # historical name; override semantics match controller.services above.
+  services:
+    dataPlaneName: ""  # default: agent-sandbox-data-plane
 
   resources:
     manager:
@@ -114,6 +167,9 @@ extproc:
   #   /agent-sandbox/api/e2b     → E2B-compatible API (port 80)
   ingress:
     enabled: true
+    # name overrides the Ingress resource name. Empty = "<fullname>-gateway-ingress".
+    # Override when adopting an existing Ingress (rename would orphan the old one).
+    name: ""
     className: nginx
     host: agent-sandbox-gateway.example.com
     annotations:
@@ -145,4 +201,9 @@ metrics:
   # enabled controls whether ServiceMonitor resources are created.
   # Requires the Prometheus Operator (kube-prometheus-stack) to be installed.
   enabled: false
+  # Override ServiceMonitor resource names (empty = "<fullname>-{controller,extproc}-metrics-monitor").
+  # Override only when adopting an existing ServiceMonitor — renaming would
+  # leave the old one orphaned alongside the new one.
+  controllerMonitorName: ""
+  extprocMonitorName: ""
 

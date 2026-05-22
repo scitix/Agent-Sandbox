@@ -1,12 +1,12 @@
 Agent Sandbox has been deployed to namespace {{ .Release.Namespace }}.
 
 CONTROLLER:
-  API:       http://agent-sandbox-api.{{ .Release.Namespace }}.svc.cluster.local/
-  E2B API:   http://agent-sandbox-e2b-api.{{ .Release.Namespace }}.svc.cluster.local/
-  Metrics:   http://agent-sandbox-controller-metrics.{{ .Release.Namespace }}.svc.cluster.local:8082/metrics
+  API:       http://{{ include "agent-sandbox-worker.apiServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local/
+  E2B API:   http://{{ include "agent-sandbox-worker.e2bServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local/
+  Metrics:   http://{{ include "agent-sandbox-worker.metricsServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local:8082/metrics
 
 DATA PLANE (ExtProc + Envoy):
-  Gateway:   http://agent-sandbox-data-plane.{{ .Release.Namespace }}.svc.cluster.local/
+  Gateway:   http://{{ include "agent-sandbox-worker.dataplaneServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local/
 
 {{- if .Values.extproc.ingress.enabled }}
 
@@ -28,14 +28,14 @@ E2B PYTHON SDK:
     from agent_sandbox_e2b import patch_e2b
 
     patch_e2b(
-        domain="agent-sandbox-data-plane.{{ .Release.Namespace }}.svc.cluster.local",
-        api_url="http://agent-sandbox-e2b-api.{{ .Release.Namespace }}.svc.cluster.local",
+        domain="{{ include "agent-sandbox-worker.dataplaneServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local",
+        api_url="http://{{ include "agent-sandbox-worker.e2bServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local",
     )
 
   Or set environment variables before calling patch_e2b():
 
-    export E2B_DOMAIN=agent-sandbox-data-plane.{{ .Release.Namespace }}.svc.cluster.local
-    export E2B_API_URL=http://agent-sandbox-e2b-api.{{ .Release.Namespace }}.svc.cluster.local
+    export E2B_DOMAIN={{ include "agent-sandbox-worker.dataplaneServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
+    export E2B_API_URL=http://{{ include "agent-sandbox-worker.e2bServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
 {{- end }}
 
 PREVIEW THIS MESSAGE:

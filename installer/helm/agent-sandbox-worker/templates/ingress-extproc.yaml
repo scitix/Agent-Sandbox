@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "agent-sandbox-worker.fullname" . }}-gateway-ingress
+  name: {{ default (printf "%s-gateway-ingress" (include "agent-sandbox-worker.fullname" .)) .Values.extproc.ingress.name }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
@@ -21,21 +21,21 @@ spec:
             pathType: ImplementationSpecific
             backend:
               service:
-                name: agent-sandbox-api
+                name: {{ include "agent-sandbox-worker.apiServiceName" . }}
                 port:
                   number: 80
           - path: /agent-sandbox/api/data(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
-                name: agent-sandbox-data-plane
+                name: {{ include "agent-sandbox-worker.dataplaneServiceName" . }}
                 port:
                   number: 80
           - path: /agent-sandbox/api/e2b(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
-                name: agent-sandbox-e2b-api
+                name: {{ include "agent-sandbox-worker.e2bServiceName" . }}
                 port:
                   number: 80
 {{- end }}

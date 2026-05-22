@@ -5,6 +5,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    {{- include "agent-sandbox-worker.controllerSelectorLabels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
@@ -33,12 +34,21 @@ spec:
             - --e2b-domain={{ include "agent-sandbox-worker.e2bDomain" . }}
             - --apikey-namespace={{ .Release.Namespace }}
             - --clusters-configmap-name={{ include "agent-sandbox-worker.clustersConfigMapName" . }}
+            {{- if .Values.extensionsConfig.create }}
+            - --extension-config=/etc/agentbox/extensions.yaml
+            {{- end }}
           env:
             - name: LOCAL_CLUSTER_ID
               value: {{ .Values.controller.localClusterId | quote }}
           envFrom:
             - secretRef:
                 name: {{ include "agent-sandbox-worker.secretName" . }}
+          {{- if .Values.extensionsConfig.create }}
+          volumeMounts:
+            - name: extension-config
+              mountPath: /etc/agentbox
+              readOnly: true
+          {{- end }}
           ports:
             - containerPort: 8080
               name: api
@@ -72,6 +82,12 @@ spec:
           type: RuntimeDefault
       serviceAccountName: {{ include "agent-sandbox-worker.fullname" . }}-controller-manager
       terminationGracePeriodSeconds: 10
+      {{- if .Values.extensionsConfig.create }}
+      volumes:
+        - name: extension-config
+          configMap:
+            name: {{ default (printf "%s-extensions-config" (include "agent-sandbox-worker.fullname" .)) .Values.extensionsConfig.name }}
+      {{- end }}
       {{- with .Values.controller.nodeAffinity }}
       affinity:
         nodeAffinity:

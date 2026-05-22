@@ -112,7 +112,6 @@ ingress:
   host: agent-sandbox-dashboard.example.com
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 
 # Gateway API alternative to ingress (use with Envoy Gateway or similar).
 # Mutually exclusive with ingress; enable one or the other.
@@ -156,7 +155,7 @@ logs:
 globalApiKey:
   enabled: false
   maxKeysPerUser: 0
-  adminKey: ""    # AGENTBOX_ADMIN_KEY: wsproxy admin key for API key auth; empty = dev mode
+  adminKey: "" # AGENTBOX_ADMIN_KEY: wsproxy admin key for API key auth; empty = dev mode
 
 # Images Catalog configuration.
 # When enabled, the catalog ConfigMap is managed by ws-proxy at runtime.

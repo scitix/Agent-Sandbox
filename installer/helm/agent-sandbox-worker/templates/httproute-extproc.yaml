@@ -25,7 +25,7 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: agent-sandbox-api
+        - name: {{ include "agent-sandbox-worker.apiServiceName" . }}
           port: 80
     - matches:
         - path:
@@ -38,7 +38,7 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: agent-sandbox-data-plane
+        - name: {{ include "agent-sandbox-worker.dataplaneServiceName" . }}
           port: 80
     - matches:
         - path:
@@ -51,7 +51,7 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: agent-sandbox-e2b-api
+        - name: {{ include "agent-sandbox-worker.e2bServiceName" . }}
           port: 80
 ---
 # SecurityPolicy: Replaces nginx cors-allow-* annotations

@@ -2,10 +2,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: agent-sandbox-api
+  name: {{ include "agent-sandbox-worker.apiServiceName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    {{- include "agent-sandbox-worker.controllerSelectorLabels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
@@ -19,10 +20,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agent-sandbox-controller-metrics
+  name: {{ include "agent-sandbox-worker.metricsServiceName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    {{- include "agent-sandbox-worker.controllerSelectorLabels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
@@ -36,10 +38,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agent-sandbox-e2b-api
+  name: {{ include "agent-sandbox-worker.e2bServiceName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
+    {{- include "agent-sandbox-worker.controllerSelectorLabels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
