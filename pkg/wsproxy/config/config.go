@@ -24,10 +24,11 @@ import (
 )
 
 const (
-	defaultListenAddr       = ":9003"
-	defaultInternalAddr     = ":9004"
-	defaultClustersFilePath = "/etc/agentbox/clusters.yaml"
-	defaultAPIKeyNamespace  = "agentbox-system"
+	defaultListenAddr             = ":9003"
+	defaultInternalAddr           = ":9004"
+	defaultClustersFilePath       = "/etc/agentbox/clusters.yaml"
+	defaultAPIKeyNamespace        = "agentbox-system"
+	defaultImagesCatalogConfigMap = "agentbox-images-catalog"
 )
 
 // Config holds all wsproxy runtime settings.
@@ -75,6 +76,12 @@ type Config struct {
 	// APIKeyNamespace is the Kubernetes namespace where API key Secrets are stored.
 	// Flag: --apikey-namespace  Env: AGENTBOX_APIKEY_NAMESPACE  Default: agentbox-system
 	APIKeyNamespace string
+
+	// ImagesCatalogConfigMap is the name of the ConfigMap that holds the images
+	// catalog. It is stored in APIKeyNamespace.
+	// Flag: --images-catalog-configmap  Env: AGENTBOX_IMAGES_CATALOG_CONFIGMAP
+	// Default: agentbox-images-catalog
+	ImagesCatalogConfigMap string
 }
 
 // FromFlags registers all wsproxy flags on fs and returns a *Config whose
@@ -121,6 +128,10 @@ func FromFlags(fs *flag.FlagSet) *Config {
 	fs.StringVar(&cfg.APIKeyNamespace, "apikey-namespace",
 		envOr("AGENTBOX_APIKEY_NAMESPACE", defaultAPIKeyNamespace),
 		"Kubernetes namespace for API key Secrets.")
+
+	fs.StringVar(&cfg.ImagesCatalogConfigMap, "images-catalog-configmap",
+		envOr("AGENTBOX_IMAGES_CATALOG_CONFIGMAP", defaultImagesCatalogConfigMap),
+		"Name of the ConfigMap holding the images catalog (stored in --apikey-namespace).")
 
 	return cfg
 }

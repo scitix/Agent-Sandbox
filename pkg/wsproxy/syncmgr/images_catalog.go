@@ -35,11 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	imagesCatalogNamespace = "agentbox-system"
-	imagesCatalogConfigMap = "agentbox-images-catalog"
-	imagesCatalogKey       = "images-catalog.json"
-)
+const imagesCatalogKey = "images-catalog.json"
 
 // ImageDataset mirrors the TypeScript type in components/images/data.ts.
 type ImageDataset struct {
@@ -60,8 +56,8 @@ func (m *SyncManager) loadCatalog(ctx context.Context) ([]ImageDataset, error) {
 	}
 	cm := &corev1.ConfigMap{}
 	err := m.deps.TemplateClient.Get(ctx, client.ObjectKey{
-		Namespace: imagesCatalogNamespace,
-		Name:      imagesCatalogConfigMap,
+		Namespace: m.deps.ImagesCatalogNamespace,
+		Name:      m.deps.ImagesCatalogConfigMap,
 	}, cm)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -91,8 +87,8 @@ func (m *SyncManager) saveCatalog(ctx context.Context, datasets []ImageDataset) 
 
 	cm := &corev1.ConfigMap{}
 	err = m.deps.TemplateClient.Get(ctx, client.ObjectKey{
-		Namespace: imagesCatalogNamespace,
-		Name:      imagesCatalogConfigMap,
+		Namespace: m.deps.ImagesCatalogNamespace,
+		Name:      m.deps.ImagesCatalogConfigMap,
 	}, cm)
 
 	if err != nil {
@@ -101,8 +97,8 @@ func (m *SyncManager) saveCatalog(ctx context.Context, datasets []ImageDataset) 
 		}
 		newCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      imagesCatalogConfigMap,
-				Namespace: imagesCatalogNamespace,
+				Name:      m.deps.ImagesCatalogConfigMap,
+				Namespace: m.deps.ImagesCatalogNamespace,
 				Labels: map[string]string{
 					"app.kubernetes.io/managed-by": "agentbox-dashboard",
 				},

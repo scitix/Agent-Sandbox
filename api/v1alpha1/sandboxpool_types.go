@@ -127,6 +127,13 @@ type SandboxPoolSpec struct {
 
 	// Autoscaling defines the autoscaling configuration for this pool.
 	// When nil or autoscaling.enabled=false, the pool is managed manually via spec.replicas.
+	//
+	// To be deprecated: autoscaling responsibility has moved to SandboxEnv as of the
+	// SandboxEnv Phase 1 release. After a Pool is adopted by an Env (label
+	// agentbox.navix.sh/owning-env set), the Pool Reconciler no longer runs its
+	// own autoscaler — the value here is migrated into the Env's
+	// spec.autoscaling.groups[0]. This field will be removed in the next minor
+	// release once production migration completes.
 	// +optional
 	Autoscaling *PoolAutoscalingSpec `json:"autoscaling,omitempty"`
 

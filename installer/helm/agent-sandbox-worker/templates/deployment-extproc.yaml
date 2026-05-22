@@ -28,6 +28,8 @@ spec:
             - --health-probe-bind-address=:8081
             - --extproc-bind-address=:9002
             - --internal-api-bind-address=:9003
+            - --apikey-namespace={{ .Release.Namespace }}
+            - --clusters-configmap-name={{ include "agent-sandbox-worker.clustersConfigMapName" . }}
           env:
             - name: LOCAL_CLUSTER_ID
               value: {{ .Values.controller.localClusterId | quote }}

@@ -37,6 +37,14 @@ Fully qualified name for the ws-proxy component.
 {{- end }}
 
 {{/*
+Name of the images-catalog ConfigMap. The chart owns the object; ws-proxy reads
+and writes it via the AGENTBOX_IMAGES_CATALOG_CONFIGMAP env var.
+*/}}
+{{- define "agent-sandbox-hub.imagesCatalogConfigMapName" -}}
+{{- printf "%s-images-catalog" (include "agent-sandbox-hub.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Selector labels for the ws-proxy Deployment / Service.
 */}}
 {{- define "agent-sandbox-hub.proxySelectorLabels" -}}

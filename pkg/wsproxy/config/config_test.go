@@ -50,6 +50,9 @@ func TestConfig_Defaults(t *testing.T) {
 	if cfg.APIKeyNamespace != "agentbox-system" {
 		t.Errorf("APIKeyNamespace = %q, want agentbox-system", cfg.APIKeyNamespace)
 	}
+	if cfg.ImagesCatalogConfigMap != "agentbox-images-catalog" {
+		t.Errorf("ImagesCatalogConfigMap = %q, want agentbox-images-catalog", cfg.ImagesCatalogConfigMap)
+	}
 	if cfg.MaxKeysPerUser != 0 {
 		t.Errorf("MaxKeysPerUser = %d, want 0", cfg.MaxKeysPerUser)
 	}
@@ -63,11 +66,13 @@ func TestConfig_EnvOverride(t *testing.T) {
 	_ = os.Setenv("AGENTBOX_SYNC_TOKEN", "mysecret")
 	_ = os.Setenv("AGENTBOX_MAX_KEYS_PER_USER", "5")
 	_ = os.Setenv("AGENTBOX_APIKEY_NAMESPACE", "custom-ns")
+	_ = os.Setenv("AGENTBOX_IMAGES_CATALOG_CONFIGMAP", "custom-catalog")
 	t.Cleanup(func() {
 		_ = os.Unsetenv("WSPROXY_LISTEN_ADDR")
 		_ = os.Unsetenv("AGENTBOX_SYNC_TOKEN")
 		_ = os.Unsetenv("AGENTBOX_MAX_KEYS_PER_USER")
 		_ = os.Unsetenv("AGENTBOX_APIKEY_NAMESPACE")
+		_ = os.Unsetenv("AGENTBOX_IMAGES_CATALOG_CONFIGMAP")
 	})
 
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
@@ -87,6 +92,9 @@ func TestConfig_EnvOverride(t *testing.T) {
 	}
 	if cfg.APIKeyNamespace != "custom-ns" {
 		t.Errorf("APIKeyNamespace = %q, want custom-ns", cfg.APIKeyNamespace)
+	}
+	if cfg.ImagesCatalogConfigMap != "custom-catalog" {
+		t.Errorf("ImagesCatalogConfigMap = %q, want custom-catalog", cfg.ImagesCatalogConfigMap)
 	}
 	if !cfg.SyncEnabled() {
 		t.Errorf("SyncEnabled should be true when SyncToken is non-empty")

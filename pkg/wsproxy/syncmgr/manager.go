@@ -125,6 +125,13 @@ type Deps struct {
 	TemplateService service.SandboxTemplateService // internal HTTP API: business logic + rendered responses
 	MaxPerUser      int
 	JWTSecret       string // HS256 secret shared with the BFF; enables Bearer JWT auth on internal API
+
+	// ImagesCatalogNamespace / ImagesCatalogConfigMap locate the images-catalog
+	// ConfigMap that ws-proxy reads and writes. The chart points these at the
+	// ConfigMap it actually owns; the binary falls back to the historical
+	// "agentbox-system" / "agentbox-images-catalog" values when unset.
+	ImagesCatalogNamespace string
+	ImagesCatalogConfigMap string
 }
 
 // New creates a new SyncManager.

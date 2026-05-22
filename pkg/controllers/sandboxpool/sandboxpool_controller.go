@@ -104,7 +104,7 @@ type SandboxPoolReconciler struct {
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch;get;list
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;delete;patch;update
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=namespaces,verbs=list;watch
 
@@ -367,10 +367,22 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 	// downward and update status fields. We collect the idle pod slice here
 	// (read-only) so the autoscaler can compute per-pod idle durations without
 	// needing a separate List call.
+	//
+	// Gated: when the Pool carries an OwnerReference to a SandboxEnv, the Env
+	// Reconciler owns autoscaling for this Pool. Skipping the legacy path here
+	// is what implements the breaking "autoscaling moved to Env" semantics from
+	// the SandboxEnv Phase 1 plan. The Pool still maintains pod state, status
+	// fields (IdleReplicas etc.) and the rest of its lifecycle — only the
+	// autoscaling decision is delegated. Unadopted Pools continue to use the
+	// legacy path verbatim.
 	idlePods := filterPodsByPhase(pods, agentsv1alpha1.SandboxPhaseIdle)
-	autoResult, err := r.syncAutoscaling(ctx, sandboxPool, idlePods, status.RunningReplicas)
-	if err != nil {
-		return reconcile.Result{}, err
+	autoResult := reconcile.Result{}
+	if !agentsv1alpha1.HasEnvOwner(sandboxPool) {
+		var err error
+		autoResult, err = r.syncAutoscaling(ctx, sandboxPool, idlePods, status.RunningReplicas)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 	// Re-read desired replicas in case the autoscaler changed spec.replicas.
 	desiredReplicas = sandboxPool.Spec.Replicas

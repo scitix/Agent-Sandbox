@@ -40,6 +40,7 @@ rules:
   - ''
   resources:
   - pods
+  - secrets
   verbs:
   - create
   - delete
@@ -69,18 +70,9 @@ rules:
   - patch
   - update
 - apiGroups:
-  - ''
-  resources:
-  - secrets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - watch
-- apiGroups:
   - agents.navix.sh
   resources:
+  - sandboxenvs
   - sandboxpools
   - sandboxtemplates
   verbs:
@@ -94,6 +86,7 @@ rules:
 - apiGroups:
   - agents.navix.sh
   resources:
+  - sandboxenvs/finalizers
   - sandboxpools/finalizers
   - sandboxtemplates/finalizers
   verbs:
@@ -101,6 +94,7 @@ rules:
 - apiGroups:
   - agents.navix.sh
   resources:
+  - sandboxenvs/status
   - sandboxpools/status
   - sandboxtemplates/status
   verbs:

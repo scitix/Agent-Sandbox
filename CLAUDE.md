@@ -185,8 +185,8 @@ make build
 | `api/v1alpha1/zz_generated.deepcopy.go` | `make generate` |
 | `config/crd/bases/*.yaml` | `make manifests` |
 | `config/rbac/role.yaml` | `make manifests` |
-| `installer/helm/agent-sandbox-worker/crds/*.yaml` | `make sync-crds-to-helm` (via `hack/scripts/generate-helm.py`) |
-| `installer/helm/agent-sandbox-hub/crds/*.yaml` | `make sync-crds-to-helm` (SandboxTemplate only) |
+| `installer/helm/agent-sandbox-worker/templates/crds/*.yaml` | `make sync-crds-to-helm` (via `hack/scripts/generate-helm.py`) |
+| `installer/helm/agent-sandbox-hub/templates/crds/*.yaml` | `make sync-crds-to-helm` (SandboxTemplate only) |
 | `installer/helm/agent-sandbox-worker/templates/rbac-manager-role.yaml` | `make sync-crds-to-helm` (converts `config/rbac/role.yaml`) |
 | `docs/openapi/swagger.{json,yaml}` | `make openapi` |
 | `pkg/apiserver/gen/agentbox.gen.go` | `make gen-all-api` |

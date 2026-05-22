@@ -12,6 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ---------------------------------------------------------------------------
+# CRD installation
+# ---------------------------------------------------------------------------
+# The chart ships sandboxtemplates.agents.navix.sh under templates/crds/ so
+# `helm upgrade` keeps its schema in sync. The CRD carries
+# `helm.sh/resource-policy: keep`, so it survives `helm uninstall`.
+#
+# Set to false when the agent-sandbox-worker chart is installed in the same
+# cluster — both charts ship the SandboxTemplate CRD, and only one should
+# own it. (The worker chart additionally owns sandboxpools/sandboxenvs.)
+crds:
+  create: true
+
 image:
   repository: ghcr.io/scitix/agent-sandbox-dashboard
   tag: latest
@@ -134,7 +147,7 @@ logs:
 
 # Global API Key management via ws-proxy.
 # When enabled:
-#   - ws-proxy gains a Kubernetes ServiceAccount with Secret CRUD in agentbox-system.
+#   - ws-proxy gains a Kubernetes ServiceAccount with Secret CRUD in the chart's release namespace.
 #   - ws-proxy dials every Worker cluster's /v1/ws/sync endpoint.
 #   - Dashboard BFF exposes /api/global-api-keys which delegates to ws-proxy.
 #

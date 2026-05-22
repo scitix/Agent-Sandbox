@@ -31,6 +31,8 @@ spec:
             - --envoy-gateway-base-url={{ include "agent-sandbox-worker.envoyGatewayBaseUrl" . }}
             - --e2b-bind-address=:8090
             - --e2b-domain={{ include "agent-sandbox-worker.e2bDomain" . }}
+            - --apikey-namespace={{ .Release.Namespace }}
+            - --clusters-configmap-name={{ include "agent-sandbox-worker.clustersConfigMapName" . }}
           env:
             - name: LOCAL_CLUSTER_ID
               value: {{ .Values.controller.localClusterId | quote }}

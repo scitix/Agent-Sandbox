@@ -13,6 +13,19 @@
 # limitations under the License.
 
 # ---------------------------------------------------------------------------
+# CRD installation
+# ---------------------------------------------------------------------------
+# The chart ships CRDs under templates/crds/ so `helm upgrade` keeps their
+# schemas in sync. The CRDs carry `helm.sh/resource-policy: keep`, so they
+# survive `helm uninstall` and your CRs are never garbage-collected.
+#
+# Disable when CRDs are managed out-of-band — for example, when the
+# agent-sandbox-hub chart already installs sandboxtemplates.agents.navix.sh
+# in the same cluster, or when your platform provisions CRDs separately.
+crds:
+  create: true
+
+# ---------------------------------------------------------------------------
 # Controller (sandbox operator + API server)
 # ---------------------------------------------------------------------------
 controller:
@@ -134,10 +147,3 @@ metrics:
   # Requires the Prometheus Operator (kube-prometheus-stack) to be installed.
   enabled: false
 
-# ---------------------------------------------------------------------------
-# CRD installation
-# ---------------------------------------------------------------------------
-crds:
-  # install controls whether CRDs are created/updated during helm install/upgrade.
-  # Set to false if you manage CRDs separately.
-  install: true

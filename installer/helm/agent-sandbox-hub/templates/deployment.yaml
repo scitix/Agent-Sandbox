@@ -30,6 +30,12 @@ spec:
               value: {{ .Values.env.multiClusterMode | quote }}
             - name: NEXT_PUBLIC_API_URL
               value: {{ .Values.env.apiUrl | quote }}
+            # Kubernetes namespace where worker envoy / sandbox pods live.
+            # Used by the dashboard's /api/prometheus/* routes to scope PromQL
+            # selectors. Assumes hub and worker are installed in the same
+            # namespace (the supported deployment topology).
+            - name: AGENTBOX_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:

@@ -19,6 +19,7 @@ import (
 
 	"github.com/scitix/agent-sandbox/pkg/framework"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
+	plugininstancetype "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	pluginquota "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
 
@@ -53,6 +54,13 @@ type Options struct {
 	// HTTP handlers, whereas lifecycle Plugins drive the reconciler's Pre* hooks
 	// and own side-effectful operations such as resource reservation.
 	QuotaProvider *QuotaProviderFactory
+
+	// InstanceTypeProvider registers an out-of-tree InstanceType catalog
+	// provider factory. When nil, the Noop provider is used (catalog disabled)
+	// — Sandbox.create requests must supply raw Pod resources, and SandboxEnv
+	// adoption falls back to member.InlineResources.
+	// Args are decoded from the extension config file's instanceTypeProvider.args field.
+	InstanceTypeProvider *InstanceTypeProviderFactory
 }
 
 // PluginFactory registers a lifecycle plugin factory along with a decoder that
@@ -71,6 +79,15 @@ type PluginFactory struct {
 type QuotaProviderFactory struct {
 	Name    string
 	Factory pluginquota.Factory
+	// DecodeArgs converts extconfig map[string]any → concrete framework.Args.
+	DecodeArgs func(map[string]any) (framework.Args, error)
+}
+
+// InstanceTypeProviderFactory registers an InstanceType catalog provider
+// factory along with its args decoder.
+type InstanceTypeProviderFactory struct {
+	Name    string
+	Factory plugininstancetype.Factory
 	// DecodeArgs converts extconfig map[string]any → concrete framework.Args.
 	DecodeArgs func(map[string]any) (framework.Args, error)
 }

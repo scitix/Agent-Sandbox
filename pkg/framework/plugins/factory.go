@@ -19,12 +19,18 @@ import (
 	"sync"
 
 	"github.com/scitix/agent-sandbox/pkg/framework"
+	"github.com/scitix/agent-sandbox/pkg/framework/providerset"
 )
 
-// Factory constructs a Plugin from shared runtime dependencies (Handle) and
-// plugin-specific parameters (Args). Passing nil args is legal for plugins
-// that take no parameters.
-type Factory func(h framework.Handle, args framework.Args) (Plugin, error)
+// Factory constructs a Plugin from shared runtime dependencies (Handle),
+// the Provider bundle (Set), and plugin-specific parameters (Args).
+//
+// Plugins consume Providers from Set rather than holding their own
+// ConfigMap watchers or API clients for cross-cutting concerns (catalog,
+// quota, …). Passing nil args is legal for plugins that take no parameters;
+// ps is always normalized (no nil fields) by Build before it reaches the
+// Factory.
+type Factory func(h framework.Handle, ps providerset.Set, args framework.Args) (Plugin, error)
 
 var (
 	registryMu sync.RWMutex
@@ -64,13 +70,15 @@ func Get(name string) (Factory, error) {
 }
 
 // Build is a convenience helper: look up a Factory by name and invoke it.
-// Equivalent to Get(name) followed by f(h, args).
-func Build(name string, h framework.Handle, args framework.Args) (Plugin, error) {
+// Equivalent to Get(name) followed by f(h, ps, args). The Set is normalized
+// (nil fields → Noop) before the Factory sees it, so plugins can dereference
+// any Provider field without a nil check.
+func Build(name string, h framework.Handle, ps providerset.Set, args framework.Args) (Plugin, error) {
 	f, err := Get(name)
 	if err != nil {
 		return nil, err
 	}
-	p, err := f(h, args)
+	p, err := f(h, ps.Normalize(), args)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: factory %q: %w", name, err)
 	}

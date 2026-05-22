@@ -58,6 +58,14 @@ Name for the admin-key Secret.
 {{- end }}
 
 {{/*
+Name of the cross-cluster routing ConfigMap. Both controller and extproc read
+this via --clusters-configmap-name; the chart owns the ConfigMap object itself.
+*/}}
+{{- define "agent-sandbox-worker.clustersConfigMapName" -}}
+{{- printf "%s-clusters-config" (include "agent-sandbox-worker.fullname" .) }}
+{{- end }}
+
+{{/*
 Resolved extproc internal API URL.
 */}}
 {{- define "agent-sandbox-worker.extprocInternalApiUrl" -}}

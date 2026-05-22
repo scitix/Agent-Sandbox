@@ -23,6 +23,12 @@
 //	  args:
 //	    namespace: bob-namespace
 //
+//	instanceTypeProvider:
+//	  name: dave
+//	  args:
+//	    configMapNamespace: alice-namespace
+//	    configMapName: alice-config
+//
 //	plugins:
 //	  - name: carol
 //	    args:
@@ -41,11 +47,13 @@ import (
 
 // ExtensionConfig is the top-level structure of the extension config file.
 type ExtensionConfig struct {
-	QuotaProvider *ProviderConfig `json:"quotaProvider,omitempty"`
-	Plugins       []PluginConfig  `json:"plugins,omitempty"`
+	QuotaProvider        *ProviderConfig `json:"quotaProvider,omitempty"`
+	InstanceTypeProvider *ProviderConfig `json:"instanceTypeProvider,omitempty"`
+	Plugins              []PluginConfig  `json:"plugins,omitempty"`
 }
 
-// ProviderConfig holds the name and raw args for the quota provider.
+// ProviderConfig holds the name and raw args for a provider (quota,
+// instancetype, …).
 type ProviderConfig struct {
 	Name string         `json:"name"`
 	Args map[string]any `json:"args,omitempty"`

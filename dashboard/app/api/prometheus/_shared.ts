@@ -66,6 +66,18 @@ export function getPrometheusConfig(): PrometheusConfig | null {
   return { url, token: process.env.PROMETHEUS_TOKEN }
 }
 
+/**
+ * Kubernetes namespace that envoy / sandbox pods run in. Drives the
+ * `namespace="..."` label selector in every PromQL query in this package.
+ *
+ * Sourced from the AGENTBOX_NAMESPACE env var (set by the Helm chart to the
+ * hub release namespace, which is the convention for co-located hub+worker
+ * installations). Falls back to "agentbox-system" when unset so existing
+ * single-namespace deployments keep working.
+ */
+export const AGENTBOX_NAMESPACE =
+  process.env.AGENTBOX_NAMESPACE || "agentbox-system"
+
 // ─── PromQL building ───────────────────────────────────────────────────────
 
 /**

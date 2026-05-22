@@ -38,9 +38,9 @@ import {
   fetchPrometheusRange,
   rangeResultToSeries,
   buildClusterMatcher,
+  AGENTBOX_NAMESPACE,
 } from "../_shared"
 
-const AGENTBOX_NAMESPACE = "agentbox-system"
 const ENVOY_CLUSTER_NAME = "original_dst_cluster"
 
 function buildEnvoySelector(clusterID: string): string {

@@ -135,6 +135,12 @@ const (
 	// trigger. Cleared by the Reconciler after processing.
 	PoolScaleUpPendingAnnotationKey = "agentbox.navix.sh/scale-up-pending"
 
+	// EnvScaleUpPendingAnnotationKey is set on a SandboxEnv when EnvScheduler
+	// holds pending requests it could not forward to any member (typically
+	// because all members hit Saturated). The value is the RFC3339 trigger
+	// time; the Env Reconciler clears it after processing.
+	EnvScaleUpPendingAnnotationKey = "agentbox.navix.sh/env-scale-up-pending"
+
 	// LabelSyncSource marks the origin of a resource.
 	// "global" means the resource was created/synced via ws-proxy (global key manager).
 	// Resources without this label (locally-created or legacy) are treated as non-global.

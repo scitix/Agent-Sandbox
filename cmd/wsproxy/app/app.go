@@ -97,12 +97,14 @@ func Run() {
 		templateSvc := service.NewSandboxTemplateService(k8sClient)
 
 		sm = syncmgr.New(store, cfg.SyncToken, cfg.ManagerToken, syncmgr.Deps{
-			KeyStore:        ks,
-			AdminKeyMgr:     adminKeyMgr,
-			TemplateClient:  k8sClient,
-			TemplateService: templateSvc,
-			MaxPerUser:      cfg.MaxKeysPerUser,
-			JWTSecret:       cfg.JWTSecret,
+			KeyStore:               ks,
+			AdminKeyMgr:            adminKeyMgr,
+			TemplateClient:         k8sClient,
+			TemplateService:        templateSvc,
+			MaxPerUser:             cfg.MaxKeysPerUser,
+			JWTSecret:              cfg.JWTSecret,
+			ImagesCatalogNamespace: cfg.APIKeyNamespace,
+			ImagesCatalogConfigMap: cfg.ImagesCatalogConfigMap,
 		})
 
 		internalSrv := server.NewInternalServer(cfg, server.RouterDeps{

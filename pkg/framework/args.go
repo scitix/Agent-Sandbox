@@ -27,7 +27,7 @@ import (
 //
 //	type MyArgs struct{ URL string }
 //
-//	func Factory(h framework.Handle, args framework.Args) (Plugin, error) {
+//	func Factory(h framework.Handle, ps providerset.Set, args framework.Args) (Plugin, error) {
 //	    if args == nil {
 //	        return nil, errors.New("myplugin: args required")
 //	    }
@@ -35,7 +35,7 @@ import (
 //	    if !ok {
 //	        return nil, fmt.Errorf("myplugin: got %T, want *MyArgs", args)
 //	    }
-//	    // use a.URL …
+//	    // use a.URL, ps.Quota, ps.InstanceType …
 //	}
 //
 // Passing nil is legal — use it for extensions that take no parameters.

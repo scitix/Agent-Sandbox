@@ -33,12 +33,16 @@ import (
 	"github.com/scitix/agent-sandbox/cmd/sandbox/app/extconfig"
 	"github.com/scitix/agent-sandbox/pkg/apiserver"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv"
+	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolmigration"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat"
 	"github.com/scitix/agent-sandbox/pkg/framework"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
+	plugininstancetype "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	pluginquota "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
+	"github.com/scitix/agent-sandbox/pkg/framework/providerset"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -259,11 +263,23 @@ func Run(opts Options) {
 	// extension config file, not from CLI flags, so this package stays vendor-neutral.
 	quotaPluginProvider := buildQuotaProvider(setupLog, opts.QuotaProvider, extCfg, handle)
 
+	// ---- instancetype provider ----------------------------------------------
+	// Same shape as the quota provider: out-of-tree factory + extension config
+	// args. The provider feeds SandboxEnv adoption (round-trip Pool resources
+	// back to (InstanceType, Multiplier)) and, downstream, catalog-driven Pod
+	// sizing in PoolTemplateOverrides.
+	itProvider := buildInstanceTypeProvider(setupLog, opts.InstanceTypeProvider, extCfg, handle)
+
 	// ---- lifecycle plugins ---------------------------------------------------
 	// Register all out-of-tree factories, then build those whose name appears in
 	// the extension config plugins[] list. A factory registered here but absent
 	// from the config file is silently skipped — explicit config = explicit opt-in.
-	builtPlugins := buildPlugins(setupLog, opts.OutOfTreePlugins, extCfg, handle)
+	providerSet := providerset.Set{
+		Quota:        quotaPluginProvider,
+		InstanceType: itProvider,
+	}.Normalize()
+
+	builtPlugins := buildPlugins(setupLog, opts.OutOfTreePlugins, extCfg, handle, providerSet)
 
 	pluginManager := plugins.NewPluginManager(builtPlugins...)
 	if err := pluginManager.Start(ctx, handle); err != nil {
@@ -346,6 +362,29 @@ func Run(opts Options) {
 		os.Exit(1)
 	}
 
+	if err := (&sandboxenv.SandboxEnvReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		LocalClusterID: localClusterID,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "SandboxEnv")
+		os.Exit(1)
+	}
+
+	// PoolAdoptionReconciler is the transitional half of the SandboxEnv Phase 1
+	// migration: it wraps every existing SandboxPool in a same-named
+	// SandboxEnv. Removable once the Env-creates-Pool flow lands. See
+	// pkg/controllers/sandboxenv/poolmigration/README.md.
+	if err := (&poolmigration.PoolAdoptionReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		LocalClusterID: localClusterID,
+		InstanceTypes:  itProvider,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "PoolAdoption")
+		os.Exit(1)
+	}
+
 	idleTimeoutReconciler := sandboxpool.NewIdleTimeoutReconciler(
 		mgr.GetClient(), sandboxStore, idleCheckInterval, extprocClient,
 	)
@@ -416,8 +455,51 @@ func Run(opts Options) {
 	}
 }
 
+// buildInstanceTypeProvider registers the out-of-tree InstanceType catalog
+// provider factory (if any) and builds the provider. Returns Noop when no
+// factory is configured. Intentionally parallel to buildQuotaProvider.
+//
+//nolint:dupl // parallel to buildQuotaProvider; cannot share via generics
+func buildInstanceTypeProvider(
+	log interface {
+		Info(string, ...any)
+		Error(error, string, ...any)
+	},
+	factory *InstanceTypeProviderFactory,
+	extCfg *extconfig.ExtensionConfig,
+	handle framework.Handle,
+) plugininstancetype.Provider {
+	if factory == nil || extCfg.InstanceTypeProvider == nil {
+		log.Info("InstanceType provider: noop (no out-of-tree provider configured)")
+		return plugininstancetype.NewNoop()
+	}
+	if factory.Name != extCfg.InstanceTypeProvider.Name {
+		log.Info("InstanceType provider: noop (registered factory name does not match config)",
+			"registered", factory.Name, "configured", extCfg.InstanceTypeProvider.Name)
+		return plugininstancetype.NewNoop()
+	}
+
+	plugininstancetype.Register(factory.Name, factory.Factory)
+
+	args, err := factory.DecodeArgs(extCfg.InstanceTypeProvider.Args)
+	if err != nil {
+		log.Error(err, "Failed to decode instancetype provider args", "name", factory.Name)
+		os.Exit(1)
+	}
+
+	p, err := plugininstancetype.Build(factory.Name, handle, args)
+	if err != nil {
+		log.Error(err, "Failed to build instancetype provider", "name", factory.Name)
+		os.Exit(1)
+	}
+	log.Info("InstanceType provider enabled", "name", factory.Name)
+	return p
+}
+
 // buildQuotaProvider registers the out-of-tree factory (if any) and builds the
 // provider using Args decoded from the extension config file.
+//
+//nolint:dupl // parallel to buildInstanceTypeProvider; cannot share via generics
 func buildQuotaProvider(
 	log interface {
 		Info(string, ...any)
@@ -464,6 +546,7 @@ func buildPlugins(
 	factories []PluginFactory,
 	extCfg *extconfig.ExtensionConfig,
 	handle framework.Handle,
+	providerSet providerset.Set,
 ) []plugins.Plugin {
 	// Register all factories first so the registry is complete before any Build.
 	byName := make(map[string]PluginFactory, len(factories))
@@ -485,7 +568,7 @@ func buildPlugins(
 			log.Error(err, "Failed to decode plugin args", "name", pcfg.Name)
 			os.Exit(1)
 		}
-		p, err := plugins.Build(pcfg.Name, handle, args)
+		p, err := plugins.Build(pcfg.Name, handle, providerSet, args)
 		if err != nil {
 			log.Error(err, "Failed to build plugin", "name", pcfg.Name)
 			os.Exit(1)

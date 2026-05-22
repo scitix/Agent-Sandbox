@@ -9,12 +9,12 @@ metadata:
     {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
 ---
 # Role grants Secret CRUD (API keys) and ConfigMap CRUD (images catalog)
-# in the agentbox-system namespace on the master cluster.
+# in the chart's release namespace on the master cluster.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "agent-sandbox-hub.proxyFullname" . }}-apikey-manager
-  namespace: agentbox-system
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
 rules:
@@ -23,7 +23,7 @@ rules:
     verbs: [get, list, create, delete]
   - apiGroups: [""]
     resources: [configmaps]
-    resourceNames: [agentbox-images-catalog]
+    resourceNames: [{{ include "agent-sandbox-hub.imagesCatalogConfigMapName" . }}]
     verbs: [get, create, update]
 ---
 # Separate rule to allow creating the ConfigMap when it doesn't exist yet
@@ -32,7 +32,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "agent-sandbox-hub.proxyFullname" . }}-images-catalog-creator
-  namespace: agentbox-system
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
 rules:
@@ -44,7 +44,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "agent-sandbox-hub.proxyFullname" . }}-apikey-manager
-  namespace: agentbox-system
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
 roleRef:
@@ -60,7 +60,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "agent-sandbox-hub.proxyFullname" . }}-images-catalog-creator
-  namespace: agentbox-system
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
 roleRef:

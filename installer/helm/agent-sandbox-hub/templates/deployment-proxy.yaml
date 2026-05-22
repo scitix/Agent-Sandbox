@@ -46,7 +46,9 @@ spec:
             - name: AGENTBOX_MAX_KEYS_PER_USER
               value: {{ .Values.globalApiKey.maxKeysPerUser | quote }}
             - name: AGENTBOX_APIKEY_NAMESPACE
-              value: "agentbox-system"
+              value: {{ .Release.Namespace | quote }}
+            - name: AGENTBOX_IMAGES_CATALOG_CONFIGMAP
+              value: {{ include "agent-sandbox-hub.imagesCatalogConfigMapName" . | quote }}
             - name: AGENTBOX_ADMIN_KEY
               valueFrom:
                 secretKeyRef:
