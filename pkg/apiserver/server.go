@@ -54,15 +54,12 @@ type Config struct {
 	// IAMService resolves team/user identities to Kubernetes namespaces and
 	// handles JWT-based authentication issued by the BFF.
 	IAMService service.IAMService
-	// JWTSecret is the HS256 secret used to verify IAM JWT tokens issued by the BFF.
-	// When empty, JWT-based authentication is disabled.
-	JWTSecret string
 	// RestConfig is the Kubernetes REST config, used for WebSocket exec (terminal).
 	// When nil, the terminal endpoint is disabled.
 	RestConfig *rest.Config
-	// SyncToken is the shared secret used to authenticate ws-proxy connections on
+	// Secret is the shared secret used to authenticate ws-proxy connections on
 	// /v1/ws/sync. When empty, the sync endpoint is disabled.
-	SyncToken string
+	Secret string
 	// ClusterConfigSink is called whenever a cluster_config_sync frame arrives from
 	// ws-proxy. Typically a cluster.ConfigMapWriter that persists the routing table
 	// so ExtProc can read it. May be nil when cluster config sync is not required.
@@ -117,7 +114,7 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 
 	// Build SyncService when a sync token is configured.
 	var syncSvc service.SyncService
-	if cfg.SyncToken != "" {
+	if cfg.Secret != "" {
 		templateSvc := service.NewSandboxTemplateService(k8sClient)
 		if cfg.ClusterConfigSink != nil {
 			syncSvc = service.NewSyncServiceFull(cfg.KeyStore, templateSvc, cfg.ClusterConfigSink)
@@ -148,14 +145,14 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		KubeClientset:   clientset,
 		RestConfig:      cfg.RestConfig,
 		Sync:            syncSvc,
-		SyncToken:       cfg.SyncToken,
+		SyncToken:       cfg.Secret,
 		Forwarder:       cfg.Forwarder,
 		Cluster:         service.NewClusterService(cfg.ClusterStore, cfg.LocalClusterID),
 		QuotaProvider:   quotaProv,
 		ServerVersion:   cfg.ServerVersion,
 	}
 
-	authMw := middleware.NewAuthenticateMiddleware(cfg.AdminKeyManager, cfg.KeyStore, cfg.JWTSecret, svcs.IAM)
+	authMw := middleware.NewAuthenticateMiddleware(cfg.AdminKeyManager, cfg.KeyStore, cfg.Secret, svcs.IAM)
 
 	router.Setup(r, svcs, authMw)
 

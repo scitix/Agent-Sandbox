@@ -54,12 +54,11 @@ controller:
   secrets:
     # adminKey is used to authenticate admin-level API operations.
     adminKey: ""
-    # syncToken is the shared secret used for ws-proxy sync authentication.
-    syncToken: ""
-    # jwtSecret is the secret used to sign JWT tokens issued by the API server.
-    jwtSecret: ""
+    # secret is the shared secret used for ws-proxy /v1/ws/sync auth AND for
+    # verifying BFF-issued JWTs (HS256). The hub's env.secret must match this.
+    secret: ""
     # existingSecret references a pre-existing Secret with keys:
-    #   AGENTBOX_ADMIN_KEY, AGENTBOX_SYNC_TOKEN, JWT_SECRET
+    #   AGENTBOX_ADMIN_KEY, AGENTBOX_SECRET
     # When set, the chart does NOT create a new Secret.
     existingSecret: ""
 

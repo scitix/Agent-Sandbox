@@ -18,7 +18,7 @@
 //   - Terminal WebSocket proxy (default :9003): routes dashboard terminal
 //     connections to the appropriate Worker cluster's sandbox terminal endpoint.
 //   - Sync manager + internal HTTP API (default :9004, enabled when
-//     AGENTBOX_SYNC_TOKEN is set): maintains persistent WebSocket connections
+//     AGENTBOX_SECRET is set): maintains persistent WebSocket connections
 //     to every Worker cluster and exposes management endpoints for API keys,
 //     SandboxTemplates, and cluster config.
 //
@@ -96,13 +96,13 @@ func Run() {
 		adminKeyMgr := apikey.NewAdminKeyManager(cfg.AdminKey)
 		templateSvc := service.NewSandboxTemplateService(k8sClient)
 
-		sm = syncmgr.New(store, cfg.SyncToken, cfg.ManagerToken, syncmgr.Deps{
+		sm = syncmgr.New(store, cfg.Secret, cfg.Secret, syncmgr.Deps{
 			KeyStore:               ks,
 			AdminKeyMgr:            adminKeyMgr,
 			TemplateClient:         k8sClient,
 			TemplateService:        templateSvc,
 			MaxPerUser:             cfg.MaxKeysPerUser,
-			JWTSecret:              cfg.JWTSecret,
+			JWTSecret:              cfg.Secret,
 			ImagesCatalogNamespace: cfg.APIKeyNamespace,
 			ImagesCatalogConfigMap: cfg.ImagesCatalogConfigMap,
 		})
@@ -111,8 +111,8 @@ func Run() {
 			SyncManager:  sm,
 			AdminKeyMgr:  adminKeyMgr,
 			KeyStore:     ks,
-			JWTSecret:    cfg.JWTSecret,
-			ManagerToken: cfg.ManagerToken,
+			JWTSecret:    cfg.Secret,
+			ManagerToken: cfg.Secret,
 		})
 		go func() {
 			log.Printf("wsproxy: internal API listening on %s", cfg.InternalAddr)

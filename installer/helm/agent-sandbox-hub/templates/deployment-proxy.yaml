@@ -31,16 +31,11 @@ spec:
             {{- end }}
           {{- if .Values.globalApiKey.enabled }}
           env:
-            - name: AGENTBOX_SYNC_TOKEN
+            - name: AGENTBOX_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "agent-sandbox-hub.fullname" . }}-secret
-                  key: AGENTBOX_SYNC_TOKEN
-            - name: AGENTBOX_MANAGER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
-                  key: AGENTBOX_MANAGER_TOKEN
+                  key: AGENTBOX_SECRET
             - name: WSPROXY_INTERNAL_ADDR
               value: ":9004"
             - name: AGENTBOX_MAX_KEYS_PER_USER
@@ -54,11 +49,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "agent-sandbox-hub.fullname" . }}-secret
                   key: AGENTBOX_ADMIN_KEY
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
-                  key: JWT_SECRET
           {{- end }}
           volumeMounts:
             - name: cluster-config

@@ -26,8 +26,8 @@ func TestConfig_Defaults(t *testing.T) {
 	// Ensure none of the relevant env vars are set.
 	for _, key := range []string{
 		"WSPROXY_LISTEN_ADDR", "WSPROXY_INTERNAL_ADDR", "CLUSTERS_CONFIG_PATH",
-		"AGENTBOX_SYNC_TOKEN", "AGENTBOX_MANAGER_TOKEN", "AGENTBOX_ADMIN_KEY",
-		"JWT_SECRET", "AGENTBOX_MAX_KEYS_PER_USER", "AGENTBOX_APIKEY_NAMESPACE",
+		"AGENTBOX_SECRET", "AGENTBOX_ADMIN_KEY",
+		"AGENTBOX_MAX_KEYS_PER_USER", "AGENTBOX_APIKEY_NAMESPACE",
 	} {
 		t.Setenv(key, "")
 	}
@@ -57,19 +57,19 @@ func TestConfig_Defaults(t *testing.T) {
 		t.Errorf("MaxKeysPerUser = %d, want 0", cfg.MaxKeysPerUser)
 	}
 	if cfg.SyncEnabled() {
-		t.Errorf("SyncEnabled should be false when SyncToken is empty")
+		t.Errorf("SyncEnabled should be false when Secret is empty")
 	}
 }
 
 func TestConfig_EnvOverride(t *testing.T) {
 	_ = os.Setenv("WSPROXY_LISTEN_ADDR", ":9999")
-	_ = os.Setenv("AGENTBOX_SYNC_TOKEN", "mysecret")
+	_ = os.Setenv("AGENTBOX_SECRET", "mysecret")
 	_ = os.Setenv("AGENTBOX_MAX_KEYS_PER_USER", "5")
 	_ = os.Setenv("AGENTBOX_APIKEY_NAMESPACE", "custom-ns")
 	_ = os.Setenv("AGENTBOX_IMAGES_CATALOG_CONFIGMAP", "custom-catalog")
 	t.Cleanup(func() {
 		_ = os.Unsetenv("WSPROXY_LISTEN_ADDR")
-		_ = os.Unsetenv("AGENTBOX_SYNC_TOKEN")
+		_ = os.Unsetenv("AGENTBOX_SECRET")
 		_ = os.Unsetenv("AGENTBOX_MAX_KEYS_PER_USER")
 		_ = os.Unsetenv("AGENTBOX_APIKEY_NAMESPACE")
 		_ = os.Unsetenv("AGENTBOX_IMAGES_CATALOG_CONFIGMAP")
@@ -84,8 +84,8 @@ func TestConfig_EnvOverride(t *testing.T) {
 	if cfg.ListenAddr != ":9999" {
 		t.Errorf("ListenAddr = %q, want :9999", cfg.ListenAddr)
 	}
-	if cfg.SyncToken != "mysecret" {
-		t.Errorf("SyncToken = %q, want mysecret", cfg.SyncToken)
+	if cfg.Secret != "mysecret" {
+		t.Errorf("Secret = %q, want mysecret", cfg.Secret)
 	}
 	if cfg.MaxKeysPerUser != 5 {
 		t.Errorf("MaxKeysPerUser = %d, want 5", cfg.MaxKeysPerUser)
@@ -101,13 +101,13 @@ func TestConfig_EnvOverride(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_NoSyncToken(t *testing.T) {
+func TestConfig_Validate_NoSecret(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	cfg := config.FromFlags(fs)
 	_ = fs.Parse(nil)
 
 	if err := cfg.Validate(); err != nil {
-		t.Errorf("Validate() with empty SyncToken should return nil, got %v", err)
+		t.Errorf("Validate() with empty Secret should return nil, got %v", err)
 	}
 }
 

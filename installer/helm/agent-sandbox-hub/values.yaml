@@ -41,8 +41,10 @@ basePath: ""
 
 # Environment variables
 env:
-  # JWT signing secret (required)
-  jwtSecret: "YOUR_DASHBOARD_JWT_SECRET"
+  # Shared secret (required) — used for dashboard session JWT signing, BFF↔ws-proxy
+  # internal API auth, and ws-proxy↔Worker /v1/ws/sync auth. Every Worker chart's
+  # controller.secrets.secret MUST be set to the same value.
+  secret: "YOUR_AGENTBOX_SECRET"
   # Agent Sandbox controller API base URL (reachable from inside the dashboard pod)
   apiUrl: "http://localhost:8080"
   # Enable multi-cluster mode
@@ -148,16 +150,11 @@ logs:
 # Global API Key management via ws-proxy.
 # When enabled:
 #   - ws-proxy gains a Kubernetes ServiceAccount with Secret CRUD in the chart's release namespace.
-#   - ws-proxy dials every Worker cluster's /v1/ws/sync endpoint.
-#   - Dashboard BFF exposes /api/global-api-keys which delegates to ws-proxy.
-#
-# Required values when enabled:
-#   syncToken    — shared secret between ws-proxy and Worker; must also be set as
-#                  AGENTBOX_SYNC_TOKEN on every Worker's agent-sandbox deployment.
-#   managerToken — shared secret between Dashboard BFF and ws-proxy internal API.
+#   - ws-proxy dials every Worker cluster's /v1/ws/sync endpoint (auth: env.secret).
+#   - Dashboard BFF exposes /api/global-api-keys which delegates to ws-proxy
+#     using the same env.secret as the bearer token for /internal/*.
 globalApiKey:
   enabled: false
-  token: ""
   maxKeysPerUser: 0
   adminKey: ""    # AGENTBOX_ADMIN_KEY: wsproxy admin key for API key auth; empty = dev mode
 

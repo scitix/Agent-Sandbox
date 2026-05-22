@@ -95,8 +95,7 @@ func Run(opts Options) {
 		extprocInternalAPIURL                            string
 		e2bBindAddress                                   string
 		e2bDomain                                        string
-		jwtSecret                                        string
-		syncToken                                        string
+		secret                                           string
 		localClusterID                                   string
 		clustersConfigMapName                            string
 		tlsOpts                                          []func(*tls.Config)
@@ -141,10 +140,9 @@ func Run(opts Options) {
 		"The address the E2B-compatible API server binds to (e.g. :8090). Empty = disabled.")
 	flag.StringVar(&e2bDomain, "e2b-domain", "",
 		"Domain name returned in E2B API responses for building sandbox connection URLs.")
-	flag.StringVar(&jwtSecret, "jwt-secret", os.Getenv("JWT_SECRET"),
-		"Secret used to verify IAM JWT tokens (HS256). Shared with the BFF. When empty, JWT auth is disabled.")
-	flag.StringVar(&syncToken, "sync-token", os.Getenv("AGENTBOX_SYNC_TOKEN"),
-		"Shared secret for ws-proxy connections on /v1/ws/sync.")
+	flag.StringVar(&secret, "secret", os.Getenv("AGENTBOX_SECRET"),
+		"Shared secret used for IAM JWT verification (HS256) and ws-proxy /v1/ws/sync auth. "+
+			"When empty, JWT auth is disabled and cross-cluster sync is not advertised.")
 	flag.StringVar(&localClusterID, "local-cluster-id", os.Getenv("LOCAL_CLUSTER_ID"),
 		"Identifier of the local cluster. When empty, cross-cluster features are disabled.")
 	flag.StringVar(&clustersConfigMapName, "clusters-configmap-name", "agentbox-clusters-config",
@@ -299,7 +297,7 @@ func Run(opts Options) {
 	ccForwarder := service.NewCrossClusterForwarder(clusterStore, localClusterID)
 
 	var clusterConfigSink service.ClusterConfigSink
-	if syncToken != "" && localClusterID != "" {
+	if secret != "" && localClusterID != "" {
 		clusterConfigSink = cluster.NewConfigMapWriter(mgr.GetClient(), apikeyNamespace, clustersConfigMapName)
 		setupLog.Info("cluster config sink enabled", "configmap", clustersConfigMapName)
 	}
@@ -408,8 +406,7 @@ func Run(opts Options) {
 		KeyStore:          keyStore,
 		AdminKeyManager:   adminKeyMgr,
 		IAMService:        iamSvc,
-		JWTSecret:         jwtSecret,
-		SyncToken:         syncToken,
+		Secret:            secret,
 		ClusterConfigSink: clusterConfigSink,
 		RestConfig:        restCfg,
 		Forwarder:         ccForwarder,

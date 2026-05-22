@@ -11,8 +11,9 @@ ACCESS:
 
 NEXT STEPS:
   1. Add your worker cluster(s) to values.yaml → clusters[]
-  2. Set env.jwtSecret to a strong secret value
+  2. Set env.secret to a strong secret value (must match every worker chart's
+     controller.secrets.secret — exposed as AGENTBOX_SECRET inside the pods).
   3. Point env.apiUrl to your worker cluster's controller API service
 
-  For global API key management, enable globalApiKey.enabled and
-  set globalApiKey.token to match the AGENTBOX_SYNC_TOKEN on every worker.
+  For global API key management, set globalApiKey.enabled: true. The ws-proxy
+  will reuse env.secret for both /v1/ws/sync auth and the BFF /internal/* gate.

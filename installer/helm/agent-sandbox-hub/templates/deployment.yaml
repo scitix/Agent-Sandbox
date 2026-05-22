@@ -40,7 +40,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "agent-sandbox-hub.fullname" . }}-secret
-                  key: JWT_SECRET
+                  key: AGENTBOX_SECRET
             - name: PORT
               value: "3000"
             - name: HOSTNAME
@@ -75,7 +75,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "agent-sandbox-hub.fullname" . }}-secret
-                  key: AGENTBOX_MANAGER_TOKEN
+                  key: AGENTBOX_SECRET
             {{- end }}
             {{- if .Values.prometheus.url }}
             - name: PROMETHEUS_URL
