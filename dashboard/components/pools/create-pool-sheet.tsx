@@ -70,11 +70,6 @@ import { useClusterID } from "@/hooks/use-cluster-id"
 import { clusterPath } from "@/lib/cluster-path"
 import { useFeatureGates } from "@/hooks/use-feature-gates"
 import {
-  autoscalingFieldsSchema,
-  buildAutoscalingSpec,
-  AutoscalingFormSection,
-} from "@/components/pools/autoscaling-form-section"
-import {
   ImagePullSecretDialog,
   type ImagePullSecretValue,
 } from "@/components/pools/image-pull-secret-dialog"
@@ -85,77 +80,30 @@ import { useLocale } from "@/hooks/use-locale"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TranslationFn = (key: any, params?: Record<string, string | number>) => string
 
-function addAutoscalingRefinement(t: TranslationFn) {
-  return (data: Record<string, unknown>, ctx: z.RefinementCtx) => {
-    if (!data.autoscalingEnabled) return
-    const min = data.minReplicas as number | undefined
-    const max = data.maxReplicas as number | undefined
-    const replicas = data.replicas as number
-    if (min == null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: t("pools.validation.minReplicasRequired"),
-        path: ["minReplicas"],
-      })
-    }
-    if (max == null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: t("pools.validation.maxReplicasRequired"),
-        path: ["maxReplicas"],
-      })
-    }
-    if (min != null && max != null) {
-      if (min > max) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: t("pools.validation.minExceedsMax"),
-          path: ["maxReplicas"],
-        })
-      }
-      if (replicas < min) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: t("pools.validation.replicasBelowMin", { replicas, min }),
-          path: ["replicas"],
-        })
-      }
-      if (replicas > max) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: t("pools.validation.replicasAboveMax", { replicas, max }),
-          path: ["replicas"],
-        })
-      }
-    }
-  }
+// Autoscaling is configured on SandboxEnv now, not on individual Pools, so
+// the create/edit forms no longer include the min/max replicas + policy
+// fields. The "replicas" field below is the single source of truth for the
+// pool's desired capacity.
+
+function makeCreateSchema(_t: TranslationFn) {
+  return z.object({
+    name: k8sNameSchema,
+    replicas: z.coerce.number().int().min(0, "Min 0").max(100000, "Max 100000"),
+    templateName: z.string().min(1, "Template name is required"),
+    quotaUrl: z.string().optional(),
+    overrideImage: z.string().optional(),
+    resourceMultiplier: z.coerce.number().int().min(0, "Min 0").optional(),
+    podCreationImagePolicy: z.enum(["IdleImage", "PoolDefaultImage"]).optional(),
+  })
 }
 
-function makeCreateSchema(t: TranslationFn) {
-  return z
-    .object({
-      name: k8sNameSchema,
-      replicas: z.coerce.number().int().min(0, "Min 0").max(100000, "Max 100000"),
-      templateName: z.string().min(1, "Template name is required"),
-      quotaUrl: z.string().optional(),
-      overrideImage: z.string().optional(),
-      resourceMultiplier: z.coerce.number().int().min(0, "Min 0").optional(),
-      podCreationImagePolicy: z.enum(["IdleImage", "PoolDefaultImage"]).optional(),
-      ...autoscalingFieldsSchema,
-    })
-    .superRefine(addAutoscalingRefinement(t))
-}
-
-function makeEditPoolSchema(t: TranslationFn) {
-  return z
-    .object({
-      replicas: z.coerce.number().int().min(0, "Min 0").max(100000, "Max 100000"),
-      podCreationImagePolicy: z.enum(["IdleImage", "PoolDefaultImage"]).optional(),
-      // Image override — optional; empty string means "no change"
-      overrideImage: z.string().optional(),
-      ...autoscalingFieldsSchema,
-    })
-    .superRefine(addAutoscalingRefinement(t))
+function makeEditPoolSchema(_t: TranslationFn) {
+  return z.object({
+    replicas: z.coerce.number().int().min(0, "Min 0").max(100000, "Max 100000"),
+    podCreationImagePolicy: z.enum(["IdleImage", "PoolDefaultImage"]).optional(),
+    // Image override — optional; empty string means "no change"
+    overrideImage: z.string().optional(),
+  })
 }
 
 type CreateFormData = z.infer<ReturnType<typeof makeCreateSchema>>
@@ -423,7 +371,6 @@ function CreateForm({ onOpenChange, onCreated }: CreateFormProps) {
     reset,
     control,
     watch,
-    setValue,
     formState: { errors },
   } = useForm<CreateFormData>({
     resolver: zodResolver(createSchema),
@@ -450,15 +397,6 @@ function CreateForm({ onOpenChange, onCreated }: CreateFormProps) {
           labels: data.quotaUrl ? { "quota.scitix.ai/url": data.quotaUrl } : undefined,
           spec: {
             replicas: data.replicas,
-            minReplicas:
-              data.autoscalingEnabled && data.minReplicas != null
-                ? (data.minReplicas as number)
-                : undefined,
-            maxReplicas:
-              data.autoscalingEnabled && data.maxReplicas != null
-                ? (data.maxReplicas as number)
-                : undefined,
-            autoscaling: buildAutoscalingSpec(data),
             podCreationImagePolicy: (data.podCreationImagePolicy ?? "IdleImage") as
               | "IdleImage"
               | "PoolDefaultImage",
@@ -720,13 +658,7 @@ function CreateForm({ onOpenChange, onCreated }: CreateFormProps) {
             </Field>
           )}
 
-          {/* Autoscaling */}
-          <AutoscalingFormSection
-            control={control}
-            register={register}
-            errors={errors}
-            setValue={setValue}
-          />
+          {/* Autoscaling lives on SandboxEnv now — no Pool-level fields here. */}
         </div>
       </form>
 
@@ -786,9 +718,8 @@ function EditPoolForm({ pool, onOpenChange }: EditPoolFormProps) {
   const { t } = useTranslation()
   const { mutate, isPending: isMutating } = useUpdatePool()
 
-  const currentAutoscaling = pool.spec?.autoscaling
-  const currentScaleUp = currentAutoscaling?.scaleUpPolicy
-  const currentScaleDown = currentAutoscaling?.scaleDownPolicy
+  // Autoscaling lives on the owning SandboxEnv now — the pool-edit form
+  // only manages replicas + image override.
 
   const cpuCores = pool.cpu ? parseCpuToCore(pool.cpu) : undefined
   const memMiB = pool.memory ? parseMemoryToMiB(pool.memory) : undefined
@@ -814,7 +745,6 @@ function EditPoolForm({ pool, onOpenChange }: EditPoolFormProps) {
     handleSubmit,
     reset,
     control,
-    setValue,
     formState: { errors },
   } = useForm<EditPoolFormData>({
     resolver: zodResolver(editPoolSchema),
@@ -825,17 +755,6 @@ function EditPoolForm({ pool, onOpenChange }: EditPoolFormProps) {
         (pool.spec?.podCreationImagePolicy as "IdleImage" | "PoolDefaultImage" | undefined) ??
         "IdleImage",
       overrideImage: "",
-      autoscalingEnabled: currentAutoscaling?.enabled ?? false,
-      minReplicas: pool.spec?.minReplicas ?? "",
-      maxReplicas: pool.spec?.maxReplicas ?? "",
-      scaleUpMode:
-        (currentScaleUp?.mode as "Conservative" | "Default" | "Aggressive" | undefined) ??
-        undefined,
-      cooldownSeconds: currentScaleUp?.cooldownSeconds ?? "",
-      idleThresholdSeconds: currentScaleUp?.idleThresholdSeconds ?? "",
-      idleTimeoutSeconds: currentScaleDown?.idleTimeoutSeconds ?? "",
-      stabilizationSeconds: currentScaleDown?.stabilizationSeconds ?? "",
-      protectionWindowSeconds: currentScaleDown?.protectionWindowSeconds ?? "",
     },
   })
 
@@ -845,9 +764,6 @@ function EditPoolForm({ pool, onOpenChange }: EditPoolFormProps) {
 
     const body: Record<string, unknown> = {
       replicas: resolved.replicas,
-      minReplicas: resolved.autoscalingEnabled ? resolved.minReplicas : undefined,
-      maxReplicas: resolved.autoscalingEnabled ? resolved.maxReplicas : undefined,
-      autoscaling: buildAutoscalingSpec(data),
       podCreationImagePolicy: resolved.podCreationImagePolicy,
     }
 
@@ -935,14 +851,7 @@ function EditPoolForm({ pool, onOpenChange }: EditPoolFormProps) {
             t={t}
           />
 
-          {/* Autoscaling */}
-          <AutoscalingFormSection
-            control={control}
-            register={register}
-            errors={errors}
-            defaultOpen={currentAutoscaling?.enabled === true}
-            setValue={setValue}
-          />
+          {/* Autoscaling lives on SandboxEnv now — no Pool-level fields here. */}
         </div>
       </form>
 

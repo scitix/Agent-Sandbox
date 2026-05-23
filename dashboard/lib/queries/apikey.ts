@@ -30,7 +30,9 @@ export const apiKeysQueryOptions = (namespace?: string) =>
       params: { query: namespace ? { namespace } : undefined },
     },
     {
-      select: (data) => data.items ?? [],
+      // ListAPIKeysResult is a bare APIKeyItem[] (the endpoint returns the
+      // full list without pagination), not an envelope with `.items`.
+      select: (data) => data ?? [],
     },
   )
 

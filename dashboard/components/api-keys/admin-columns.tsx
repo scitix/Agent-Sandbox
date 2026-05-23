@@ -105,18 +105,6 @@ export function createAdminApiKeyColumns(
       },
     },
     {
-      accessorKey: "quotaURL",
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t("apiKeys.col.quotaURL")} />
-      ),
-      enableHiding: true,
-      cell: ({ row }) => {
-        const url = row.original.quotaURL
-        if (!url) return <span className="text-muted-foreground text-xs">—</span>
-        return <CopyableText value={url} label={url} className="font-mono text-xs" />
-      },
-    },
-    {
       accessorKey: "issuedAt",
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t("apiKeys.col.issuedAt")} />

@@ -26,7 +26,6 @@ import {
   ArrowUpRight,
   Activity,
   AlertTriangle,
-  TrendingUp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -290,38 +289,19 @@ export function createPoolColumns(
       cell: ({ row }) => {
         const replicas = row.original.spec?.replicas
         const idleReplicas = row.original.status?.idleReplicas
-        // spec is SandboxPoolSpec; access autoscaling via the full spec reference
-        const spec = row.original.spec as typeof row.original.spec & {
-          autoscaling?: { enabled?: boolean }
-        }
-        const isAutoscaling = spec?.autoscaling?.enabled === true
-        const minR = row.original.spec?.minReplicas
-        const maxR = row.original.spec?.maxReplicas
-
         if (replicas == null) return <span className="font-mono text-sm">---</span>
+        // Autoscaling state lives on the owning SandboxEnv now; the Pool
+        // spec only carries the desired replica count. The "autoscaling
+        // active" tooltip will return when the dashboard surfaces Env-level
+        // state — out of scope for this refactor.
         return (
-          <div className="flex items-center gap-1.5">
-            <StatusLinkCell
-              value={replicas}
-              color="text-foreground"
-              poolName={row.original.name}
-              status=""
-              disableLink={idleReplicas === replicas}
-            />
-            {isAutoscaling && (
-              <Tooltip>
-                <TooltipTrigger render={<span className="inline-flex cursor-default" />}>
-                  <TrendingUp className="text-primary/70 h-3 w-3" />
-                </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-48 text-xs">
-                  {t("pools.col.autoscalingEnabled", {
-                    min: minR ?? 0,
-                    max: maxR ?? "∞",
-                  })}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
+          <StatusLinkCell
+            value={replicas}
+            color="text-foreground"
+            poolName={row.original.name}
+            status=""
+            disableLink={idleReplicas === replicas}
+          />
         )
       },
     },
