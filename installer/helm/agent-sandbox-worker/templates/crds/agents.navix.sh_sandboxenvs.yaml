@@ -346,7 +346,7 @@ spec:
                             description: Multiplier scales InstanceType's resources.
                               Required when InstanceType is set.
                             format: int32
-                            minimum: 1
+                            minimum: 0
                             type: integer
                           name:
                             description: 'Name is the SandboxPool''s metadata.name
@@ -428,9 +428,7 @@ spec:
                 description: 'Mode selects between WarmPool (predefined member Pools)
                   and OnDemandJob
 
-                  (per-request SandboxJob). Immutable after creation; switching modes
-
-                  requires a new Env.'
+                  (per-request SandboxJob).'
                 enum:
                 - WarmPool
                 - OnDemandJob

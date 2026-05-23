@@ -91,116 +91,6 @@ spec:
           spec:
             description: spec defines the desired state of SandboxPool
             properties:
-              autoscaling:
-                description: "Autoscaling defines the autoscaling configuration for\
-                  \ this pool.\nWhen nil or autoscaling.enabled=false, the pool is\
-                  \ managed manually via spec.replicas.\n\nTo be deprecated: autoscaling\
-                  \ responsibility has moved to SandboxEnv as of the\nSandboxEnv Phase\
-                  \ 1 release. After a Pool is adopted by an Env (label\nagentbox.navix.sh/owning-env\
-                  \ set), the Pool Reconciler no longer runs its\nown autoscaler \u2014\
-                  \ the value here is migrated into the Env's\nspec.autoscaling.groups[0].\
-                  \ This field will be removed in the next minor\nrelease once production\
-                  \ migration completes."
-                properties:
-                  enabled:
-                    default: false
-                    description: 'Enabled controls whether the PoolAutoscaler is active.
-
-                      When false (default), spec.replicas is the only source of truth
-                      and
-
-                      MinReplicas/MaxReplicas are ignored.'
-                    type: boolean
-                  scaleDownPolicy:
-                    description: ScaleDownPolicy defines when and how the pool scales
-                      down.
-                    properties:
-                      idleTimeoutSeconds:
-                        default: 300
-                        description: 'IdleTimeoutSeconds is the minimum duration (in
-                          seconds) a Pod must remain
-
-                          in Idle state before it becomes a candidate for scale-down.
-
-                          Defaults to 300 (5 minutes).'
-                        format: int32
-                        minimum: 0
-                        type: integer
-                      protectionWindowSeconds:
-                        default: 10
-                        description: 'ProtectionWindowSeconds is the time window after
-                          a Pod is marked for
-
-                          scale-down (via the scale-down-protected annotation) during
-                          which a new
-
-                          Create Sandbox request can still claim it, cancelling the
-                          scale-down intent.
-
-                          Defaults to 10.'
-                        format: int32
-                        minimum: 0
-                        type: integer
-                      stabilizationSeconds:
-                        default: 60
-                        description: 'StabilizationSeconds is the minimum number of
-                          seconds between two consecutive
-
-                          scale-down events. Prevents thrashing when load fluctuates
-                          around the threshold.
-
-                          Defaults to 60.'
-                        format: int32
-                        minimum: 0
-                        type: integer
-                    type: object
-                  scaleUpPolicy:
-                    description: ScaleUpPolicy defines when and how the pool scales
-                      up.
-                    properties:
-                      cooldownSeconds:
-                        default: 30
-                        description: 'CooldownSeconds is the minimum number of seconds
-                          between two consecutive
-
-                          scale-up events. Prevents scale-up storms when many requests
-                          arrive simultaneously.
-
-                          Defaults to 30.'
-                        format: int32
-                        minimum: 0
-                        type: integer
-                      idleThresholdSeconds:
-                        default: 30
-                        description: 'IdleThresholdSeconds triggers a proactive scale-up
-                          when idleReplicas == 0
-
-                          has persisted for this many seconds. Set to 0 to disable
-                          proactive scale-up.
-
-                          Defaults to 30.'
-                        format: int32
-                        minimum: 0
-                        type: integer
-                      mode:
-                        allOf:
-                        - enum:
-                          - Conservative
-                          - Default
-                          - Aggressive
-                        - enum:
-                          - Conservative
-                          - Default
-                          - Aggressive
-                        default: Default
-                        description: "Mode controls how aggressively the pool grows\
-                          \ on each scale-up decision.\n  - Conservative: +1 per decision\n\
-                          \  - Default:      +max(1, ceil(currentReplicas/2))\n  -\
-                          \ Aggressive:   scale to min(currentReplicas*2, maxReplicas)\n\
-                          Defaults to Default."
-                        type: string
-                    type: object
-                type: object
               defaultIdleTimeout:
                 description: 'DefaultIdleTimeout is the default idle timeout applied
                   to sandboxes created
@@ -240,21 +130,6 @@ spec:
                   If not specified, the image from Template.Spec.Containers[0].Image
                   will be used.'
                 type: string
-              maxReplicas:
-                description: 'MaxReplicas is the upper bound for PoolAutoscaler.
-
-                  When MinReplicas == MaxReplicas, autoscaler is disabled (manual-only
-                  scaling).'
-                format: int32
-                type: integer
-              minReplicas:
-                description: 'MinReplicas is the lower bound for PoolAutoscaler.
-
-                  When MinReplicas == MaxReplicas, autoscaler is disabled (manual-only
-                  scaling).'
-                format: int32
-                minimum: 0
-                type: integer
               podCreationImagePolicy:
                 allOf:
                 - enum:
@@ -274,7 +149,10 @@ spec:
                 description: 'Replicas is the total desired number of Pods (Idle +
                   Running + Starting + Stopping).
 
-                  Can be adjusted by PoolAutoscaler when MinReplicas != MaxReplicas.'
+                  Adjusted by the SandboxEnv autoscaler (when the Pool is owned by
+                  an Env) or
+
+                  directly by the operator for unmanaged Pools.'
                 format: int32
                 minimum: 0
                 type: integer
@@ -644,15 +522,6 @@ spec:
                 description: IdleReplicas is the number of Pods in idle state
                 format: int32
                 type: integer
-              idleZeroSince:
-                description: 'IdleZeroSince is the timestamp when idleReplicas first
-                  dropped to zero in the
-
-                  current continuous zero-idle window. Used to evaluate scaleUpPolicy.idleThresholdSeconds.
-
-                  Cleared when idleReplicas > 0.'
-                format: date-time
-                type: string
               labelSelector:
                 description: 'LabelSelector is the structured label selector matching
                   all Pods managed by this Pool.
@@ -714,20 +583,6 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
-              lastScaleDownTime:
-                description: 'LastScaleDownTime is the timestamp of the most recent
-                  scale-down event triggered
-
-                  by the PoolAutoscaler. Used to enforce scaleDownPolicy.stabilizationSeconds.'
-                format: date-time
-                type: string
-              lastScaleUpTime:
-                description: 'LastScaleUpTime is the timestamp of the most recent
-                  scale-up event triggered
-
-                  by the PoolAutoscaler. Used to enforce scaleUpPolicy.cooldownSeconds.'
-                format: date-time
-                type: string
               phase:
                 description: "Phase is a high-level summary of the pool's current\
                   \ state.\nPossible values: Pending, Ready, ScalingUp, ScalingDown,\

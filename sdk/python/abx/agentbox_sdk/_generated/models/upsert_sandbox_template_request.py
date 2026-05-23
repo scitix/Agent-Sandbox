@@ -22,11 +22,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-from ..types import UNSET, Unset
-from typing import cast
 
-if TYPE_CHECKING:
-  from ..models.sandbox_template_spec import SandboxTemplateSpec
 
 
 
@@ -40,16 +36,11 @@ T = TypeVar("T", bound="UpsertSandboxTemplateRequest")
 class UpsertSandboxTemplateRequest:
     """ 
         Attributes:
-            name (str | Unset): RFC 1123 DNS label (letter-start): lowercase letters, digits, hyphens; start with a letter,
-                end with alphanumeric
-            spec (SandboxTemplateSpec | Unset):
-            crd_yaml (str | Unset): Complete SandboxTemplate CRD YAML string. When provided, name/spec/labels/annotations
-                are extracted from the YAML and the individual fields above are ignored.
+            crd_json (str): Complete SandboxTemplate CRD object serialized as JSON. metadata.name is required. Labels,
+                annotations, and resourceVersion are extracted from the JSON.
      """
 
-    name: str | Unset = UNSET
-    spec: SandboxTemplateSpec | Unset = UNSET
-    crd_yaml: str | Unset = UNSET
+    crd_json: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -57,26 +48,14 @@ class UpsertSandboxTemplateRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_template_spec import SandboxTemplateSpec
-        name = self.name
-
-        spec: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.spec, Unset):
-            spec = self.spec.to_dict()
-
-        crd_yaml = self.crd_yaml
+        crd_json = self.crd_json
 
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({
+            "crdJson": crd_json,
         })
-        if name is not UNSET:
-            field_dict["name"] = name
-        if spec is not UNSET:
-            field_dict["spec"] = spec
-        if crd_yaml is not UNSET:
-            field_dict["crdYaml"] = crd_yaml
 
         return field_dict
 
@@ -84,26 +63,11 @@ class UpsertSandboxTemplateRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_template_spec import SandboxTemplateSpec
         d = dict(src_dict)
-        name = d.pop("name", UNSET)
-
-        _spec = d.pop("spec", UNSET)
-        spec: SandboxTemplateSpec | Unset
-        if isinstance(_spec,  Unset):
-            spec = UNSET
-        else:
-            spec = SandboxTemplateSpec.from_dict(_spec)
-
-
-
-
-        crd_yaml = d.pop("crdYaml", UNSET)
+        crd_json = d.pop("crdJson")
 
         upsert_sandbox_template_request = cls(
-            name=name,
-            spec=spec,
-            crd_yaml=crd_yaml,
+            crd_json=crd_json,
         )
 
 

@@ -590,16 +590,16 @@ func (s *PoolScheduler) triggerScaleUpOnce() {
 }
 
 // writeScaleUpPendingAnnotation patches PoolScaleUpPendingAnnotationKey onto
-// the SandboxPool if autoscaling is enabled and the annotation is absent or
-// stale (> 30 s). Idempotent.
+// the SandboxPool when the annotation is absent or stale (> 30 s). Idempotent.
+//
+// The annotation is a signal consumed by the SandboxEnv autoscaler — its only
+// purpose is to communicate "this Pool has pending claim demand right now".
+// The Pool reconciler reads it too, to suppress scale-down under demand.
 func writeScaleUpPendingAnnotation(ctx context.Context, c client.Client, ns, name string) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		pool := &agentsv1alpha1.SandboxPool{}
 		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, pool); err != nil {
 			return err
-		}
-		if pool.Spec.Autoscaling == nil || !pool.Spec.Autoscaling.Enabled {
-			return nil
 		}
 		if ts := pool.Annotations[agentsv1alpha1.PoolScaleUpPendingAnnotationKey]; ts != "" {
 			if t, err := time.Parse(time.RFC3339, ts); err == nil && time.Since(t) < 30*time.Second {

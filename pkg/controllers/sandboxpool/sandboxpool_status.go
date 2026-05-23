@@ -169,16 +169,6 @@ func (r *SandboxPoolReconciler) statusEquals(sandboxPool *agentsv1alpha1.Sandbox
 	if old.FailedReplicas != newStatus.FailedReplicas {
 		return false
 	}
-	// Compare autoscaler status timestamps.
-	if !timePointerEqual(old.LastScaleUpTime, newStatus.LastScaleUpTime) {
-		return false
-	}
-	if !timePointerEqual(old.LastScaleDownTime, newStatus.LastScaleDownTime) {
-		return false
-	}
-	if !timePointerEqual(old.IdleZeroSince, newStatus.IdleZeroSince) {
-		return false
-	}
 	return conditionsEqual(old.Conditions, newStatus.Conditions)
 }
 
@@ -188,19 +178,6 @@ func (r *SandboxPoolReconciler) markPoolTerminating(ctx context.Context, sandbox
 	}
 	sandboxPool.Status.Phase = agentsv1alpha1.SandboxPoolPhaseTerminating
 	return r.Status().Update(ctx, sandboxPool)
-}
-
-// timePointerEqual returns true when both pointers are nil, or both are non-nil
-// and represent the same instant (compared at second granularity to avoid
-// spurious updates from sub-second rounding differences).
-func timePointerEqual(a, b *metav1.Time) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.UTC().Equal(b.UTC())
 }
 
 // conditionsEqual compares two Condition slices for semantic equality (order-insensitive).

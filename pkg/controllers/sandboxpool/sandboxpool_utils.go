@@ -81,6 +81,24 @@ func resolveLastActive(pod *corev1.Pod, extprocMap map[string]time.Time) time.Ti
 	return pod.CreationTimestamp.Time
 }
 
+// isPendingScaleUpAnnotationFresh returns true when the pool has a
+// PoolScaleUpPendingAnnotationKey annotation that is younger than maxAge
+// (defaulting to 2 minutes when cooldown is zero). The Env autoscaler now
+// owns the scale-up decision, but the Pool reconciler still consults this
+// annotation to suppress scale-down when pending demand is signalled.
+func isPendingScaleUpAnnotationFresh(pool *agentsv1alpha1.SandboxPool, cooldown time.Duration) bool {
+	ts, ok := pool.Annotations[agentsv1alpha1.PoolScaleUpPendingAnnotationKey]
+	if !ok || ts == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return false
+	}
+	maxAge := max(cooldown*2, 2*time.Minute)
+	return time.Since(t) <= maxAge
+}
+
 // patchLastActiveAnnotation patches the last-active annotation on the pod
 // if the new timestamp is strictly newer than the existing one.
 func patchLastActiveAnnotation(ctx context.Context, c client.Client, pod *corev1.Pod, ts time.Time) {

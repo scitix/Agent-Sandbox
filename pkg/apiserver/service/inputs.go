@@ -60,15 +60,12 @@ type CreateSandboxPoolInput struct {
 }
 
 // UpdateSandboxPoolInput carries parameters for updating an existing SandboxPool.
-// Service-internal because Autoscaling and PodCreationImagePolicy are typed against
-// the CRD package rather than the gen wire shape.
+// Service-internal because PodCreationImagePolicy is typed against the CRD
+// package rather than the gen wire shape.
 type UpdateSandboxPoolInput struct {
 	Name                   string
 	Namespace              string
 	Replicas               *int32                                 // nil = don't modify
-	MinReplicas            *int32                                 // nil = don't modify
-	MaxReplicas            *int32                                 // nil = don't modify
 	PodCreationImagePolicy *agentsv1alpha1.PodCreationImagePolicy // nil = don't modify
 	OverrideImage          string                                 // empty = don't modify
-	Autoscaling            *agentsv1alpha1.PoolAutoscalingSpec    // nil = don't modify
 }

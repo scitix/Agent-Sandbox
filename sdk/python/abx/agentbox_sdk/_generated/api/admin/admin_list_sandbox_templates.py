@@ -22,8 +22,8 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
-from ...models.api_key_item import APIKeyItem
 from ...models.error_response import ErrorResponse
+from ...models.list_sandbox_templates_result import ListSandboxTemplatesResult
 from ...types import UNSET, Unset
 from typing import cast
 
@@ -31,7 +31,8 @@ from typing import cast
 
 def _get_kwargs(
     *,
-    namespace: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    user: str | Unset = UNSET,
 
 ) -> dict[str, Any]:
     
@@ -40,7 +41,9 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    params["namespace"] = namespace
+    params["team"] = team
+
+    params["user"] = user
 
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
@@ -48,7 +51,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/admin/api-keys",
+        "url": "/admin/sandbox-templates",
         "params": params,
     }
 
@@ -57,16 +60,11 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | list[APIKeyItem] | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | ListSandboxTemplatesResult | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for componentsschemas_list_api_keys_result_item_data in (_response_200):
-            componentsschemas_list_api_keys_result_item = APIKeyItem.from_dict(componentsschemas_list_api_keys_result_item_data)
+        response_200 = ListSandboxTemplatesResult.from_dict(response.json())
 
 
-
-            response_200.append(componentsschemas_list_api_keys_result_item)
 
         return response_200
 
@@ -84,12 +82,12 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_403
 
-    if response.status_code == 503:
-        response_503 = ErrorResponse.from_dict(response.json())
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
 
 
 
-        return response_503
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -97,7 +95,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | list[APIKeyItem]]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | ListSandboxTemplatesResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -109,25 +107,32 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 def sync_detailed(
     *,
     client: AuthenticatedClient,
-    namespace: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    user: str | Unset = UNSET,
 
-) -> Response[ErrorResponse | list[APIKeyItem]]:
-    """ List API keys (admin)
+) -> Response[ErrorResponse | ListSandboxTemplatesResult]:
+    """ List sandbox templates (admin)
+
+     Returns all SandboxTemplate resources. Admin callers see every template
+    regardless of origin; optional `team` / `user` query parameters narrow
+    results to templates accessible by a specific identity.
 
     Args:
-        namespace (str | Unset):
+        team (str | Unset):
+        user (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[APIKeyItem]]
+        Response[ErrorResponse | ListSandboxTemplatesResult]
      """
 
 
     kwargs = _get_kwargs(
-        namespace=namespace,
+        team=team,
+user=user,
 
     )
 
@@ -140,51 +145,65 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
-    namespace: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    user: str | Unset = UNSET,
 
-) -> ErrorResponse | list[APIKeyItem] | None:
-    """ List API keys (admin)
+) -> ErrorResponse | ListSandboxTemplatesResult | None:
+    """ List sandbox templates (admin)
+
+     Returns all SandboxTemplate resources. Admin callers see every template
+    regardless of origin; optional `team` / `user` query parameters narrow
+    results to templates accessible by a specific identity.
 
     Args:
-        namespace (str | Unset):
+        team (str | Unset):
+        user (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[APIKeyItem]
+        ErrorResponse | ListSandboxTemplatesResult
      """
 
 
     return sync_detailed(
         client=client,
-namespace=namespace,
+team=team,
+user=user,
 
     ).parsed
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
-    namespace: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    user: str | Unset = UNSET,
 
-) -> Response[ErrorResponse | list[APIKeyItem]]:
-    """ List API keys (admin)
+) -> Response[ErrorResponse | ListSandboxTemplatesResult]:
+    """ List sandbox templates (admin)
+
+     Returns all SandboxTemplate resources. Admin callers see every template
+    regardless of origin; optional `team` / `user` query parameters narrow
+    results to templates accessible by a specific identity.
 
     Args:
-        namespace (str | Unset):
+        team (str | Unset):
+        user (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[APIKeyItem]]
+        Response[ErrorResponse | ListSandboxTemplatesResult]
      """
 
 
     kwargs = _get_kwargs(
-        namespace=namespace,
+        team=team,
+user=user,
 
     )
 
@@ -197,25 +216,32 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
-    namespace: str | Unset = UNSET,
+    team: str | Unset = UNSET,
+    user: str | Unset = UNSET,
 
-) -> ErrorResponse | list[APIKeyItem] | None:
-    """ List API keys (admin)
+) -> ErrorResponse | ListSandboxTemplatesResult | None:
+    """ List sandbox templates (admin)
+
+     Returns all SandboxTemplate resources. Admin callers see every template
+    regardless of origin; optional `team` / `user` query parameters narrow
+    results to templates accessible by a specific identity.
 
     Args:
-        namespace (str | Unset):
+        team (str | Unset):
+        user (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[APIKeyItem]
+        ErrorResponse | ListSandboxTemplatesResult
      """
 
 
     return (await asyncio_detailed(
         client=client,
-namespace=namespace,
+team=team,
+user=user,
 
     )).parsed

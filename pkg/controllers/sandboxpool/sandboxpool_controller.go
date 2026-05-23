@@ -362,50 +362,23 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		"idle", status.IdleReplicas, "running", status.RunningReplicas,
 		"starting", status.StartingReplicas, "stopping", status.StoppingReplicas, "failed", status.FailedReplicas)
 
-	// ── Autoscaler ───────────────────────────────────────────────────────────
-	// Run the autoscaler after pod status is known. It may patch spec.replicas
-	// downward and update status fields. We collect the idle pod slice here
-	// (read-only) so the autoscaler can compute per-pod idle durations without
-	// needing a separate List call.
-	//
-	// Gated: when the Pool carries an OwnerReference to a SandboxEnv, the Env
-	// Reconciler owns autoscaling for this Pool. Skipping the legacy path here
-	// is what implements the breaking "autoscaling moved to Env" semantics from
-	// the SandboxEnv Phase 1 plan. The Pool still maintains pod state, status
-	// fields (IdleReplicas etc.) and the rest of its lifecycle — only the
-	// autoscaling decision is delegated. Unadopted Pools continue to use the
-	// legacy path verbatim.
-	idlePods := filterPodsByPhase(pods, agentsv1alpha1.SandboxPhaseIdle)
-	autoResult := reconcile.Result{}
-	if !agentsv1alpha1.HasEnvOwner(sandboxPool) {
-		var err error
-		autoResult, err = r.syncAutoscaling(ctx, sandboxPool, idlePods, status.RunningReplicas)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-	}
-	// Re-read desired replicas in case the autoscaler changed spec.replicas.
-	desiredReplicas = sandboxPool.Spec.Replicas
-
 	// ── Clear residual / overridden scale-down-protected annotations ─────────
 	//
 	// The scheduler's ready queue (pkg/lifecycle/schedule/ready_queue.go) drops
 	// any idle pod that carries SandboxScaleDownProtectedAnnotationKey, so a
-	// stale annotation (e.g. left over from a time when autoscaling was on, or
-	// from a scale-down cycle that never reached the delete step) silently
-	// removes the pod from the schedulable set. Two situations call for a
-	// proactive cleanup here:
+	// stale annotation (e.g. from a scale-down cycle that never reached the
+	// delete step) silently removes the pod from the schedulable set. Two
+	// situations call for a proactive cleanup here:
 	//
-	//   (a) No scale-down is planned this cycle (autoscaling disabled, or
-	//       current ≤ desired). The annotation has no purpose; clear it.
+	//   (a) No scale-down is planned this cycle (current ≤ desired) — the
+	//       annotation has no purpose; clear it.
 	//   (b) Scale-down would normally fire, but the scheduler reported pending
 	//       claim demand via PoolScaleUpPendingAnnotationKey. Demand wins —
 	//       release the protection and skip scale-down for this cycle.
 	//
 	// After clearing we wake the scheduler so it refreshes immediately instead
 	// of waiting for its 10s pollTimer (and its exponential backoff).
-	if sandboxPool.Spec.Autoscaling == nil || !sandboxPool.Spec.Autoscaling.Enabled ||
-		currentReplicas <= desiredReplicas {
+	if currentReplicas <= desiredReplicas {
 		if n := r.unmarkStaleScaleDownProtected(ctx, pods); n > 0 {
 			klog.V(2).InfoS("Cleared stale scale-down-protected annotations",
 				"namespace", sandboxPool.Namespace, "name", sandboxPool.Name, "count", n, "reason", "no_scale_down")
@@ -583,11 +556,6 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 
 		// Requeue to verify Pods are deleted
 		return reconcile.Result{RequeueAfter: RequeueAfter}, nil
-	}
-
-	// Return the autoscaler's suggested requeue time if it has one.
-	if autoResult.RequeueAfter > 0 {
-		return autoResult, nil
 	}
 
 	return reconcile.Result{}, nil

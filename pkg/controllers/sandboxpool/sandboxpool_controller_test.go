@@ -36,8 +36,11 @@ var _ = Describe("SandboxPool Controller", func() {
 	const (
 		resourceName = "test-resource"
 		namespace    = "default"
-		timeout      = time.Second * 10
-		interval     = time.Millisecond * 250
+		// timeout must comfortably exceed the constant scale-down protection
+		// window (defaultScaleDownProtectionWindow ≈ 10s) so Eventually loops
+		// that wait for scale-down to complete don't race the window expiry.
+		timeout  = time.Second * 20
+		interval = time.Millisecond * 250
 	)
 
 	ctx := context.Background()

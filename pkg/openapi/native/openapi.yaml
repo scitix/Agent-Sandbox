@@ -598,64 +598,6 @@ components:
     # =========================================================
     # SandboxPool
     # =========================================================
-    PoolScaleUpPolicy:
-      type: object
-      description: "Controls scale-up behavior for a SandboxPool."
-      properties:
-        mode:
-          type: string
-          enum: [Conservative, Default, Aggressive]
-          default: Default
-          description: "Conservative: +1/decision; Default: +max(1,ceil(n/2))/decision; Aggressive: double up to maxReplicas/decision."
-        cooldownSeconds:
-          type: integer
-          format: int32
-          minimum: 0
-          default: 30
-          description: "Minimum seconds between two consecutive scale-up events."
-        idleThresholdSeconds:
-          type: integer
-          format: int32
-          minimum: 0
-          default: 30
-          description: "Trigger proactive scale-up when idleReplicas==0 persists for this many seconds. Set 0 to disable."
-
-    PoolScaleDownPolicy:
-      type: object
-      description: "Controls scale-down behavior for a SandboxPool."
-      properties:
-        idleTimeoutSeconds:
-          type: integer
-          format: int32
-          minimum: 0
-          default: 300
-          description: "Minimum seconds a pod must remain Idle before it becomes a scale-down candidate."
-        stabilizationSeconds:
-          type: integer
-          format: int32
-          minimum: 0
-          default: 60
-          description: "Minimum seconds between two consecutive scale-down events."
-        protectionWindowSeconds:
-          type: integer
-          format: int32
-          minimum: 0
-          default: 10
-          description: "Seconds after a pod is marked for scale-down during which a new Claim can still cancel the intent."
-
-    PoolAutoscalingSpec:
-      type: object
-      description: "Autoscaling configuration for a SandboxPool. When nil or enabled=false, spec.replicas is the only source of truth."
-      properties:
-        enabled:
-          type: boolean
-          default: false
-          description: "When false (default), the pool is managed manually via spec.replicas. MinReplicas/MaxReplicas are ignored."
-        scaleUpPolicy:
-          $ref: '#/components/schemas/PoolScaleUpPolicy'
-        scaleDownPolicy:
-          $ref: '#/components/schemas/PoolScaleDownPolicy'
-
     SandboxPoolSpec:
       type: object
       required: [replicas]
@@ -665,22 +607,9 @@ components:
           format: int32
           minimum: 0
           description: "Desired number of pre-warmed idle pods in the pool."
-        minReplicas:
-          type: integer
-          format: int32
-          minimum: 0
-          description: "Minimum number of replicas when auto-scaling is enabled."
-        maxReplicas:
-          type: integer
-          format: int32
-          minimum: 0
-          description: "Maximum number of replicas when auto-scaling is enabled."
         templateName:
           type: string
           description: "Name of the SandboxTemplate cluster resource to use as the pod spec source."
-        autoscaling:
-          $ref: '#/components/schemas/PoolAutoscalingSpec'
-          description: "Optional autoscaling configuration. When nil or enabled=false, pool is managed manually via spec.replicas."
         podCreationImagePolicy:
           type: string
           enum: [PoolDefaultImage, IdleImage]
@@ -820,12 +749,6 @@ components:
         replicas:
           type: integer
           format: int32
-        minReplicas:
-          type: integer
-          format: int32
-        maxReplicas:
-          type: integer
-          format: int32
         labels:
           type: object
           additionalProperties:
@@ -880,14 +803,6 @@ components:
         replicas:
           type: integer
           format: int32
-        minReplicas:
-          type: integer
-          format: int32
-          description: "New minimum replicas bound for the autoscaler. Omit to leave unchanged."
-        maxReplicas:
-          type: integer
-          format: int32
-          description: "New maximum replicas bound for the autoscaler. Omit to leave unchanged."
         podCreationImagePolicy:
           type: string
           enum: [PoolDefaultImage, IdleImage]
@@ -900,9 +815,6 @@ components:
               type: string
               description: "Override the main container (containers[0]) image"
           additionalProperties: false
-        autoscaling:
-          $ref: '#/components/schemas/PoolAutoscalingSpec'
-          description: "Update autoscaling configuration for this pool."
 
     DeleteSandboxPoolResult:
       type: object

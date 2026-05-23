@@ -22,8 +22,8 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.api_key_item import APIKeyItem
 from ...models.error_response import ErrorResponse
-from ...models.list_api_keys_result import ListAPIKeysResult
 from typing import cast
 
 
@@ -47,11 +47,16 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | ListAPIKeysResult | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | list[APIKeyItem] | None:
     if response.status_code == 200:
-        response_200 = ListAPIKeysResult.from_dict(response.json())
+        response_200 = []
+        _response_200 = response.json()
+        for componentsschemas_list_api_keys_result_item_data in (_response_200):
+            componentsschemas_list_api_keys_result_item = APIKeyItem.from_dict(componentsschemas_list_api_keys_result_item_data)
 
 
+
+            response_200.append(componentsschemas_list_api_keys_result_item)
 
         return response_200
 
@@ -68,7 +73,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | ListAPIKeysResult]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | list[APIKeyItem]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,7 +86,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | ListAPIKeysResult]:
+) -> Response[ErrorResponse | list[APIKeyItem]]:
     """ List your own API keys (tenant)
 
     Raises:
@@ -89,7 +94,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | ListAPIKeysResult]
+        Response[ErrorResponse | list[APIKeyItem]]
      """
 
 
@@ -107,7 +112,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | ListAPIKeysResult | None:
+) -> ErrorResponse | list[APIKeyItem] | None:
     """ List your own API keys (tenant)
 
     Raises:
@@ -115,7 +120,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | ListAPIKeysResult
+        ErrorResponse | list[APIKeyItem]
      """
 
 
@@ -128,7 +133,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | ListAPIKeysResult]:
+) -> Response[ErrorResponse | list[APIKeyItem]]:
     """ List your own API keys (tenant)
 
     Raises:
@@ -136,7 +141,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | ListAPIKeysResult]
+        Response[ErrorResponse | list[APIKeyItem]]
      """
 
 
@@ -154,7 +159,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | ListAPIKeysResult | None:
+) -> ErrorResponse | list[APIKeyItem] | None:
     """ List your own API keys (tenant)
 
     Raises:
@@ -162,7 +167,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | ListAPIKeysResult
+        ErrorResponse | list[APIKeyItem]
      """
 
 

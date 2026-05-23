@@ -1441,50 +1441,10 @@ func TestMarkScaleDownProtected(t *testing.T) {
 	}
 }
 
-func TestScaleDownProtectionWindow_NilAutoscaling(t *testing.T) {
+func TestScaleDownProtectionWindow_ReturnsDefault(t *testing.T) {
 	pool := &agentsv1alpha1.SandboxPool{Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 5}}
-	if w := scaleDownProtectionWindow(pool); w != 0 {
-		t.Errorf("expected 0 when autoscaling is nil, got %v", w)
-	}
-}
-
-func TestScaleDownProtectionWindow_WithAutoscaling(t *testing.T) {
-	pool := &agentsv1alpha1.SandboxPool{
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 5,
-			Autoscaling: &agentsv1alpha1.PoolAutoscalingSpec{
-				Enabled: true,
-				ScaleDownPolicy: &agentsv1alpha1.PoolScaleDownPolicy{
-					ProtectionWindowSeconds: 15,
-				},
-			},
-		},
-	}
-	if w := scaleDownProtectionWindow(pool); w != 15*time.Second {
-		t.Errorf("expected 15s, got %v", w)
-	}
-}
-
-// TestScaleDownProtectionWindow_AutoscalingDisabled confirms that the two-phase
-// scale-down dance is skipped when autoscaling.enabled=false, even though the
-// Autoscaling object itself is non-nil. Without this short-circuit, calling
-// markScaleDownProtected on a pool that has autoscaling toggled off (but
-// previously had it on) would stamp idle pods with an annotation that nothing
-// ever clears, silently removing them from the scheduler's ready queue.
-func TestScaleDownProtectionWindow_AutoscalingDisabled(t *testing.T) {
-	pool := &agentsv1alpha1.SandboxPool{
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 5,
-			Autoscaling: &agentsv1alpha1.PoolAutoscalingSpec{
-				Enabled: false,
-				ScaleDownPolicy: &agentsv1alpha1.PoolScaleDownPolicy{
-					ProtectionWindowSeconds: 15,
-				},
-			},
-		},
-	}
-	if w := scaleDownProtectionWindow(pool); w != 0 {
-		t.Errorf("expected 0 when autoscaling.enabled=false, got %v", w)
+	if w := scaleDownProtectionWindow(pool); w != defaultScaleDownProtectionWindow {
+		t.Errorf("expected %v, got %v", defaultScaleDownProtectionWindow, w)
 	}
 }
 
@@ -1549,15 +1509,13 @@ func (f *fakeIdleNotifier) NotifyIdleAvailable(namespace, poolName string) {
 }
 func (f *fakeIdleNotifier) OnSandboxReleased(_ context.Context, _ string) {}
 
-// TestReconcile_UnmarksStaleProtection_AutoscalingOff verifies that when a
-// pool has autoscaling disabled, reconcile clears every idle pod's residual
-// scale-down-protected annotation and wakes the scheduler — the core fix for
-// the production stuck-pool bug. No pod should be deleted.
-func TestReconcile_UnmarksStaleProtection_AutoscalingOff(t *testing.T) {
+// TestReconcile_UnmarksStaleProtection_NoScaleDown verifies that when no
+// scale-down is planned this cycle (current ≤ desired), reconcile clears every
+// idle pod's residual scale-down-protected annotation and wakes the scheduler —
+// the core fix for the production stuck-pool bug. No pod should be deleted.
+func TestReconcile_UnmarksStaleProtection_NoScaleDown(t *testing.T) {
 	const ns, poolName = "default", "terminal2"
 	pool := makePoolForGuard(ns, poolName, 3)
-	// Explicit autoscaling block with enabled=false, mirroring production yaml.
-	pool.Spec.Autoscaling = &agentsv1alpha1.PoolAutoscalingSpec{Enabled: false}
 
 	pods := []*corev1.Pod{
 		makeProtectedIdlePod("p1", ns, poolName, "2026-05-08T08:20:02Z"),
@@ -1597,7 +1555,7 @@ func TestReconcile_UnmarksStaleProtection_AutoscalingOff(t *testing.T) {
 	}
 }
 
-// TestReconcile_PendingDemand_OverridesScaleDown covers the autoscaling-on
+// TestReconcile_PendingDemand_OverridesScaleDown covers the demand-override
 // case: current(3) > desired(2) would normally trigger scale-down, but a
 // fresh PoolScaleUpPendingAnnotationKey on the pool tells the controller the
 // scheduler has waiters. We expect: protection stripped from all idle pods,
@@ -1605,19 +1563,6 @@ func TestReconcile_UnmarksStaleProtection_AutoscalingOff(t *testing.T) {
 func TestReconcile_PendingDemand_OverridesScaleDown(t *testing.T) {
 	const ns, poolName = "default", "demand-pool"
 	pool := makePoolForGuard(ns, poolName, 2)
-	// Cap MaxReplicas so the autoscaler cannot bump desired upward in response
-	// to the pending annotation; this forces current(3) > desired(2) and
-	// exercises branch (b) of the cleanup logic specifically.
-	maxRep := int32(2)
-	minRep := int32(2)
-	pool.Spec.MinReplicas = &minRep
-	pool.Spec.MaxReplicas = &maxRep
-	pool.Spec.Autoscaling = &agentsv1alpha1.PoolAutoscalingSpec{
-		Enabled: true,
-		ScaleDownPolicy: &agentsv1alpha1.PoolScaleDownPolicy{
-			ProtectionWindowSeconds: 30,
-		},
-	}
 	if pool.Annotations == nil {
 		pool.Annotations = map[string]string{}
 	}

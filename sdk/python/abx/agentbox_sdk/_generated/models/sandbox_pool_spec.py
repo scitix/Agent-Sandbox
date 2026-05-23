@@ -24,10 +24,7 @@ from ..types import UNSET, Unset
 
 from ..models.sandbox_pool_spec_pod_creation_image_policy import SandboxPoolSpecPodCreationImagePolicy
 from ..types import UNSET, Unset
-from typing import cast
 
-if TYPE_CHECKING:
-  from ..models.pool_autoscaling_spec import PoolAutoscalingSpec
 
 
 
@@ -42,11 +39,7 @@ class SandboxPoolSpec:
     """ 
         Attributes:
             replicas (int): Desired number of pre-warmed idle pods in the pool.
-            min_replicas (int | Unset): Minimum number of replicas when auto-scaling is enabled.
-            max_replicas (int | Unset): Maximum number of replicas when auto-scaling is enabled.
             template_name (str | Unset): Name of the SandboxTemplate cluster resource to use as the pod spec source.
-            autoscaling (PoolAutoscalingSpec | Unset): Autoscaling configuration for a SandboxPool. When nil or
-                enabled=false, spec.replicas is the only source of truth.
             pod_creation_image_policy (SandboxPoolSpecPodCreationImagePolicy | Unset): Controls which image newly created
                 Pods start with. IdleImage (default) uses spec.idleImage; PoolDefaultImage uses the template container image.
                 Default: SandboxPoolSpecPodCreationImagePolicy.IDLEIMAGE.
@@ -60,10 +53,7 @@ class SandboxPoolSpec:
      """
 
     replicas: int
-    min_replicas: int | Unset = UNSET
-    max_replicas: int | Unset = UNSET
     template_name: str | Unset = UNSET
-    autoscaling: PoolAutoscalingSpec | Unset = UNSET
     pod_creation_image_policy: SandboxPoolSpecPodCreationImagePolicy | Unset = SandboxPoolSpecPodCreationImagePolicy.IDLEIMAGE
     default_startup_timeout: str | Unset = UNSET
     default_idle_timeout: str | Unset = UNSET
@@ -74,18 +64,9 @@ class SandboxPoolSpec:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.pool_autoscaling_spec import PoolAutoscalingSpec
         replicas = self.replicas
 
-        min_replicas = self.min_replicas
-
-        max_replicas = self.max_replicas
-
         template_name = self.template_name
-
-        autoscaling: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.autoscaling, Unset):
-            autoscaling = self.autoscaling.to_dict()
 
         pod_creation_image_policy: str | Unset = UNSET
         if not isinstance(self.pod_creation_image_policy, Unset):
@@ -102,14 +83,8 @@ class SandboxPoolSpec:
         field_dict.update({
             "replicas": replicas,
         })
-        if min_replicas is not UNSET:
-            field_dict["minReplicas"] = min_replicas
-        if max_replicas is not UNSET:
-            field_dict["maxReplicas"] = max_replicas
         if template_name is not UNSET:
             field_dict["templateName"] = template_name
-        if autoscaling is not UNSET:
-            field_dict["autoscaling"] = autoscaling
         if pod_creation_image_policy is not UNSET:
             field_dict["podCreationImagePolicy"] = pod_creation_image_policy
         if default_startup_timeout is not UNSET:
@@ -123,25 +98,10 @@ class SandboxPoolSpec:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.pool_autoscaling_spec import PoolAutoscalingSpec
         d = dict(src_dict)
         replicas = d.pop("replicas")
 
-        min_replicas = d.pop("minReplicas", UNSET)
-
-        max_replicas = d.pop("maxReplicas", UNSET)
-
         template_name = d.pop("templateName", UNSET)
-
-        _autoscaling = d.pop("autoscaling", UNSET)
-        autoscaling: PoolAutoscalingSpec | Unset
-        if isinstance(_autoscaling,  Unset):
-            autoscaling = UNSET
-        else:
-            autoscaling = PoolAutoscalingSpec.from_dict(_autoscaling)
-
-
-
 
         _pod_creation_image_policy = d.pop("podCreationImagePolicy", UNSET)
         pod_creation_image_policy: SandboxPoolSpecPodCreationImagePolicy | Unset
@@ -159,10 +119,7 @@ class SandboxPoolSpec:
 
         sandbox_pool_spec = cls(
             replicas=replicas,
-            min_replicas=min_replicas,
-            max_replicas=max_replicas,
             template_name=template_name,
-            autoscaling=autoscaling,
             pod_creation_image_policy=pod_creation_image_policy,
             default_startup_timeout=default_startup_timeout,
             default_idle_timeout=default_idle_timeout,

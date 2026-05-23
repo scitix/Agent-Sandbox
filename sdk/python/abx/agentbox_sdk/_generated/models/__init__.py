@@ -36,17 +36,12 @@ from .exec_command_result import ExecCommandResult
 from .exec_token_response import ExecTokenResponse
 from .feature_gates import FeatureGates
 from .image_pull_secret_input import ImagePullSecretInput
-from .list_api_keys_result import ListAPIKeysResult
 from .list_clusters_result import ListClustersResult
 from .list_quotas_result import ListQuotasResult
 from .list_sandbox_pools_result import ListSandboxPoolsResult
 from .list_sandbox_templates_result import ListSandboxTemplatesResult
 from .list_sandboxes_result import ListSandboxesResult
 from .namespaces_result import NamespacesResult
-from .pool_autoscaling_spec import PoolAutoscalingSpec
-from .pool_scale_down_policy import PoolScaleDownPolicy
-from .pool_scale_up_policy import PoolScaleUpPolicy
-from .pool_scale_up_policy_mode import PoolScaleUpPolicyMode
 from .pool_template_overrides import PoolTemplateOverrides
 from .promote_api_key_result import PromoteAPIKeyResult
 from .quota import Quota
@@ -129,17 +124,12 @@ __all__ = (
     "ExecTokenResponse",
     "FeatureGates",
     "ImagePullSecretInput",
-    "ListAPIKeysResult",
     "ListClustersResult",
     "ListQuotasResult",
     "ListSandboxesResult",
     "ListSandboxPoolsResult",
     "ListSandboxTemplatesResult",
     "NamespacesResult",
-    "PoolAutoscalingSpec",
-    "PoolScaleDownPolicy",
-    "PoolScaleUpPolicy",
-    "PoolScaleUpPolicyMode",
     "PoolTemplateOverrides",
     "PromoteAPIKeyResult",
     "Quota",

@@ -413,51 +413,6 @@ func TestBuildMemberFromPool_CatalogMatch(t *testing.T) {
 	}
 }
 
-func TestMapPoolAutoscalingToEnv_PreservesPolicies(t *testing.T) {
-	pool := newPool()
-	pool.Spec.MinReplicas = ptr(int32(1))
-	pool.Spec.MaxReplicas = ptr(int32(5))
-	//nolint:staticcheck // exercising the migration path.
-	pool.Spec.Autoscaling = &agentsv1alpha1.PoolAutoscalingSpec{
-		Enabled: true,
-		ScaleUpPolicy: &agentsv1alpha1.PoolScaleUpPolicy{
-			Mode:                 agentsv1alpha1.PoolScaleUpModeAggressive,
-			CooldownSeconds:      11,
-			IdleThresholdSeconds: 22,
-		},
-		ScaleDownPolicy: &agentsv1alpha1.PoolScaleDownPolicy{
-			IdleTimeoutSeconds:   33,
-			StabilizationSeconds: 44,
-		},
-	}
-	got := mapPoolAutoscalingToEnv(pool)
-	if got == nil {
-		t.Fatal("expected non-nil EnvAutoscalingSpec")
-	}
-	if !got.Enabled {
-		t.Errorf("expected Enabled=true")
-	}
-	if len(got.Groups) != 1 {
-		t.Fatalf("expected one group, got %d", len(got.Groups))
-	}
-	g := got.Groups[0]
-	if g.Name != defaultScalingGroup {
-		t.Errorf("group name = %q, want %q", g.Name, defaultScalingGroup)
-	}
-	if g.MinReplicas == nil || *g.MinReplicas != 1 {
-		t.Errorf("MinReplicas = %v, want 1", g.MinReplicas)
-	}
-	if g.MaxReplicas == nil || *g.MaxReplicas != 5 {
-		t.Errorf("MaxReplicas = %v, want 5", g.MaxReplicas)
-	}
-	if g.ScaleUpPolicy == nil || g.ScaleUpPolicy.CooldownSeconds != 11 {
-		t.Errorf("ScaleUpPolicy not preserved: %+v", g.ScaleUpPolicy)
-	}
-	if g.ScaleDownPolicy == nil || g.ScaleDownPolicy.IdleTimeoutSeconds != 33 {
-		t.Errorf("ScaleDownPolicy not preserved: %+v", g.ScaleDownPolicy)
-	}
-}
-
 func TestEnvLabelsFromPool_PropagatesTeamUser(t *testing.T) {
 	pool := newPool()
 	labels := envLabelsFromPool(pool)
@@ -476,5 +431,3 @@ func TestEnvLabelsFromPool_EmptyReturnsNil(t *testing.T) {
 		t.Errorf("expected nil, got %v", got)
 	}
 }
-
-func ptr[T any](v T) *T { return &v }

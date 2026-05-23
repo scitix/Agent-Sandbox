@@ -51,7 +51,6 @@ class CreateAPIKeyRequest:
             hash_prefix (str | Unset): First 16 hex characters of the tokenHash. Required when tokenHash is provided.
             issued_at (datetime.datetime | Unset): Original issue timestamp (import mode). Used to preserve the original
                 creation time. Ignored when tokenHash is not provided.
-            quota_url (str | Unset): Quota URL associated with the key (import mode).
      """
 
     namespace: str | Unset = UNSET
@@ -62,7 +61,6 @@ class CreateAPIKeyRequest:
     token_hash: str | Unset = UNSET
     hash_prefix: str | Unset = UNSET
     issued_at: datetime.datetime | Unset = UNSET
-    quota_url: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -90,8 +88,6 @@ class CreateAPIKeyRequest:
         if not isinstance(self.issued_at, Unset):
             issued_at = self.issued_at.isoformat()
 
-        quota_url = self.quota_url
-
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -113,8 +109,6 @@ class CreateAPIKeyRequest:
             field_dict["hashPrefix"] = hash_prefix
         if issued_at is not UNSET:
             field_dict["issuedAt"] = issued_at
-        if quota_url is not UNSET:
-            field_dict["quotaURL"] = quota_url
 
         return field_dict
 
@@ -155,8 +149,6 @@ class CreateAPIKeyRequest:
 
 
 
-        quota_url = d.pop("quotaURL", UNSET)
-
         create_api_key_request = cls(
             namespace=namespace,
             user=user,
@@ -166,7 +158,6 @@ class CreateAPIKeyRequest:
             token_hash=token_hash,
             hash_prefix=hash_prefix,
             issued_at=issued_at,
-            quota_url=quota_url,
         )
 
 

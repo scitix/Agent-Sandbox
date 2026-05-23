@@ -179,17 +179,6 @@ func (r *SandboxPoolReconciler) createPod(ctx context.Context, sandboxPool *agen
 	return nil
 }
 
-// filterPodsByPhase returns only the pods whose sandbox phase label matches phase.
-func filterPodsByPhase(pods []corev1.Pod, phase string) []corev1.Pod {
-	var result []corev1.Pod
-	for i := range pods {
-		if inplaceupdate.GetSandboxPhase(&pods[i]) == phase {
-			result = append(result, pods[i])
-		}
-	}
-	return result
-}
-
 func filterPodsNotDeleting(pods []corev1.Pod) []corev1.Pod {
 	result := make([]corev1.Pod, 0, len(pods))
 	for i := range pods {
@@ -201,20 +190,23 @@ func filterPodsNotDeleting(pods []corev1.Pod) []corev1.Pod {
 	return result
 }
 
+// defaultScaleDownProtectionWindow is the two-phase protection window applied
+// to idle Pods scheduled for deletion. It gives a concurrent Sandbox.create
+// request a brief opportunity to claim the Pod and cancel the scale-down.
+//
+// The window used to be configurable via Pool.spec.autoscaling.scaleDownPolicy
+// — that knob moved to SandboxEnv when autoscaling decisions were lifted to
+// the Env layer. For now the Pool unconditionally uses a sensible constant;
+// if a per-Pool override is needed later, surface it via the owning Env's
+// scaleDownPolicy and look it up here.
+const defaultScaleDownProtectionWindow = 10 * time.Second
+
 // scaleDownProtectionWindow returns the duration of the two-phase protection
-// window for idle pods being deleted. Returns 0 when autoscaling is not
-// configured or explicitly disabled, preserving the original immediate-delete
-// behaviour — in those cases the two-phase mark-then-delete dance only stamps
-// annotations that nothing ever clears.
+// window applied to idle Pods being scaled down. Always returns the constant
+// default since the autoscaling decision lives on SandboxEnv now.
 func scaleDownProtectionWindow(pool *agentsv1alpha1.SandboxPool) time.Duration {
-	if pool.Spec.Autoscaling == nil || !pool.Spec.Autoscaling.Enabled {
-		return 0
-	}
-	_, _, protectionWindowSec := scaleDownPolicyOrDefault(pool)
-	if protectionWindowSec <= 0 {
-		return 0
-	}
-	return time.Duration(protectionWindowSec) * time.Second
+	_ = pool
+	return defaultScaleDownProtectionWindow
 }
 
 // markScaleDownProtected stamps the pod with a scale-down-protected annotation

@@ -14,24 +14,6 @@
 
 package v1alpha1
 
-// PoolAutoscalingSpec defines the autoscaling configuration for a SandboxPool.
-type PoolAutoscalingSpec struct {
-	// Enabled controls whether the PoolAutoscaler is active.
-	// When false (default), spec.replicas is the only source of truth and
-	// MinReplicas/MaxReplicas are ignored.
-	// +optional
-	// +kubebuilder:default=false
-	Enabled bool `json:"enabled,omitempty"`
-
-	// ScaleUpPolicy defines when and how the pool scales up.
-	// +optional
-	ScaleUpPolicy *PoolScaleUpPolicy `json:"scaleUpPolicy,omitempty"`
-
-	// ScaleDownPolicy defines when and how the pool scales down.
-	// +optional
-	ScaleDownPolicy *PoolScaleDownPolicy `json:"scaleDownPolicy,omitempty"`
-}
-
 // PoolScaleUpPolicy controls scale-up behavior.
 type PoolScaleUpPolicy struct {
 	// Mode controls how aggressively the pool grows on each scale-up decision.

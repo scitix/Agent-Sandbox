@@ -78,20 +78,10 @@ type SandboxPoolSpec struct {
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
 	// Replicas is the total desired number of Pods (Idle + Running + Starting + Stopping).
-	// Can be adjusted by PoolAutoscaler when MinReplicas != MaxReplicas.
+	// Adjusted by the SandboxEnv autoscaler (when the Pool is owned by an Env) or
+	// directly by the operator for unmanaged Pools.
 	// +kubebuilder:validation:Minimum=0
 	Replicas int32 `json:"replicas"`
-
-	// MinReplicas is the lower bound for PoolAutoscaler.
-	// When MinReplicas == MaxReplicas, autoscaler is disabled (manual-only scaling).
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	MinReplicas *int32 `json:"minReplicas,omitempty"`
-
-	// MaxReplicas is the upper bound for PoolAutoscaler.
-	// When MinReplicas == MaxReplicas, autoscaler is disabled (manual-only scaling).
-	// +optional
-	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
 	// TemplateName references a cluster-scoped SandboxTemplate to use as the base
 	// configuration. When set, the template's EmbeddedSandboxTemplate is copied at
@@ -124,18 +114,6 @@ type SandboxPoolSpec struct {
 	// +kubebuilder:validation:Enum=PoolDefaultImage;IdleImage
 	// +kubebuilder:default=IdleImage
 	PodCreationImagePolicy PodCreationImagePolicy `json:"podCreationImagePolicy,omitempty"`
-
-	// Autoscaling defines the autoscaling configuration for this pool.
-	// When nil or autoscaling.enabled=false, the pool is managed manually via spec.replicas.
-	//
-	// To be deprecated: autoscaling responsibility has moved to SandboxEnv as of the
-	// SandboxEnv Phase 1 release. After a Pool is adopted by an Env (label
-	// agentbox.navix.sh/owning-env set), the Pool Reconciler no longer runs its
-	// own autoscaler — the value here is migrated into the Env's
-	// spec.autoscaling.groups[0]. This field will be removed in the next minor
-	// release once production migration completes.
-	// +optional
-	Autoscaling *PoolAutoscalingSpec `json:"autoscaling,omitempty"`
 
 	EmbeddedSandboxTemplate `json:",inline"`
 }
@@ -187,22 +165,6 @@ type SandboxPoolStatus struct {
 	// FailedReplicas is the number of Pods in failed state
 	// +optional
 	FailedReplicas int32 `json:"failedReplicas,omitempty"`
-
-	// LastScaleUpTime is the timestamp of the most recent scale-up event triggered
-	// by the PoolAutoscaler. Used to enforce scaleUpPolicy.cooldownSeconds.
-	// +optional
-	LastScaleUpTime *metav1.Time `json:"lastScaleUpTime,omitempty"`
-
-	// LastScaleDownTime is the timestamp of the most recent scale-down event triggered
-	// by the PoolAutoscaler. Used to enforce scaleDownPolicy.stabilizationSeconds.
-	// +optional
-	LastScaleDownTime *metav1.Time `json:"lastScaleDownTime,omitempty"`
-
-	// IdleZeroSince is the timestamp when idleReplicas first dropped to zero in the
-	// current continuous zero-idle window. Used to evaluate scaleUpPolicy.idleThresholdSeconds.
-	// Cleared when idleReplicas > 0.
-	// +optional
-	IdleZeroSince *metav1.Time `json:"idleZeroSince,omitempty"`
 
 	// Selector is the label selector string used to identify Pods managed by this Pool.
 	// Deprecated: Use LabelSelector for structured access or PhaseSelectors for per-phase filtering.

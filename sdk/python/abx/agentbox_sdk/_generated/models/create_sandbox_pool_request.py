@@ -48,8 +48,6 @@ class CreateSandboxPoolRequest:
                 alphanumeric
             template_name (str | Unset):
             replicas (int | Unset):
-            min_replicas (int | Unset):
-            max_replicas (int | Unset):
             labels (CreateSandboxPoolRequestLabels | Unset):
             annotations (CreateSandboxPoolRequestAnnotations | Unset):
             spec (SandboxPoolSpec | Unset):
@@ -62,8 +60,6 @@ class CreateSandboxPoolRequest:
     name: str
     template_name: str | Unset = UNSET
     replicas: int | Unset = UNSET
-    min_replicas: int | Unset = UNSET
-    max_replicas: int | Unset = UNSET
     labels: CreateSandboxPoolRequestLabels | Unset = UNSET
     annotations: CreateSandboxPoolRequestAnnotations | Unset = UNSET
     spec: SandboxPoolSpec | Unset = UNSET
@@ -87,10 +83,6 @@ class CreateSandboxPoolRequest:
         template_name = self.template_name
 
         replicas = self.replicas
-
-        min_replicas = self.min_replicas
-
-        max_replicas = self.max_replicas
 
         labels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.labels, Unset):
@@ -124,10 +116,6 @@ class CreateSandboxPoolRequest:
             field_dict["templateName"] = template_name
         if replicas is not UNSET:
             field_dict["replicas"] = replicas
-        if min_replicas is not UNSET:
-            field_dict["minReplicas"] = min_replicas
-        if max_replicas is not UNSET:
-            field_dict["maxReplicas"] = max_replicas
         if labels is not UNSET:
             field_dict["labels"] = labels
         if annotations is not UNSET:
@@ -158,10 +146,6 @@ class CreateSandboxPoolRequest:
         template_name = d.pop("templateName", UNSET)
 
         replicas = d.pop("replicas", UNSET)
-
-        min_replicas = d.pop("minReplicas", UNSET)
-
-        max_replicas = d.pop("maxReplicas", UNSET)
 
         _labels = d.pop("labels", UNSET)
         labels: CreateSandboxPoolRequestLabels | Unset
@@ -219,8 +203,6 @@ class CreateSandboxPoolRequest:
             name=name,
             template_name=template_name,
             replicas=replicas,
-            min_replicas=min_replicas,
-            max_replicas=max_replicas,
             labels=labels,
             annotations=annotations,
             spec=spec,

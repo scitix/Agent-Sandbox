@@ -148,42 +148,6 @@ func derefString(s *string) string {
 	return *s
 }
 
-// genToAutoscaling converts a generated gen.PoolAutoscalingSpec to the CRD type.
-func genToAutoscaling(a *gen.PoolAutoscalingSpec) *agentsv1alpha1.PoolAutoscalingSpec {
-	if a == nil {
-		return nil
-	}
-	result := &agentsv1alpha1.PoolAutoscalingSpec{}
-	if a.Enabled != nil {
-		result.Enabled = *a.Enabled
-	}
-	if a.ScaleUpPolicy != nil {
-		result.ScaleUpPolicy = &agentsv1alpha1.PoolScaleUpPolicy{}
-		if a.ScaleUpPolicy.Mode != nil {
-			result.ScaleUpPolicy.Mode = agentsv1alpha1.PoolScaleUpMode(*a.ScaleUpPolicy.Mode)
-		}
-		if a.ScaleUpPolicy.CooldownSeconds != nil {
-			result.ScaleUpPolicy.CooldownSeconds = *a.ScaleUpPolicy.CooldownSeconds
-		}
-		if a.ScaleUpPolicy.IdleThresholdSeconds != nil {
-			result.ScaleUpPolicy.IdleThresholdSeconds = *a.ScaleUpPolicy.IdleThresholdSeconds
-		}
-	}
-	if a.ScaleDownPolicy != nil {
-		result.ScaleDownPolicy = &agentsv1alpha1.PoolScaleDownPolicy{}
-		if a.ScaleDownPolicy.IdleTimeoutSeconds != nil {
-			result.ScaleDownPolicy.IdleTimeoutSeconds = *a.ScaleDownPolicy.IdleTimeoutSeconds
-		}
-		if a.ScaleDownPolicy.StabilizationSeconds != nil {
-			result.ScaleDownPolicy.StabilizationSeconds = *a.ScaleDownPolicy.StabilizationSeconds
-		}
-		if a.ScaleDownPolicy.ProtectionWindowSeconds != nil {
-			result.ScaleDownPolicy.ProtectionWindowSeconds = *a.ScaleDownPolicy.ProtectionWindowSeconds
-		}
-	}
-	return result
-}
-
 // templateToSummary converts a gen.SandboxTemplate (full) to gen.SandboxTemplateSummary
 // (omits docs / crdYaml, derives hasDocs).
 func templateToSummary(t *gen.SandboxTemplate) gen.SandboxTemplateSummary {
@@ -220,15 +184,10 @@ func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (
 	spec := agentsv1alpha1.SandboxPoolSpec{}
 	if req.Spec != nil {
 		spec = agentsv1alpha1.SandboxPoolSpec{
-			Replicas:    req.Spec.Replicas,
-			MinReplicas: req.Spec.MinReplicas,
-			MaxReplicas: req.Spec.MaxReplicas,
+			Replicas: req.Spec.Replicas,
 		}
 		if req.Spec.TemplateName != nil {
 			spec.TemplateName = *req.Spec.TemplateName
-		}
-		if req.Spec.Autoscaling != nil {
-			spec.Autoscaling = genToAutoscaling(req.Spec.Autoscaling)
 		}
 		if req.Spec.PodCreationImagePolicy != nil {
 			spec.PodCreationImagePolicy = agentsv1alpha1.PodCreationImagePolicy(*req.Spec.PodCreationImagePolicy)
@@ -251,12 +210,6 @@ func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (
 	// Also support top-level replicas/templateName fields
 	if req.Replicas != nil {
 		spec.Replicas = *req.Replicas
-	}
-	if req.MinReplicas != nil {
-		spec.MinReplicas = req.MinReplicas
-	}
-	if req.MaxReplicas != nil {
-		spec.MaxReplicas = req.MaxReplicas
 	}
 
 	templateName := ""
@@ -673,26 +626,20 @@ func (s *Server) UpdateSandboxPool(ctx context.Context, req gen.UpdateSandboxPoo
 	if req.Body == nil {
 		return gen.UpdateSandboxPool400JSONResponse{Error: "request body is required"}, nil
 	}
-	hasReplicas := req.Body.Replicas != nil || req.Body.MinReplicas != nil || req.Body.MaxReplicas != nil
+	hasReplicas := req.Body.Replicas != nil
 	hasImage := req.Body.Overrides != nil && req.Body.Overrides.Image != nil && *req.Body.Overrides.Image != ""
-	hasAutoscaling := req.Body.Autoscaling != nil
 	hasPodCreationImagePolicy := req.Body.PodCreationImagePolicy != nil
-	if !hasReplicas && !hasImage && !hasAutoscaling && !hasPodCreationImagePolicy {
-		return gen.UpdateSandboxPool400JSONResponse{Error: "at least one of replicas, minReplicas, maxReplicas, overrides.image, autoscaling, or podCreationImagePolicy is required"}, nil
+	if !hasReplicas && !hasImage && !hasPodCreationImagePolicy {
+		return gen.UpdateSandboxPool400JSONResponse{Error: "at least one of replicas, overrides.image, or podCreationImagePolicy is required"}, nil
 	}
 	auth := authFrom(ctx)
 	input := service.UpdateSandboxPoolInput{
-		Name:        req.Name,
-		Namespace:   auth.Namespace,
-		Replicas:    req.Body.Replicas,
-		MinReplicas: req.Body.MinReplicas,
-		MaxReplicas: req.Body.MaxReplicas,
+		Name:      req.Name,
+		Namespace: auth.Namespace,
+		Replicas:  req.Body.Replicas,
 	}
 	if hasImage {
 		input.OverrideImage = *req.Body.Overrides.Image
-	}
-	if hasAutoscaling {
-		input.Autoscaling = genToAutoscaling(req.Body.Autoscaling)
 	}
 	if hasPodCreationImagePolicy {
 		pol := agentsv1alpha1.PodCreationImagePolicy(*req.Body.PodCreationImagePolicy)

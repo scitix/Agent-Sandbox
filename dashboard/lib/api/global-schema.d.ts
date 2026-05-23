@@ -302,8 +302,6 @@ export interface components {
             team?: string;
             /** @description Role granted by this key (e.g. tenant, admin). */
             role: string;
-            /** @description Quota URL associated with the key (populated in import mode). */
-            quotaURL?: string;
             /** @description Human-readable description of the key. */
             description?: string;
             /**
@@ -345,16 +343,8 @@ export interface components {
              */
             expiresAt?: string;
         };
-        ListAPIKeysResult: {
-            /** @description Page of API key objects. */
-            items: components["schemas"]["APIKeyItem"][];
-            /** @description Total number of API keys matching the query (before pagination). */
-            total: number;
-            /** @description Maximum number of items requested per page. */
-            limit: number;
-            /** @description Number of items skipped before this page. */
-            offset: number;
-        };
+        /** @description List of API key objects. Returned in full — the endpoint does not paginate. */
+        ListAPIKeysResult: components["schemas"]["APIKeyItem"][];
         CreateAPIKeyRequest: {
             description?: string;
             /** Format: date-time */
@@ -374,8 +364,6 @@ export interface components {
             user?: string;
             /** @description Import mode: original team. */
             team?: string;
-            /** @description Import mode: quota URL. */
-            quotaURL?: string;
         };
         ImageDataset: {
             id: string;

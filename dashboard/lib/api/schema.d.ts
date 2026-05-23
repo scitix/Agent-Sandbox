@@ -880,78 +880,14 @@ export interface components {
             /** @description Number of items skipped before this page. */
             offset: number;
         };
-        /** @description Controls scale-up behavior for a SandboxPool. */
-        PoolScaleUpPolicy: {
-            /**
-             * @description Conservative: +1/decision; Default: +max(1,ceil(n/2))/decision; Aggressive: double up to maxReplicas/decision.
-             * @default Default
-             * @enum {string}
-             */
-            mode: "Conservative" | "Default" | "Aggressive";
-            /**
-             * Format: int32
-             * @description Minimum seconds between two consecutive scale-up events.
-             * @default 30
-             */
-            cooldownSeconds: number;
-            /**
-             * Format: int32
-             * @description Trigger proactive scale-up when idleReplicas==0 persists for this many seconds. Set 0 to disable.
-             * @default 30
-             */
-            idleThresholdSeconds: number;
-        };
-        /** @description Controls scale-down behavior for a SandboxPool. */
-        PoolScaleDownPolicy: {
-            /**
-             * Format: int32
-             * @description Minimum seconds a pod must remain Idle before it becomes a scale-down candidate.
-             * @default 300
-             */
-            idleTimeoutSeconds: number;
-            /**
-             * Format: int32
-             * @description Minimum seconds between two consecutive scale-down events.
-             * @default 60
-             */
-            stabilizationSeconds: number;
-            /**
-             * Format: int32
-             * @description Seconds after a pod is marked for scale-down during which a new Claim can still cancel the intent.
-             * @default 10
-             */
-            protectionWindowSeconds: number;
-        };
-        /** @description Autoscaling configuration for a SandboxPool. When nil or enabled=false, spec.replicas is the only source of truth. */
-        PoolAutoscalingSpec: {
-            /**
-             * @description When false (default), the pool is managed manually via spec.replicas. MinReplicas/MaxReplicas are ignored.
-             * @default false
-             */
-            enabled: boolean;
-            scaleUpPolicy?: components["schemas"]["PoolScaleUpPolicy"];
-            scaleDownPolicy?: components["schemas"]["PoolScaleDownPolicy"];
-        };
         SandboxPoolSpec: {
             /**
              * Format: int32
              * @description Desired number of pre-warmed idle pods in the pool.
              */
             replicas: number;
-            /**
-             * Format: int32
-             * @description Minimum number of replicas when auto-scaling is enabled.
-             */
-            minReplicas?: number;
-            /**
-             * Format: int32
-             * @description Maximum number of replicas when auto-scaling is enabled.
-             */
-            maxReplicas?: number;
             /** @description Name of the SandboxTemplate cluster resource to use as the pod spec source. */
             templateName?: string;
-            /** @description Optional autoscaling configuration. When nil or enabled=false, pool is managed manually via spec.replicas. */
-            autoscaling?: components["schemas"]["PoolAutoscalingSpec"];
             /**
              * @description Controls which image newly created Pods start with. IdleImage (default) uses spec.idleImage; PoolDefaultImage uses the template container image.
              * @default IdleImage
@@ -1069,10 +1005,6 @@ export interface components {
             templateName?: string;
             /** Format: int32 */
             replicas?: number;
-            /** Format: int32 */
-            minReplicas?: number;
-            /** Format: int32 */
-            maxReplicas?: number;
             labels?: {
                 [key: string]: string;
             };
@@ -1109,16 +1041,6 @@ export interface components {
             /** Format: int32 */
             replicas?: number;
             /**
-             * Format: int32
-             * @description New minimum replicas bound for the autoscaler. Omit to leave unchanged.
-             */
-            minReplicas?: number;
-            /**
-             * Format: int32
-             * @description New maximum replicas bound for the autoscaler. Omit to leave unchanged.
-             */
-            maxReplicas?: number;
-            /**
              * @description Update the pod creation image policy. Omit to leave unchanged.
              * @enum {string}
              */
@@ -1128,8 +1050,6 @@ export interface components {
                 /** @description Override the main container (containers[0]) image */
                 image?: string;
             };
-            /** @description Update autoscaling configuration for this pool. */
-            autoscaling?: components["schemas"]["PoolAutoscalingSpec"];
         };
         DeleteSandboxPoolResult: {
             name: string;
@@ -1307,8 +1227,6 @@ export interface components {
              * @description Original issue timestamp (import mode). Used to preserve the original creation time. Ignored when tokenHash is not provided.
              */
             issuedAt?: string;
-            /** @description Quota URL associated with the key (import mode). */
-            quotaURL?: string;
         };
         CreateAPIKeyResult: {
             /** @description The raw API key value (only returned once at creation time; store it securely). */
@@ -1343,8 +1261,6 @@ export interface components {
             team?: string;
             /** @description Role granted by this key (e.g. tenant, admin). */
             role: string;
-            /** @description Quota URL associated with the key (populated in import mode). */
-            quotaURL?: string;
             /** @description Human-readable description of the key. */
             description?: string;
             /**
@@ -1374,16 +1290,8 @@ export interface components {
             /** @description Result of the delete operation (e.g. Deleted). */
             status: string;
         };
-        ListAPIKeysResult: {
-            /** @description Page of API key objects. */
-            items: components["schemas"]["APIKeyItem"][];
-            /** @description Total number of API keys matching the query (before pagination). */
-            total: number;
-            /** @description Maximum number of items requested per page. */
-            limit: number;
-            /** @description Number of items skipped before this page. */
-            offset: number;
-        };
+        /** @description List of API key objects. Returned in full — the endpoint does not paginate. */
+        ListAPIKeysResult: components["schemas"]["APIKeyItem"][];
         Quota: {
             /** @description Name of the quota entry. */
             name: string;

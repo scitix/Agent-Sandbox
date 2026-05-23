@@ -354,12 +354,6 @@ func (s *k8sSandboxPoolService) Update(ctx context.Context, input UpdateSandboxP
 		if input.Replicas != nil {
 			p.Spec.Replicas = *input.Replicas
 		}
-		if input.MinReplicas != nil {
-			p.Spec.MinReplicas = input.MinReplicas
-		}
-		if input.MaxReplicas != nil {
-			p.Spec.MaxReplicas = input.MaxReplicas
-		}
 		if input.PodCreationImagePolicy != nil {
 			p.Spec.PodCreationImagePolicy = *input.PodCreationImagePolicy
 		}
@@ -377,13 +371,6 @@ func (s *k8sSandboxPoolService) Update(ctx context.Context, input UpdateSandboxP
 			}
 			existing.Image = input.OverrideImage
 			persistPoolTemplateOverridesInAnnotations(p.Annotations, existing)
-		}
-		if input.Autoscaling != nil {
-			p.Spec.Autoscaling = input.Autoscaling
-			if !input.Autoscaling.Enabled {
-				p.Spec.MinReplicas = nil
-				p.Spec.MaxReplicas = nil
-			}
 		}
 		return validatePoolSpec(&p.Spec)
 	}
@@ -607,23 +594,14 @@ func isBadRequest(err error) bool {
 
 // poolToGen converts a CRD SandboxPool (plus optional source template) to the gen
 // wire shape. The CRD spec is intentionally not exposed; instead we project the
-// fields the API documents (replicas, autoscaling, default timeouts, template
-// reference, computed CPU/Memory, SpecYaml for diff) into gen.SandboxPool.
+// fields the API documents (replicas, default timeouts, template reference,
+// computed CPU/Memory, SpecYaml for diff) into gen.SandboxPool.
 func poolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agentsv1alpha1.SandboxTemplate) gen.SandboxPool {
 	spec := gen.SandboxPoolSpec{
 		Replicas: pool.Spec.Replicas,
 	}
-	if pool.Spec.MinReplicas != nil {
-		spec.MinReplicas = pool.Spec.MinReplicas
-	}
-	if pool.Spec.MaxReplicas != nil {
-		spec.MaxReplicas = pool.Spec.MaxReplicas
-	}
 	if pool.Spec.TemplateName != "" {
 		spec.TemplateName = ptr.To(pool.Spec.TemplateName)
-	}
-	if pool.Spec.Autoscaling != nil {
-		spec.Autoscaling = autoscalingToGen(pool.Spec.Autoscaling)
 	}
 	if pool.Spec.DefaultStartupTimeout != nil {
 		spec.DefaultStartupTimeout = ptr.To(pool.Spec.DefaultStartupTimeout.Duration.String())
@@ -683,32 +661,6 @@ func poolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agen
 		} else {
 			result.Cpu = ptr.To(cpu.String())
 			result.Memory = ptr.To(memory.String())
-		}
-	}
-	return result
-}
-
-// autoscalingToGen converts a CRD PoolAutoscalingSpec to the generated gen type.
-func autoscalingToGen(a *agentsv1alpha1.PoolAutoscalingSpec) *gen.PoolAutoscalingSpec {
-	if a == nil {
-		return nil
-	}
-	result := &gen.PoolAutoscalingSpec{
-		Enabled: &a.Enabled,
-	}
-	if a.ScaleUpPolicy != nil {
-		mode := gen.PoolScaleUpPolicyMode(a.ScaleUpPolicy.Mode)
-		result.ScaleUpPolicy = &gen.PoolScaleUpPolicy{
-			Mode:                 &mode,
-			CooldownSeconds:      &a.ScaleUpPolicy.CooldownSeconds,
-			IdleThresholdSeconds: &a.ScaleUpPolicy.IdleThresholdSeconds,
-		}
-	}
-	if a.ScaleDownPolicy != nil {
-		result.ScaleDownPolicy = &gen.PoolScaleDownPolicy{
-			IdleTimeoutSeconds:      &a.ScaleDownPolicy.IdleTimeoutSeconds,
-			StabilizationSeconds:    &a.ScaleDownPolicy.StabilizationSeconds,
-			ProtectionWindowSeconds: &a.ScaleDownPolicy.ProtectionWindowSeconds,
 		}
 	}
 	return result
@@ -775,31 +727,6 @@ func validatePoolSpec(spec *agentsv1alpha1.SandboxPoolSpec) *domain.AppError {
 		}
 	}
 
-	if spec.Autoscaling != nil && spec.Autoscaling.Enabled {
-		if spec.MinReplicas == nil {
-			return domain.NewBadRequest("autoscaling requires minReplicas to be set")
-		}
-		if spec.MaxReplicas == nil {
-			return domain.NewBadRequest("autoscaling requires maxReplicas to be set")
-		}
-		minVal := *spec.MinReplicas
-		maxVal := *spec.MaxReplicas
-		if minVal < 0 {
-			return domain.NewBadRequest("minReplicas must be >= 0")
-		}
-		if maxVal < 0 {
-			return domain.NewBadRequest("maxReplicas must be >= 0")
-		}
-		if minVal > maxVal {
-			return domain.NewBadRequest(fmt.Sprintf("minReplicas (%d) must be <= maxReplicas (%d)", minVal, maxVal))
-		}
-		if spec.Replicas < minVal {
-			return domain.NewBadRequest(fmt.Sprintf("replicas (%d) must be >= minReplicas (%d)", spec.Replicas, minVal))
-		}
-		if spec.Replicas > maxVal {
-			return domain.NewBadRequest(fmt.Sprintf("replicas (%d) must be <= maxReplicas (%d)", spec.Replicas, maxVal))
-		}
-	}
 	return nil
 }
 

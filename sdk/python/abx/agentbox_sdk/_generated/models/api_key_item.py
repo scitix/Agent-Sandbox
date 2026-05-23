@@ -45,7 +45,6 @@ class APIKeyItem:
             issued_at (datetime.datetime): RFC 3339 timestamp when the key was created.
             user (str | Unset): Username associated with the key.
             team (str | Unset): Team associated with the key.
-            quota_url (str | Unset): Quota URL associated with the key (populated in import mode).
             description (str | Unset): Human-readable description of the key.
             expires_at (datetime.datetime | Unset): RFC 3339 expiry timestamp, or absent if the key never expires.
             sync_source (str | Unset): Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on
@@ -60,7 +59,6 @@ class APIKeyItem:
     issued_at: datetime.datetime
     user: str | Unset = UNSET
     team: str | Unset = UNSET
-    quota_url: str | Unset = UNSET
     description: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     sync_source: str | Unset = UNSET
@@ -81,8 +79,6 @@ class APIKeyItem:
         user = self.user
 
         team = self.team
-
-        quota_url = self.quota_url
 
         description = self.description
 
@@ -106,8 +102,6 @@ class APIKeyItem:
             field_dict["user"] = user
         if team is not UNSET:
             field_dict["team"] = team
-        if quota_url is not UNSET:
-            field_dict["quotaURL"] = quota_url
         if description is not UNSET:
             field_dict["description"] = description
         if expires_at is not UNSET:
@@ -137,8 +131,6 @@ class APIKeyItem:
 
         team = d.pop("team", UNSET)
 
-        quota_url = d.pop("quotaURL", UNSET)
-
         description = d.pop("description", UNSET)
 
         _expires_at = d.pop("expiresAt", UNSET)
@@ -161,7 +153,6 @@ class APIKeyItem:
             issued_at=issued_at,
             user=user,
             team=team,
-            quota_url=quota_url,
             description=description,
             expires_at=expires_at,
             sync_source=sync_source,

@@ -368,7 +368,6 @@ func buildEnvFromPool(
 					Members:   []agentsv1alpha1.EnvClusterMember{member},
 				},
 			},
-			Autoscaling: mapPoolAutoscalingToEnv(pool),
 		},
 	}
 	if itName != "" {
@@ -415,35 +414,6 @@ func envLabelsFromPool(pool *agentsv1alpha1.SandboxPool) map[string]string {
 		return nil
 	}
 	return labels
-}
-
-// mapPoolAutoscalingToEnv translates a Pool's autoscaling spec into the Env's
-// group-style autoscaling spec. Always emits a single group named "default".
-//
-//nolint:staticcheck // intentionally reading the deprecated field as part of the migration path.
-func mapPoolAutoscalingToEnv(pool *agentsv1alpha1.SandboxPool) *agentsv1alpha1.EnvAutoscalingSpec {
-	if pool.Spec.Autoscaling == nil && pool.Spec.MinReplicas == nil && pool.Spec.MaxReplicas == nil {
-		return nil
-	}
-	group := agentsv1alpha1.EnvAutoscalingGroup{
-		Name:        defaultScalingGroup,
-		MinReplicas: pool.Spec.MinReplicas,
-		MaxReplicas: pool.Spec.MaxReplicas,
-	}
-	enabled := false
-	if pool.Spec.Autoscaling != nil {
-		enabled = pool.Spec.Autoscaling.Enabled
-		if pool.Spec.Autoscaling.ScaleUpPolicy != nil {
-			group.ScaleUpPolicy = pool.Spec.Autoscaling.ScaleUpPolicy.DeepCopy()
-		}
-		if pool.Spec.Autoscaling.ScaleDownPolicy != nil {
-			group.ScaleDownPolicy = pool.Spec.Autoscaling.ScaleDownPolicy.DeepCopy()
-		}
-	}
-	return &agentsv1alpha1.EnvAutoscalingSpec{
-		Enabled: enabled,
-		Groups:  []agentsv1alpha1.EnvAutoscalingGroup{group},
-	}
 }
 
 // firstContainerResources returns a deep-copyable handle to the first

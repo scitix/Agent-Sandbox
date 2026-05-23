@@ -27,7 +27,6 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.pool_autoscaling_spec import PoolAutoscalingSpec
   from ..models.update_sandbox_pool_request_overrides import UpdateSandboxPoolRequestOverrides
 
 
@@ -43,22 +42,15 @@ class UpdateSandboxPoolRequest:
     """ 
         Attributes:
             replicas (int | Unset):
-            min_replicas (int | Unset): New minimum replicas bound for the autoscaler. Omit to leave unchanged.
-            max_replicas (int | Unset): New maximum replicas bound for the autoscaler. Omit to leave unchanged.
             pod_creation_image_policy (UpdateSandboxPoolRequestPodCreationImagePolicy | Unset): Update the pod creation
                 image policy. Omit to leave unchanged.
             overrides (UpdateSandboxPoolRequestOverrides | Unset): Partial overrides to update. Only image can be updated
                 after pool creation.
-            autoscaling (PoolAutoscalingSpec | Unset): Autoscaling configuration for a SandboxPool. When nil or
-                enabled=false, spec.replicas is the only source of truth.
      """
 
     replicas: int | Unset = UNSET
-    min_replicas: int | Unset = UNSET
-    max_replicas: int | Unset = UNSET
     pod_creation_image_policy: UpdateSandboxPoolRequestPodCreationImagePolicy | Unset = UNSET
     overrides: UpdateSandboxPoolRequestOverrides | Unset = UNSET
-    autoscaling: PoolAutoscalingSpec | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -66,13 +58,8 @@ class UpdateSandboxPoolRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.pool_autoscaling_spec import PoolAutoscalingSpec
         from ..models.update_sandbox_pool_request_overrides import UpdateSandboxPoolRequestOverrides
         replicas = self.replicas
-
-        min_replicas = self.min_replicas
-
-        max_replicas = self.max_replicas
 
         pod_creation_image_policy: str | Unset = UNSET
         if not isinstance(self.pod_creation_image_policy, Unset):
@@ -83,10 +70,6 @@ class UpdateSandboxPoolRequest:
         if not isinstance(self.overrides, Unset):
             overrides = self.overrides.to_dict()
 
-        autoscaling: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.autoscaling, Unset):
-            autoscaling = self.autoscaling.to_dict()
-
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -94,16 +77,10 @@ class UpdateSandboxPoolRequest:
         })
         if replicas is not UNSET:
             field_dict["replicas"] = replicas
-        if min_replicas is not UNSET:
-            field_dict["minReplicas"] = min_replicas
-        if max_replicas is not UNSET:
-            field_dict["maxReplicas"] = max_replicas
         if pod_creation_image_policy is not UNSET:
             field_dict["podCreationImagePolicy"] = pod_creation_image_policy
         if overrides is not UNSET:
             field_dict["overrides"] = overrides
-        if autoscaling is not UNSET:
-            field_dict["autoscaling"] = autoscaling
 
         return field_dict
 
@@ -111,14 +88,9 @@ class UpdateSandboxPoolRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.pool_autoscaling_spec import PoolAutoscalingSpec
         from ..models.update_sandbox_pool_request_overrides import UpdateSandboxPoolRequestOverrides
         d = dict(src_dict)
         replicas = d.pop("replicas", UNSET)
-
-        min_replicas = d.pop("minReplicas", UNSET)
-
-        max_replicas = d.pop("maxReplicas", UNSET)
 
         _pod_creation_image_policy = d.pop("podCreationImagePolicy", UNSET)
         pod_creation_image_policy: UpdateSandboxPoolRequestPodCreationImagePolicy | Unset
@@ -140,23 +112,10 @@ class UpdateSandboxPoolRequest:
 
 
 
-        _autoscaling = d.pop("autoscaling", UNSET)
-        autoscaling: PoolAutoscalingSpec | Unset
-        if isinstance(_autoscaling,  Unset):
-            autoscaling = UNSET
-        else:
-            autoscaling = PoolAutoscalingSpec.from_dict(_autoscaling)
-
-
-
-
         update_sandbox_pool_request = cls(
             replicas=replicas,
-            min_replicas=min_replicas,
-            max_replicas=max_replicas,
             pod_creation_image_policy=pod_creation_image_policy,
             overrides=overrides,
-            autoscaling=autoscaling,
         )
 
 

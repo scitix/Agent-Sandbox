@@ -206,11 +206,17 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 GOIMPORTS ?= $(LOCALBIN)/goimports
 OAPI_CODEGEN ?= $(LOCALBIN)/oapi-codegen
 ADDLICENSE ?= $(LOCALBIN)/addlicense
+PROTOC_GEN_GO ?= $(LOCALBIN)/protoc-gen-go
+PROTOC_GEN_GO_GRPC ?= $(LOCALBIN)/protoc-gen-go-grpc
 
 ## Tool Versions
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
 OAPI_CODEGEN_VERSION ?= v2.6.0
 ADDLICENSE_VERSION ?= v1.2.0
+# Pin protoc plugins to the versions recorded in the generated .pb.go headers
+# so `make gen-internal-proto` is reproducible across machines.
+PROTOC_GEN_GO_VERSION ?= v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 E2B_SPEC_VERSION ?= 2026.10
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
@@ -269,6 +275,16 @@ addlicense: $(ADDLICENSE) ## Download addlicense locally if necessary.
 $(ADDLICENSE): $(LOCALBIN)
 	$(call go-install-tool,$(ADDLICENSE),github.com/google/addlicense,$(ADDLICENSE_VERSION))
 
+.PHONY: protoc-gen-go
+protoc-gen-go: $(PROTOC_GEN_GO) ## Download protoc-gen-go locally if necessary.
+$(PROTOC_GEN_GO): $(LOCALBIN)
+	$(call go-install-tool,$(PROTOC_GEN_GO),google.golang.org/protobuf/cmd/protoc-gen-go,$(PROTOC_GEN_GO_VERSION))
+
+.PHONY: protoc-gen-go-grpc
+protoc-gen-go-grpc: $(PROTOC_GEN_GO_GRPC) ## Download protoc-gen-go-grpc locally if necessary.
+$(PROTOC_GEN_GO_GRPC): $(LOCALBIN)
+	$(call go-install-tool,$(PROTOC_GEN_GO_GRPC),google.golang.org/grpc/cmd/protoc-gen-go-grpc,$(PROTOC_GEN_GO_GRPC_VERSION))
+
 .PHONY: sync-e2b-spec
 sync-e2b-spec: ## Sync E2B OpenAPI spec from GitHub (use E2B_SPEC_VERSION=x.y to pin version)
 	mkdir -p pkg/openapi/e2b
@@ -288,16 +304,18 @@ generate-api: oapi-codegen ## Generate API code from OpenAPI specs
 	fi
 
 .PHONY: gen-internal-proto
-gen-internal-proto: ## Generate Go/gRPC code from pkg/proto/ (internal Controller ↔ ExtProc RPCs).
+gen-internal-proto: protoc-gen-go protoc-gen-go-grpc goimports ## Generate Go/gRPC code from pkg/proto/ (internal Controller ↔ ExtProc RPCs).
 	@command -v protoc >/dev/null 2>&1 || { echo "protoc not found; install protobuf-compiler"; exit 1; }
-	@command -v protoc-gen-go >/dev/null 2>&1 || go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	@command -v protoc-gen-go-grpc >/dev/null 2>&1 || go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	protoc \
+	@PATH="$(LOCALBIN):$$PATH" protoc \
 		--proto_path=pkg/proto \
 		--go_out=. --go_opt=module=github.com/scitix/agent-sandbox \
 		--go-grpc_out=. --go-grpc_opt=module=github.com/scitix/agent-sandbox \
 		pkg/proto/sandbox/ctrlplane/v1/ctrlplane.proto \
 		pkg/proto/sandbox/sync/v1/sync.proto
+	@# protoc-gen-go emits imports unsorted; normalise so re-running this target
+	@# produces a stable byte-identical diff against committed .pb.go files.
+	@$(GOIMPORTS) -w -local github.com/scitix/agent-sandbox \
+		pkg/proto/sandbox/ctrlplane/v1 pkg/proto/sandbox/sync/v1
 	@echo "Internal proto code regenerated alongside the .proto file."
 
 .PHONY: gen-all-api
