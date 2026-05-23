@@ -50,6 +50,9 @@ class SandboxPoolStatus:
             stopping_replicas (int | Unset): Number of pods transitioning from Running to Idle (in-place upgrade in
                 progress).
             failed_replicas (int | Unset): Number of pods in a Failed state.
+            pending_requests (int | Unset): Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s
+                when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability —
+                the Env autoscaler reads the live in-process Snapshot instead.
      """
 
     phase: SandboxPoolStatusPhase | Unset = UNSET
@@ -59,6 +62,7 @@ class SandboxPoolStatus:
     starting_replicas: int | Unset = UNSET
     stopping_replicas: int | Unset = UNSET
     failed_replicas: int | Unset = UNSET
+    pending_requests: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -83,6 +87,8 @@ class SandboxPoolStatus:
 
         failed_replicas = self.failed_replicas
 
+        pending_requests = self.pending_requests
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -102,6 +108,8 @@ class SandboxPoolStatus:
             field_dict["stoppingReplicas"] = stopping_replicas
         if failed_replicas is not UNSET:
             field_dict["failedReplicas"] = failed_replicas
+        if pending_requests is not UNSET:
+            field_dict["pendingRequests"] = pending_requests
 
         return field_dict
 
@@ -132,6 +140,8 @@ class SandboxPoolStatus:
 
         failed_replicas = d.pop("failedReplicas", UNSET)
 
+        pending_requests = d.pop("pendingRequests", UNSET)
+
         sandbox_pool_status = cls(
             phase=phase,
             idle_replicas=idle_replicas,
@@ -140,6 +150,7 @@ class SandboxPoolStatus:
             starting_replicas=starting_replicas,
             stopping_replicas=stopping_replicas,
             failed_replicas=failed_replicas,
+            pending_requests=pending_requests,
         )
 
 

@@ -269,6 +269,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/envs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List SandboxEnvs visible to the caller */
+        get: operations["ListSandboxEnvs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/envs/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a SandboxEnv by name */
+        get: operations["GetSandboxEnv"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update editable SandboxEnv fields (currently autoscaling only) */
+        patch: operations["UpdateSandboxEnv"];
+        trace?: never;
+    };
     "/sandbox-templates": {
         parameters: {
             query?: never;
@@ -935,6 +970,11 @@ export interface components {
              * @description Number of pods in a Failed state.
              */
             failedReplicas?: number;
+            /**
+             * Format: int32
+             * @description Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability — the Env autoscaler reads the live in-process Snapshot instead.
+             */
+            pendingRequests?: number;
         };
         /** @description Persisted pool-level overrides applied on top of the referenced template and re-applied during template sync. */
         PoolTemplateOverrides: {
@@ -995,6 +1035,8 @@ export interface components {
             createdAt?: string;
             /** @description Markdown usage docs for this pool, sourced from the linked SandboxTemplate's agentbox.navix.sh/docs annotation. The variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are substituted by the server before returning; ${AGBX_API_KEY} is resolved to the first non-legacy API key of the acting user. If the template references ${AGBX_API_KEY} but the user has no key with a recoverable plaintext token, GetSandboxPool returns 422 with errorCode API_KEY_REQUIRED. */
             poolDocs?: string;
+            /** @description Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). Empty when the pool has not been adopted by an Env yet — typical during a brief window after pool creation before the PoolAdoptionReconciler runs. */
+            owningEnv?: string;
         };
         SandboxPoolEnvelope: {
             template: components["schemas"]["SandboxPool"];
@@ -1065,6 +1107,232 @@ export interface components {
             limit: number;
             /** @description Number of items skipped before this page. */
             offset: number;
+        };
+        /** @description Scale-up behaviour for a scaling group (mode + cooldown + idle threshold + saturation cooldown). */
+        PoolScaleUpPolicy: {
+            /**
+             * @description Conservative=+1 per decision; Default=+max(1,ceil(N/2)); Aggressive=double up to maxReplicas.
+             * @enum {string}
+             */
+            mode?: "Conservative" | "Default" | "Aggressive";
+            /**
+             * Format: int32
+             * @description Minimum seconds between two consecutive scale-up events (group-level).
+             */
+            cooldownSeconds?: number;
+            /**
+             * Format: int32
+             * @description Aggregate idleReplicas=0 must persist for this long before the proactive trigger fires. Zero disables proactive scale-up.
+             */
+            idleThresholdSeconds?: number;
+            /**
+             * Format: int32
+             * @description How long a member stays marked saturated after a probe returned InsufficientResources / InvalidSpec. Default 60s.
+             */
+            saturationCooldownSeconds?: number;
+        };
+        /** @description Scale-down behaviour for a scaling group. */
+        PoolScaleDownPolicy: {
+            /**
+             * Format: int32
+             * @description Minimum seconds a pod must remain Idle before it becomes a scale-down candidate.
+             */
+            idleTimeoutSeconds?: number;
+            /**
+             * Format: int32
+             * @description Minimum seconds between two consecutive scale-down events.
+             */
+            stabilizationSeconds?: number;
+            /**
+             * Format: int32
+             * @description Seconds during which a scale-down-marked pod can still be claimed (cancels deletion).
+             */
+            protectionWindowSeconds?: number;
+        };
+        SandboxEnvTemplateRef: {
+            /** @description Name of the cluster-scoped SandboxTemplate the Env binds to. */
+            name: string;
+            /** @description Optional Template version pin. When empty, the Env tracks the Template's current spec.version. */
+            version?: string;
+        };
+        SandboxEnvDefaults: {
+            /** @description Default InstanceType used when Sandbox.create does not specify one. References an entry in the InstanceType catalog. */
+            instanceType?: string;
+            /**
+             * Format: int32
+             * @description Default multiplier applied to the InstanceType base resources.
+             */
+            multiplier?: number;
+        };
+        EnvClusterMember: {
+            /** @description SandboxPool's metadata.name within the Env's namespace. Acts as the member identity within the Env. */
+            name: string;
+            /** @description Optional InstanceType catalog entry referenced by this member. */
+            instanceType?: string;
+            /**
+             * Format: int32
+             * @description Multiplier applied to the InstanceType base resources for this member.
+             */
+            multiplier?: number;
+            /** @description ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi'). Members in the same group share autoscaling policy. */
+            scalingGroup?: string;
+            /**
+             * Format: int32
+             * @description Upper bound on this member's spec.replicas. Enforced by the Env autoscaler when distributing scale-up delta.
+             */
+            maxReplicas?: number;
+            /**
+             * Format: int32
+             * @description Routing priority — lower preferred when EnvScheduler picks a member to dispatch a request.
+             */
+            priority?: number;
+            /**
+             * Format: int32
+             * @description Scale-up order within the scaling group — lower scaled first. Same-value tiebreak by name.
+             */
+            scaleUpPriority?: number;
+            /**
+             * Format: int32
+             * @description Scale-down order within the scaling group — lower shrunk first.
+             */
+            scaleDownPriority?: number;
+        };
+        EnvClusterSpec: {
+            /** @description Cluster identifier that owns this segment. Each Worker only mutates the segment matching its own clusterID. */
+            clusterID: string;
+            /** @description Member Pools in this cluster. MVP allows multiple members per cluster but a single ScalingGroup. */
+            members?: components["schemas"]["EnvClusterMember"][];
+        };
+        EnvAutoscalingGroup: {
+            /** @description ScalingGroup identifier this policy applies to. Must match an EnvClusterMember.scalingGroup value to take effect. */
+            name: string;
+            /**
+             * Format: int32
+             * @description Lower bound on the group's aggregate desired replicas.
+             */
+            minReplicas?: number;
+            /**
+             * Format: int32
+             * @description Upper bound on the group's aggregate desired replicas.
+             */
+            maxReplicas?: number;
+            scaleUpPolicy?: components["schemas"]["PoolScaleUpPolicy"];
+            scaleDownPolicy?: components["schemas"]["PoolScaleDownPolicy"];
+        };
+        EnvAutoscalingSpec: {
+            /** @description Master switch. When false, the autoscaler is dormant — Pool replicas are managed manually. */
+            enabled?: boolean;
+            /** @description Per-scaling-group policies. MVP only consults groups[0]; multi-group support arrives with multi-resource Envs. */
+            groups?: components["schemas"]["EnvAutoscalingGroup"][];
+        };
+        SandboxEnvSpec: {
+            templateRef: components["schemas"]["SandboxEnvTemplateRef"];
+            /**
+             * @description Routing mode — WarmPool dispatches to pre-warmed member Pools; OnDemandJob (Phase 3) creates a SandboxJob per request.
+             * @enum {string}
+             */
+            mode: "WarmPool" | "OnDemandJob";
+            defaults?: components["schemas"]["SandboxEnvDefaults"];
+            clusters?: components["schemas"]["EnvClusterSpec"][];
+            autoscaling?: components["schemas"]["EnvAutoscalingSpec"];
+        };
+        EnvObservedMember: {
+            name: string;
+            instanceType?: string;
+            /** Format: int32 */
+            multiplier?: number;
+            /** @enum {string} */
+            state?: "Active" | "Saturated" | "Missing" | "Inconsistent";
+            /** Format: int32 */
+            idleCount?: number;
+            /** Format: int32 */
+            runningCount?: number;
+            /** Format: int32 */
+            desiredReplicas?: number;
+            /** Format: int32 */
+            currentReplicas?: number;
+            /**
+             * Format: int32
+             * @description Mirror of SandboxPool.status.pendingRequests for this member — throttled at the source so visible value lags actual queue depth by up to ~3s.
+             */
+            pendingRequests?: number;
+            /**
+             * Format: date-time
+             * @description Set by the autoscaler when a PreUpdatePool probe returned InsufficientResources or InvalidSpec. Until this time, the autoscaler skips probing this member and the router deprioritises it.
+             */
+            saturatedUntil?: string;
+            /** @description Outcome of the most recent probe-and-patch attempt: Success | InsufficientResources | InternalError | InvalidSpec. */
+            lastScaleUpAttemptResult?: string;
+            /** @description Short error description from the most recent non-Success probe. Empty when LastScaleUpAttemptResult is Success. */
+            scaleUpErrorMessage?: string;
+        };
+        EnvClusterStatus: {
+            clusterID: string;
+            /** @description True on the Worker that owns this segment. Other segments arrive via Hub Sync (future). */
+            isLocal?: boolean;
+            observedMembers?: components["schemas"]["EnvObservedMember"][];
+            /** Format: date-time */
+            lastScaleUpTime?: string;
+            /** Format: date-time */
+            lastScaleDownTime?: string;
+            /** Format: date-time */
+            idleZeroSince?: string;
+            /** Format: date-time */
+            lastSnapshotTime?: string;
+        };
+        EnvScalingGroupStatus: {
+            name: string;
+            /** Format: int32 */
+            totalIdle?: number;
+            /** Format: int32 */
+            totalRunning?: number;
+            /** Format: int32 */
+            totalDesired?: number;
+            /**
+             * Format: int32
+             * @description Aggregate ObservedMember.pendingRequests across all members of this group.
+             */
+            totalPending?: number;
+        };
+        EnvCondition: {
+            type: string;
+            status: string;
+            reason?: string;
+            message?: string;
+            /** Format: date-time */
+            lastTransitionTime?: string;
+        };
+        SandboxEnvStatus: {
+            conditions?: components["schemas"]["EnvCondition"][];
+            clusters?: components["schemas"]["EnvClusterStatus"][];
+            scalingGroups?: components["schemas"]["EnvScalingGroupStatus"][];
+            /** Format: int32 */
+            pendingRequests?: number;
+            /** Format: int32 */
+            localMemberCount?: number;
+        };
+        SandboxEnv: {
+            name: string;
+            namespace: string;
+            labels?: {
+                [key: string]: string;
+            };
+            spec: components["schemas"]["SandboxEnvSpec"];
+            status?: components["schemas"]["SandboxEnvStatus"];
+            team?: string;
+            user?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        SandboxEnvEnvelope: {
+            env: components["schemas"]["SandboxEnv"];
+        };
+        ListSandboxEnvsResult: {
+            items: components["schemas"]["SandboxEnv"][];
+        };
+        /** @description Patch one or more editable fields. MVP only allows updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter. */
+        UpdateSandboxEnvRequest: {
+            autoscaling?: components["schemas"]["EnvAutoscalingSpec"];
         };
         /** @description Lightweight readiness probe — only httpGet is supported. Advanced fields (initialDelaySeconds, periodSeconds, etc.) use Kubernetes defaults. */
         RuntimeReadinessProbe: {
@@ -2749,6 +3017,155 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ListSandboxEnvs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSandboxEnvsResult"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    GetSandboxEnv: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxEnvEnvelope"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    UpdateSandboxEnv: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSandboxEnvRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxEnvEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

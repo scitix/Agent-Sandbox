@@ -68,6 +68,9 @@ class SandboxPool:
                 substituted by the server before returning; ${AGBX_API_KEY} is resolved to the first non-legacy API key of the
                 acting user. If the template references ${AGBX_API_KEY} but the user has no key with a recoverable plaintext
                 token, GetSandboxPool returns 422 with errorCode API_KEY_REQUIRED.
+            owning_env (str | Unset): Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). Empty when
+                the pool has not been adopted by an Env yet — typical during a brief window after pool creation before the
+                PoolAdoptionReconciler runs.
      """
 
     name: str
@@ -83,6 +86,7 @@ class SandboxPool:
     spec_yaml: str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     pool_docs: str | Unset = UNSET
+    owning_env: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -123,6 +127,8 @@ class SandboxPool:
 
         pool_docs = self.pool_docs
 
+        owning_env = self.owning_env
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -150,6 +156,8 @@ class SandboxPool:
             field_dict["createdAt"] = created_at
         if pool_docs is not UNSET:
             field_dict["poolDocs"] = pool_docs
+        if owning_env is not UNSET:
+            field_dict["owningEnv"] = owning_env
 
         return field_dict
 
@@ -209,6 +217,8 @@ class SandboxPool:
 
         pool_docs = d.pop("poolDocs", UNSET)
 
+        owning_env = d.pop("owningEnv", UNSET)
+
         sandbox_pool = cls(
             name=name,
             namespace=namespace,
@@ -223,6 +233,7 @@ class SandboxPool:
             spec_yaml=spec_yaml,
             created_at=created_at,
             pool_docs=pool_docs,
+            owning_env=owning_env,
         )
 
 

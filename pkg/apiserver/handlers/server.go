@@ -52,6 +52,7 @@ const adminUser = "admin"
 type Services struct {
 	Sandbox         service.SandboxService
 	SandboxPool     service.SandboxPoolService
+	SandboxEnv      service.SandboxEnvService
 	SandboxTemplate service.SandboxTemplateService
 	APIKey          service.APIKeyService
 	Quota           service.QuotaService
@@ -74,6 +75,7 @@ type Services struct {
 type Server struct {
 	sandbox      service.SandboxService
 	pool         service.SandboxPoolService
+	env          service.SandboxEnvService
 	template     service.SandboxTemplateService
 	apikey       service.APIKeyService
 	quota        service.QuotaService
@@ -98,6 +100,7 @@ func NewServer(svcs Services) *Server {
 	return &Server{
 		sandbox:       svcs.Sandbox,
 		pool:          svcs.SandboxPool,
+		env:           svcs.SandboxEnv,
 		template:      svcs.SandboxTemplate,
 		apikey:        svcs.APIKey,
 		quota:         svcs.Quota,
@@ -676,6 +679,63 @@ func (s *Server) DeleteSandboxPool(ctx context.Context, req gen.DeleteSandboxPoo
 		Status:    "Terminating",
 	}, nil
 }
+
+// ---------------------------------------------------------------------------
+// SandboxEnv
+// ---------------------------------------------------------------------------
+
+func (s *Server) ListSandboxEnvs(ctx context.Context, _ gen.ListSandboxEnvsRequestObject) (gen.ListSandboxEnvsResponseObject, error) {
+	auth := authFrom(ctx)
+	items, appErr := s.env.List(ctx, auth.Namespace, auth.Team, auth.User)
+	if appErr != nil {
+		return gen.ListSandboxEnvs500JSONResponse(errResp(ctx, appErr)), nil
+	}
+	return gen.ListSandboxEnvs200JSONResponse{Items: items}, nil
+}
+
+func (s *Server) GetSandboxEnv(ctx context.Context, req gen.GetSandboxEnvRequestObject) (gen.GetSandboxEnvResponseObject, error) {
+	auth := authFrom(ctx)
+	result, appErr := s.env.Get(ctx, auth.Namespace, req.Name)
+	if appErr != nil {
+		if appErr.Code == domain.ErrCodeNotFound {
+			return gen.GetSandboxEnv404JSONResponse(errResp(ctx, appErr)), nil
+		}
+		return gen.GetSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
+	}
+	return gen.GetSandboxEnv200JSONResponse{Env: *result}, nil
+}
+
+func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvRequestObject) (gen.UpdateSandboxEnvResponseObject, error) {
+	if req.Body == nil {
+		return gen.UpdateSandboxEnv400JSONResponse{Error: "request body is required"}, nil
+	}
+	if req.Body.Autoscaling == nil {
+		// MVP only supports updating autoscaling. Reject empty bodies so the
+		// caller doesn't get a silent no-op.
+		return gen.UpdateSandboxEnv400JSONResponse{Error: "at least one editable field (autoscaling) must be provided"}, nil
+	}
+	auth := authFrom(ctx)
+	result, appErr := s.env.UpdateAutoscaling(ctx, service.UpdateEnvAutoscalingInput{
+		Name:        req.Name,
+		Namespace:   auth.Namespace,
+		Autoscaling: req.Body.Autoscaling,
+	})
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeBadRequest:
+			return gen.UpdateSandboxEnv400JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeNotFound:
+			return gen.UpdateSandboxEnv404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.UpdateSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.UpdateSandboxEnv200JSONResponse{Env: *result}, nil
+}
+
+// ---------------------------------------------------------------------------
+// SandboxPool sync template (continued)
+// ---------------------------------------------------------------------------
 
 func (s *Server) SyncSandboxPoolTemplate(ctx context.Context, req gen.SyncSandboxPoolTemplateRequestObject) (gen.SyncSandboxPoolTemplateResponseObject, error) {
 	auth := authFrom(ctx)

@@ -32,6 +32,7 @@ import (
 type Services struct {
 	Sandbox         service.SandboxService
 	SandboxPool     service.SandboxPoolService
+	SandboxEnv      service.SandboxEnvService
 	SandboxTemplate service.SandboxTemplateService
 	APIKey          service.APIKeyService
 	Quota           service.QuotaService
@@ -69,6 +70,7 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 	srv := handlers.NewServer(handlers.Services{
 		Sandbox:         svcs.Sandbox,
 		SandboxPool:     svcs.SandboxPool,
+		SandboxEnv:      svcs.SandboxEnv,
 		SandboxTemplate: svcs.SandboxTemplate,
 		APIKey:          svcs.APIKey,
 		Quota:           svcs.Quota,

@@ -653,6 +653,10 @@ components:
           type: integer
           format: int32
           description: "Number of pods in a Failed state."
+        pendingRequests:
+          type: integer
+          format: int32
+          description: "Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability — the Env autoscaler reads the live in-process Snapshot instead."
 
     PoolTemplateOverrides:
       type: object
@@ -709,6 +713,9 @@ components:
         poolDocs:
           type: string
           description: "Markdown usage docs for this pool, sourced from the linked SandboxTemplate's agentbox.navix.sh/docs annotation. The variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are substituted by the server before returning; ${AGBX_API_KEY} is resolved to the first non-legacy API key of the acting user. If the template references ${AGBX_API_KEY} but the user has no key with a recoverable plaintext token, GetSandboxPool returns 422 with errorCode API_KEY_REQUIRED."
+        owningEnv:
+          type: string
+          description: "Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). Empty when the pool has not been adopted by an Env yet — typical during a brief window after pool creation before the PoolAdoptionReconciler runs."
       example:
         name: "poolname"
         namespace: "t-team-user"
@@ -845,6 +852,353 @@ components:
         offset:
           type: integer
           description: "Number of items skipped before this page."
+
+    # =========================================================
+    # SandboxEnv
+    #
+    # Env is the user-facing "sandbox environment" abstraction that binds one
+    # SandboxTemplate runtime to one or more member SandboxPools. Autoscaling
+    # configuration lives here (lifted from Pool in the Phase 1 rollout) so a
+    # single Env can manage replicas across multiple Pools (same resource
+    # shape, different scheduling classes — e.g. ondemand + spot).
+    # =========================================================
+    PoolScaleUpPolicy:
+      type: object
+      description: "Scale-up behaviour for a scaling group (mode + cooldown + idle threshold + saturation cooldown)."
+      properties:
+        mode:
+          type: string
+          enum: [Conservative, Default, Aggressive]
+          description: "Conservative=+1 per decision; Default=+max(1,ceil(N/2)); Aggressive=double up to maxReplicas."
+        cooldownSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Minimum seconds between two consecutive scale-up events (group-level)."
+        idleThresholdSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Aggregate idleReplicas=0 must persist for this long before the proactive trigger fires. Zero disables proactive scale-up."
+        saturationCooldownSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "How long a member stays marked saturated after a probe returned InsufficientResources / InvalidSpec. Default 60s."
+
+    PoolScaleDownPolicy:
+      type: object
+      description: "Scale-down behaviour for a scaling group."
+      properties:
+        idleTimeoutSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Minimum seconds a pod must remain Idle before it becomes a scale-down candidate."
+        stabilizationSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Minimum seconds between two consecutive scale-down events."
+        protectionWindowSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Seconds during which a scale-down-marked pod can still be claimed (cancels deletion)."
+
+    SandboxEnvTemplateRef:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Name of the cluster-scoped SandboxTemplate the Env binds to."
+        version:
+          type: string
+          description: "Optional Template version pin. When empty, the Env tracks the Template's current spec.version."
+
+    SandboxEnvDefaults:
+      type: object
+      properties:
+        instanceType:
+          type: string
+          description: "Default InstanceType used when Sandbox.create does not specify one. References an entry in the InstanceType catalog."
+        multiplier:
+          type: integer
+          format: int32
+          minimum: 1
+          description: "Default multiplier applied to the InstanceType base resources."
+
+    EnvClusterMember:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "SandboxPool's metadata.name within the Env's namespace. Acts as the member identity within the Env."
+        instanceType:
+          type: string
+          description: "Optional InstanceType catalog entry referenced by this member."
+        multiplier:
+          type: integer
+          format: int32
+          description: "Multiplier applied to the InstanceType base resources for this member."
+        scalingGroup:
+          type: string
+          description: "ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi'). Members in the same group share autoscaling policy."
+        maxReplicas:
+          type: integer
+          format: int32
+          description: "Upper bound on this member's spec.replicas. Enforced by the Env autoscaler when distributing scale-up delta."
+        priority:
+          type: integer
+          format: int32
+          description: "Routing priority — lower preferred when EnvScheduler picks a member to dispatch a request."
+        scaleUpPriority:
+          type: integer
+          format: int32
+          description: "Scale-up order within the scaling group — lower scaled first. Same-value tiebreak by name."
+        scaleDownPriority:
+          type: integer
+          format: int32
+          description: "Scale-down order within the scaling group — lower shrunk first."
+
+    EnvClusterSpec:
+      type: object
+      required: [clusterID]
+      properties:
+        clusterID:
+          type: string
+          description: "Cluster identifier that owns this segment. Each Worker only mutates the segment matching its own clusterID."
+        members:
+          type: array
+          description: "Member Pools in this cluster. MVP allows multiple members per cluster but a single ScalingGroup."
+          items:
+            $ref: '#/components/schemas/EnvClusterMember'
+
+    EnvAutoscalingGroup:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "ScalingGroup identifier this policy applies to. Must match an EnvClusterMember.scalingGroup value to take effect."
+        minReplicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Lower bound on the group's aggregate desired replicas."
+        maxReplicas:
+          type: integer
+          format: int32
+          description: "Upper bound on the group's aggregate desired replicas."
+        scaleUpPolicy:
+          $ref: '#/components/schemas/PoolScaleUpPolicy'
+        scaleDownPolicy:
+          $ref: '#/components/schemas/PoolScaleDownPolicy'
+
+    EnvAutoscalingSpec:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: "Master switch. When false, the autoscaler is dormant — Pool replicas are managed manually."
+        groups:
+          type: array
+          description: "Per-scaling-group policies. MVP only consults groups[0]; multi-group support arrives with multi-resource Envs."
+          items:
+            $ref: '#/components/schemas/EnvAutoscalingGroup'
+
+    SandboxEnvSpec:
+      type: object
+      required: [templateRef, mode]
+      properties:
+        templateRef:
+          $ref: '#/components/schemas/SandboxEnvTemplateRef'
+        mode:
+          type: string
+          enum: [WarmPool, OnDemandJob]
+          description: "Routing mode — WarmPool dispatches to pre-warmed member Pools; OnDemandJob (Phase 3) creates a SandboxJob per request."
+        defaults:
+          $ref: '#/components/schemas/SandboxEnvDefaults'
+        clusters:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvClusterSpec'
+        autoscaling:
+          $ref: '#/components/schemas/EnvAutoscalingSpec'
+
+    EnvObservedMember:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        instanceType:
+          type: string
+        multiplier:
+          type: integer
+          format: int32
+        state:
+          type: string
+          enum: [Active, Saturated, Missing, Inconsistent]
+        idleCount:
+          type: integer
+          format: int32
+        runningCount:
+          type: integer
+          format: int32
+        desiredReplicas:
+          type: integer
+          format: int32
+        currentReplicas:
+          type: integer
+          format: int32
+        pendingRequests:
+          type: integer
+          format: int32
+          description: "Mirror of SandboxPool.status.pendingRequests for this member — throttled at the source so visible value lags actual queue depth by up to ~3s."
+        saturatedUntil:
+          type: string
+          format: date-time
+          description: "Set by the autoscaler when a PreUpdatePool probe returned InsufficientResources or InvalidSpec. Until this time, the autoscaler skips probing this member and the router deprioritises it."
+        lastScaleUpAttemptResult:
+          type: string
+          description: "Outcome of the most recent probe-and-patch attempt: Success | InsufficientResources | InternalError | InvalidSpec."
+        scaleUpErrorMessage:
+          type: string
+          description: "Short error description from the most recent non-Success probe. Empty when LastScaleUpAttemptResult is Success."
+
+    EnvClusterStatus:
+      type: object
+      required: [clusterID]
+      properties:
+        clusterID:
+          type: string
+        isLocal:
+          type: boolean
+          description: "True on the Worker that owns this segment. Other segments arrive via Hub Sync (future)."
+        observedMembers:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvObservedMember'
+        lastScaleUpTime:
+          type: string
+          format: date-time
+        lastScaleDownTime:
+          type: string
+          format: date-time
+        idleZeroSince:
+          type: string
+          format: date-time
+        lastSnapshotTime:
+          type: string
+          format: date-time
+
+    EnvScalingGroupStatus:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        totalIdle:
+          type: integer
+          format: int32
+        totalRunning:
+          type: integer
+          format: int32
+        totalDesired:
+          type: integer
+          format: int32
+        totalPending:
+          type: integer
+          format: int32
+          description: "Aggregate ObservedMember.pendingRequests across all members of this group."
+
+    EnvCondition:
+      type: object
+      required: [type, status]
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+        reason:
+          type: string
+        message:
+          type: string
+        lastTransitionTime:
+          type: string
+          format: date-time
+
+    SandboxEnvStatus:
+      type: object
+      properties:
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvCondition'
+        clusters:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvClusterStatus'
+        scalingGroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvScalingGroupStatus'
+        pendingRequests:
+          type: integer
+          format: int32
+        localMemberCount:
+          type: integer
+          format: int32
+
+    SandboxEnv:
+      type: object
+      required: [name, namespace, spec]
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/SandboxEnvSpec'
+        status:
+          $ref: '#/components/schemas/SandboxEnvStatus'
+        team:
+          type: string
+        user:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    SandboxEnvEnvelope:
+      type: object
+      required: [env]
+      properties:
+        env:
+          $ref: '#/components/schemas/SandboxEnv'
+
+    ListSandboxEnvsResult:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SandboxEnv'
+
+    UpdateSandboxEnvRequest:
+      type: object
+      description: "Patch one or more editable fields. MVP only allows updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter."
+      properties:
+        autoscaling:
+          $ref: '#/components/schemas/EnvAutoscalingSpec'
 
     # =========================================================
     # SandboxTemplate
@@ -2329,6 +2683,118 @@ paths:
                 $ref: '#/components/schemas/SyncTemplatePreviewResult'
         "400":
           description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # =========================================================
+  # SandboxEnvs
+  # =========================================================
+  /envs:
+    get:
+      operationId: ListSandboxEnvs
+      summary: List SandboxEnvs visible to the caller
+      tags: [sandbox-envs]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSandboxEnvsResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /envs/{name}:
+    get:
+      operationId: GetSandboxEnv
+      summary: Get a SandboxEnv by name
+      tags: [sandbox-envs]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxEnvEnvelope'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      operationId: UpdateSandboxEnv
+      summary: Update editable SandboxEnv fields (currently autoscaling only)
+      tags: [sandbox-envs]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSandboxEnvRequest'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxEnvEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
           content:
             application/json:
               schema:

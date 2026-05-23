@@ -25,6 +25,7 @@ export type DashboardPage =
   | "overview"
   | "sandboxes"
   | "pools"
+  | "envs"
   | "templates"
   | "datasets"
   | "admin"

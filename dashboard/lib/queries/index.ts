@@ -16,6 +16,7 @@
 
 // Unified re-export for all query options and mutations
 
+export * from "./env"
 export * from "./pool"
 export * from "./sandbox"
 export * from "./template"
@@ -43,6 +44,7 @@ export function useInvalidate() {
   return {
     sandboxes: () => void qc.invalidateQueries({ queryKey: ["get", "/sandboxes"] }),
     pools: () => void qc.invalidateQueries({ queryKey: ["get", "/sandboxpools"] }),
+    envs: () => void qc.invalidateQueries({ queryKey: ["get", "/envs"] }),
     templates: () => void qc.invalidateQueries({ queryKey: ["get", "/sandbox-templates"] }),
     apiKeys: () => void qc.invalidateQueries({ queryKey: ["get", "/admin/api-keys"] }),
     globalApiKeys: () => void qc.invalidateQueries({ queryKey: ["get", "/api-keys"] }),

@@ -21,6 +21,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
   Box,
+  Boxes,
   Layers,
   Settings,
   KeyRound,
@@ -85,6 +86,7 @@ export const navSectionDefs: NavSectionDef[] = [
     items: [
       { labelKey: "nav.overview", page: "overview", icon: LayoutDashboard },
       { labelKey: "nav.sandboxes", page: "sandboxes", icon: Box },
+      { labelKey: "nav.envs", page: "envs", icon: Boxes },
       { labelKey: "nav.pools", page: "pools", icon: Database },
     ],
   },

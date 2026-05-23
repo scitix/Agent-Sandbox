@@ -115,6 +115,27 @@ function StatusLinkCell({
   )
 }
 
+// OwningEnvCell renders the SandboxEnv that owns this Pool. The link
+// navigates to the Envs page with ?env=<name> so the detail sheet auto-
+// opens on mount — matches the existing "PoolNameCell" jump from
+// sandboxes → pools. Pools awaiting adoption show "—".
+function OwningEnvCell({ envName }: { envName?: string }) {
+  const clusterID = useClusterID()
+  if (!envName) return <span className="text-muted-foreground text-xs">—</span>
+  const href = `${clusterPath(clusterID, "envs")}?env=${encodeURIComponent(envName)}`
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      nativeButton={false}
+      className="text-muted-foreground hover:text-foreground h-auto gap-1 px-0 py-0 font-mono text-xs hover:bg-transparent"
+      render={<Link href={href} />}
+    >
+      {envName}
+    </Button>
+  )
+}
+
 function TemplateNameCell({ name, version }: { name: string; version?: string }) {
   const clusterID = useClusterID()
   const href = `${clusterPath(clusterID, "templates")}?template=${encodeURIComponent(name)}`
@@ -275,6 +296,17 @@ export function createPoolColumns(
         if (!name) return <span className="text-muted-foreground text-xs">---</span>
         return <TemplateNameCell name={name} version={version} />
       },
+    },
+    {
+      // Reverse-link to the owning SandboxEnv. The OwnerReference is stamped
+      // by the Phase 1 adopter, so every Pool created post-adoption shows a
+      // link; brand-new Pools may show "—" briefly before adoption runs.
+      id: "owningEnv",
+      accessorFn: (row) => row.owningEnv ?? "",
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t("pools.col.env")} />
+      ),
+      cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
     },
     {
       id: "replicas",

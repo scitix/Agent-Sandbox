@@ -621,6 +621,7 @@ func poolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agen
 		StartingReplicas:        ptr.To(pool.Status.StartingReplicas),
 		StoppingReplicas:        ptr.To(pool.Status.StoppingReplicas),
 		FailedReplicas:          ptr.To(pool.Status.FailedReplicas),
+		PendingRequests:         ptr.To(pool.Status.PendingRequests),
 	}
 	if pool.Status.Phase != "" {
 		phase := gen.SandboxPoolStatusPhase(pool.Status.Phase)
@@ -661,6 +662,17 @@ func poolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agen
 		} else {
 			result.Cpu = ptr.To(cpu.String())
 			result.Memory = ptr.To(memory.String())
+		}
+	}
+	// Surface the Pool's owning SandboxEnv (Phase 1 adoption stamps a non-
+	// controlling OwnerReference). Used by the dashboard for reverse navigation
+	// from Pool → Env.
+	for i := range pool.OwnerReferences {
+		ref := &pool.OwnerReferences[i]
+		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind &&
+			strings.HasPrefix(ref.APIVersion, agentsv1alpha1.GroupVersion.Group+"/") {
+			result.OwningEnv = ptr.To(ref.Name)
+			break
 		}
 	}
 	return result

@@ -30,6 +30,15 @@ from .delete_api_key_result import DeleteAPIKeyResult
 from .delete_sandbox_pool_result import DeleteSandboxPoolResult
 from .delete_sandbox_result import DeleteSandboxResult
 from .delete_sandbox_template_result import DeleteSandboxTemplateResult
+from .env_autoscaling_group import EnvAutoscalingGroup
+from .env_autoscaling_spec import EnvAutoscalingSpec
+from .env_cluster_member import EnvClusterMember
+from .env_cluster_spec import EnvClusterSpec
+from .env_cluster_status import EnvClusterStatus
+from .env_condition import EnvCondition
+from .env_observed_member import EnvObservedMember
+from .env_observed_member_state import EnvObservedMemberState
+from .env_scaling_group_status import EnvScalingGroupStatus
 from .error_response import ErrorResponse
 from .exec_command_request import ExecCommandRequest
 from .exec_command_result import ExecCommandResult
@@ -38,10 +47,14 @@ from .feature_gates import FeatureGates
 from .image_pull_secret_input import ImagePullSecretInput
 from .list_clusters_result import ListClustersResult
 from .list_quotas_result import ListQuotasResult
+from .list_sandbox_envs_result import ListSandboxEnvsResult
 from .list_sandbox_pools_result import ListSandboxPoolsResult
 from .list_sandbox_templates_result import ListSandboxTemplatesResult
 from .list_sandboxes_result import ListSandboxesResult
 from .namespaces_result import NamespacesResult
+from .pool_scale_down_policy import PoolScaleDownPolicy
+from .pool_scale_up_policy import PoolScaleUpPolicy
+from .pool_scale_up_policy_mode import PoolScaleUpPolicyMode
 from .pool_template_overrides import PoolTemplateOverrides
 from .promote_api_key_result import PromoteAPIKeyResult
 from .quota import Quota
@@ -57,6 +70,14 @@ from .sandbox import Sandbox
 from .sandbox_container_images import SandboxContainerImages
 from .sandbox_endpoint import SandboxEndpoint
 from .sandbox_endpoints import SandboxEndpoints
+from .sandbox_env import SandboxEnv
+from .sandbox_env_defaults import SandboxEnvDefaults
+from .sandbox_env_envelope import SandboxEnvEnvelope
+from .sandbox_env_labels import SandboxEnvLabels
+from .sandbox_env_spec import SandboxEnvSpec
+from .sandbox_env_spec_mode import SandboxEnvSpecMode
+from .sandbox_env_status import SandboxEnvStatus
+from .sandbox_env_template_ref import SandboxEnvTemplateRef
 from .sandbox_envelope import SandboxEnvelope
 from .sandbox_log_entry import SandboxLogEntry
 from .sandbox_logs_result import SandboxLogsResult
@@ -89,6 +110,7 @@ from .self_create_api_key_request import SelfCreateAPIKeyRequest
 from .set_sandbox_timeout_request import SetSandboxTimeoutRequest
 from .sync_template_preview_result import SyncTemplatePreviewResult
 from .teams_result import TeamsResult
+from .update_sandbox_env_request import UpdateSandboxEnvRequest
 from .update_sandbox_pool_request import UpdateSandboxPoolRequest
 from .update_sandbox_pool_request_overrides import UpdateSandboxPoolRequestOverrides
 from .update_sandbox_pool_request_pod_creation_image_policy import UpdateSandboxPoolRequestPodCreationImagePolicy
@@ -118,6 +140,15 @@ __all__ = (
     "DeleteSandboxPoolResult",
     "DeleteSandboxResult",
     "DeleteSandboxTemplateResult",
+    "EnvAutoscalingGroup",
+    "EnvAutoscalingSpec",
+    "EnvClusterMember",
+    "EnvClusterSpec",
+    "EnvClusterStatus",
+    "EnvCondition",
+    "EnvObservedMember",
+    "EnvObservedMemberState",
+    "EnvScalingGroupStatus",
     "ErrorResponse",
     "ExecCommandRequest",
     "ExecCommandResult",
@@ -126,10 +157,14 @@ __all__ = (
     "ImagePullSecretInput",
     "ListClustersResult",
     "ListQuotasResult",
+    "ListSandboxEnvsResult",
     "ListSandboxesResult",
     "ListSandboxPoolsResult",
     "ListSandboxTemplatesResult",
     "NamespacesResult",
+    "PoolScaleDownPolicy",
+    "PoolScaleUpPolicy",
+    "PoolScaleUpPolicyMode",
     "PoolTemplateOverrides",
     "PromoteAPIKeyResult",
     "Quota",
@@ -145,7 +180,15 @@ __all__ = (
     "SandboxContainerImages",
     "SandboxEndpoint",
     "SandboxEndpoints",
+    "SandboxEnv",
+    "SandboxEnvDefaults",
     "SandboxEnvelope",
+    "SandboxEnvEnvelope",
+    "SandboxEnvLabels",
+    "SandboxEnvSpec",
+    "SandboxEnvSpecMode",
+    "SandboxEnvStatus",
+    "SandboxEnvTemplateRef",
     "SandboxLogEntry",
     "SandboxLogsResult",
     "SandboxLogsResultSource",
@@ -177,6 +220,7 @@ __all__ = (
     "SetSandboxTimeoutRequest",
     "SyncTemplatePreviewResult",
     "TeamsResult",
+    "UpdateSandboxEnvRequest",
     "UpdateSandboxPoolRequest",
     "UpdateSandboxPoolRequestOverrides",
     "UpdateSandboxPoolRequestPodCreationImagePolicy",
