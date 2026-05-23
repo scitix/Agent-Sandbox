@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -45,6 +46,7 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envscheduler"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/schedule"
@@ -98,6 +100,19 @@ type SandboxService interface {
 	IsReady(ctx context.Context, namespace, sandboxID string) (*gen.SandboxReadinessResult, *domain.AppError)
 }
 
+// EnvRouter is the subset of envscheduler.Manager that sandbox_service uses
+// at request-entry time to translate bare template names into a target
+// Pool. It is an interface (rather than a concrete *envscheduler.Manager)
+// so unit tests can substitute a fake without standing up a real Manager.
+//
+// May be nil — when nil, sandbox_service skips Env routing entirely and
+// treats every template as a direct Pool reference (legacy behaviour, used
+// by tests that don't wire the Env layer).
+type EnvRouter interface {
+	Resolve(ns, raw string) envscheduler.ResolveResult
+	SelectPool(envKey types.NamespacedName) string
+}
+
 type k8sSandboxService struct {
 	client         client.Client
 	clientset      kubernetes.Interface // may be nil; used for live log retrieval and exec
@@ -110,8 +125,34 @@ type k8sSandboxService struct {
 	extprocClient  ExtProcClient // may be nil in tests; used to push new routes to ExtProc
 	registryStore  RegistryStore // may be nil; used for per-cluster image registry rewriting
 
+	envRouter EnvRouter // may be nil; set via SetEnvRouter at startup
+
 	schedulersMu sync.RWMutex
 	schedulers   map[string]*schedule.PoolScheduler // key: "namespace/name"
+}
+
+// SetEnvRouter wires the Env-level request router so Sandbox.Create can
+// resolve bare template names through SandboxEnv before falling back to
+// direct Pool dispatch. Safe to call at most once during startup.
+func (s *k8sSandboxService) SetEnvRouter(r EnvRouter) {
+	s.envRouter = r
+}
+
+// GetScheduler implements envscheduler.SchedulerLookup. Returns the
+// existing per-pool scheduler when present; nil otherwise. Used by the
+// Env router's Snapshot-based ranking on the request hot path.
+func (s *k8sSandboxService) GetScheduler(ns, poolName string) *schedule.PoolScheduler {
+	s.schedulersMu.RLock()
+	defer s.schedulersMu.RUnlock()
+	return s.schedulers[ns+"/"+poolName]
+}
+
+// GetSchedulerOrCreate implements envscheduler.SchedulerLookup. Mirrors
+// getOrCreateScheduler with public access; team/user labels are forwarded
+// for metrics. Exported method on the *service* type for the router to
+// share the same scheduler registry without re-keying.
+func (s *k8sSandboxService) GetOrCreateScheduler(ns, poolName, team, user string) *schedule.PoolScheduler {
+	return s.getOrCreateScheduler(ns, poolName, team, user)
 }
 
 const defaultCreateStartupTimeout = 2 * time.Minute
@@ -258,6 +299,48 @@ func (s *k8sSandboxService) buildAvailablePoolsDetail(ctx context.Context, names
 }
 
 func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput) (*gen.Sandbox, *domain.AppError) { //nolint:gocyclo // claim path branches by metric outcome; restructuring would obscure ordering
+	// Resolve the request's `template` field (carried as input.PoolName for
+	// historical reasons) against the Env router. Three outcomes that we
+	// care about here:
+	//
+	//   - ResolveEnv     — bare name matched a SandboxEnv. Pick one of its
+	//                       member Pools via SelectPool and rewrite
+	//                       input.PoolName so the rest of Create sees a
+	//                       concrete pool name. The actual Pool enqueue
+	//                       happens further down on the routine fast path.
+	//   - ResolveLocalPool — explicit "<localID>::pool" bypasses Env. Use
+	//                       the parsed pool name verbatim.
+	//   - ResolveNotFound — bare name with no Env. Phase 1 adoption ensures
+	//                       every legacy Pool has a same-named Env, so this
+	//                       branch is a true 404. ResolveCrossCluster is
+	//                       handled in the apiserver handler layer (forwarder).
+	//
+	// envRouter may be nil (legacy unit-test wiring) — in that case we skip
+	// resolution and treat input.PoolName as a direct Pool reference, which
+	// is exactly the pre-Env behaviour.
+	if s.envRouter != nil {
+		res := s.envRouter.Resolve(input.Namespace, input.PoolName)
+		switch res.Kind {
+		case envscheduler.ResolveEnv:
+			selected := s.envRouter.SelectPool(res.EnvKey)
+			if selected == "" {
+				return nil, domain.NewServiceUnavailable(
+					fmt.Sprintf("sandbox env %s/%s has no eligible members", input.Namespace, res.EnvKey.Name))
+			}
+			input.PoolName = selected
+		case envscheduler.ResolveLocalPool:
+			input.PoolName = res.PoolName
+		case envscheduler.ResolveCrossCluster:
+			// The apiserver handler should have forwarded this request before
+			// reaching the service. Reaching here indicates a wiring bug.
+			return nil, domain.NewBadRequest(
+				fmt.Sprintf("cross-cluster pool reference %q must be forwarded by the handler layer", res.ClusterID+"::"+res.PoolName))
+		case envscheduler.ResolveNotFound:
+			return nil, domain.NewNotFound(
+				fmt.Sprintf("sandbox env or pool %q not found in namespace %s", res.PoolName, input.Namespace))
+		}
+	}
+
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: input.Namespace, Name: input.PoolName}, pool); err != nil {
 		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{

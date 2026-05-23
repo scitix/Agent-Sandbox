@@ -22,11 +22,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envscheduler"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
@@ -200,6 +202,159 @@ func TestSandboxService_Create_PoolNotFound(t *testing.T) {
 	}
 	if appErr.Code != domain.ErrCodeNotFound {
 		t.Fatalf("expected ErrCodeNotFound, got %d", appErr.Code)
+	}
+}
+
+// --- EnvRouter integration -------------------------------------------------
+
+// fakeEnvRouter is a tiny EnvRouter stub for the entry-resolution tests.
+type fakeEnvRouter struct {
+	resolveFn func(ns, raw string) envscheduler.ResolveResult
+	pickFn    func(types.NamespacedName) string
+}
+
+func (f *fakeEnvRouter) Resolve(ns, raw string) envscheduler.ResolveResult {
+	return f.resolveFn(ns, raw)
+}
+func (f *fakeEnvRouter) SelectPool(key types.NamespacedName) string {
+	return f.pickFn(key)
+}
+
+// TestSandboxService_Create_EnvRouter_BareNameMissing_Returns404 verifies the
+// "no Pool fallback" semantics: with envRouter wired, a bare template that
+// doesn't match any Env produces 404 rather than falling through to a
+// direct Pool lookup.
+func TestSandboxService_Create_EnvRouter_BareNameMissing_Returns404(t *testing.T) {
+	// We also seed a SandboxPool named "my-pool" — if the entry refactor
+	// were buggy and fell through, Create would succeed instead of 404'ing.
+	pool := makePool("my-pool", "tenant-a")
+	svc := newTestSandboxService(t, pool)
+
+	router := &fakeEnvRouter{
+		resolveFn: func(_, raw string) envscheduler.ResolveResult {
+			return envscheduler.ResolveResult{Kind: envscheduler.ResolveNotFound, PoolName: raw}
+		},
+	}
+	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
+
+	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
+		PoolName:  "my-pool",
+		Namespace: "tenant-a",
+	})
+	if appErr == nil {
+		t.Fatal("expected NotFound, got nil")
+	}
+	if appErr.Code != domain.ErrCodeNotFound {
+		t.Fatalf("Code = %d, want NotFound (404)", appErr.Code)
+	}
+}
+
+// TestSandboxService_Create_EnvRouter_LocalPoolBypassesEnv verifies that an
+// explicit "<localID>::pool" reference skips the Env layer.
+func TestSandboxService_Create_EnvRouter_LocalPoolBypassesEnv(t *testing.T) {
+	pool := makePool("direct", "tenant-a")
+	svc := newTestSandboxService(t, pool)
+
+	var resolveCalls, pickCalls int
+	router := &fakeEnvRouter{
+		resolveFn: func(_, raw string) envscheduler.ResolveResult {
+			resolveCalls++
+			return envscheduler.ResolveResult{Kind: envscheduler.ResolveLocalPool, PoolName: "direct"}
+		},
+		pickFn: func(types.NamespacedName) string { pickCalls++; return "" },
+	}
+	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
+
+	// The full Create depends on Pods + scheduler — we expect either success
+	// (with the test framework's setup) or a downstream error unrelated to
+	// resolution. We just want to verify Resolve was called once and SelectPool
+	// was NOT called (i.e. local-pool path skipped Env routing).
+	// Use a tiny StartupTimeout so the scheduler wait fails fast rather than
+	// stalling the test for the default 2-minute timeout.
+	_, _ = svc.Create(context.Background(), CreateSandboxInput{
+		PoolName:       "local::direct",
+		Namespace:      "tenant-a",
+		StartupTimeout: 100 * time.Millisecond,
+	})
+	if resolveCalls != 1 {
+		t.Errorf("Resolve calls = %d, want 1", resolveCalls)
+	}
+	if pickCalls != 0 {
+		t.Errorf("SelectPool calls = %d, want 0 (local pool should bypass)", pickCalls)
+	}
+}
+
+// TestSandboxService_Create_EnvRouter_CrossClusterRejected confirms that a
+// cross-cluster reference reaching the service is treated as a wiring bug
+// (the handler should have forwarded the request before reaching service).
+func TestSandboxService_Create_EnvRouter_CrossClusterRejected(t *testing.T) {
+	svc := newTestSandboxService(t)
+	router := &fakeEnvRouter{
+		resolveFn: func(_, raw string) envscheduler.ResolveResult {
+			return envscheduler.ResolveResult{Kind: envscheduler.ResolveCrossCluster, ClusterID: "remote", PoolName: "p"}
+		},
+	}
+	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
+	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
+		PoolName:  "remote::p",
+		Namespace: "tenant-a",
+	})
+	if appErr == nil || appErr.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected BadRequest, got %+v", appErr)
+	}
+}
+
+// TestSandboxService_Create_EnvRouter_EnvHit_PicksSelectedPool exercises the
+// rewriting of input.PoolName when bare name matches an Env: the Env's
+// SelectPool returns "chosen", and the rest of Create proceeds against
+// "chosen" rather than the original template.
+func TestSandboxService_Create_EnvRouter_EnvHit_PicksSelectedPool(t *testing.T) {
+	chosenPool := makePool("chosen", "tenant-a")
+	svc := newTestSandboxService(t, chosenPool)
+
+	router := &fakeEnvRouter{
+		resolveFn: func(ns, raw string) envscheduler.ResolveResult {
+			return envscheduler.ResolveResult{
+				Kind:   envscheduler.ResolveEnv,
+				EnvKey: types.NamespacedName{Namespace: ns, Name: raw},
+			}
+		},
+		pickFn: func(types.NamespacedName) string { return "chosen" },
+	}
+	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
+
+	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
+		PoolName:       "my-env", // resolves to Env, SelectPool picks "chosen"
+		Namespace:      "tenant-a",
+		StartupTimeout: 100 * time.Millisecond,
+	})
+	// We don't assert success — without idle pods Create eventually fails
+	// with TooManyRequests/NoIdle. The point is no NotFound: the rewrite
+	// from "my-env" to "chosen" must have hit a real Pool.
+	if appErr != nil && appErr.Code == domain.ErrCodeNotFound {
+		t.Errorf("unexpected NotFound — entry rewrite should have used 'chosen': %v", appErr)
+	}
+}
+
+// TestSandboxService_Create_EnvRouter_EnvHitNoMembers_ReturnsServiceUnavailable
+// covers the case where SelectPool returns "" (env exists but no eligible
+// local member).
+func TestSandboxService_Create_EnvRouter_EnvHitNoMembers_ReturnsServiceUnavailable(t *testing.T) {
+	svc := newTestSandboxService(t)
+	router := &fakeEnvRouter{
+		resolveFn: func(ns, raw string) envscheduler.ResolveResult {
+			return envscheduler.ResolveResult{Kind: envscheduler.ResolveEnv, EnvKey: types.NamespacedName{Namespace: ns, Name: raw}}
+		},
+		pickFn: func(types.NamespacedName) string { return "" },
+	}
+	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
+
+	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
+		PoolName:  "empty-env",
+		Namespace: "tenant-a",
+	})
+	if appErr == nil || appErr.Code != domain.ErrCodeServiceUnavailable {
+		t.Fatalf("expected ServiceUnavailable, got %+v", appErr)
 	}
 }
 

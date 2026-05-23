@@ -41,6 +41,16 @@ type PoolScaleUpPolicy struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:default=30
 	IdleThresholdSeconds int32 `json:"idleThresholdSeconds,omitempty"`
+
+	// SaturationCooldownSeconds is the duration the Env autoscaler keeps
+	// a member marked saturated after a probe returned InsufficientResources
+	// (or InvalidSpec). Subsequent reconciles skip the member's expensive
+	// PreUpdatePool probe until the cooldown elapses; the router also
+	// deprioritises saturated members. Defaults to 60.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=60
+	SaturationCooldownSeconds int32 `json:"saturationCooldownSeconds,omitempty"`
 }
 
 // PoolScaleDownPolicy controls scale-down behavior.

@@ -109,12 +109,50 @@ const (
 	// until a slot frees. Generous: apiserver can handle much more, but a
 	// bound prevents pathological fan-out if something goes wrong upstream.
 	maxInflightCAS = 128
+
+	// statusWriteInterval bounds how often the throttled status writer can
+	// patch SandboxPool.Status.PendingRequests. Picked to be slow enough
+	// that 100 active pools generate well under 1 K patches/min total, but
+	// quick enough that Dashboard observability lags by no more than a
+	// handful of seconds.
+	statusWriteInterval = 3 * time.Second
+
+	// statusWriteRelativeDelta is the relative change in queue length that
+	// triggers a patch within an interval. Below this threshold the writer
+	// skips the patch — drift from the prior reported value stays bounded
+	// by 20 % per cycle.
+	statusWriteRelativeDelta = 0.2
 )
 
 // ClaimResult is the outcome of a single Enqueue/claim attempt.
 type ClaimResult struct {
 	Pod *corev1.Pod
 	Err error
+}
+
+// Snapshot is a point-in-time view of a PoolScheduler's internal counters.
+// All fields are read with atomic / channel-len semantics; calling Snapshot
+// is safe from any goroutine and does not interact with the apiserver.
+//
+// EnvScheduler reads Snapshots on the request hot path to rank candidate
+// member pools, so the cost must stay in the tens-of-nanoseconds range.
+type Snapshot struct {
+	// IdleReady is the number of idle Pods currently admitted to the ready
+	// queue and not reserved — what would be popped if a request arrived now.
+	IdleReady int
+	// QueueLen is the number of ClaimRequests currently buffered in reqCh
+	// waiting for an idle pod (i.e. unsatisfied demand).
+	QueueLen int
+	// ReservedCount is the number of pods currently reserved (handed off to
+	// a CAS goroutine but not yet observed back as Idle/Starting through the
+	// informer cache).
+	ReservedCount int
+	// InflightCAS is the number of TriggerUpdateWithOptions goroutines
+	// currently running. Useful for diagnosing apiserver back-pressure.
+	InflightCAS int
+	// LastDispatchAt is the wall-clock time of the most recent successful
+	// dispatch (doCAS OK branch). Zero when no dispatch has ever succeeded.
+	LastDispatchAt time.Time
 }
 
 // ClaimOptions carries the per-request options applied to the target pod when
@@ -168,8 +206,26 @@ type PoolScheduler struct {
 	queue    *readyQueue
 	reserved *reservations
 
-	inflightCAS chan struct{}
-	lastRefresh atomic.Int64 // unix nanos; 0 means never
+	inflightCAS  chan struct{}
+	lastRefresh  atomic.Int64 // unix nanos; 0 means never
+	lastDispatch atomic.Int64 // unix nanos of most recent successful doCAS; 0 means never
+}
+
+// Snapshot returns a point-in-time view of the scheduler's internal counters.
+// See the Snapshot doc comment for field semantics. Safe to call from any
+// goroutine; cost is O(1) atomic / channel-len reads.
+func (s *PoolScheduler) Snapshot() Snapshot {
+	var lastDispatch time.Time
+	if v := s.lastDispatch.Load(); v != 0 {
+		lastDispatch = time.Unix(0, v)
+	}
+	return Snapshot{
+		IdleReady:      s.queue.len(),
+		QueueLen:       len(s.reqCh),
+		ReservedCount:  s.reserved.size(),
+		InflightCAS:    len(s.inflightCAS),
+		LastDispatchAt: lastDispatch,
+	}
 }
 
 // NewPoolScheduler allocates a scheduler without starting its goroutine.
@@ -259,6 +315,11 @@ func (s *PoolScheduler) Run(ctx context.Context) {
 	// Prime the queue on start so the first request does not pay the cost of
 	// a full List+admit on its hot path.
 	s.refreshReady(ctx)
+
+	// Throttled mirror of QueueLen onto Pool.Status.PendingRequests. Runs in
+	// its own goroutine because patches go through the apiserver and we
+	// don't want them on the dispatch hot path. No-op when k8sClient is nil.
+	go s.runStatusWriter(ctx)
 
 	curPollInterval := pollInterval
 	pollTimer := time.NewTimer(curPollInterval)
@@ -457,6 +518,7 @@ func (s *PoolScheduler) doCAS(req *ClaimRequest, pod corev1.Pod) {
 	switch {
 	case updateErr == nil:
 		req.ResultCh <- ClaimResult{Pod: fresh}
+		s.lastDispatch.Store(time.Now().UnixNano())
 		pkgmetrics.ScheduleCASOutcomeTotal.With(outcomeLabels(labels, "success")).Inc()
 		// Reservation stays; TTL sweep evicts it after the informer catches up.
 
@@ -612,6 +674,84 @@ func writeScaleUpPendingAnnotation(ctx context.Context, c client.Client, ns, nam
 		}
 		pool.Annotations[agentsv1alpha1.PoolScaleUpPendingAnnotationKey] = time.Now().UTC().Format(time.RFC3339)
 		return c.Patch(ctx, pool, client.MergeFrom(base))
+	})
+}
+
+// shouldWriteStatus decides whether the throttled status writer should issue
+// a patch this cycle. Rules:
+//   - last == -1 (first observation) — always write so Dashboard sees the
+//     initial value rather than waiting for the first material change.
+//   - last and cur differ in zero-ness (one is 0, the other > 0) — always
+//     write to surface the "idle/busy" transition.
+//   - relative change |cur-last|/max(last,1) >= statusWriteRelativeDelta —
+//     write.
+//   - otherwise — skip.
+func shouldWriteStatus(last, cur int32) bool {
+	if last < 0 {
+		return true
+	}
+	if (last == 0) != (cur == 0) {
+		return true
+	}
+	if last == 0 {
+		return false
+	}
+	diff := cur - last
+	if diff < 0 {
+		diff = -diff
+	}
+	return float64(diff)/float64(last) >= statusWriteRelativeDelta
+}
+
+// runStatusWriter periodically mirrors the in-process QueueLen onto
+// SandboxPool.Status.PendingRequests so it's visible via kubectl / Dashboard
+// without scraping in-process state. Throttled by statusWriteInterval +
+// statusWriteRelativeDelta to keep apiserver writes well-bounded even when
+// many pools are active. Started from Run(); no-op when k8sClient is nil
+// (unit-test mode).
+func (s *PoolScheduler) runStatusWriter(ctx context.Context) {
+	if s.k8sClient == nil {
+		return
+	}
+	var last int32 = -1
+	t := time.NewTicker(statusWriteInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cur := int32(len(s.reqCh))
+			if !shouldWriteStatus(last, cur) {
+				continue
+			}
+			if err := patchPoolPendingRequests(ctx, s.k8sClient, s.poolNS, s.poolName, cur); err != nil {
+				klog.V(4).ErrorS(err, "schedule: patch pendingRequests failed (will retry next tick)",
+					"pool", s.poolNS+"/"+s.poolName, "value", cur)
+				continue
+			}
+			last = cur
+		}
+	}
+}
+
+// patchPoolPendingRequests patches Status.PendingRequests on the named pool
+// using the Status subresource. RetryOnConflict handles concurrent status
+// updates from the pool reconciler.
+func patchPoolPendingRequests(ctx context.Context, c client.Client, ns, name string, value int32) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		pool := &agentsv1alpha1.SandboxPool{}
+		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, pool); err != nil {
+			return err
+		}
+		if pool.Status.PendingRequests == value {
+			return nil
+		}
+		base := pool.DeepCopy()
+		pool.Status.PendingRequests = value
+		return c.Status().Patch(ctx, pool, client.MergeFrom(base))
 	})
 }
 

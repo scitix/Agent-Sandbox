@@ -247,7 +247,7 @@ func TestReconcile_C_AdminPreCreatedEnv(t *testing.T) {
 				{
 					ClusterID: testCluster,
 					Members: []agentsv1alpha1.EnvClusterMember{
-						{Name: testPoolName, ScalingGroup: defaultScalingGroup},
+						{Name: testPoolName, ScalingGroup: fallbackScalingGroup},
 					},
 				},
 			},
@@ -389,9 +389,12 @@ func TestPoolFullyAdopted_UIDMismatch(t *testing.T) {
 
 func TestBuildMemberFromPool_InlineFallback(t *testing.T) {
 	pool := newPool()
-	m := buildMemberFromPool(pool, "", 0)
+	m := buildMemberFromPool(pool, "", 0, "2c4Gi")
 	if m.InstanceType != "" || m.Multiplier != 0 {
 		t.Errorf("unexpected catalog metadata: %+v", m)
+	}
+	if m.ScalingGroup != "2c4Gi" {
+		t.Errorf("ScalingGroup = %q, want %q", m.ScalingGroup, "2c4Gi")
 	}
 	if m.InlineResources == nil {
 		t.Fatalf("expected InlineResources, got nil")
@@ -404,12 +407,31 @@ func TestBuildMemberFromPool_InlineFallback(t *testing.T) {
 
 func TestBuildMemberFromPool_CatalogMatch(t *testing.T) {
 	pool := newPool()
-	m := buildMemberFromPool(pool, "sci.c2", 1)
+	m := buildMemberFromPool(pool, "sci.c2", 1, "sci.c2")
 	if m.InstanceType != "sci.c2" || m.Multiplier != 1 {
 		t.Errorf("instance metadata not set: %+v", m)
 	}
+	if m.ScalingGroup != "sci.c2" {
+		t.Errorf("ScalingGroup = %q, want %q", m.ScalingGroup, "sci.c2")
+	}
 	if m.InlineResources != nil {
 		t.Errorf("expected InlineResources empty when catalog matched, got %+v", m.InlineResources)
+	}
+}
+
+func TestDeriveScalingGroupName_ProviderDerives(t *testing.T) {
+	// Real Noop provider returns "2c4Gi" for the newPool resources.
+	pool := newPool()
+	name := deriveScalingGroupName(instancetype.NewNoop(), pool)
+	if name != "2c4Gi" {
+		t.Errorf("deriveScalingGroupName = %q, want %q", name, "2c4Gi")
+	}
+}
+
+func TestDeriveScalingGroupName_NoResourcesFallsBack(t *testing.T) {
+	pool := &agentsv1alpha1.SandboxPool{}
+	if got := deriveScalingGroupName(instancetype.NewNoop(), pool); got != fallbackScalingGroup {
+		t.Errorf("got %q, want %q", got, fallbackScalingGroup)
 	}
 }
 

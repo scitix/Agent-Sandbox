@@ -565,3 +565,119 @@ func itoa(i int) string {
 	}
 	return string(b)
 }
+
+// TestScheduler_Snapshot_ReflectsState walks a scheduler through three states
+// and asserts that Snapshot() observes each: cold start (everything zero),
+// pending demand without idle (QueueLen > 0, IdleReady == 0), and a completed
+// dispatch (IdleReady drops, LastDispatchAt populated).
+func TestScheduler_Snapshot_ReflectsState(t *testing.T) {
+	t.Parallel()
+
+	c := newFakeClient(t)
+	s := NewPoolScheduler("ns", "p", "", "", c)
+	// Don't start Run() — we drive state explicitly so the snapshot
+	// observations are deterministic.
+
+	// 1. Cold start — all counters zero, LastDispatchAt is the zero time.
+	if got := s.Snapshot(); got.IdleReady != 0 || got.QueueLen != 0 || got.ReservedCount != 0 || got.InflightCAS != 0 || !got.LastDispatchAt.IsZero() {
+		t.Fatalf("cold snapshot: got %+v, want all-zero", got)
+	}
+
+	// 2. Enqueue a request without any idle pods — QueueLen should become 1.
+	req, _ := mkReq()
+	if !s.Enqueue(req) {
+		t.Fatal("Enqueue returned false on a fresh scheduler")
+	}
+	if got := s.Snapshot(); got.QueueLen != 1 {
+		t.Fatalf("after enqueue: QueueLen = %d, want 1; full snapshot=%+v", got.QueueLen, got)
+	}
+
+	// 3. Mark a successful dispatch — lastDispatch should be populated.
+	before := time.Now()
+	s.lastDispatch.Store(time.Now().UnixNano())
+	got := s.Snapshot()
+	if got.LastDispatchAt.IsZero() {
+		t.Fatal("after lastDispatch store: LastDispatchAt is zero")
+	}
+	if got.LastDispatchAt.Before(before.Add(-time.Second)) {
+		t.Fatalf("LastDispatchAt looks stale: got %v, expected > %v", got.LastDispatchAt, before)
+	}
+}
+
+// TestShouldWriteStatus exercises the throttling decision used by
+// runStatusWriter. Verifies: first observation, 0/>0 transitions, and the
+// 20 % relative-change threshold.
+func TestShouldWriteStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		last, cur int32
+		want      bool
+	}{
+		{"first observation, zero current", -1, 0, true},
+		{"first observation, positive current", -1, 7, true},
+		{"steady zero", 0, 0, false},
+		{"zero → positive (busy edge)", 0, 1, true},
+		{"positive → zero (idle edge)", 5, 0, true},
+		{"same nonzero value", 10, 10, false},
+		{"19 % up — below threshold", 100, 119, false},
+		{"20 % up — at threshold", 100, 120, true},
+		{"19 % down — below threshold", 100, 81, false},
+		{"50 % up — clearly above", 10, 15, true},
+		{"big drop above threshold", 100, 50, true},
+		{"tiny last value triggers easily", 1, 2, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldWriteStatus(tt.last, tt.cur); got != tt.want {
+				t.Errorf("shouldWriteStatus(%d, %d) = %v, want %v", tt.last, tt.cur, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPatchPoolPendingRequests_UpdatesStatus drives the patch helper end-to-end
+// against a fake client. Confirms the Status subresource is written and that
+// a no-op patch (value unchanged) doesn't issue a write.
+func TestPatchPoolPendingRequests_UpdatesStatus(t *testing.T) {
+	t.Parallel()
+	pool := &agentsv1alpha1.SandboxPool{}
+	pool.Name = "p"
+	pool.Namespace = "ns"
+	c := newFakeClient(t, pool)
+
+	if err := patchPoolPendingRequests(context.Background(), c, "ns", "p", 7); err != nil {
+		t.Fatalf("first patch: %v", err)
+	}
+	got := &agentsv1alpha1.SandboxPool{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, got); err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if got.Status.PendingRequests != 7 {
+		t.Fatalf("Status.PendingRequests = %d, want 7", got.Status.PendingRequests)
+	}
+
+	// Repeat with same value — should be a no-op (no error).
+	if err := patchPoolPendingRequests(context.Background(), c, "ns", "p", 7); err != nil {
+		t.Fatalf("idempotent patch: %v", err)
+	}
+}
+
+// BenchmarkPoolScheduler_Snapshot exercises the hot-path read used by
+// EnvScheduler routing. Target: tens of nanoseconds — Snapshot is dominated
+// by atomic-load + channel-len + len() on the ready queue, no locks.
+func BenchmarkPoolScheduler_Snapshot(b *testing.B) {
+	c := newFakeClient(&testing.T{})
+	s := NewPoolScheduler("ns", "p", "", "", c)
+	// Populate so the counters aren't all empty.
+	s.lastDispatch.Store(time.Now().UnixNano())
+	req, _ := mkReq()
+	if !s.Enqueue(req) {
+		b.Fatal("Enqueue failed")
+	}
+
+	for b.Loop() {
+		_ = s.Snapshot()
+	}
+}

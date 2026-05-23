@@ -16,6 +16,9 @@ package instancetype
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -47,6 +50,70 @@ func (Noop) Resolve(_ context.Context, name string, _ int32) (corev1.ResourceReq
 
 func (Noop) ResolveByResources(_ context.Context, _ corev1.ResourceRequirements) (*InstanceType, int32, *domain.AppError) {
 	return nil, 0, nil
+}
+
+func (Noop) DeriveScalingGroupName(observed corev1.ResourceRequirements) string {
+	return DeriveDefaultScalingGroupName(observed)
+}
+
+// DeriveDefaultScalingGroupName is the open-source canonical naming used by
+// the Noop provider and (fallback path) any caller that doesn't have access
+// to a richer catalog. It is exported so other providers can delegate to it
+// for resource shapes outside their own catalog.
+//
+// Output shape: "Xc{Y}Gi" plus optional "-<count><resource-suffix>" segments
+// for every non-zero extended resource (e.g. GPUs). Examples:
+//
+//	{cpu:1, mem:4Gi}                                  → "1c4Gi"
+//	{cpu:22, mem:220Gi, nvidia.com/gpu:1}             → "22c220Gi-1gpu"
+//	{cpu:8, mem:32Gi, "scitix.ai/tpu":4}              → "8c32Gi-4scitix.ai-tpu"
+//	{}                                                → "default"
+//
+// Numeric values are rounded up by k8s resource.Quantity.Value() (so 500m
+// CPU → 1, 1500Mi memory → 2Gi). Sub-unit shapes therefore collapse to the
+// next whole unit — acceptable for the MVP pre-warmed-pool use case, where
+// members are usually whole-CPU sized.
+func DeriveDefaultScalingGroupName(observed corev1.ResourceRequirements) string {
+	reqs := observed.Requests
+	cpu := reqs.Cpu().Value()    // cores, rounded down
+	mem := reqs.Memory().Value() // bytes
+	memGi := mem / (1 << 30)
+	if cpu == 0 && memGi == 0 && len(reqs) == 0 {
+		return "default"
+	}
+	parts := []string{fmt.Sprintf("%dc%dGi", cpu, memGi)}
+
+	// Extended resources (GPU, accelerators) — sort by name so output is stable.
+	type extra struct {
+		name string
+		qty  int64
+	}
+	var extras []extra
+	for k, v := range reqs {
+		if k == corev1.ResourceCPU || k == corev1.ResourceMemory {
+			continue
+		}
+		if v.IsZero() {
+			continue
+		}
+		extras = append(extras, extra{name: string(k), qty: v.Value()})
+	}
+	sort.Slice(extras, func(i, j int) bool { return extras[i].name < extras[j].name })
+	for _, e := range extras {
+		parts = append(parts, fmt.Sprintf("%d%s", e.qty, normalizeExtendedName(e.name)))
+	}
+	return strings.Join(parts, "-")
+}
+
+// normalizeExtendedName turns "nvidia.com/gpu" → "gpu" so the common GPU
+// case produces "1gpu" rather than the verbose "1nvidia.com-gpu". For any
+// other extended resource we fall back to replacing "/" with "-" to keep
+// the result DNS-label-ish.
+func normalizeExtendedName(name string) string {
+	if strings.HasSuffix(name, "/gpu") {
+		return "gpu"
+	}
+	return strings.ReplaceAll(name, "/", "-")
 }
 
 func init() {

@@ -52,10 +52,12 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 )
 
-// defaultScalingGroup names the single autoscaling group created during
-// migration. Kept in sync with sandboxenv.defaultScalingGroup (intentionally
-// duplicated to avoid an upward import cycle).
-const defaultScalingGroup = "default"
+// fallbackScalingGroup names the autoscaling group used when the
+// InstanceType provider can't supply a derived name (e.g. zero-resources
+// pool, provider returns the canonical "default" string). Kept in sync
+// with sandboxenv.defaultScalingGroup (intentionally duplicated to avoid an
+// upward import cycle).
+const fallbackScalingGroup = "default"
 
 // PoolAdoptionReconciler ensures every SandboxPool is wrapped in a same-named
 // SandboxEnv. It watches SandboxPool only — Env updates do not enqueue work
@@ -219,14 +221,15 @@ func (r *PoolAdoptionReconciler) adoptOrphanPool(ctx context.Context, pool *agen
 	if err != nil {
 		return fmt.Errorf("resolve pool shape: %w", err)
 	}
-	member := buildMemberFromPool(pool, itName, multiplier)
+	groupName := deriveScalingGroupName(r.InstanceTypes, pool)
+	member := buildMemberFromPool(pool, itName, multiplier, groupName)
 	envName := pool.Name // Phase 1: 1:1 same-name Env.
 
 	env := &agentsv1alpha1.SandboxEnv{}
 	getErr := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: envName}, env)
 	switch {
 	case apierrors.IsNotFound(getErr):
-		env = buildEnvFromPool(pool, itName, multiplier, member, r.LocalClusterID)
+		env = buildEnvFromPool(pool, itName, multiplier, member, r.LocalClusterID, groupName)
 		if err := r.Create(ctx, env); err != nil {
 			if apierrors.IsAlreadyExists(err) {
 				if err := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: envName}, env); err != nil {
@@ -342,13 +345,17 @@ func resolvePoolShape(ctx context.Context, p instancetype.Provider, pool *agents
 }
 
 // buildEnvFromPool constructs a fresh SandboxEnv that adopts the given Pool
-// as its sole member in the local cluster segment.
+// as its sole member in the local cluster segment. groupName labels the
+// ScalingGroup associated with this Pool and is mirrored into the Env's
+// autoscaling.groups[0] entry so the autoscaler config and the member's
+// ScalingGroup field agree by construction.
 func buildEnvFromPool(
 	pool *agentsv1alpha1.SandboxPool,
 	itName string,
 	multiplier int32,
 	member agentsv1alpha1.EnvClusterMember,
 	localClusterID string,
+	groupName string,
 ) *agentsv1alpha1.SandboxEnv {
 	env := &agentsv1alpha1.SandboxEnv{
 		ObjectMeta: metav1.ObjectMeta{
@@ -368,6 +375,10 @@ func buildEnvFromPool(
 					Members:   []agentsv1alpha1.EnvClusterMember{member},
 				},
 			},
+			Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
+				Enabled: false,
+				Groups:  []agentsv1alpha1.EnvAutoscalingGroup{{Name: groupName}},
+			},
 		},
 	}
 	if itName != "" {
@@ -383,10 +394,13 @@ func buildEnvFromPool(
 // given Pool. When the Provider supplied (InstanceType, Multiplier), those
 // fields are filled and InlineResources is left empty. Otherwise the Pool's
 // first-container resources are copied verbatim.
-func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multiplier int32) agentsv1alpha1.EnvClusterMember {
+//
+// groupName is the resolved ScalingGroup name (typically derived from the
+// effective resources via the InstanceType provider).
+func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multiplier int32, groupName string) agentsv1alpha1.EnvClusterMember {
 	m := agentsv1alpha1.EnvClusterMember{
 		Name:         pool.Name,
-		ScalingGroup: defaultScalingGroup,
+		ScalingGroup: groupName,
 	}
 	if itName != "" {
 		m.InstanceType = itName
@@ -397,6 +411,25 @@ func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multip
 		m.InlineResources = res.DeepCopy()
 	}
 	return m
+}
+
+// deriveScalingGroupName resolves the ScalingGroup name for a Pool by asking
+// the InstanceType provider to derive a stable identifier from the Pool's
+// effective resources. Returns the fallback "default" name when the provider
+// is nil, returns its own "default", or the Pool has no observable resources.
+func deriveScalingGroupName(provider instancetype.Provider, pool *agentsv1alpha1.SandboxPool) string {
+	if provider == nil {
+		return fallbackScalingGroup
+	}
+	res := firstContainerResources(pool)
+	if res == nil {
+		return fallbackScalingGroup
+	}
+	name := provider.DeriveScalingGroupName(*res)
+	if name == "" {
+		return fallbackScalingGroup
+	}
+	return name
 }
 
 // envLabelsFromPool propagates the team/user labels (and any other discovery

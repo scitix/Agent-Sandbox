@@ -136,4 +136,19 @@ type Provider interface {
 	//   - The resulting multiplier must be ≥ 1 and (when MaxMultiplier > 0)
 	//     ≤ MaxMultiplier.
 	ResolveByResources(ctx context.Context, observed corev1.ResourceRequirements) (*InstanceType, int32, *domain.AppError)
+
+	// DeriveScalingGroupName returns a stable, human-readable identifier
+	// for the given resource shape. Used by SandboxEnv member adoption and
+	// the autoscaler to cluster Pools sharing one resource regimen into a
+	// single ScalingGroup (e.g. ondemand + spot of the same shape).
+	//
+	// Implementations MUST return identical names for equivalent resource
+	// shapes (same CPU / memory / GPU counts and types). Names should fit
+	// DNS-label characters so they can be used as annotation values and
+	// map keys.
+	//
+	// Open-source Noop returns a canonical "Xc{Y}Gi[-Zgpu]" form derived
+	// purely from the observed Requests. Closed-source Scitix provider can
+	// return catalog-aligned names like "sci.c24-2".
+	DeriveScalingGroupName(observed corev1.ResourceRequirements) string
 }

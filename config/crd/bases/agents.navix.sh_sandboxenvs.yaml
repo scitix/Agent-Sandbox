@@ -164,6 +164,17 @@ spec:
                                   - Aggressive:   scale to min(currentReplicas*2, maxReplicas)
                                 Defaults to Default.
                               type: string
+                            saturationCooldownSeconds:
+                              default: 60
+                              description: |-
+                                SaturationCooldownSeconds is the duration the Env autoscaler keeps
+                                a member marked saturated after a probe returned InsufficientResources
+                                (or InvalidSpec). Subsequent reconciles skip the member's expensive
+                                PreUpdatePool probe until the cooldown elapses; the router also
+                                deprioritises saturated members. Defaults to 60.
+                              format: int32
+                              minimum: 0
+                              type: integer
                           type: object
                       required:
                       - name
@@ -510,6 +521,13 @@ spec:
                             description: InstanceType / Multiplier are echoed from
                               spec for convenience.
                             type: string
+                          lastScaleUpAttemptResult:
+                            description: |-
+                              LastScaleUpAttemptResult records the outcome of the most recent
+                              probe-and-patch attempt against this member. Values:
+                              "Success" | "InsufficientResources" | "InternalError" | "InvalidSpec".
+                              Useful for `kubectl describe sbe` triage.
+                            type: string
                           multiplier:
                             format: int32
                             type: integer
@@ -517,9 +535,32 @@ spec:
                             description: Name matches the spec member's Name and is
                               the list map key.
                             type: string
+                          pendingRequests:
+                            description: |-
+                              PendingRequests is the throttled mirror of the in-process PoolScheduler
+                              claim queue length, copied from SandboxPool.Status.PendingRequests.
+                              Used by Dashboard observability and (future) cross-cluster routing.
+                            format: int32
+                            type: integer
                           runningCount:
                             format: int32
                             type: integer
+                          saturatedUntil:
+                            description: |-
+                              SaturatedUntil marks this member as ineligible for routing/scaling
+                              until the given time. Set by the Env autoscaler after a probe returned
+                              InsufficientResources / InvalidSpec; cleared on next successful probe
+                              or naturally when the time elapses. The router (EnvScheduler) holds
+                              saturated members back from the primary candidate list but still
+                              tries them as fallback when no fresh member can accept the request.
+                            format: date-time
+                            type: string
+                          scaleUpErrorMessage:
+                            description: |-
+                              ScaleUpErrorMessage carries the most recent non-success probe error
+                              message verbatim for diagnostics. Empty when LastScaleUpAttemptResult
+                              is "Success".
+                            type: string
                           state:
                             description: State summarises whether the member can currently
                               serve requests.
@@ -637,6 +678,14 @@ spec:
                     totalIdle:
                       description: TotalIdle / TotalRunning / TotalDesired aggregate
                         across members.
+                      format: int32
+                      type: integer
+                    totalPending:
+                      description: |-
+                        TotalPending aggregates ObservedMember.PendingRequests across all
+                        members of this group. Drives the reactive scale-up signal — when
+                        > 0 the Env autoscaler considers the group under demand even before
+                        the legacy annotation-based wake-up fires.
                       format: int32
                       type: integer
                     totalRunning:

@@ -33,6 +33,7 @@ import (
 	"github.com/scitix/agent-sandbox/cmd/sandbox/app/extconfig"
 	"github.com/scitix/agent-sandbox/pkg/apiserver"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envscheduler"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolmigration"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
@@ -328,6 +329,33 @@ func Run(opts Options) {
 		idleNotifier = n
 	}
 
+	// ---- Env-level request router -------------------------------------------
+	// envRouter resolves bare template names through SandboxEnv before the
+	// request reaches a Pool's scheduler. The Manager itself is in-memory and
+	// goroutine-free; the request hot path takes a single RWMutex RLock.
+	//
+	// We need the sandbox_service to also implement
+	// envscheduler.SchedulerLookup so the router can read PoolScheduler
+	// snapshots without re-keying. The concrete *k8sSandboxService type
+	// satisfies the interface; cast through the interface to expose it.
+	var envRouter *envscheduler.Manager
+	schedulerLookup, ok := sandboxSvc.(envscheduler.SchedulerLookup)
+	if !ok {
+		setupLog.Error(nil, "sandbox service does not satisfy envscheduler.SchedulerLookup — Env routing disabled")
+	} else {
+		envRouter = envscheduler.New(localClusterID, schedulerLookup, &envGetterFromCache{client: mgr.GetClient()})
+		if r, ok := sandboxSvc.(interface{ SetEnvRouter(service.EnvRouter) }); ok {
+			r.SetEnvRouter(envRouter)
+		}
+		// Subscribe to SandboxEnv changes so the router's cache stays fresh.
+		// The Reconciler also calls OnEnvUpsert at the end of Reconcile as a
+		// belt-and-braces guarantee, but the informer event is faster.
+		if err := setupEnvRouterInformer(mgr, envRouter); err != nil {
+			setupLog.Error(err, "Failed to wire SandboxEnv informer to env router")
+			os.Exit(1)
+		}
+	}
+
 	// ---- shared auth infrastructure ------------------------------------------
 	// keyStore, adminKeyMgr, and iamSvc are shared by both the native and E2B
 	// API servers so they validate against the same Secret-backed cache.
@@ -360,11 +388,16 @@ func Run(opts Options) {
 		os.Exit(1)
 	}
 
-	if err := (&sandboxenv.SandboxEnvReconciler{
+	envReconciler := &sandboxenv.SandboxEnvReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		LocalClusterID: localClusterID,
-	}).SetupWithManager(mgr); err != nil {
+		PluginManager:  pluginManager,
+	}
+	if envRouter != nil {
+		envReconciler.EnvRouterSync = envRouter
+	}
+	if err := envReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxEnv")
 		os.Exit(1)
 	}

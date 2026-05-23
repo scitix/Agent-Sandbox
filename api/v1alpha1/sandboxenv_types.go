@@ -335,6 +335,34 @@ type EnvObservedMember struct {
 	// CurrentReplicas is the value last observed on the Pool spec.
 	// +optional
 	CurrentReplicas int32 `json:"currentReplicas,omitempty"`
+
+	// PendingRequests is the throttled mirror of the in-process PoolScheduler
+	// claim queue length, copied from SandboxPool.Status.PendingRequests.
+	// Used by Dashboard observability and (future) cross-cluster routing.
+	// +optional
+	PendingRequests int32 `json:"pendingRequests,omitempty"`
+
+	// SaturatedUntil marks this member as ineligible for routing/scaling
+	// until the given time. Set by the Env autoscaler after a probe returned
+	// InsufficientResources / InvalidSpec; cleared on next successful probe
+	// or naturally when the time elapses. The router (EnvScheduler) holds
+	// saturated members back from the primary candidate list but still
+	// tries them as fallback when no fresh member can accept the request.
+	// +optional
+	SaturatedUntil *metav1.Time `json:"saturatedUntil,omitempty"`
+
+	// LastScaleUpAttemptResult records the outcome of the most recent
+	// probe-and-patch attempt against this member. Values:
+	// "Success" | "InsufficientResources" | "InternalError" | "InvalidSpec".
+	// Useful for `kubectl describe sbe` triage.
+	// +optional
+	LastScaleUpAttemptResult string `json:"lastScaleUpAttemptResult,omitempty"`
+
+	// ScaleUpErrorMessage carries the most recent non-success probe error
+	// message verbatim for diagnostics. Empty when LastScaleUpAttemptResult
+	// is "Success".
+	// +optional
+	ScaleUpErrorMessage string `json:"scaleUpErrorMessage,omitempty"`
 }
 
 // EnvScalingGroupStatus aggregates a scalingGroup's runtime state across all
@@ -351,6 +379,12 @@ type EnvScalingGroupStatus struct {
 	TotalRunning int32 `json:"totalRunning,omitempty"`
 	// +optional
 	TotalDesired int32 `json:"totalDesired,omitempty"`
+	// TotalPending aggregates ObservedMember.PendingRequests across all
+	// members of this group. Drives the reactive scale-up signal — when
+	// > 0 the Env autoscaler considers the group under demand even before
+	// the legacy annotation-based wake-up fires.
+	// +optional
+	TotalPending int32 `json:"totalPending,omitempty"`
 }
 
 // Condition type constants for SandboxEnv.

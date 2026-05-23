@@ -166,6 +166,14 @@ type SandboxPoolStatus struct {
 	// +optional
 	FailedReplicas int32 `json:"failedReplicas,omitempty"`
 
+	// PendingRequests is the throttled mirror of the in-process PoolScheduler
+	// claim queue depth. Patched every ~3 s when the queue length changes by
+	// at least 20 % or crosses the 0/>0 boundary. Used by Dashboard for
+	// real-time backlog observability; the Env autoscaler reads the live
+	// in-process Snapshot instead and does not depend on this field.
+	// +optional
+	PendingRequests int32 `json:"pendingRequests,omitempty"`
+
 	// Selector is the label selector string used to identify Pods managed by this Pool.
 	// Deprecated: Use LabelSelector for structured access or PhaseSelectors for per-phase filtering.
 	// This field is retained for kubectl scale / HPA compatibility (subresource:scale selectorpath).

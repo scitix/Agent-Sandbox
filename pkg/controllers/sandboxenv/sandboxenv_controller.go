@@ -55,6 +55,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 )
 
 const (
@@ -67,6 +68,16 @@ const (
 	// autoscaler and status code don't need to import poolmigration.
 	defaultScalingGroup = "default"
 )
+
+// EnvRouterSync is the minimal contract the SandboxEnv Reconciler uses to
+// keep the in-process Env router's cache in sync with K8s state. The
+// informer event handler covers the steady-state case; this hook fires at
+// the end of every successful Reconcile as a fallback against missed
+// events (rare, but cheap to defend against). Implemented by
+// *envscheduler.Manager.
+type EnvRouterSync interface {
+	OnEnvUpsert(env *agentsv1alpha1.SandboxEnv)
+}
 
 // SandboxEnvReconciler reconciles a SandboxEnv object.
 type SandboxEnvReconciler struct {
@@ -81,6 +92,18 @@ type SandboxEnvReconciler struct {
 	// Recorder, when non-nil, emits Kubernetes Events on autoscaler decisions.
 	// Initialised in SetupWithManager when not pre-set.
 	Recorder events.EventRecorder
+
+	// PluginManager, when non-nil, gates scale-up via PreUpdatePool admission
+	// probes (scheduler reservation / quota plugins). The autoscaler binary-
+	// searches the probe range when a plugin reports InsufficientResources to
+	// converge on a scheduler-acceptable target. When nil (test mode), every
+	// candidate replicas value is admitted unconditionally.
+	PluginManager *plugins.PluginManager
+
+	// EnvRouterSync, when non-nil, is invoked at the end of every successful
+	// Reconcile so the in-process Env router observes the freshest spec
+	// even if it missed an informer event.
+	EnvRouterSync EnvRouterSync
 }
 
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxenvs,verbs=get;list;watch;create;update;patch;delete
@@ -126,6 +149,13 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	if res.RequeueAfter == 0 {
 		res.RequeueAfter = RequeueAfter
+	}
+	if r.EnvRouterSync != nil {
+		// Belt-and-braces resync of the in-process router cache. Cheap (one
+		// RWMutex.Lock + map write); guarantees the router never lags the
+		// authoritative K8s state by more than one reconcile cycle even if
+		// the informer event was dropped.
+		r.EnvRouterSync.OnEnvUpsert(env)
 	}
 	return res, nil
 }
