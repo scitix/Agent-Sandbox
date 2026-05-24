@@ -20,9 +20,7 @@ import { type ColumnDef } from "@tanstack/react-table"
 import { type AgentSandboxPool } from "@/lib/api/client"
 import {
   MoreVertical,
-  RefreshCw,
-  Pencil,
-  Trash2,
+  FileText,
   ArrowUpRight,
   Activity,
   AlertTriangle,
@@ -115,14 +113,13 @@ function StatusLinkCell({
   )
 }
 
-// OwningEnvCell renders the SandboxEnv that owns this Pool. The link
-// navigates to the Envs page with ?env=<name> so the detail sheet auto-
-// opens on mount — matches the existing "PoolNameCell" jump from
-// sandboxes → pools. Pools awaiting adoption show "—".
+// OwningEnvCell renders the SandboxEnv that owns this Pool. Links to the
+// 3-level Env detail page at /clusters/{id}/envs/{name}. Pools awaiting
+// adoption (no owning Env) show "—".
 function OwningEnvCell({ envName }: { envName?: string }) {
   const clusterID = useClusterID()
   if (!envName) return <span className="text-muted-foreground text-xs">—</span>
-  const href = `${clusterPath(clusterID, "envs")}?env=${encodeURIComponent(envName)}`
+  const href = `${clusterPath(clusterID, "envs")}/${encodeURIComponent(envName)}`
   return (
     <Button
       variant="ghost"
@@ -159,9 +156,6 @@ function TemplateNameCell({ name, version }: { name: string; version?: string })
 
 export function createPoolColumns(
   t: (key: TranslationKey, params?: Record<string, string | number>) => string,
-  onEdit: (pool: AgentSandboxPool) => void,
-  onDelete: (pool: AgentSandboxPool) => void,
-  onSyncTemplate?: (pool: AgentSandboxPool) => void,
   onViewMetrics?: (pool: AgentSandboxPool) => void,
   onViewDocs?: (pool: AgentSandboxPool) => void,
   options?: { showOwner?: boolean },
@@ -453,52 +447,41 @@ export function createPoolColumns(
     createdAtColumn,
     {
       id: "actions",
-      cell: ({ row }) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="ghost" size="icon-sm" className="text-muted-foreground h-7 w-7" />
-            }
-          >
-            <MoreVertical className="h-4 w-4" />
-            <span className="sr-only">{t("common.actions")}</span>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem
-              onClick={() => onEdit(row.original)}
-              className="cursor-pointer font-mono text-xs"
+      cell: ({ row }) => {
+        if (!onViewMetrics && !onViewDocs) return null
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon-sm" className="text-muted-foreground h-7 w-7" />
+              }
             >
-              <Pencil className="mr-2 h-3.5 w-3.5" />
-              {t("pools.editPool")}
-            </DropdownMenuItem>
-            {onSyncTemplate && row.original.spec?.templateName && (
-              <DropdownMenuItem
-                onClick={() => onSyncTemplate(row.original)}
-                className="cursor-pointer font-mono text-xs"
-              >
-                <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                {t("pools.syncTemplate")}
-              </DropdownMenuItem>
-            )}
-            {onViewMetrics && (
-              <DropdownMenuItem
-                onClick={() => onViewMetrics(row.original)}
-                className="cursor-pointer font-mono text-xs"
-              >
-                <Activity className="mr-2 h-3.5 w-3.5" />
-                {t("prometheus.metrics")}
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              onClick={() => onDelete(row.original)}
-              className="text-destructive focus:text-destructive cursor-pointer font-mono text-xs"
-            >
-              <Trash2 className="mr-2 h-3.5 w-3.5" />
-              {t("common.delete")}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
+              <MoreVertical className="h-4 w-4" />
+              <span className="sr-only">{t("common.actions")}</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {onViewMetrics && (
+                <DropdownMenuItem
+                  onClick={() => onViewMetrics(row.original)}
+                  className="cursor-pointer font-mono text-xs"
+                >
+                  <Activity className="mr-2 h-3.5 w-3.5" />
+                  {t("prometheus.metrics")}
+                </DropdownMenuItem>
+              )}
+              {onViewDocs && (
+                <DropdownMenuItem
+                  onClick={() => onViewDocs(row.original)}
+                  className="cursor-pointer font-mono text-xs"
+                >
+                  <FileText className="mr-2 h-3.5 w-3.5" />
+                  {t("pools.docs")}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      },
     },
   ]
 }

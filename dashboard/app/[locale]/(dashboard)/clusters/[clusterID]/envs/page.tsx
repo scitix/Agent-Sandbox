@@ -16,17 +16,21 @@
 
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { parseAsString, useQueryState } from "nuqs"
+import { useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
+import { Plus } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
+import { Button } from "@/components/ui/button"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
 import { createEnvColumns } from "@/components/envs/columns"
-import { EnvDetailSheet } from "@/components/envs/env-detail-sheet"
 import { EditAutoscalingSheet } from "@/components/envs/edit-autoscaling-sheet"
-import { ENV_DETAIL_PARAM } from "@/components/envs/constants"
+import { CreateEnvSheet } from "@/components/envs/create-env-sheet"
+import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
 import { envsQueryOptions } from "@/lib/queries"
 import type { AgentSandboxEnv } from "@/lib/api/client"
+import { clusterPath } from "@/lib/cluster-path"
+import { useClusterID } from "@/hooks/use-cluster-id"
 import { useTableSearchParams, type FilterColumnDef } from "@/hooks/use-table-search-params"
 import { useTranslation } from "@/lib/i18n"
 
@@ -38,42 +42,46 @@ const envFilterColumns: FilterColumnDef[] = [
 
 export default function EnvsPage() {
   const { t } = useTranslation()
-  const [detailTarget, setDetailTarget] = useState<AgentSandboxEnv | null>(null)
+  const router = useRouter()
+  const clusterID = useClusterID()
   const [editTarget, setEditTarget] = useState<AgentSandboxEnv | null>(null)
-  const [autoOpenName, setAutoOpenName] = useQueryState(
-    ENV_DETAIL_PARAM,
-    parseAsString.withOptions({ scroll: false, shallow: true }),
-  )
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editEnvTarget, setEditEnvTarget] = useState<AgentSandboxEnv | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<AgentSandboxEnv | null>(null)
   const tableState = useTableSearchParams(envFilterColumns)
   const queryOptions = envsQueryOptions()
+
+  // Name clicks navigate to the 3-level detail page so the URL is
+  // shareable and the browser back-stack works as users expect.
+  const goToDetail = (env: AgentSandboxEnv) => {
+    router.push(`${clusterPath(clusterID, "envs")}/${encodeURIComponent(env.name)}`)
+  }
 
   const columns = useMemo(
     () =>
       createEnvColumns(
         t,
-        (env) => setDetailTarget(env),
+        goToDetail,
         (env) => setEditTarget(env),
+        (env) => setEditEnvTarget(env),
+        (env) => setDeleteTarget(env),
       ),
-    [t],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t, clusterID],
   )
 
-  // When the URL carries `?env=<name>` (reverse link from the Pool list),
-  // we open the detail sheet for that env once the data has loaded. Cleared
-  // when the user closes the sheet.
-  useEffect(() => {
-    if (!autoOpenName || detailTarget) return
-    const data = queryOptions.queryKey
-    // queryOptions.queryKey is the stable cache key; we let the QueryTable
-    // load the list and then re-check via a lightweight effect below. To
-    // avoid a second fetch here we just stash the name into a virtual env
-    // stub and let the detail sheet's own useQuery fetch the full env.
-    setDetailTarget({
-      name: autoOpenName,
-      namespace: "",
-      spec: { templateRef: { name: "" }, mode: "WarmPool" },
-    } as AgentSandboxEnv)
-    void data // silence unused warning
-  }, [autoOpenName, detailTarget, queryOptions.queryKey])
+  const toolbar = (
+    <div>
+      <Button
+        size="sm"
+        onClick={() => setCreateOpen(true)}
+        className="bg-foreground text-background hover:bg-foreground/90 h-9 gap-1.5 font-mono text-[12px] tracking-wider uppercase"
+      >
+        <Plus className="h-3 w-3" />
+        {t("envs.newEnv")}
+      </Button>
+    </div>
+  )
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -86,23 +94,25 @@ export default function EnvsPage() {
           queryOptions={queryOptions}
           externalState={tableState}
           className="table-layout-fixed h-[calc(100vh-104px)]"
-        />
+        >
+          {toolbar}
+        </QueryTable>
       </div>
 
-      <EnvDetailSheet
-        env={detailTarget}
-        onOpenChange={(open: boolean) => {
-          if (!open) {
-            setDetailTarget(null)
-            if (autoOpenName) void setAutoOpenName(null)
-          }
-        }}
-        onEditAutoscaling={(env: AgentSandboxEnv) => {
-          setDetailTarget(null)
-          setEditTarget(env)
+      <CreateEnvSheet open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateEnvSheet
+        env={editEnvTarget}
+        open={!!editEnvTarget}
+        onOpenChange={(open) => {
+          if (!open) setEditEnvTarget(null)
         }}
       />
-
+      <DeleteEnvDialog
+        env={deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+      />
       <EditAutoscalingSheet
         env={editTarget}
         onOpenChange={(open: boolean) => {

@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-// Query options and mutations for Sandbox Pool resources
+// Query options for Sandbox Pool resources. Pools are now read-only at the
+// HTTP layer — creation / deletion / template-sync go through SandboxEnv,
+// which materialises member Pools via the Env Reconciler.
 
-import { useQueryClient } from "@tanstack/react-query"
-import { currentApiClient, currentFetchClient } from "@/lib/api/client"
-import { delayedInvalidate, impersonationHeaders } from "./utils"
+import { currentApiClient } from "@/lib/api/client"
+import { impersonationHeaders } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
 
@@ -43,90 +44,3 @@ export const adminUserPoolsQueryOptions = (team: string, user: string) =>
       select: (data) => data.items ?? [],
     },
   )
-
-// ─── Mutations ─────────────────────────────────────────────────────────────────
-
-export function useCreatePool() {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("post", "/sandboxpools", {
-    onSuccess: () => delayedInvalidate(qc, ["get", "/sandboxpools"]),
-  })
-}
-
-export function useUpdatePool() {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("put", "/sandboxpools/{name}", {
-    onSuccess: () => delayedInvalidate(qc, ["get", "/sandboxpools"]),
-  })
-}
-
-export function useDeletePool() {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("delete", "/sandboxpools/{name}", {
-    onSuccess: () => delayedInvalidate(qc, ["get", "/sandboxpools"]),
-  })
-}
-
-export function useSyncPoolTemplate() {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("post", "/sandboxpools/{name}/sync-template", {
-    onSuccess: () => delayedInvalidate(qc, ["get", "/sandboxpools"]),
-  })
-}
-
-export const previewSyncTemplateQueryOptions = (poolName: string) =>
-  currentApiClient().queryOptions(
-    "post",
-    "/sandboxpools/{name}/sync-template/preview",
-    { params: { path: { name: poolName } } },
-  )
-
-export function useAdminCreateUserPool(team: string, user: string) {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("post", "/sandboxpools", {
-    onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/sandboxpools", { headers: impersonationHeaders(team, user) }])
-    },
-  })
-}
-
-export function useAdminUpdateUserPool(team: string, user: string) {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("put", "/sandboxpools/{name}", {
-    onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/sandboxpools", { headers: impersonationHeaders(team, user) }])
-    },
-  })
-}
-
-export function useAdminDeleteUserPool(team: string, user: string) {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("delete", "/sandboxpools/{name}", {
-    onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/sandboxpools", { headers: impersonationHeaders(team, user) }])
-    },
-  })
-}
-
-// ─── Imperative helpers (for batch operations) ─────────────────────────────────
-
-export async function deletePoolImperative(name: string): Promise<void> {
-  const client = currentFetchClient()
-  const { error } = await client.DELETE("/sandboxpools/{name}", {
-    params: { path: { name } },
-  })
-  if (error) throw error
-}
-
-export async function adminDeleteUserPoolImperative(
-  team: string,
-  user: string,
-  name: string,
-): Promise<void> {
-  const client = currentFetchClient()
-  const { error } = await client.DELETE("/sandboxpools/{name}", {
-    params: { path: { name } },
-    headers: impersonationHeaders(team, user),
-  })
-  if (error) throw error
-}

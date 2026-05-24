@@ -59,6 +59,10 @@ export type AgentEnvAutoscalingSpec = components["schemas"]["EnvAutoscalingSpec"
 export type AgentEnvAutoscalingGroup = components["schemas"]["EnvAutoscalingGroup"]
 export type AgentEnvClusterMember = components["schemas"]["EnvClusterMember"]
 export type AgentEnvObservedMember = components["schemas"]["EnvObservedMember"]
+export type AgentEnvOverrides = components["schemas"]["EnvOverrides"]
+export type AgentResourceRequirements = components["schemas"]["ResourceRequirements"]
+export type AgentCreateSandboxEnvRequest = components["schemas"]["CreateSandboxEnvRequest"]
+export type AgentUpdateSandboxEnvRequest = components["schemas"]["UpdateSandboxEnvRequest"]
 
 // Template
 export type AgentSandboxTemplate = components["schemas"]["SandboxTemplate"] // backward-compat alias

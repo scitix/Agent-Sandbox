@@ -223,52 +223,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandboxpools/{name}/sync-template": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sync a sandbox pool's spec from its source template
-         * @deprecated
-         * @description **DEPRECATED** — will be removed in a future version.
-         *
-         *     Prefer `PUT /sandboxpools/{name}` with the specific fields you want to update
-         *     (e.g. `overrides.image`, `replicas`) rather than re-reading the source template
-         *     implicitly. Admin template updates via `PUT /admin/sandbox-templates/{name}` now
-         *     propagate to pools automatically.
-         *
-         *     Re-reads the pool's source SandboxTemplate (from templateName annotation) and
-         *     patches the pool's EmbeddedSandboxTemplate fields. Does not change replicas.
-         */
-        post: operations["SyncSandboxPoolTemplate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sandboxpools/{name}/sync-template/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Preview the result of syncing pool to current template (dry-run, no write) */
-        post: operations["PreviewSyncSandboxPoolTemplate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/envs": {
         parameters: {
             query?: never;
@@ -279,7 +233,8 @@ export interface paths {
         /** List SandboxEnvs visible to the caller */
         get: operations["ListSandboxEnvs"];
         put?: never;
-        post?: never;
+        /** Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in `members` (or a single quota-less pool named after the Env when `members` is empty). */
+        post: operations["CreateSandboxEnv"];
         delete?: never;
         options?: never;
         head?: never;
@@ -293,15 +248,42 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a SandboxEnv by name */
+        /** Get a SandboxEnv by name. Response includes the rendered envDocs Markdown. */
         get: operations["GetSandboxEnv"];
         put?: never;
         post?: never;
+        /** Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences. */
+        delete: operations["DeleteSandboxEnv"];
+        options?: never;
+        head?: never;
+        /** Update editable SandboxEnv fields (autoscaling, members, overrides, replicas, podCreationImagePolicy, default timeouts) */
+        patch: operations["UpdateSandboxEnv"];
+        trace?: never;
+    };
+    "/envs/{name}/sync-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current overrides.
+         * @description Forces every member SandboxPool to pick up the current `spec.embedded` from
+         *     the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
+         *     after an admin edits the underlying Template — Env-level overrides edits
+         *     propagate automatically through `PATCH /envs/{name}`.
+         *
+         *     Per-Pool changes are independent; partial failure leaves successful members
+         *     synced and surfaces the offending member in the response error.
+         */
+        post: operations["SyncSandboxEnvTemplate"];
         delete?: never;
         options?: never;
         head?: never;
-        /** Update editable SandboxEnv fields (currently autoscaling only) */
-        patch: operations["UpdateSandboxEnv"];
+        patch?: never;
         trace?: never;
     };
     "/sandbox-templates": {
@@ -976,15 +958,10 @@ export interface components {
              */
             pendingRequests?: number;
         };
-        /** @description Persisted pool-level overrides applied on top of the referenced template and re-applied during template sync. */
+        /** @description Legacy pool-create overrides. Image-only — per-Pool resource sizing flows through EnvClusterMember.{instanceType,multiplier,inlineResources} now. */
         PoolTemplateOverrides: {
             /** @description Override the main container (containers[0]) image */
             image?: string;
-            /**
-             * Format: int32
-             * @description Uniform scale factor for all container CPU/Memory requests+limits (>= 1). Also multiplies reservation.replicaQuota values.
-             */
-            resourceMultiplier?: number;
         };
         /**
          * @example {
@@ -1196,6 +1173,58 @@ export interface components {
              * @description Scale-down order within the scaling group — lower shrunk first.
              */
             scaleDownPriority?: number;
+            /** @description Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata (e.g. quota.scitix.ai/url) that the Env itself doesn't need to interpret. */
+            labels?: {
+                [key: string]: string;
+            };
+            /** @description Annotations stamped onto this member's SandboxPool. Same propagation semantics as labels. */
+            annotations?: {
+                [key: string]: string;
+            };
+            /**
+             * Format: int32
+             * @description Initial replica count for this member Pool. Autoscaling owns subsequent changes — the Reconciler does not force this value back on later reconciles.
+             */
+            replicas?: number;
+            /** @description Per-Pool resource sizing. When set, the Env Reconciler replaces containers[0].resources of the rendered Template with this value. Use this (or — once wired — InstanceType + Multiplier) to express resource regions across members. */
+            inlineResources?: components["schemas"]["ResourceRequirements"];
+        };
+        /** @description Subset of Kubernetes corev1.ResourceRequirements used for per-Pool resource sizing on EnvClusterMember.inlineResources. */
+        ResourceRequirements: {
+            /** @description Resource requests keyed by resource name (e.g. cpu, memory). Values use Kubernetes Quantity strings, e.g. '500m', '1Gi'. */
+            requests?: {
+                [key: string]: string;
+            };
+            /** @description Resource limits keyed by resource name. */
+            limits?: {
+                [key: string]: string;
+            };
+        };
+        /** @description SandboxTemplate fields this Env replaces uniformly for every member Pool. The Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember. */
+        EnvOverrides: {
+            /** @description Override the main container (containers[0]) image of the rendered Template. Applied before any per-Member overrides. */
+            image?: string;
+            /**
+             * @description Mirrored onto every member Pool's spec.podCreationImagePolicy.
+             * @enum {string}
+             */
+            podCreationImagePolicy?: "PoolDefaultImage" | "IdleImage";
+            /** @description Mirrored onto every member Pool's spec.defaultStartupTimeout. Duration string, e.g. '5m'. */
+            defaultStartupTimeout?: string;
+            /** @description Mirrored onto every member Pool's spec.defaultIdleTimeout. Duration string, e.g. '30m'. */
+            defaultIdleTimeout?: string;
+            /**
+             * @description Write-only image-pull credentials. On create / update the server materialises a
+             *     dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an
+             *     OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render
+             *     time the Env Reconciler appends that Secret's reference to every member
+             *     Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private
+             *     images uniformly across the Env. Not returned on GET — check
+             *     imagePullSecretConfigured for read-state.
+             */
+            imagePullSecret?: components["schemas"]["ImagePullSecretInput"];
+            /** @description Server-set on GET: true when the ips-{envName} Secret exists in the Env's namespace. Write attempts via PATCH are ignored. */
+            readonly imagePullSecretConfigured?: boolean;
         };
         EnvClusterSpec: {
             /** @description Cluster identifier that owns this segment. Each Worker only mutates the segment matching its own clusterID. */
@@ -1235,6 +1264,7 @@ export interface components {
             defaults?: components["schemas"]["SandboxEnvDefaults"];
             clusters?: components["schemas"]["EnvClusterSpec"][];
             autoscaling?: components["schemas"]["EnvAutoscalingSpec"];
+            overrides?: components["schemas"]["EnvOverrides"];
         };
         EnvObservedMember: {
             name: string;
@@ -1323,6 +1353,8 @@ export interface components {
             user?: string;
             /** Format: date-time */
             createdAt?: string;
+            /** @description Rendered Markdown documentation for this Env, sourced from the linked SandboxTemplate's agentbox.navix.sh/docs annotation. The substitutions ${AGBX_ENV_NAME}, ${AGBX_POOL_NAME} (renders the env name for backward compat), ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are performed server-side before the response is returned. When the docs reference ${AGBX_API_KEY} but the caller has no key with a recoverable plaintext token, GetSandboxEnv returns 422 with errorCode API_KEY_REQUIRED. */
+            envDocs?: string;
         };
         SandboxEnvEnvelope: {
             env: components["schemas"]["SandboxEnv"];
@@ -1330,9 +1362,37 @@ export interface components {
         ListSandboxEnvsResult: {
             items: components["schemas"]["SandboxEnv"][];
         };
-        /** @description Patch one or more editable fields. MVP only allows updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter. */
+        /** @description Patch one or more editable Env spec fields. Omitted fields are left unchanged. */
         UpdateSandboxEnvRequest: {
             autoscaling?: components["schemas"]["EnvAutoscalingSpec"];
+            /** @description Replaces the local cluster's member list. Each member carries its own replicas and per-Pool overrides. Plugin-relevant metadata (e.g. quota URLs) belongs in each member's labels/annotations. */
+            members?: components["schemas"]["EnvClusterMember"][];
+            overrides?: components["schemas"]["EnvOverrides"];
+        };
+        CreateSandboxEnvRequest: {
+            /** @description RFC 1123 DNS label. */
+            name: string;
+            templateRef: components["schemas"]["SandboxEnvTemplateRef"];
+            /**
+             * @default WarmPool
+             * @enum {string}
+             */
+            mode: "WarmPool" | "OnDemandJob";
+            /** @description Member SandboxPools materialised by the Env Reconciler in the local cluster segment. Each member becomes one Pool with member.labels/annotations stamped verbatim and per-Pool fields (replicas, overrides.resourceMultiplier) applied to that Pool only. */
+            members?: components["schemas"]["EnvClusterMember"][];
+            overrides?: components["schemas"]["EnvOverrides"];
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        DeleteSandboxEnvResult: {
+            name: string;
+            namespace: string;
+            /** @description 'Terminating' on a successful delete request. */
+            status: string;
         };
         /** @description Lightweight readiness probe — only httpGet is supported. Advanced fields (initialDelaySeconds, periodSeconds, etc.) use Kubernetes defaults. */
         RuntimeReadinessProbe: {
@@ -1445,12 +1505,6 @@ export interface components {
         DeleteSandboxTemplateResult: {
             name: string;
             status: string;
-        };
-        SyncTemplatePreviewResult: {
-            /** @description EmbeddedSandboxTemplate YAML after applying all overrides. Suitable for diff comparison against pool.specYaml. */
-            specYaml: string;
-            /** @description Version of the source template. */
-            version: string;
         };
         ListSandboxTemplatesResult: {
             /** @description Page of SandboxTemplateSummary objects (lightweight — use GET /sandbox-templates/{name} for full details). */
@@ -2922,128 +2976,6 @@ export interface operations {
             };
         };
     };
-    SyncSandboxPoolTemplate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description SandboxPool name.
-                 *
-                 *     * Single-cluster: a DNS-1123 label such as `my-pool`.
-                 *     * Cross-cluster: a `{clusterID}::{poolName}` composite such as `cluster1::my-pool`
-                 *       (double-colon separator). Discover valid cluster IDs via `GET /clusters`.
-                 *       Parsing reference: `pkg/utils/cluster/parse.go::ParsePoolRef`.
-                 *
-                 *     Note: the E2B-compatible API further extends this to
-                 *     `{clusterID}::{poolName}//{imageOverride}` for template strings; that form is
-                 *     only accepted on the E2B port, not on this native API.
-                 */
-                name: components["parameters"]["PathPoolName"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxPoolEnvelope"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    PreviewSyncSandboxPoolTemplate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description SandboxPool name.
-                 *
-                 *     * Single-cluster: a DNS-1123 label such as `my-pool`.
-                 *     * Cross-cluster: a `{clusterID}::{poolName}` composite such as `cluster1::my-pool`
-                 *       (double-colon separator). Discover valid cluster IDs via `GET /clusters`.
-                 *       Parsing reference: `pkg/utils/cluster/parse.go::ParsePoolRef`.
-                 *
-                 *     Note: the E2B-compatible API further extends this to
-                 *     `{clusterID}::{poolName}//{imageOverride}` for template strings; that form is
-                 *     only accepted on the E2B port, not on this native API.
-                 */
-                name: components["parameters"]["PathPoolName"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncTemplatePreviewResult"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     ListSandboxEnvs: {
         parameters: {
             query?: never;
@@ -3064,6 +2996,66 @@ export interface operations {
             };
             /** @description Unauthorized */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    CreateSandboxEnv: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSandboxEnvRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxEnvEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Already Exists */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3120,6 +3112,64 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Unprocessable Entity (e.g. docs reference ${AGBX_API_KEY} but caller has no key with a recoverable plaintext token; errorCode = API_KEY_REQUIRED) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    DeleteSandboxEnv: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteSandboxEnvResult"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal Server Error */
             500: {
                 headers: {
@@ -3145,6 +3195,64 @@ export interface operations {
                 "application/json": components["schemas"]["UpdateSandboxEnvRequest"];
             };
         };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxEnvEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    SyncSandboxEnvTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {

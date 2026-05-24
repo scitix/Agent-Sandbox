@@ -21,7 +21,7 @@
 // keyed by env name (unique within namespace, which the API scopes us to).
 
 import type { ColumnDef } from "@tanstack/react-table"
-import { Eye, MoreVertical, Settings2 } from "lucide-react"
+import { Eye, MoreVertical, Pencil, Settings2, Trash2 } from "lucide-react"
 
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
 import { RelativeTime } from "@/components/custom/relative-time"
@@ -67,6 +67,8 @@ export function createEnvColumns(
   t: TranslationFn,
   onViewDetail: (env: AgentSandboxEnv) => void,
   onEditAutoscaling: (env: AgentSandboxEnv) => void,
+  onEditEnv?: (env: AgentSandboxEnv) => void,
+  onDeleteEnv?: (env: AgentSandboxEnv) => void,
 ): ColumnDef<AgentSandboxEnv>[] {
   return [
     {
@@ -207,6 +209,19 @@ export function createEnvColumns(
             <DropdownMenuItem onClick={() => onEditAutoscaling(row.original)}>
               <Settings2 className="mr-2 h-3.5 w-3.5" /> {t("envs.action.editAutoscaling")}
             </DropdownMenuItem>
+            {onEditEnv && (
+              <DropdownMenuItem onClick={() => onEditEnv(row.original)}>
+                <Pencil className="mr-2 h-3.5 w-3.5" /> {t("envs.action.edit")}
+              </DropdownMenuItem>
+            )}
+            {onDeleteEnv && (
+              <DropdownMenuItem
+                onClick={() => onDeleteEnv(row.original)}
+                className="text-destructive focus:text-destructive"
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" /> {t("envs.action.delete")}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       ),

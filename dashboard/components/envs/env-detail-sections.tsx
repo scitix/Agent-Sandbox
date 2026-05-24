@@ -18,13 +18,12 @@
 
 import { useQuery } from "@tanstack/react-query"
 import Link from "next/link"
-import { Boxes, ExternalLink, Settings2 } from "lucide-react"
+import { ExternalLink, Settings2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { RelativeTime } from "@/components/custom/relative-time"
-import { envQueryOptions, poolQueryOptions } from "@/lib/queries"
+import { poolQueryOptions } from "@/lib/queries"
 import type {
   AgentEnvObservedMember,
   AgentSandboxEnv,
@@ -35,76 +34,9 @@ import { useClusterID } from "@/hooks/use-cluster-id"
 import { useTranslation } from "@/lib/i18n"
 import { POOL_DOCS_PARAM } from "@/components/pools/pool-docs-sheet"
 
-interface Props {
-  env: AgentSandboxEnv | null
-  onOpenChange: (open: boolean) => void
-  onEditAutoscaling: (env: AgentSandboxEnv) => void
-}
+// ─── Spec ────────────────────────────────────────────────────────────────────
 
-/**
- * EnvDetailSheet shows the read-only Env spec, an inline table of member
- * Pools (each row driven by its own live poolQueryOptions), a status section
- * (conditions + saturation flags), and an "Edit" entry to the autoscaling
- * editor.
- *
- * Shell-vs-inner split mirrors the project's standard SOP: the outer Sheet
- * controls open state, the inner component fetches fresh data only while
- * the sheet is mounted.
- */
-export function EnvDetailSheet({ env, onOpenChange, onEditAutoscaling }: Props) {
-  const isOpen = !!env
-  return (
-    <Sheet open={isOpen} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-4xl"
-      >
-        {env && <EnvDetailInner envName={env.name} onEditAutoscaling={onEditAutoscaling} />}
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-function EnvDetailInner({
-  envName,
-  onEditAutoscaling,
-}: {
-  envName: string
-  onEditAutoscaling: (env: AgentSandboxEnv) => void
-}) {
-  const { data, isLoading } = useQuery(envQueryOptions(envName))
-  const env = data?.env
-
-  return (
-    <>
-      <SheetHeader className="border-border border-b px-5 py-4">
-        <div className="flex items-center gap-3">
-          <div className="bg-muted flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-            <Boxes className="h-4 w-4" />
-          </div>
-          <SheetTitle className="font-mono text-base font-semibold">{envName}</SheetTitle>
-        </div>
-      </SheetHeader>
-
-      <div className="flex-1 overflow-y-auto px-5 py-5">
-        {isLoading || !env ? (
-          <div className="text-muted-foreground text-sm">…</div>
-        ) : (
-          <div className="space-y-6">
-            <SpecSection env={env} />
-            <MembersSection env={env} />
-            <AutoscalingSummary env={env} onEdit={() => onEditAutoscaling(env)} />
-            <StatusSection env={env} />
-          </div>
-        )}
-      </div>
-    </>
-  )
-}
-
-// ─── Spec ─────────────────────────────────────────────────────────────────────
-
-function SpecSection({ env }: { env: AgentSandboxEnv }) {
+export function SpecSection({ env }: { env: AgentSandboxEnv }) {
   const { t } = useTranslation()
   const local = env.spec.clusters?.find((c) => c.members && c.members.length > 0)
   return (
@@ -138,9 +70,9 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
-// ─── Members (inline per-pool status) ─────────────────────────────────────────
+// ─── Members (inline per-pool status) ────────────────────────────────────────
 
-function MembersSection({ env }: { env: AgentSandboxEnv }) {
+export function MembersSection({ env }: { env: AgentSandboxEnv }) {
   const { t } = useTranslation()
   const allMembers = env.spec.clusters?.flatMap((c) => c.members ?? []) ?? []
   const observedByName = new Map<string, AgentEnvObservedMember>()
@@ -214,8 +146,6 @@ function MemberRow({
 
   // Mirror sandboxes → pool jump pattern; opens PoolDocsSheet on the Pools page.
   const poolHref = `${clusterPath(clusterID, "pools")}?${POOL_DOCS_PARAM}=${encodeURIComponent(memberName)}`
-  // envNamespace is unused at the moment but reserved for future "open in
-  // another namespace" scenarios — keep the param so we don't break callers.
   void envNamespace
 
   return (
@@ -256,9 +186,15 @@ function MemberRow({
   )
 }
 
-// ─── Autoscaling read-only summary ────────────────────────────────────────────
+// ─── Autoscaling read-only summary ───────────────────────────────────────────
 
-function AutoscalingSummary({ env, onEdit }: { env: AgentSandboxEnv; onEdit: () => void }) {
+export function AutoscalingSummary({
+  env,
+  onEdit,
+}: {
+  env: AgentSandboxEnv
+  onEdit: () => void
+}) {
   const { t } = useTranslation()
   const auto = env.spec.autoscaling
   const groups = auto?.groups ?? []
@@ -342,7 +278,7 @@ function InfoCell({
 
 // ─── Status conditions ───────────────────────────────────────────────────────
 
-function StatusSection({ env }: { env: AgentSandboxEnv }) {
+export function StatusSection({ env }: { env: AgentSandboxEnv }) {
   const { t } = useTranslation()
   const conditions = env.status?.conditions ?? []
   const localCluster = env.status?.clusters?.find((c) => c.isLocal === true)
