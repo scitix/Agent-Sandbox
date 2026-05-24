@@ -16,40 +16,14 @@ package quota
 
 import "testing"
 
-// TestDeriveDefaultShortName covers the common scitix QuotaURL shapes the
-// Env Reconciler will see when naming member pools.
-func TestDeriveDefaultShortName(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty input", "", ""},
-		{"single segment", "ondemand", "ondemand"},
-		{"two segments", "math.exclusive", "exclusive"},
-		{"scitix-style three segments", "zxli.ai-lab.math.exclusive", "exclusive"},
-		{"upgrader example", "upgrader.autoupg.test.ondemand", "ondemand"},
-		{"with scheme + host", "https://quota.scitix.ai/v1/zxli.ai-lab.math.exclusive", "exclusive"},
-		{"with query string", "math.ondemand?team=foo", "ondemand"},
-		{"mixed case is lowercased", "tenant.Pool.SPOT", "spot"},
-		{"underscore becomes dash", "team_x.spot_a", "spot-a"},
-		{"trailing dot is empty segment", "team.pool.", ""},
-		{"only punctuation", "...", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := DeriveDefaultShortName(tt.in); got != tt.want {
-				t.Errorf("DeriveDefaultShortName(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestNoop_DeriveShortName confirms the Noop provider delegates to the
-// open-source default extractor.
+// TestNoop_DeriveShortName confirms the open-source Noop refuses to guess
+// at QuotaURL shapes — callers must fall back to a hash-based suffix.
 func TestNoop_DeriveShortName(t *testing.T) {
 	n := Noop{}
-	if got := n.DeriveShortName("x.y.spot"); got != "spot" {
-		t.Errorf("Noop.DeriveShortName: got %q", got)
+	cases := []string{"", "ondemand", "math.exclusive", "zxli.ai-lab.math.spot"}
+	for _, in := range cases {
+		if got := n.DeriveShortName(in); got != "" {
+			t.Errorf("Noop.DeriveShortName(%q) = %q, want %q", in, got, "")
+		}
 	}
 }

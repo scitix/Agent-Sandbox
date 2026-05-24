@@ -44,12 +44,10 @@ type Provider interface {
 	// a quota URL, used by the SandboxEnv Reconciler when naming member
 	// SandboxPools that consume the quota (e.g. "{env-name}-{shortName}").
 	//
-	// Examples (open-source default, see DeriveDefaultShortName):
-	//   "zxli.ai-lab.math.exclusive"     → "exclusive"
-	//   "upgrader.autoupg.test.ondemand" → "ondemand"
-	//
-	// Returns an empty string when no usable identifier can be derived;
-	// callers fall back to a deterministic hash-based suffix so naming
-	// stays idempotent.
+	// QuotaURL shapes are Provider-defined, so the parsing rule lives with
+	// the concrete Provider — the open-source Noop returns "" and the
+	// caller falls back to a deterministic hash-based suffix so naming
+	// stays idempotent. Closed-source Providers can override this with a
+	// catalog lookup or a tenant-specific path parser.
 	DeriveShortName(quotaURL string) string
 }
