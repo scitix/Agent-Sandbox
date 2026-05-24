@@ -22,8 +22,8 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.delete_sandbox_env_result import DeleteSandboxEnvResult
 from ...models.error_response import ErrorResponse
-from ...models.sync_template_preview_result import SyncTemplatePreviewResult
 from typing import cast
 
 
@@ -39,8 +39,8 @@ def _get_kwargs(
     
 
     _kwargs: dict[str, Any] = {
-        "method": "post",
-        "url": "/sandboxpools/{name}/sync-template/preview".format(name=quote(str(name), safe=""),),
+        "method": "delete",
+        "url": "/envs/{name}".format(name=quote(str(name), safe=""),),
     }
 
 
@@ -48,20 +48,20 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | SyncTemplatePreviewResult | None:
-    if response.status_code == 200:
-        response_200 = SyncTemplatePreviewResult.from_dict(response.json())
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> DeleteSandboxEnvResult | ErrorResponse | None:
+    if response.status_code == 202:
+        response_202 = DeleteSandboxEnvResult.from_dict(response.json())
 
 
 
-        return response_200
+        return response_202
 
-    if response.status_code == 400:
-        response_400 = ErrorResponse.from_dict(response.json())
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
 
 
 
-        return response_400
+        return response_401
 
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
@@ -83,7 +83,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | SyncTemplatePreviewResult]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[DeleteSandboxEnvResult | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,18 +97,18 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | SyncTemplatePreviewResult]:
-    """ Preview the result of syncing pool to current template (dry-run, no write)
+) -> Response[DeleteSandboxEnvResult | ErrorResponse]:
+    """ Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | SyncTemplatePreviewResult]
+        Response[DeleteSandboxEnvResult | ErrorResponse]
      """
 
 
@@ -128,18 +128,18 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | SyncTemplatePreviewResult | None:
-    """ Preview the result of syncing pool to current template (dry-run, no write)
+) -> DeleteSandboxEnvResult | ErrorResponse | None:
+    """ Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | SyncTemplatePreviewResult
+        DeleteSandboxEnvResult | ErrorResponse
      """
 
 
@@ -154,18 +154,18 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | SyncTemplatePreviewResult]:
-    """ Preview the result of syncing pool to current template (dry-run, no write)
+) -> Response[DeleteSandboxEnvResult | ErrorResponse]:
+    """ Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | SyncTemplatePreviewResult]
+        Response[DeleteSandboxEnvResult | ErrorResponse]
      """
 
 
@@ -185,18 +185,18 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | SyncTemplatePreviewResult | None:
-    """ Preview the result of syncing pool to current template (dry-run, no write)
+) -> DeleteSandboxEnvResult | ErrorResponse | None:
+    """ Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | SyncTemplatePreviewResult
+        DeleteSandboxEnvResult | ErrorResponse
      """
 
 

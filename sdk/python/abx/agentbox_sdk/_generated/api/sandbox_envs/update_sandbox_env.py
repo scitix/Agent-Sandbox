@@ -115,12 +115,13 @@ def sync_detailed(
     body: UpdateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Update editable SandboxEnv fields (currently autoscaling only)
+    """ Update editable SandboxEnv fields (autoscaling, members, overrides, replicas,
+    podCreationImagePolicy, default timeouts)
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable fields. MVP only allows
-            updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter.
+        body (UpdateSandboxEnvRequest): Patch one or more editable Env spec fields. Omitted fields
+            are left unchanged.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,12 +151,13 @@ def sync(
     body: UpdateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Update editable SandboxEnv fields (currently autoscaling only)
+    """ Update editable SandboxEnv fields (autoscaling, members, overrides, replicas,
+    podCreationImagePolicy, default timeouts)
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable fields. MVP only allows
-            updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter.
+        body (UpdateSandboxEnvRequest): Patch one or more editable Env spec fields. Omitted fields
+            are left unchanged.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,12 +182,13 @@ async def asyncio_detailed(
     body: UpdateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Update editable SandboxEnv fields (currently autoscaling only)
+    """ Update editable SandboxEnv fields (autoscaling, members, overrides, replicas,
+    podCreationImagePolicy, default timeouts)
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable fields. MVP only allows
-            updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter.
+        body (UpdateSandboxEnvRequest): Patch one or more editable Env spec fields. Omitted fields
+            are left unchanged.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -215,12 +218,13 @@ async def asyncio(
     body: UpdateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Update editable SandboxEnv fields (currently autoscaling only)
+    """ Update editable SandboxEnv fields (autoscaling, members, overrides, replicas,
+    podCreationImagePolicy, default timeouts)
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable fields. MVP only allows
-            updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter.
+        body (UpdateSandboxEnvRequest): Patch one or more editable Env spec fields. Omitted fields
+            are left unchanged.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

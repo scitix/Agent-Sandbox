@@ -318,86 +318,6 @@ func TestSandboxPoolService_Create_TemplateNotFound(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// SyncTemplate tests
-// ---------------------------------------------------------------------------
-
-func makePoolObjWithTemplateAnnotation(name, templateName, templateVersion string, replicas int32) *agentsv1alpha1.SandboxPool {
-	pool := makePoolObj(name, replicas)
-	pool.Annotations = map[string]string{
-		agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey:    templateName,
-		agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey: templateVersion,
-	}
-	return pool
-}
-
-func TestSyncTemplate_UpdatesEmbeddedSpec(t *testing.T) {
-	// Pool created from template v1.0.0 with old idleImage
-	pool := makePoolObjWithTemplateAnnotation("pool-a", "my-template", "1.0.0", 3)
-	pool.Spec.IdleImage = "old-image:v1"
-
-	// Updated template with new idleImage
-	tmpl := &agentsv1alpha1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "my-template"},
-		Spec: agentsv1alpha1.SandboxTemplateSpec{
-			Version: "1.1.0",
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{{Name: "sandbox", Image: "new-image:v2"}},
-					},
-				},
-			},
-		},
-	}
-
-	svc, cli := newTestSandboxPoolServiceWithClient(t, pool, tmpl)
-
-	result, appErr := svc.SyncTemplate(context.Background(), "default", "pool-a")
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	// TemplateVersion should be updated to template's current version
-	if result.TemplateVersion == nil || *result.TemplateVersion != "1.1.0" {
-		t.Errorf("TemplateVersion = %v, want %q", result.TemplateVersion, "1.1.0")
-	}
-	// Replicas must not change
-	if result.Spec.Replicas != 3 {
-		t.Errorf("Replicas = %d, want 3", result.Spec.Replicas)
-	}
-	crd := fetchCRDPool(t, cli, "pool-a")
-	if crd.Spec.IdleImage != "pause:3.10" {
-		t.Errorf("IdleImage = %q, want %q", crd.Spec.IdleImage, "pause:3.10")
-	}
-}
-
-func TestSyncTemplate_NoTemplateAnnotation_Returns400(t *testing.T) {
-	// Pool without any template annotation
-	pool := makePoolObj("pool-no-template", 2)
-	svc := newTestSandboxPoolService(t, pool)
-
-	_, appErr := svc.SyncTemplate(context.Background(), "default", "pool-no-template")
-	if appErr == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if appErr.Code != domain.ErrCodeBadRequest {
-		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
-	}
-}
-
-func TestSyncTemplate_PoolNotFound_Returns404(t *testing.T) {
-	svc := newTestSandboxPoolService(t)
-
-	_, appErr := svc.SyncTemplate(context.Background(), "default", "nonexistent-pool")
-	if appErr == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if appErr.Code != domain.ErrCodeNotFound {
-		t.Fatalf("expected ErrCodeNotFound, got %d", appErr.Code)
-	}
-}
-
 func TestSandboxPoolService_Update_InvalidImage_Returns400(t *testing.T) {
 	pool := makePoolObj("pool-a", 1)
 	svc := newTestSandboxPoolService(t, pool)
@@ -453,19 +373,5 @@ func TestSandboxPoolService_Create_FromTemplate_InvalidOverrideImage(t *testing.
 	}
 	if appErr.Code != domain.ErrCodeBadRequest {
 		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
-	}
-}
-
-func TestSyncTemplate_TemplateNotFound_Returns404(t *testing.T) {
-	// Pool references a template that no longer exists
-	pool := makePoolObjWithTemplateAnnotation("pool-orphan", "deleted-template", "1.0.0", 2)
-	svc := newTestSandboxPoolService(t, pool)
-
-	_, appErr := svc.SyncTemplate(context.Background(), "default", "pool-orphan")
-	if appErr == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if appErr.Code != domain.ErrCodeNotFound {
-		t.Fatalf("expected ErrCodeNotFound, got %d", appErr.Code)
 	}
 }

@@ -856,6 +856,7 @@
   "datasets.tagBenchmark": "基準測試",
 
   "envs.newEnv": "新增環境",
+  "envs.searchAll": "搜尋環境…",
   "envs.action.edit": "編輯",
   "envs.action.delete": "刪除",
   "envs.delete.title": "刪除環境",

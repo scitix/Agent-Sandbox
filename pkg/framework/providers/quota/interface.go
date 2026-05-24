@@ -39,4 +39,17 @@ type Provider interface {
 	// of each gen.Quota, including the required `Label` field (typically
 	// derived from QuotaUrl, falling back to Name).
 	ListForUser(ctx context.Context, user, team string) ([]gen.Quota, *domain.AppError)
+
+	// DeriveShortName returns a stable human-readable short identifier for
+	// a quota URL, used by the SandboxEnv Reconciler when naming member
+	// SandboxPools that consume the quota (e.g. "{env-name}-{shortName}").
+	//
+	// Examples (open-source default, see DeriveDefaultShortName):
+	//   "zxli.ai-lab.math.exclusive"     → "exclusive"
+	//   "upgrader.autoupg.test.ondemand" → "ondemand"
+	//
+	// Returns an empty string when no usable identifier can be derived;
+	// callers fall back to a deterministic hash-based suffix so naming
+	// stays idempotent.
+	DeriveShortName(quotaURL string) string
 }

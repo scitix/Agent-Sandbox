@@ -28,39 +28,27 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="SyncTemplatePreviewResult")
+T = TypeVar("T", bound="ResourceRequirementsRequests")
 
 
 
 @_attrs_define
-class SyncTemplatePreviewResult:
-    """ 
-        Attributes:
-            spec_yaml (str): EmbeddedSandboxTemplate YAML after applying all overrides. Suitable for diff comparison against
-                pool.specYaml.
-            version (str): Version of the source template.
+class ResourceRequirementsRequests:
+    """ Resource requests keyed by resource name (e.g. cpu, memory). Values use Kubernetes Quantity strings, e.g. '500m',
+    '1Gi'.
+
      """
 
-    spec_yaml: str
-    version: str
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        spec_yaml = self.spec_yaml
-
-        version = self.version
-
-
+        
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "specYaml": spec_yaml,
-            "version": version,
-        })
 
         return field_dict
 
@@ -69,27 +57,21 @@ class SyncTemplatePreviewResult:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        spec_yaml = d.pop("specYaml")
-
-        version = d.pop("version")
-
-        sync_template_preview_result = cls(
-            spec_yaml=spec_yaml,
-            version=version,
+        resource_requirements_requests = cls(
         )
 
 
-        sync_template_preview_result.additional_properties = d
-        return sync_template_preview_result
+        resource_requirements_requests.additional_properties = d
+        return resource_requirements_requests
 
     @property
     def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> str:
         return self.additional_properties[key]
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def __setitem__(self, key: str, value: str) -> None:
         self.additional_properties[key] = value
 
     def __delitem__(self, key: str) -> None:

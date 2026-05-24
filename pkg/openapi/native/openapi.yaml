@@ -660,16 +660,11 @@ components:
 
     PoolTemplateOverrides:
       type: object
-      description: "Persisted pool-level overrides applied on top of the referenced template and re-applied during template sync."
+      description: "Legacy pool-create overrides. Image-only — per-Pool resource sizing flows through EnvClusterMember.{instanceType,multiplier,inlineResources} now."
       properties:
         image:
           type: string
           description: "Override the main container (containers[0]) image"
-        resourceMultiplier:
-          type: integer
-          format: int32
-          minimum: 1
-          description: "Uniform scale factor for all container CPU/Memory requests+limits (>= 1). Also multiplies reservation.replicaQuota values."
       additionalProperties: false
 
     SandboxPool:
@@ -962,6 +957,72 @@ components:
           type: integer
           format: int32
           description: "Scale-down order within the scaling group — lower shrunk first."
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata (e.g. quota.scitix.ai/url) that the Env itself doesn't need to interpret."
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Annotations stamped onto this member's SandboxPool. Same propagation semantics as labels."
+        replicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Initial replica count for this member Pool. Autoscaling owns subsequent changes — the Reconciler does not force this value back on later reconciles."
+        inlineResources:
+          $ref: '#/components/schemas/ResourceRequirements'
+          description: "Per-Pool resource sizing. When set, the Env Reconciler replaces containers[0].resources of the rendered Template with this value. Use this (or — once wired — InstanceType + Multiplier) to express resource regions across members."
+
+    ResourceRequirements:
+      type: object
+      description: "Subset of Kubernetes corev1.ResourceRequirements used for per-Pool resource sizing on EnvClusterMember.inlineResources."
+      properties:
+        requests:
+          type: object
+          description: "Resource requests keyed by resource name (e.g. cpu, memory). Values use Kubernetes Quantity strings, e.g. '500m', '1Gi'."
+          additionalProperties:
+            type: string
+        limits:
+          type: object
+          description: "Resource limits keyed by resource name."
+          additionalProperties:
+            type: string
+
+    EnvOverrides:
+      type: object
+      description: "SandboxTemplate fields this Env replaces uniformly for every member Pool. The Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember."
+      properties:
+        image:
+          type: string
+          description: "Override the main container (containers[0]) image of the rendered Template. Applied before any per-Member overrides."
+        podCreationImagePolicy:
+          type: string
+          enum: [PoolDefaultImage, IdleImage]
+          description: "Mirrored onto every member Pool's spec.podCreationImagePolicy."
+        defaultStartupTimeout:
+          type: string
+          description: "Mirrored onto every member Pool's spec.defaultStartupTimeout. Duration string, e.g. '5m'."
+        defaultIdleTimeout:
+          type: string
+          description: "Mirrored onto every member Pool's spec.defaultIdleTimeout. Duration string, e.g. '30m'."
+        imagePullSecret:
+          $ref: '#/components/schemas/ImagePullSecretInput'
+          description: |
+            Write-only image-pull credentials. On create / update the server materialises a
+            dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an
+            OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render
+            time the Env Reconciler appends that Secret's reference to every member
+            Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private
+            images uniformly across the Env. Not returned on GET — check
+            imagePullSecretConfigured for read-state.
+        imagePullSecretConfigured:
+          type: boolean
+          readOnly: true
+          description: "Server-set on GET: true when the ips-{envName} Secret exists in the Env's namespace. Write attempts via PATCH are ignored."
+      additionalProperties: false
 
     EnvClusterSpec:
       type: object
@@ -1027,6 +1088,8 @@ components:
             $ref: '#/components/schemas/EnvClusterSpec'
         autoscaling:
           $ref: '#/components/schemas/EnvAutoscalingSpec'
+        overrides:
+          $ref: '#/components/schemas/EnvOverrides'
 
     EnvObservedMember:
       type: object
@@ -1176,6 +1239,9 @@ components:
         createdAt:
           type: string
           format: date-time
+        envDocs:
+          type: string
+          description: "Rendered Markdown documentation for this Env, sourced from the linked SandboxTemplate's agentbox.navix.sh/docs annotation. The substitutions ${AGBX_ENV_NAME}, ${AGBX_POOL_NAME} (renders the env name for backward compat), ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are performed server-side before the response is returned. When the docs reference ${AGBX_API_KEY} but the caller has no key with a recoverable plaintext token, GetSandboxEnv returns 422 with errorCode API_KEY_REQUIRED."
 
     SandboxEnvEnvelope:
       type: object
@@ -1195,10 +1261,61 @@ components:
 
     UpdateSandboxEnvRequest:
       type: object
-      description: "Patch one or more editable fields. MVP only allows updating autoscaling; the rest of the Env spec is managed by the Phase 1 adopter."
+      description: "Patch one or more editable Env spec fields. Omitted fields are left unchanged."
       properties:
         autoscaling:
           $ref: '#/components/schemas/EnvAutoscalingSpec'
+        members:
+          type: array
+          description: "Replaces the local cluster's member list. Each member carries its own replicas and per-Pool overrides. Plugin-relevant metadata (e.g. quota URLs) belongs in each member's labels/annotations."
+          items:
+            $ref: '#/components/schemas/EnvClusterMember'
+        overrides:
+          $ref: '#/components/schemas/EnvOverrides'
+
+    CreateSandboxEnvRequest:
+      type: object
+      required: [name, templateRef]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[a-z]([a-z0-9-]*[a-z0-9])?$'
+          description: "RFC 1123 DNS label."
+        templateRef:
+          $ref: '#/components/schemas/SandboxEnvTemplateRef'
+        mode:
+          type: string
+          enum: [WarmPool, OnDemandJob]
+          default: WarmPool
+        members:
+          type: array
+          description: "Member SandboxPools materialised by the Env Reconciler in the local cluster segment. Each member becomes one Pool with member.labels/annotations stamped verbatim and per-Pool fields (replicas, overrides.resourceMultiplier) applied to that Pool only."
+          items:
+            $ref: '#/components/schemas/EnvClusterMember'
+        overrides:
+          $ref: '#/components/schemas/EnvOverrides'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+
+    DeleteSandboxEnvResult:
+      type: object
+      required: [name, namespace, status]
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        status:
+          type: string
+          description: "'Terminating' on a successful delete request."
 
     # =========================================================
     # SandboxTemplate
@@ -1396,17 +1513,6 @@ components:
           type: string
         status:
           type: string
-
-    SyncTemplatePreviewResult:
-      type: object
-      required: [specYaml, version]
-      properties:
-        specYaml:
-          type: string
-          description: "EmbeddedSandboxTemplate YAML after applying all overrides. Suitable for diff comparison against pool.specYaml."
-        version:
-          type: string
-          description: "Version of the source template."
 
     ListSandboxTemplatesResult:
       type: object
@@ -2623,83 +2729,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /sandboxpools/{name}/sync-template:
-    post:
-      operationId: SyncSandboxPoolTemplate
-      summary: Sync a sandbox pool's spec from its source template
-      deprecated: true
-      description: |
-        **DEPRECATED** — will be removed in a future version.
-
-        Prefer `PUT /sandboxpools/{name}` with the specific fields you want to update
-        (e.g. `overrides.image`, `replicas`) rather than re-reading the source template
-        implicitly. Admin template updates via `PUT /admin/sandbox-templates/{name}` now
-        propagate to pools automatically.
-
-        Re-reads the pool's source SandboxTemplate (from templateName annotation) and
-        patches the pool's EmbeddedSandboxTemplate fields. Does not change replicas.
-      tags: [pools]
-      parameters:
-        - $ref: '#/components/parameters/PathPoolName'
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SandboxPoolEnvelope'
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /sandboxpools/{name}/sync-template/preview:
-    post:
-      operationId: PreviewSyncSandboxPoolTemplate
-      summary: Preview the result of syncing pool to current template (dry-run, no write)
-      tags: [pools]
-      parameters:
-        - $ref: '#/components/parameters/PathPoolName'
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SyncTemplatePreviewResult'
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
   # =========================================================
   # SandboxEnvs
   # =========================================================
@@ -2727,11 +2756,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: CreateSandboxEnv
+      summary: Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in `members` (or a single quota-less pool named after the Env when `members` is empty).
+      tags: [sandbox-envs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSandboxEnvRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxEnvEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Already Exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /envs/{name}:
     get:
       operationId: GetSandboxEnv
-      summary: Get a SandboxEnv by name
+      summary: Get a SandboxEnv by name. Response includes the rendered envDocs Markdown.
       tags: [sandbox-envs]
       parameters:
         - in: path
@@ -2758,6 +2828,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Unprocessable Entity (e.g. docs reference ${AGBX_API_KEY} but caller has no key with a recoverable plaintext token; errorCode = API_KEY_REQUIRED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: DeleteSandboxEnv
+      summary: Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
+      tags: [sandbox-envs]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteSandboxEnvResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal Server Error
           content:
@@ -2766,7 +2877,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
     patch:
       operationId: UpdateSandboxEnv
-      summary: Update editable SandboxEnv fields (currently autoscaling only)
+      summary: Update editable SandboxEnv fields (autoscaling, members, overrides, replicas, podCreationImagePolicy, default timeouts)
       tags: [sandbox-envs]
       parameters:
         - in: path
@@ -2780,6 +2891,57 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UpdateSandboxEnvRequest'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxEnvEnvelope'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /envs/{name}/sync-template:
+    post:
+      operationId: SyncSandboxEnvTemplate
+      summary: Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current overrides.
+      description: |
+        Forces every member SandboxPool to pick up the current `spec.embedded` from
+        the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
+        after an admin edits the underlying Template — Env-level overrides edits
+        propagate automatically through `PATCH /envs/{name}`.
+
+        Per-Pool changes are independent; partial failure leaves successful members
+        synced and surfaces the offending member in the response error.
+      tags: [sandbox-envs]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: OK

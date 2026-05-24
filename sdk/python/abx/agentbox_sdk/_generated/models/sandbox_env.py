@@ -52,6 +52,11 @@ class SandboxEnv:
             team (str | Unset):
             user (str | Unset):
             created_at (datetime.datetime | Unset):
+            env_docs (str | Unset): Rendered Markdown documentation for this Env, sourced from the linked SandboxTemplate's
+                agentbox.navix.sh/docs annotation. The substitutions ${AGBX_ENV_NAME}, ${AGBX_POOL_NAME} (renders the env name
+                for backward compat), ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are performed server-side before the response is
+                returned. When the docs reference ${AGBX_API_KEY} but the caller has no key with a recoverable plaintext token,
+                GetSandboxEnv returns 422 with errorCode API_KEY_REQUIRED.
      """
 
     name: str
@@ -62,6 +67,7 @@ class SandboxEnv:
     team: str | Unset = UNSET
     user: str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
+    env_docs: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -94,6 +100,8 @@ class SandboxEnv:
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
 
+        env_docs = self.env_docs
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -112,6 +120,8 @@ class SandboxEnv:
             field_dict["user"] = user
         if created_at is not UNSET:
             field_dict["createdAt"] = created_at
+        if env_docs is not UNSET:
+            field_dict["envDocs"] = env_docs
 
         return field_dict
 
@@ -166,6 +176,8 @@ class SandboxEnv:
 
 
 
+        env_docs = d.pop("envDocs", UNSET)
+
         sandbox_env = cls(
             name=name,
             namespace=namespace,
@@ -175,6 +187,7 @@ class SandboxEnv:
             team=team,
             user=user,
             created_at=created_at,
+            env_docs=env_docs,
         )
 
 

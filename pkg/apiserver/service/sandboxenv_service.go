@@ -20,7 +20,9 @@ import (
 	"maps"
 	"sort"
 
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
@@ -29,6 +31,7 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
 
 // SandboxEnvService is the business-layer surface for SandboxEnv resources.
@@ -47,20 +50,64 @@ type SandboxEnvService interface {
 	List(ctx context.Context, namespace, team, user string) ([]gen.SandboxEnv, *domain.AppError)
 	// Get returns a single Env or NotFound.
 	Get(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
-	// UpdateAutoscaling replaces env.Spec.Autoscaling with the supplied value.
-	// The rest of the Env spec is read-only at this layer.
-	UpdateAutoscaling(ctx context.Context, input UpdateEnvAutoscalingInput) (*gen.SandboxEnv, *domain.AppError)
+	// Create posts a new SandboxEnv. The Env Reconciler picks up the new
+	// object and materialises member SandboxPools from spec.Quotas — this
+	// service call does NOT create Pools directly.
+	Create(ctx context.Context, input CreateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError)
+	// Update merges any subset of editable spec fields into the existing
+	// Env, retrying on conflict. Returns the post-write Env.
+	Update(ctx context.Context, input UpdateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError)
+	// Delete issues a foreground delete on the Env. Member Pools are
+	// cascade-deleted via OwnerReferences (controller=true,
+	// blockOwnerDeletion=true) once the Env Reconciler stamps the upgraded
+	// owner reference shape.
+	Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxEnvResult, *domain.AppError)
+	// SyncTemplate re-renders every member SandboxPool against the current
+	// SandboxTemplate body + the Env's overrides, advancing each Pool's
+	// template-version annotation. Use this after an admin edits the
+	// underlying Template — Env-level overrides edits propagate
+	// automatically via Update().
+	SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
 }
 
-// UpdateEnvAutoscalingInput carries the fields UpdateAutoscaling reads.
-//
-// Autoscaling==nil means "clear the autoscaling spec" — pass an empty value
-// (e.g. {Enabled: false}) when the caller wants to disable rather than
-// remove the configuration.
-type UpdateEnvAutoscalingInput struct {
-	Name        string
-	Namespace   string
-	Autoscaling *gen.EnvAutoscalingSpec
+// CreateSandboxEnvInput is the parsed CreateSandboxEnvRequest with auth
+// context resolved.
+type CreateSandboxEnvInput struct {
+	Name      string
+	Namespace string
+	Team      string // copied from auth, injected as label
+	User      string // copied from auth, injected as label
+
+	TemplateRef    agentsv1alpha1.SandboxEnvTemplateRef
+	Mode           agentsv1alpha1.SandboxEnvMode
+	Members        []agentsv1alpha1.EnvClusterMember
+	LocalClusterID string // cluster the supplied members belong to
+	Overrides      *agentsv1alpha1.EnvOverridesSpec
+	// ImagePullSecret, when non-nil, instructs the service to materialise a
+	// dockerconfigjson Secret named ips-{envName} with an OwnerRef pointing
+	// at the Env (cascade-delete free). The Env Reconciler stamps a
+	// LocalObjectReference to that Secret into every member Pool.
+	ImagePullSecret *gen.ImagePullSecretInput
+
+	Labels      map[string]string
+	Annotations map[string]string
+}
+
+// UpdateSandboxEnvInput carries the editable patch for an Env. Pointer
+// fields disambiguate "not specified" from "explicit zero/empty"; passing
+// a non-nil pointer means "replace with this value".
+type UpdateSandboxEnvInput struct {
+	Name      string
+	Namespace string
+
+	Autoscaling    *gen.EnvAutoscalingSpec
+	Members        *[]agentsv1alpha1.EnvClusterMember
+	LocalClusterID string // required when Members is non-nil
+	Overrides      *agentsv1alpha1.EnvOverridesSpec
+	// ImagePullSecret, when non-nil, upserts the dockerconfigjson Secret
+	// backing this Env's image-pull credentials. Nil means leave existing
+	// Secret untouched.
+	ImagePullSecret *gen.ImagePullSecretInput
 }
 
 type k8sSandboxEnvService struct {
@@ -106,51 +153,345 @@ func (s *k8sSandboxEnvService) Get(ctx context.Context, namespace, name string) 
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 	result := envToGen(env)
+	s.enrichImagePullSecretStatus(ctx, env, &result)
 	return &result, nil
 }
 
-// UpdateAutoscaling persists a new autoscaling block onto the Env.
+// enrichImagePullSecretStatus populates result.spec.overrides.imagePullSecretConfigured
+// by checking whether the convention-named dockerconfigjson Secret exists.
+// Best-effort: API errors fall back to "unknown" (field stays nil).
+func (s *k8sSandboxEnvService) enrichImagePullSecretStatus(
+	ctx context.Context,
+	env *agentsv1alpha1.SandboxEnv,
+	out *gen.SandboxEnv,
+) {
+	secret := &corev1.Secret{}
+	key := client.ObjectKey{
+		Namespace: env.Namespace,
+		Name:      agentsv1alpha1.EnvImagePullSecretName(env.Name),
+	}
+	if err := s.client.Get(ctx, key, secret); err != nil {
+		return
+	}
+	if out.Spec.Overrides == nil {
+		out.Spec.Overrides = &gen.EnvOverrides{}
+	}
+	out.Spec.Overrides.ImagePullSecretConfigured = ptr.To(true)
+}
+
+// Create persists a new SandboxEnv. The Env Reconciler picks up the resulting
+// object and materialises member SandboxPools from spec.Quotas.
+func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError) {
+	existing := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: input.Namespace, Name: input.Name}, existing); err == nil {
+		return nil, domain.NewConflict(fmt.Sprintf("sandbox env %q already exists in namespace %s", input.Name, input.Namespace))
+	} else if !k8serrors.IsNotFound(err) {
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+
+	if input.TemplateRef.Name == "" {
+		return nil, domain.NewBadRequest("templateRef.name is required")
+	}
+	mode := input.Mode
+	if mode == "" {
+		mode = agentsv1alpha1.SandboxEnvModeWarmPool
+	}
+
+	env := &agentsv1alpha1.SandboxEnv{}
+	env.Name = input.Name
+	env.Namespace = input.Namespace
+
+	labels := make(map[string]string, len(input.Labels)+2)
+	maps.Copy(labels, input.Labels)
+	if input.Team != "" {
+		labels[agentsv1alpha1.LabelTeam] = input.Team
+	}
+	if input.User != "" {
+		labels[agentsv1alpha1.LabelUser] = input.User
+	}
+	if len(labels) > 0 {
+		env.Labels = labels
+	}
+	if len(input.Annotations) > 0 {
+		env.Annotations = make(map[string]string, len(input.Annotations))
+		maps.Copy(env.Annotations, input.Annotations)
+	}
+
+	env.Spec = agentsv1alpha1.SandboxEnvSpec{
+		TemplateRef: input.TemplateRef,
+		Mode:        mode,
+		Overrides:   input.Overrides,
+	}
+	if len(input.Members) > 0 {
+		if input.LocalClusterID == "" {
+			return nil, domain.NewBadRequest("localClusterID is required when members is set")
+		}
+		env.Spec.Clusters = []agentsv1alpha1.EnvClusterSpec{{
+			ClusterID: input.LocalClusterID,
+			Members:   append([]agentsv1alpha1.EnvClusterMember(nil), input.Members...),
+		}}
+	}
+
+	if err := s.client.Create(ctx, env); err != nil {
+		if k8serrors.IsAlreadyExists(err) {
+			return nil, domain.NewConflict(fmt.Sprintf("sandbox env %q already exists in namespace %s", input.Name, input.Namespace))
+		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+	// Materialise the dockerconfigjson Secret after the Env exists so the
+	// OwnerRef back to the Env is valid. Failures roll the Env back to
+	// avoid leaving an Env whose member Pools can never authenticate to
+	// their registry.
+	if input.ImagePullSecret != nil && len(input.ImagePullSecret.Registries) > 0 {
+		if appErr := s.upsertEnvImagePullSecret(ctx, env, input.ImagePullSecret); appErr != nil {
+			if delErr := s.client.Delete(ctx, env); delErr != nil && !k8serrors.IsNotFound(delErr) {
+				// Best-effort rollback; surface the original error.
+				_ = delErr
+			}
+			return nil, appErr
+		}
+	}
+	result := envToGen(env)
+	return &result, nil
+}
+
+// Update merges the editable subset of spec fields into the existing Env,
+// retrying on conflict. Pointer fields disambiguate "not specified" from
+// "explicit zero/empty"; pass a non-nil pointer to replace, nil to keep.
 //
-// Idempotency: the caller may submit identical autoscaling repeatedly; the
-// Patch is a no-op when the JSON-serialised spec is unchanged. Conflicts on
-// the Env Generation are retried automatically.
-//
-// Validation: each group's Name must be non-empty, Mode (when set) must be
-// one of the known scale-up modes. Other field constraints are enforced by
-// the CRD's OpenAPI validation when the Patch reaches the apiserver.
-func (s *k8sSandboxEnvService) UpdateAutoscaling(ctx context.Context, input UpdateEnvAutoscalingInput) (*gen.SandboxEnv, *domain.AppError) {
+// Validation: when Autoscaling is set, each group's Name must be non-empty
+// and Mode (when supplied) must be a known scale-up mode. The CRD's OpenAPI
+// validation enforces the remainder once the Patch reaches the apiserver.
+func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError) {
 	if appErr := validateEnvAutoscaling(input.Autoscaling); appErr != nil {
 		return nil, appErr
 	}
 	key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
-	env := &agentsv1alpha1.SandboxEnv{}
-	if err := s.client.Get(ctx, key, env); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", input.Name, input.Namespace))
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &agentsv1alpha1.SandboxEnv{}
 		if err := s.client.Get(ctx, key, current); err != nil {
 			return err
 		}
 		base := current.DeepCopy()
-		current.Spec.Autoscaling = autoscalingFromGen(input.Autoscaling)
+		applyEnvUpdate(&current.Spec, input)
 		return s.client.Patch(ctx, current, client.MergeFrom(base))
 	}); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", input.Name, input.Namespace))
+		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 
-	// Re-read so the response reflects the persisted state (status fields are
-	// populated by the controller, so the result also includes anything that
-	// reconciled while we were patching).
-	if err := s.client.Get(ctx, key, env); err != nil {
+	updated := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(ctx, key, updated); err != nil {
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	result := envToGen(env)
+	if input.ImagePullSecret != nil && len(input.ImagePullSecret.Registries) > 0 {
+		if appErr := s.upsertEnvImagePullSecret(ctx, updated, input.ImagePullSecret); appErr != nil {
+			return nil, appErr
+		}
+	}
+	result := envToGen(updated)
 	return &result, nil
+}
+
+// Delete issues a foreground delete on the Env. Member Pools are
+// cascade-deleted via OwnerReferences once the Env Reconciler stamps the
+// controller=true OwnerRef.
+func (s *k8sSandboxEnvService) Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxEnvResult, *domain.AppError) {
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, env); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", name, namespace))
+		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+	policy := metav1.DeletePropagationForeground
+	if err := s.client.Delete(ctx, env, &client.DeleteOptions{PropagationPolicy: &policy}); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", name, namespace))
+		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+	return &gen.DeleteSandboxEnvResult{
+		Name:      env.Name,
+		Namespace: env.Namespace,
+		Status:    "Terminating",
+	}, nil
+}
+
+// SyncTemplate re-renders every member Pool of the Env against the current
+// linked SandboxTemplate body and the Env's overrides. Each member's
+// template-name / -version annotations are advanced and its
+// EmbeddedSandboxTemplate is patched in place.
+//
+// Errors from individual members are aggregated — a partial failure leaves
+// successful members synced and reports the first failure to the caller so
+// it can be retried.
+func (s *k8sSandboxEnvService) SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError) {
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, env); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", name, namespace))
+		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+
+	templateName := env.Spec.TemplateRef.Name
+	if templateName == "" {
+		return nil, domain.NewBadRequest("env.spec.templateRef.name is empty")
+	}
+	tmpl := &agentsv1alpha1.SandboxTemplate{}
+	if err := s.client.Get(ctx, client.ObjectKey{Name: templateName}, tmpl); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("source template %q not found", templateName))
+		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+
+	pools := &agentsv1alpha1.SandboxPoolList{}
+	if err := s.client.List(ctx, pools, client.InNamespace(namespace)); err != nil {
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+
+	// Index member-by-name so each pool can be re-rendered with the
+	// Env-level overrides + that pool's per-Member resource sizing.
+	memberByName := map[string]*agentsv1alpha1.EnvClusterMember{}
+	for _, c := range env.Spec.Clusters {
+		for i := range c.Members {
+			m := &c.Members[i]
+			memberByName[m.Name] = m
+		}
+	}
+
+	var firstErr *domain.AppError
+	for i := range pools.Items {
+		p := &pools.Items[i]
+		if !poolOwnedByEnv(p, env) {
+			continue
+		}
+		opts := composeServiceRenderOptions(env.Spec.Overrides, memberByName[p.Name])
+		if err := s.syncMemberPoolToTemplate(ctx, p, tmpl, opts); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	updated := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, updated); err != nil {
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+	result := envToGen(updated)
+	return &result, nil
+}
+
+// composeServiceRenderOptions composes the sandboxrender.Apply input from
+// Env-level overrides (image) + Member-level resource sizing
+// (InlineResources). Mirror of the Env Reconciler's composeRenderOptions
+// for the SyncTemplate path.
+func composeServiceRenderOptions(envOv *agentsv1alpha1.EnvOverridesSpec, member *agentsv1alpha1.EnvClusterMember) sandboxrender.Options {
+	var opts sandboxrender.Options
+	if envOv != nil {
+		opts.Image = envOv.Image
+	}
+	if member != nil && member.InlineResources != nil {
+		opts.InlineResources = member.InlineResources
+	}
+	return opts
+}
+
+// syncMemberPoolToTemplate re-renders a single member Pool against the
+// supplied Template snapshot + composed override options, patches the
+// Pool's EmbeddedSandboxTemplate, and advances the template-version
+// annotation. Retries on conflict.
+func (s *k8sSandboxEnvService) syncMemberPoolToTemplate(
+	ctx context.Context,
+	pool *agentsv1alpha1.SandboxPool,
+	tmpl *agentsv1alpha1.SandboxTemplate,
+	opts sandboxrender.Options,
+) *domain.AppError {
+	emb := tmpl.Spec.EmbeddedSandboxTemplate
+	if err := sandboxrender.Apply(&emb, opts); err != nil {
+		return domain.NewBadRequest(err.Error())
+	}
+	// Re-stamp the Env-level imagePullSecret reference (or remove it if
+	// the Secret no longer exists). Matches the Reconciler render path so
+	// `POST /envs/{n}/sync-template` and steady-state reconciles agree.
+	envName := envNameFromOwnerRefs(pool.OwnerReferences)
+	if envName != "" {
+		if err := stampPoolImagePullSecretIfPresent(ctx, s.client, pool.Namespace, agentsv1alpha1.EnvImagePullSecretName(envName), &emb); err != nil {
+			return domain.NewInternal(err.Error(), err)
+		}
+	}
+	key := types.NamespacedName{Namespace: pool.Namespace, Name: pool.Name}
+	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &agentsv1alpha1.SandboxPool{}
+		if err := s.client.Get(ctx, key, current); err != nil {
+			return err
+		}
+		base := current.DeepCopy()
+		current.Spec.EmbeddedSandboxTemplate = emb
+		if current.Annotations == nil {
+			current.Annotations = map[string]string{}
+		}
+		current.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = tmpl.Name
+		current.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] = tmpl.Spec.Version
+		return s.client.Patch(ctx, current, client.MergeFrom(base))
+	})
+	if retryErr != nil {
+		if k8serrors.IsNotFound(retryErr) {
+			return nil // Pool was deleted concurrently — treat as success.
+		}
+		return domain.NewInternal(retryErr.Error(), retryErr)
+	}
+	return nil
+}
+
+// poolOwnedByEnv returns true when pool.OwnerReferences includes a
+// reference back to env (matched by Kind, Name, and UID).
+func poolOwnedByEnv(pool *agentsv1alpha1.SandboxPool, env *agentsv1alpha1.SandboxEnv) bool {
+	for _, ref := range pool.OwnerReferences {
+		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind && ref.Name == env.Name && ref.UID == env.UID {
+			return true
+		}
+	}
+	return false
+}
+
+// applyEnvUpdate merges the non-nil fields of input onto spec in place.
+func applyEnvUpdate(spec *agentsv1alpha1.SandboxEnvSpec, input UpdateSandboxEnvInput) {
+	if input.Autoscaling != nil {
+		spec.Autoscaling = autoscalingFromGen(input.Autoscaling)
+	}
+	if input.Members != nil {
+		setLocalClusterMembers(spec, input.LocalClusterID, *input.Members)
+	}
+	if input.Overrides != nil {
+		spec.Overrides = input.Overrides
+	}
+}
+
+// setLocalClusterMembers replaces the Members slice on the cluster segment
+// matching localClusterID, creating the segment when absent. Passing an
+// empty members slice clears the local segment's members (the Reconciler
+// then falls back to a single namesake Pool).
+func setLocalClusterMembers(spec *agentsv1alpha1.SandboxEnvSpec, localClusterID string, members []agentsv1alpha1.EnvClusterMember) {
+	if spec == nil || localClusterID == "" {
+		return
+	}
+	copyMembers := append([]agentsv1alpha1.EnvClusterMember(nil), members...)
+	for i := range spec.Clusters {
+		if spec.Clusters[i].ClusterID == localClusterID {
+			spec.Clusters[i].Members = copyMembers
+			return
+		}
+	}
+	spec.Clusters = append(spec.Clusters, agentsv1alpha1.EnvClusterSpec{
+		ClusterID: localClusterID,
+		Members:   copyMembers,
+	})
 }
 
 // validateEnvAutoscaling rejects obviously malformed input. Detailed validation
@@ -238,6 +579,60 @@ func envSpecToGen(spec *agentsv1alpha1.SandboxEnvSpec) gen.SandboxEnvSpec {
 	if spec.Autoscaling != nil {
 		out.Autoscaling = autoscalingToGen(spec.Autoscaling)
 	}
+	if o := envOverridesToGen(spec.Overrides); o != nil {
+		out.Overrides = o
+	}
+	return out
+}
+
+func envOverridesToGen(o *agentsv1alpha1.EnvOverridesSpec) *gen.EnvOverrides {
+	if o == nil {
+		return nil
+	}
+	out := &gen.EnvOverrides{}
+	if o.Image != "" {
+		out.Image = ptr.To(o.Image)
+	}
+	if o.PodCreationImagePolicy != "" {
+		p := gen.EnvOverridesPodCreationImagePolicy(o.PodCreationImagePolicy)
+		out.PodCreationImagePolicy = &p
+	}
+	if o.DefaultStartupTimeout != nil {
+		out.DefaultStartupTimeout = ptr.To(o.DefaultStartupTimeout.Duration.String())
+	}
+	if o.DefaultIdleTimeout != nil {
+		out.DefaultIdleTimeout = ptr.To(o.DefaultIdleTimeout.Duration.String())
+	}
+	return out
+}
+
+// inlineResourcesToGen flattens corev1.ResourceRequirements into the wire
+// ResourceRequirements shape (Quantity string maps). Returns nil when the
+// input carries no observable values.
+func inlineResourcesToGen(rr *corev1.ResourceRequirements) *gen.ResourceRequirements {
+	if rr == nil {
+		return nil
+	}
+	out := &gen.ResourceRequirements{}
+	if len(rr.Requests) > 0 {
+		req := quantityMapToGen(rr.Requests)
+		out.Requests = &req
+	}
+	if len(rr.Limits) > 0 {
+		lim := quantityMapToGen(rr.Limits)
+		out.Limits = &lim
+	}
+	if out.Requests == nil && out.Limits == nil {
+		return nil
+	}
+	return out
+}
+
+func quantityMapToGen(rl corev1.ResourceList) map[string]string {
+	out := make(map[string]string, len(rl))
+	for k, v := range rl {
+		out[string(k)] = v.String()
+	}
 	return out
 }
 
@@ -263,6 +658,22 @@ func envMemberToGen(m agentsv1alpha1.EnvClusterMember) gen.EnvClusterMember {
 	}
 	if m.ScaleDownPriority != 0 {
 		out.ScaleDownPriority = ptr.To(m.ScaleDownPriority)
+	}
+	if m.Replicas > 0 {
+		out.Replicas = ptr.To(m.Replicas)
+	}
+	if m.InlineResources != nil {
+		out.InlineResources = inlineResourcesToGen(m.InlineResources)
+	}
+	if len(m.Labels) > 0 {
+		labels := make(map[string]string, len(m.Labels))
+		maps.Copy(labels, m.Labels)
+		out.Labels = &labels
+	}
+	if len(m.Annotations) > 0 {
+		annotations := make(map[string]string, len(m.Annotations))
+		maps.Copy(annotations, m.Annotations)
+		out.Annotations = &annotations
 	}
 	return out
 }

@@ -109,7 +109,7 @@ type SandboxEnvReconciler struct {
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxenvs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxenvs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxenvs/finalizers,verbs=update
-// +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools/status,verbs=get
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
@@ -135,6 +135,13 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// emit an informational log; never refuse to reconcile the local segment.
 	if hasForeignClusterSegments(env, r.LocalClusterID) {
 		log.V(2).Info("Env contains foreign cluster segments; local Reconciler will only touch the local segment")
+	}
+
+	// Materialise / reconcile member Pools from spec.Clusters[local].Members.
+	// Falls back to a single namesake Pool when no members are declared, so
+	// adopter-created Envs continue to converge.
+	if err := r.reconcilePools(ctx, env); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Aggregate status from member Pools (writes status.clusters[local]).

@@ -52,8 +52,8 @@ class CreateSandboxPoolRequest:
             annotations (CreateSandboxPoolRequestAnnotations | Unset):
             spec (SandboxPoolSpec | Unset):
             quota_url (str | Unset): Deprecated: pass quota URL via labels["quota.scitix.ai/url"] instead.
-            overrides (PoolTemplateOverrides | Unset): Persisted pool-level overrides applied on top of the referenced
-                template and re-applied during template sync.
+            overrides (PoolTemplateOverrides | Unset): Legacy pool-create overrides. Image-only — per-Pool resource sizing
+                flows through EnvClusterMember.{instanceType,multiplier,inlineResources} now.
             image_pull_secret (ImagePullSecretInput | Unset):
      """
 

@@ -23,7 +23,7 @@ from ...types import Response, UNSET
 from ... import errors
 
 from ...models.error_response import ErrorResponse
-from ...models.sandbox_pool_envelope import SandboxPoolEnvelope
+from ...models.sandbox_env_envelope import SandboxEnvEnvelope
 from typing import cast
 
 
@@ -40,7 +40,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/sandboxpools/{name}/sync-template".format(name=quote(str(name), safe=""),),
+        "url": "/envs/{name}/sync-template".format(name=quote(str(name), safe=""),),
     }
 
 
@@ -48,9 +48,9 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | SandboxPoolEnvelope | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | SandboxEnvEnvelope | None:
     if response.status_code == 200:
-        response_200 = SandboxPoolEnvelope.from_dict(response.json())
+        response_200 = SandboxEnvEnvelope.from_dict(response.json())
 
 
 
@@ -62,6 +62,13 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
         return response_400
+
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
+
+
+
+        return response_401
 
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
@@ -83,7 +90,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | SandboxPoolEnvelope]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | SandboxEnvEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,28 +104,27 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | SandboxPoolEnvelope]:
-    """ Sync a sandbox pool's spec from its source template
+) -> Response[ErrorResponse | SandboxEnvEnvelope]:
+    """ Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current
+    overrides.
 
-     **DEPRECATED** — will be removed in a future version.
+     Forces every member SandboxPool to pick up the current `spec.embedded` from
+    the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
+    after an admin edits the underlying Template — Env-level overrides edits
+    propagate automatically through `PATCH /envs/{name}`.
 
-    Prefer `PUT /sandboxpools/{name}` with the specific fields you want to update
-    (e.g. `overrides.image`, `replicas`) rather than re-reading the source template
-    implicitly. Admin template updates via `PUT /admin/sandbox-templates/{name}` now
-    propagate to pools automatically.
-
-    Re-reads the pool's source SandboxTemplate (from templateName annotation) and
-    patches the pool's EmbeddedSandboxTemplate fields. Does not change replicas.
+    Per-Pool changes are independent; partial failure leaves successful members
+    synced and surfaces the offending member in the response error.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | SandboxPoolEnvelope]
+        Response[ErrorResponse | SandboxEnvEnvelope]
      """
 
 
@@ -138,28 +144,27 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | SandboxPoolEnvelope | None:
-    """ Sync a sandbox pool's spec from its source template
+) -> ErrorResponse | SandboxEnvEnvelope | None:
+    """ Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current
+    overrides.
 
-     **DEPRECATED** — will be removed in a future version.
+     Forces every member SandboxPool to pick up the current `spec.embedded` from
+    the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
+    after an admin edits the underlying Template — Env-level overrides edits
+    propagate automatically through `PATCH /envs/{name}`.
 
-    Prefer `PUT /sandboxpools/{name}` with the specific fields you want to update
-    (e.g. `overrides.image`, `replicas`) rather than re-reading the source template
-    implicitly. Admin template updates via `PUT /admin/sandbox-templates/{name}` now
-    propagate to pools automatically.
-
-    Re-reads the pool's source SandboxTemplate (from templateName annotation) and
-    patches the pool's EmbeddedSandboxTemplate fields. Does not change replicas.
+    Per-Pool changes are independent; partial failure leaves successful members
+    synced and surfaces the offending member in the response error.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | SandboxPoolEnvelope
+        ErrorResponse | SandboxEnvEnvelope
      """
 
 
@@ -174,28 +179,27 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | SandboxPoolEnvelope]:
-    """ Sync a sandbox pool's spec from its source template
+) -> Response[ErrorResponse | SandboxEnvEnvelope]:
+    """ Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current
+    overrides.
 
-     **DEPRECATED** — will be removed in a future version.
+     Forces every member SandboxPool to pick up the current `spec.embedded` from
+    the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
+    after an admin edits the underlying Template — Env-level overrides edits
+    propagate automatically through `PATCH /envs/{name}`.
 
-    Prefer `PUT /sandboxpools/{name}` with the specific fields you want to update
-    (e.g. `overrides.image`, `replicas`) rather than re-reading the source template
-    implicitly. Admin template updates via `PUT /admin/sandbox-templates/{name}` now
-    propagate to pools automatically.
-
-    Re-reads the pool's source SandboxTemplate (from templateName annotation) and
-    patches the pool's EmbeddedSandboxTemplate fields. Does not change replicas.
+    Per-Pool changes are independent; partial failure leaves successful members
+    synced and surfaces the offending member in the response error.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | SandboxPoolEnvelope]
+        Response[ErrorResponse | SandboxEnvEnvelope]
      """
 
 
@@ -215,28 +219,27 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | SandboxPoolEnvelope | None:
-    """ Sync a sandbox pool's spec from its source template
+) -> ErrorResponse | SandboxEnvEnvelope | None:
+    """ Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current
+    overrides.
 
-     **DEPRECATED** — will be removed in a future version.
+     Forces every member SandboxPool to pick up the current `spec.embedded` from
+    the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
+    after an admin edits the underlying Template — Env-level overrides edits
+    propagate automatically through `PATCH /envs/{name}`.
 
-    Prefer `PUT /sandboxpools/{name}` with the specific fields you want to update
-    (e.g. `overrides.image`, `replicas`) rather than re-reading the source template
-    implicitly. Admin template updates via `PUT /admin/sandbox-templates/{name}` now
-    propagate to pools automatically.
-
-    Re-reads the pool's source SandboxTemplate (from templateName annotation) and
-    patches the pool's EmbeddedSandboxTemplate fields. Does not change replicas.
+    Per-Pool changes are independent; partial failure leaves successful members
+    synced and surfaces the offending member in the response error.
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | SandboxPoolEnvelope
+        ErrorResponse | SandboxEnvEnvelope
      """
 
 

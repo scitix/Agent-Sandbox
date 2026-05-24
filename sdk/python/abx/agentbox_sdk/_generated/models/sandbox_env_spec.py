@@ -29,6 +29,7 @@ from typing import cast
 if TYPE_CHECKING:
   from ..models.env_autoscaling_spec import EnvAutoscalingSpec
   from ..models.env_cluster_spec import EnvClusterSpec
+  from ..models.env_overrides import EnvOverrides
   from ..models.sandbox_env_defaults import SandboxEnvDefaults
   from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
 
@@ -50,6 +51,9 @@ class SandboxEnvSpec:
             defaults (SandboxEnvDefaults | Unset):
             clusters (list[EnvClusterSpec] | Unset):
             autoscaling (EnvAutoscalingSpec | Unset):
+            overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The
+                Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull
+                credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.
      """
 
     template_ref: SandboxEnvTemplateRef
@@ -57,6 +61,7 @@ class SandboxEnvSpec:
     defaults: SandboxEnvDefaults | Unset = UNSET
     clusters: list[EnvClusterSpec] | Unset = UNSET
     autoscaling: EnvAutoscalingSpec | Unset = UNSET
+    overrides: EnvOverrides | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -66,6 +71,7 @@ class SandboxEnvSpec:
     def to_dict(self) -> dict[str, Any]:
         from ..models.env_autoscaling_spec import EnvAutoscalingSpec
         from ..models.env_cluster_spec import EnvClusterSpec
+        from ..models.env_overrides import EnvOverrides
         from ..models.sandbox_env_defaults import SandboxEnvDefaults
         from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
         template_ref = self.template_ref.to_dict()
@@ -89,6 +95,10 @@ class SandboxEnvSpec:
         if not isinstance(self.autoscaling, Unset):
             autoscaling = self.autoscaling.to_dict()
 
+        overrides: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.overrides, Unset):
+            overrides = self.overrides.to_dict()
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -102,6 +112,8 @@ class SandboxEnvSpec:
             field_dict["clusters"] = clusters
         if autoscaling is not UNSET:
             field_dict["autoscaling"] = autoscaling
+        if overrides is not UNSET:
+            field_dict["overrides"] = overrides
 
         return field_dict
 
@@ -111,6 +123,7 @@ class SandboxEnvSpec:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.env_autoscaling_spec import EnvAutoscalingSpec
         from ..models.env_cluster_spec import EnvClusterSpec
+        from ..models.env_overrides import EnvOverrides
         from ..models.sandbox_env_defaults import SandboxEnvDefaults
         from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
         d = dict(src_dict)
@@ -156,12 +169,23 @@ class SandboxEnvSpec:
 
 
 
+        _overrides = d.pop("overrides", UNSET)
+        overrides: EnvOverrides | Unset
+        if isinstance(_overrides,  Unset):
+            overrides = UNSET
+        else:
+            overrides = EnvOverrides.from_dict(_overrides)
+
+
+
+
         sandbox_env_spec = cls(
             template_ref=template_ref,
             mode=mode,
             defaults=defaults,
             clusters=clusters,
             autoscaling=autoscaling,
+            overrides=overrides,
         )
 
 

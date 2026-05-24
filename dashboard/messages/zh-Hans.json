@@ -855,6 +855,7 @@
   "datasets.tagBenchmark": "基准测试",
 
   "envs.newEnv": "新建环境",
+  "envs.searchAll": "搜索环境…",
   "envs.action.edit": "编辑",
   "envs.action.delete": "删除",
   "envs.delete.title": "删除环境",

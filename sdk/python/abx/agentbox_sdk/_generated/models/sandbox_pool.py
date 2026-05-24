@@ -58,8 +58,8 @@ class SandboxPool:
             team (str | Unset): Team label of the pool owner (from CRD label)
             user (str | Unset): User label of the pool owner (from CRD label)
             template_version (str | Unset): Version of the source SandboxTemplate at last sync (from annotation)
-            overrides (PoolTemplateOverrides | Unset): Persisted pool-level overrides applied on top of the referenced
-                template and re-applied during template sync.
+            overrides (PoolTemplateOverrides | Unset): Legacy pool-create overrides. Image-only — per-Pool resource sizing
+                flows through EnvClusterMember.{instanceType,multiplier,inlineResources} now.
             spec_yaml (str | Unset): Full EmbeddedSandboxTemplate (idleImage, runtimes, reservation, template) serialized as
                 YAML for diff comparison.
             created_at (datetime.datetime | Unset): Creation time of the pool (from metadata.creationTimestamp)

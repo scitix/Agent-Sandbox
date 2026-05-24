@@ -22,39 +22,49 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.create_sandbox_env_request_mode import CreateSandboxEnvRequestMode
 from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.env_autoscaling_spec import EnvAutoscalingSpec
+  from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
+  from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
   from ..models.env_cluster_member import EnvClusterMember
   from ..models.env_overrides import EnvOverrides
+  from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
 
 
 
 
 
-T = TypeVar("T", bound="UpdateSandboxEnvRequest")
+T = TypeVar("T", bound="CreateSandboxEnvRequest")
 
 
 
 @_attrs_define
-class UpdateSandboxEnvRequest:
-    """ Patch one or more editable Env spec fields. Omitted fields are left unchanged.
-
+class CreateSandboxEnvRequest:
+    """ 
         Attributes:
-            autoscaling (EnvAutoscalingSpec | Unset):
-            members (list[EnvClusterMember] | Unset): Replaces the local cluster's member list. Each member carries its own
-                replicas and per-Pool overrides. Plugin-relevant metadata (e.g. quota URLs) belongs in each member's
-                labels/annotations.
+            name (str): RFC 1123 DNS label.
+            template_ref (SandboxEnvTemplateRef):
+            mode (CreateSandboxEnvRequestMode | Unset):  Default: CreateSandboxEnvRequestMode.WARMPOOL.
+            members (list[EnvClusterMember] | Unset): Member SandboxPools materialised by the Env Reconciler in the local
+                cluster segment. Each member becomes one Pool with member.labels/annotations stamped verbatim and per-Pool
+                fields (replicas, overrides.resourceMultiplier) applied to that Pool only.
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The
                 Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull
                 credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.
+            labels (CreateSandboxEnvRequestLabels | Unset):
+            annotations (CreateSandboxEnvRequestAnnotations | Unset):
      """
 
-    autoscaling: EnvAutoscalingSpec | Unset = UNSET
+    name: str
+    template_ref: SandboxEnvTemplateRef
+    mode: CreateSandboxEnvRequestMode | Unset = CreateSandboxEnvRequestMode.WARMPOOL
     members: list[EnvClusterMember] | Unset = UNSET
     overrides: EnvOverrides | Unset = UNSET
+    labels: CreateSandboxEnvRequestLabels | Unset = UNSET
+    annotations: CreateSandboxEnvRequestAnnotations | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -62,12 +72,19 @@ class UpdateSandboxEnvRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
+        from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
+        from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
         from ..models.env_cluster_member import EnvClusterMember
         from ..models.env_overrides import EnvOverrides
-        autoscaling: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.autoscaling, Unset):
-            autoscaling = self.autoscaling.to_dict()
+        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
+        name = self.name
+
+        template_ref = self.template_ref.to_dict()
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
 
         members: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.members, Unset):
@@ -82,17 +99,31 @@ class UpdateSandboxEnvRequest:
         if not isinstance(self.overrides, Unset):
             overrides = self.overrides.to_dict()
 
+        labels: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.labels, Unset):
+            labels = self.labels.to_dict()
+
+        annotations: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.annotations, Unset):
+            annotations = self.annotations.to_dict()
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({
+            "name": name,
+            "templateRef": template_ref,
         })
-        if autoscaling is not UNSET:
-            field_dict["autoscaling"] = autoscaling
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if members is not UNSET:
             field_dict["members"] = members
         if overrides is not UNSET:
             field_dict["overrides"] = overrides
+        if labels is not UNSET:
+            field_dict["labels"] = labels
+        if annotations is not UNSET:
+            field_dict["annotations"] = annotations
 
         return field_dict
 
@@ -100,16 +131,25 @@ class UpdateSandboxEnvRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
+        from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
+        from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
         from ..models.env_cluster_member import EnvClusterMember
         from ..models.env_overrides import EnvOverrides
+        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
         d = dict(src_dict)
-        _autoscaling = d.pop("autoscaling", UNSET)
-        autoscaling: EnvAutoscalingSpec | Unset
-        if isinstance(_autoscaling,  Unset):
-            autoscaling = UNSET
+        name = d.pop("name")
+
+        template_ref = SandboxEnvTemplateRef.from_dict(d.pop("templateRef"))
+
+
+
+
+        _mode = d.pop("mode", UNSET)
+        mode: CreateSandboxEnvRequestMode | Unset
+        if isinstance(_mode,  Unset):
+            mode = UNSET
         else:
-            autoscaling = EnvAutoscalingSpec.from_dict(_autoscaling)
+            mode = CreateSandboxEnvRequestMode(_mode)
 
 
 
@@ -136,15 +176,39 @@ class UpdateSandboxEnvRequest:
 
 
 
-        update_sandbox_env_request = cls(
-            autoscaling=autoscaling,
+        _labels = d.pop("labels", UNSET)
+        labels: CreateSandboxEnvRequestLabels | Unset
+        if isinstance(_labels,  Unset):
+            labels = UNSET
+        else:
+            labels = CreateSandboxEnvRequestLabels.from_dict(_labels)
+
+
+
+
+        _annotations = d.pop("annotations", UNSET)
+        annotations: CreateSandboxEnvRequestAnnotations | Unset
+        if isinstance(_annotations,  Unset):
+            annotations = UNSET
+        else:
+            annotations = CreateSandboxEnvRequestAnnotations.from_dict(_annotations)
+
+
+
+
+        create_sandbox_env_request = cls(
+            name=name,
+            template_ref=template_ref,
+            mode=mode,
             members=members,
             overrides=overrides,
+            labels=labels,
+            annotations=annotations,
         )
 
 
-        update_sandbox_env_request.additional_properties = d
-        return update_sandbox_env_request
+        create_sandbox_env_request.additional_properties = d
+        return create_sandbox_env_request
 
     @property
     def additional_keys(self) -> list[str]:

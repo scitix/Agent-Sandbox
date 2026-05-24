@@ -149,4 +149,20 @@ const (
 	LabelSyncSource = "agentbox.io/sync-source"
 	// LabelSyncSourceGlobal is the value for LabelSyncSource that indicates a globally-managed resource.
 	LabelSyncSourceGlobal = "global"
+
+	// ImagePullSecretNamePrefix is prepended to a parent resource's name to
+	// derive the deterministic dockerconfigjson Secret created alongside
+	// it. Used by both the legacy SandboxPool Create flow (Secret owned by
+	// the Pool) and the SandboxEnv flow (Secret owned by the Env and
+	// referenced by every member Pool). The full name is
+	// "ips-{ownerName}".
+	ImagePullSecretNamePrefix = "ips-"
 )
+
+// EnvImagePullSecretName returns the deterministic Secret name for the
+// dockerconfigjson Secret that backs an Env's overrides.imagePullSecret.
+// One Secret per Env; the Env Reconciler stamps a LocalObjectReference
+// for this name into every member Pool's spec.template.spec.imagePullSecrets.
+func EnvImagePullSecretName(envName string) string {
+	return ImagePullSecretNamePrefix + envName
+}

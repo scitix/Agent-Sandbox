@@ -22,6 +22,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.create_sandbox_env_request import CreateSandboxEnvRequest
 from ...models.error_response import ErrorResponse
 from ...models.sandbox_env_envelope import SandboxEnvEnvelope
 from typing import cast
@@ -29,32 +30,46 @@ from typing import cast
 
 
 def _get_kwargs(
-    name: str,
+    *,
+    body: CreateSandboxEnvRequest,
 
 ) -> dict[str, Any]:
-    
+    headers: dict[str, Any] = {}
+
 
     
 
     
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/envs/{name}".format(name=quote(str(name), safe=""),),
+        "method": "post",
+        "url": "/envs",
     }
 
+    _kwargs["json"] = body.to_dict()
 
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
 
 def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | SandboxEnvEnvelope | None:
-    if response.status_code == 200:
-        response_200 = SandboxEnvEnvelope.from_dict(response.json())
+    if response.status_code == 201:
+        response_201 = SandboxEnvEnvelope.from_dict(response.json())
 
 
 
-        return response_200
+        return response_201
+
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = ErrorResponse.from_dict(response.json())
@@ -63,19 +78,12 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_401
 
-    if response.status_code == 404:
-        response_404 = ErrorResponse.from_dict(response.json())
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
 
 
 
-        return response_404
-
-    if response.status_code == 422:
-        response_422 = ErrorResponse.from_dict(response.json())
-
-
-
-        return response_422
+        return response_409
 
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
@@ -100,15 +108,16 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
 def sync_detailed(
-    name: str,
     *,
     client: AuthenticatedClient | Client,
+    body: CreateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Get a SandboxEnv by name. Response includes the rendered envDocs Markdown.
+    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
+    `members` (or a single quota-less pool named after the Env when `members` is empty).
 
     Args:
-        name (str):
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,7 +129,7 @@ def sync_detailed(
 
 
     kwargs = _get_kwargs(
-        name=name,
+        body=body,
 
     )
 
@@ -131,15 +140,16 @@ def sync_detailed(
     return _build_response(client=client, response=response)
 
 def sync(
-    name: str,
     *,
     client: AuthenticatedClient | Client,
+    body: CreateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Get a SandboxEnv by name. Response includes the rendered envDocs Markdown.
+    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
+    `members` (or a single quota-less pool named after the Env when `members` is empty).
 
     Args:
-        name (str):
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,21 +161,22 @@ def sync(
 
 
     return sync_detailed(
-        name=name,
-client=client,
+        client=client,
+body=body,
 
     ).parsed
 
 async def asyncio_detailed(
-    name: str,
     *,
     client: AuthenticatedClient | Client,
+    body: CreateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Get a SandboxEnv by name. Response includes the rendered envDocs Markdown.
+    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
+    `members` (or a single quota-less pool named after the Env when `members` is empty).
 
     Args:
-        name (str):
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,7 +188,7 @@ async def asyncio_detailed(
 
 
     kwargs = _get_kwargs(
-        name=name,
+        body=body,
 
     )
 
@@ -188,15 +199,16 @@ async def asyncio_detailed(
     return _build_response(client=client, response=response)
 
 async def asyncio(
-    name: str,
     *,
     client: AuthenticatedClient | Client,
+    body: CreateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Get a SandboxEnv by name. Response includes the rendered envDocs Markdown.
+    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
+    `members` (or a single quota-less pool named after the Env when `members` is empty).
 
     Args:
-        name (str):
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,7 +220,7 @@ async def asyncio(
 
 
     return (await asyncio_detailed(
-        name=name,
-client=client,
+        client=client,
+body=body,
 
     )).parsed

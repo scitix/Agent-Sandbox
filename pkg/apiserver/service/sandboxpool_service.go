@@ -16,7 +16,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -25,7 +24,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
@@ -39,6 +37,7 @@ import (
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 	"github.com/scitix/agent-sandbox/pkg/utils/dockerconfig"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
@@ -55,18 +54,18 @@ func imagePullSecretName(poolName string) string {
 }
 
 // SandboxPoolService defines business operations for SandboxPools.
+//
+// Template / overrides reconciliation moved off this interface: Pool now stores
+// the rendered result only. The Env Reconciler renders new members from the
+// source SandboxTemplate at create time, and the Env-level
+// `POST /envs/{name}/sync-template` endpoint re-renders existing members. See
+// pkg/controllers/sandboxenv/poolsync.go.
 type SandboxPoolService interface {
 	Create(ctx context.Context, input CreateSandboxPoolInput) (*gen.SandboxPool, *domain.AppError)
 	List(ctx context.Context, namespace, team, user string) ([]gen.SandboxPool, *domain.AppError)
 	Get(ctx context.Context, namespace, name string) (*gen.SandboxPool, *domain.AppError)
 	Update(ctx context.Context, input UpdateSandboxPoolInput) (*gen.SandboxPool, *domain.AppError)
 	Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxPoolResult, *domain.AppError)
-	// SyncTemplate re-reads the pool's source SandboxTemplate and patches the pool's EmbeddedSandboxTemplate.
-	// Does not change replicas. Returns error if pool has no templateName annotation.
-	SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxPool, *domain.AppError)
-	// SyncTemplatePreview dry-runs SyncTemplate: returns what the EmbeddedSandboxTemplate would look like
-	// after applying all overrides, without writing to Kubernetes.
-	SyncTemplatePreview(ctx context.Context, namespace, name string) (*gen.SyncTemplatePreviewResult, *domain.AppError)
 }
 
 type k8sSandboxPoolService struct {
@@ -115,10 +114,10 @@ func (s *k8sSandboxPoolService) Create(ctx context.Context, input CreateSandboxP
 		}
 		input.Spec.EmbeddedSandboxTemplate = tmpl.Spec.EmbeddedSandboxTemplate
 		// Apply caller-supplied overrides on top of the copied template.
-		overrides := overridesFromGen(input.Overrides)
-		if overrides != nil {
-			if appErr := applyPoolTemplateOverrides(&input.Spec.EmbeddedSandboxTemplate, overrides); appErr != nil {
-				return nil, appErr
+		opts := renderOptionsFromGen(input.Overrides)
+		if !opts.Empty() {
+			if err := sandboxrender.Apply(&input.Spec.EmbeddedSandboxTemplate, opts); err != nil {
+				return nil, domain.NewBadRequest(err.Error())
 			}
 		}
 		input.Spec.TemplateName = tmpl.Name
@@ -134,7 +133,6 @@ func (s *k8sSandboxPoolService) Create(ctx context.Context, input CreateSandboxP
 		// what the Template's own annotations contain.
 		input.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = tmpl.Name
 		input.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] = tmpl.Spec.Version
-		persistPoolTemplateOverridesInAnnotations(input.Annotations, overrides)
 	} else if input.Spec.Template == nil {
 		return nil, domain.NewBadRequest("either templateName or spec.template is required")
 	}
@@ -161,16 +159,6 @@ func (s *k8sSandboxPoolService) Create(ctx context.Context, input CreateSandboxP
 		if !alreadyReferenced {
 			pool.Spec.Template.Spec.ImagePullSecrets = append(refs, corev1.LocalObjectReference{Name: secretName})
 		}
-		// Persist so SyncTemplate can re-inject the reference on top of newer template revisions.
-		if pool.Annotations == nil {
-			pool.Annotations = make(map[string]string)
-		}
-		existing := mustPoolTemplateOverridesFromAnnotations(pool.Annotations)
-		if existing == nil {
-			existing = &PoolTemplateOverrides{}
-		}
-		existing.ImagePullSecretName = secretName
-		persistPoolTemplateOverridesInAnnotations(pool.Annotations, existing)
 	}
 
 	// Validate cross-field constraints (autoscaling bounds, replicas range, etc.)
@@ -358,19 +346,10 @@ func (s *k8sSandboxPoolService) Update(ctx context.Context, input UpdateSandboxP
 			p.Spec.PodCreationImagePolicy = *input.PodCreationImagePolicy
 		}
 		if input.OverrideImage != "" {
-			if p.Annotations == nil {
-				p.Annotations = make(map[string]string)
-			}
 			if p.Spec.Template == nil || len(p.Spec.Template.Spec.Containers) == 0 {
 				return domain.NewBadRequest("image override requires at least one container in the template")
 			}
 			p.Spec.Template.Spec.Containers[0].Image = input.OverrideImage
-			existing := mustPoolTemplateOverridesFromAnnotations(p.Annotations)
-			if existing == nil {
-				existing = &PoolTemplateOverrides{}
-			}
-			existing.Image = input.OverrideImage
-			persistPoolTemplateOverridesInAnnotations(p.Annotations, existing)
 		}
 		return validatePoolSpec(&p.Spec)
 	}
@@ -429,131 +408,6 @@ func (s *k8sSandboxPoolService) Update(ctx context.Context, input UpdateSandboxP
 
 	result := poolToGen(ctx, pool, nil)
 	return &result, nil
-}
-
-func (s *k8sSandboxPoolService) SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxPool, *domain.AppError) {
-	// Resolve the template name from the pool once upfront — if the pool doesn't
-	// exist or has no templateName annotation we can fail fast before any retries.
-	pool := &agentsv1alpha1.SandboxPool{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pool); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", name))
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
-	templateName := pool.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey]
-	if templateName == "" {
-		return nil, domain.NewBadRequest("pool has no associated template (templateName annotation missing)")
-	}
-
-	tmpl := &agentsv1alpha1.SandboxTemplate{}
-	if err := s.client.Get(ctx, client.ObjectKey{Name: templateName}, tmpl); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("source template %q not found", templateName))
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
-	var result gen.SandboxPool
-	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current := &agentsv1alpha1.SandboxPool{}
-		if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, current); err != nil {
-			return err
-		}
-
-		updated := current.DeepCopy()
-		updated.Spec.EmbeddedSandboxTemplate = tmpl.Spec.EmbeddedSandboxTemplate
-		if updated.Labels == nil {
-			updated.Labels = make(map[string]string)
-		}
-		if updated.Annotations == nil {
-			updated.Annotations = make(map[string]string)
-		}
-		// Sync most Template labels and annotations to keep the Pool in sync with the
-		// Template's metadata. Same exclusion rules as at creation time apply here:
-		// agentbox.io/sync-source is excluded from labels, and system-managed annotation
-		// keys are overwritten after the merge to ensure correct values.
-		sandboxpool.SyncLabelsFromTemplate(updated.Labels, tmpl.Labels)
-		sandboxpool.SyncAnnotationsFromTemplate(updated.Annotations, tmpl.Annotations)
-		overrides, appErr := poolTemplateOverridesFromAnnotations(updated.Annotations)
-		if appErr != nil {
-			return fmt.Errorf("%s: %w", appErr.Error(), errBadRequest)
-		}
-		if appErr := applyPoolTemplateOverrides(&updated.Spec.EmbeddedSandboxTemplate, overrides); appErr != nil {
-			return fmt.Errorf("%s: %w", appErr.Error(), errBadRequest)
-		}
-		persistPoolTemplateOverridesInAnnotations(updated.Annotations, overrides)
-		updated.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = tmpl.Name
-		updated.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] = tmpl.Spec.Version
-
-		patch := client.MergeFrom(current)
-		if err := s.client.Patch(ctx, updated, patch); err != nil {
-			return err
-		}
-		result = poolToGen(ctx, updated, nil)
-		return nil
-	})
-	if retryErr != nil {
-		if k8serrors.IsNotFound(retryErr) {
-			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", name))
-		}
-		if isBadRequest(retryErr) {
-			return nil, domain.NewBadRequest(strings.TrimSuffix(retryErr.Error(), ": "+errBadRequest.Error()))
-		}
-		return nil, domain.NewInternal(retryErr.Error(), retryErr)
-	}
-
-	return &result, nil
-}
-
-func (s *k8sSandboxPoolService) SyncTemplatePreview(ctx context.Context, namespace, name string) (*gen.SyncTemplatePreviewResult, *domain.AppError) {
-	pool := &agentsv1alpha1.SandboxPool{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pool); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("pool %q not found", name))
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
-	templateName := pool.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey]
-	if templateName == "" {
-		return nil, domain.NewBadRequest("pool has no associated template (templateName annotation missing)")
-	}
-
-	tmpl := &agentsv1alpha1.SandboxTemplate{}
-	if err := s.client.Get(ctx, client.ObjectKey{Name: templateName}, tmpl); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("source template %q not found", templateName))
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
-	// Build a scratch pool copy so we can reuse the same override helpers without touching the real pool.
-	scratch := pool.DeepCopy()
-	scratch.Spec.EmbeddedSandboxTemplate = tmpl.Spec.EmbeddedSandboxTemplate
-	if scratch.Annotations == nil {
-		scratch.Annotations = make(map[string]string)
-	}
-	sandboxpool.SyncAnnotationsFromTemplate(scratch.Annotations, tmpl.Annotations)
-
-	overrides, appErr := poolTemplateOverridesFromAnnotations(scratch.Annotations)
-	if appErr != nil {
-		return nil, domain.NewBadRequest(appErr.Error())
-	}
-	if appErr := applyPoolTemplateOverrides(&scratch.Spec.EmbeddedSandboxTemplate, overrides); appErr != nil {
-		return nil, domain.NewBadRequest(appErr.Error())
-	}
-
-	b, err := yaml.Marshal(scratch.Spec.EmbeddedSandboxTemplate)
-	if err != nil {
-		return nil, domain.NewInternal("marshal preview: "+err.Error(), err)
-	}
-
-	return &gen.SyncTemplatePreviewResult{
-		SpecYaml: string(b),
-		Version:  tmpl.Spec.Version,
-	}, nil
 }
 
 func (s *k8sSandboxPoolService) Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxPoolResult, *domain.AppError) {
@@ -641,15 +495,10 @@ func poolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agen
 		SpecYaml:        ptr.To(specYaml),
 		CreatedAt:       &createdAt,
 	}
-	if overrides := mustPoolTemplateOverridesFromAnnotations(pool.Annotations); overrides != nil {
-		result.Overrides = &gen.PoolTemplateOverrides{}
-		if overrides.Image != "" {
-			result.Overrides.Image = &overrides.Image
-		}
-		if overrides.ResourceMultiplier > 1 {
-			result.Overrides.ResourceMultiplier = &overrides.ResourceMultiplier
-		}
-	}
+	// Pool no longer caches overrides — SandboxEnv.spec.overrides is the
+	// source of truth and Pool.spec.embedded already reflects the rendered
+	// result. result.Overrides stays nil; clients should read overrides
+	// from the owning Env.
 	if tmpl != nil {
 		if v := tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]; v != "" {
 			result.PoolDocs = ptr.To(v)
@@ -739,136 +588,5 @@ func validatePoolSpec(spec *agentsv1alpha1.SandboxPoolSpec) *domain.AppError {
 		}
 	}
 
-	return nil
-}
-
-// applyPoolTemplateOverrides mutates tmpl in-place after it has been deep-copied from the
-// source SandboxTemplate. The CRD stores the final computed values; the override params
-// themselves are not persisted.
-func applyPoolTemplateOverrides(
-	tmpl *agentsv1alpha1.EmbeddedSandboxTemplate,
-	overrides *PoolTemplateOverrides,
-) *domain.AppError {
-	if overrides == nil {
-		return nil
-	}
-	if overrides.Image != "" {
-		if err := ValidateContainerImage(overrides.Image); err != nil {
-			return domain.NewBadRequest(err.Error())
-		}
-		if tmpl.Template == nil || len(tmpl.Template.Spec.Containers) == 0 {
-			return domain.NewBadRequest("image override requires at least one container in the template")
-		}
-		tmpl.Template.Spec.Containers[0].Image = overrides.Image
-	}
-	if overrides.ResourceMultiplier > 1 {
-		if tmpl.Template == nil || len(tmpl.Template.Spec.Containers) == 0 {
-			return domain.NewBadRequest("resourceMultiplier requires at least one container in the template")
-		}
-		for i := range tmpl.Template.Spec.Containers {
-			if err := multiplyContainerResources(&tmpl.Template.Spec.Containers[i], overrides.ResourceMultiplier); err != nil {
-				return domain.NewBadRequest(
-					fmt.Sprintf("container %q: %v", tmpl.Template.Spec.Containers[i].Name, err),
-				)
-			}
-		}
-	}
-	if overrides.ImagePullSecretName != "" {
-		if tmpl.Template == nil {
-			return domain.NewBadRequest("imagePullSecret override requires spec.template in the template")
-		}
-		alreadyReferenced := false
-		for _, r := range tmpl.Template.Spec.ImagePullSecrets {
-			if r.Name == overrides.ImagePullSecretName {
-				alreadyReferenced = true
-				break
-			}
-		}
-		if !alreadyReferenced {
-			tmpl.Template.Spec.ImagePullSecrets = append(tmpl.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: overrides.ImagePullSecretName})
-		}
-	}
-	return nil
-}
-
-func persistPoolTemplateOverridesInAnnotations(annotations map[string]string, overrides *PoolTemplateOverrides) {
-	if annotations == nil {
-		return
-	}
-	delete(annotations, agentsv1alpha1.SandboxPoolOverridesAnnotationKey)
-	if overrides == nil {
-		return
-	}
-	data, err := json.Marshal(overrides)
-	if err != nil {
-		return
-	}
-	annotations[agentsv1alpha1.SandboxPoolOverridesAnnotationKey] = string(data)
-}
-
-func poolTemplateOverridesFromAnnotations(annotations map[string]string) (*PoolTemplateOverrides, *domain.AppError) {
-	raw, ok := annotations[agentsv1alpha1.SandboxPoolOverridesAnnotationKey]
-	if !ok || strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	overrides := &PoolTemplateOverrides{}
-	if err := json.Unmarshal([]byte(raw), overrides); err != nil {
-		return nil, domain.NewBadRequest(fmt.Sprintf("invalid pool overrides annotation: %v", err))
-	}
-	if overrides.Image == "" && overrides.ResourceMultiplier <= 1 && overrides.ImagePullSecretName == "" {
-		return nil, nil
-	}
-	return overrides, nil
-}
-
-func mustPoolTemplateOverridesFromAnnotations(annotations map[string]string) *PoolTemplateOverrides {
-	overrides, err := poolTemplateOverridesFromAnnotations(annotations)
-	if err != nil {
-		return nil
-	}
-	return overrides
-}
-
-// multiplyContainerResources scales CPU and Memory requests+limits of a single container
-// by the given integer multiplier.
-//
-// CPU uses MilliValue arithmetic (lossless for all standard Kubernetes CPU quantities):
-//
-//	"500m" × 2 → NewMilliQuantity(500*2, DecimalSI) → "1"
-//	"4"    × 2 → NewMilliQuantity(4000*2, DecimalSI) → "8"
-//
-// Memory uses Value (byte) arithmetic (always integer, BinarySI normalises units):
-//
-//	"4Gi"  × 2 → NewQuantity(4294967296*2, BinarySI) → "8Gi"
-func multiplyContainerResources(c *corev1.Container, multiplier int32) error {
-	m := int64(multiplier)
-	_, hasCPUReq := c.Resources.Requests[corev1.ResourceCPU]
-	_, hasMemReq := c.Resources.Requests[corev1.ResourceMemory]
-	_, hasCPULim := c.Resources.Limits[corev1.ResourceCPU]
-	_, hasMemLim := c.Resources.Limits[corev1.ResourceMemory]
-	if !hasCPUReq && !hasCPULim {
-		return fmt.Errorf("has no CPU requests or limits; cannot apply resourceMultiplier")
-	}
-	if !hasMemReq && !hasMemLim {
-		return fmt.Errorf("has no memory requests or limits; cannot apply resourceMultiplier")
-	}
-	if c.Resources.Requests == nil {
-		c.Resources.Requests = corev1.ResourceList{}
-	}
-	if c.Resources.Limits == nil {
-		c.Resources.Limits = corev1.ResourceList{}
-	}
-	if cpuReq, ok := c.Resources.Requests[corev1.ResourceCPU]; ok {
-		c.Resources.Requests[corev1.ResourceCPU] = *resource.NewMilliQuantity(cpuReq.MilliValue()*m, resource.DecimalSI)
-	}
-	if memReq, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
-		c.Resources.Requests[corev1.ResourceMemory] = *resource.NewQuantity(memReq.Value()*m, resource.BinarySI)
-	}
-	if cpuLim, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
-		c.Resources.Limits[corev1.ResourceCPU] = *resource.NewMilliQuantity(cpuLim.MilliValue()*m, resource.DecimalSI)
-	}
-	if memLim, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
-		c.Resources.Limits[corev1.ResourceMemory] = *resource.NewQuantity(memLim.Value()*m, resource.BinarySI)
-	}
 	return nil
 }

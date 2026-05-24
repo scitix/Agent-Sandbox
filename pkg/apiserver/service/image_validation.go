@@ -15,21 +15,13 @@
 package service
 
 import (
-	"fmt"
-
-	"github.com/distribution/reference"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
 
-// ValidateContainerImage checks that image is a syntactically valid Docker/OCI
-// image reference (e.g. "nginx:1.25", "ghcr.io/org/repo@sha256:abc...").
-// It returns a *domain.AppError (400 Bad Request) on failure, nil on success.
-// Empty strings are silently accepted (callers skip empty images before calling this).
+// ValidateContainerImage is a thin alias kept so service-package callers can
+// stay against the existing symbol; the implementation lives in
+// pkg/sandboxrender so the controller layer can validate without taking a
+// service-package dependency.
 func ValidateContainerImage(image string) error {
-	if image == "" {
-		return nil
-	}
-	if _, err := reference.ParseAnyReference(image); err != nil {
-		return fmt.Errorf("invalid container image reference %q: %v", image, err)
-	}
-	return nil
+	return sandboxrender.ValidateContainerImage(image)
 }

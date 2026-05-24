@@ -92,6 +92,7 @@ export default function EnvsPage() {
           columns={columns}
           idFn={(row) => row.name}
           queryOptions={queryOptions}
+          toolbarConfig={{ globalSearch: { placeholder: t("envs.searchAll") } }}
           externalState={tableState}
           className="table-layout-fixed h-[calc(100vh-104px)]"
         >

@@ -18,6 +18,10 @@ from .api_key_item import APIKeyItem
 from .cluster_summary import ClusterSummary
 from .create_api_key_request import CreateAPIKeyRequest
 from .create_api_key_result import CreateAPIKeyResult
+from .create_sandbox_env_request import CreateSandboxEnvRequest
+from .create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
+from .create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
+from .create_sandbox_env_request_mode import CreateSandboxEnvRequestMode
 from .create_sandbox_pool_request import CreateSandboxPoolRequest
 from .create_sandbox_pool_request_annotations import CreateSandboxPoolRequestAnnotations
 from .create_sandbox_pool_request_labels import CreateSandboxPoolRequestLabels
@@ -27,17 +31,22 @@ from .create_sandbox_request_container_images import CreateSandboxRequestContain
 from .create_sandbox_request_labels import CreateSandboxRequestLabels
 from .create_sandbox_request_metadata import CreateSandboxRequestMetadata
 from .delete_api_key_result import DeleteAPIKeyResult
+from .delete_sandbox_env_result import DeleteSandboxEnvResult
 from .delete_sandbox_pool_result import DeleteSandboxPoolResult
 from .delete_sandbox_result import DeleteSandboxResult
 from .delete_sandbox_template_result import DeleteSandboxTemplateResult
 from .env_autoscaling_group import EnvAutoscalingGroup
 from .env_autoscaling_spec import EnvAutoscalingSpec
 from .env_cluster_member import EnvClusterMember
+from .env_cluster_member_annotations import EnvClusterMemberAnnotations
+from .env_cluster_member_labels import EnvClusterMemberLabels
 from .env_cluster_spec import EnvClusterSpec
 from .env_cluster_status import EnvClusterStatus
 from .env_condition import EnvCondition
 from .env_observed_member import EnvObservedMember
 from .env_observed_member_state import EnvObservedMemberState
+from .env_overrides import EnvOverrides
+from .env_overrides_pod_creation_image_policy import EnvOverridesPodCreationImagePolicy
 from .env_scaling_group_status import EnvScalingGroupStatus
 from .error_response import ErrorResponse
 from .exec_command_request import ExecCommandRequest
@@ -63,6 +72,9 @@ from .quota_reserved import QuotaReserved
 from .quota_resources import QuotaResources
 from .quota_used import QuotaUsed
 from .registry_credential import RegistryCredential
+from .resource_requirements import ResourceRequirements
+from .resource_requirements_limits import ResourceRequirementsLimits
+from .resource_requirements_requests import ResourceRequirementsRequests
 from .runtime import Runtime
 from .runtime_readiness_probe import RuntimeReadinessProbe
 from .runtime_readiness_probe_http_get import RuntimeReadinessProbeHttpGet
@@ -108,7 +120,6 @@ from .sandbox_template_status import SandboxTemplateStatus
 from .sandbox_template_summary import SandboxTemplateSummary
 from .self_create_api_key_request import SelfCreateAPIKeyRequest
 from .set_sandbox_timeout_request import SetSandboxTimeoutRequest
-from .sync_template_preview_result import SyncTemplatePreviewResult
 from .teams_result import TeamsResult
 from .update_sandbox_env_request import UpdateSandboxEnvRequest
 from .update_sandbox_pool_request import UpdateSandboxPoolRequest
@@ -128,6 +139,10 @@ __all__ = (
     "ClusterSummary",
     "CreateAPIKeyRequest",
     "CreateAPIKeyResult",
+    "CreateSandboxEnvRequest",
+    "CreateSandboxEnvRequestAnnotations",
+    "CreateSandboxEnvRequestLabels",
+    "CreateSandboxEnvRequestMode",
     "CreateSandboxPoolRequest",
     "CreateSandboxPoolRequestAnnotations",
     "CreateSandboxPoolRequestLabels",
@@ -137,17 +152,22 @@ __all__ = (
     "CreateSandboxRequestLabels",
     "CreateSandboxRequestMetadata",
     "DeleteAPIKeyResult",
+    "DeleteSandboxEnvResult",
     "DeleteSandboxPoolResult",
     "DeleteSandboxResult",
     "DeleteSandboxTemplateResult",
     "EnvAutoscalingGroup",
     "EnvAutoscalingSpec",
     "EnvClusterMember",
+    "EnvClusterMemberAnnotations",
+    "EnvClusterMemberLabels",
     "EnvClusterSpec",
     "EnvClusterStatus",
     "EnvCondition",
     "EnvObservedMember",
     "EnvObservedMemberState",
+    "EnvOverrides",
+    "EnvOverridesPodCreationImagePolicy",
     "EnvScalingGroupStatus",
     "ErrorResponse",
     "ExecCommandRequest",
@@ -173,6 +193,9 @@ __all__ = (
     "QuotaResources",
     "QuotaUsed",
     "RegistryCredential",
+    "ResourceRequirements",
+    "ResourceRequirementsLimits",
+    "ResourceRequirementsRequests",
     "Runtime",
     "RuntimeReadinessProbe",
     "RuntimeReadinessProbeHttpGet",
@@ -218,7 +241,6 @@ __all__ = (
     "SandboxTemplateSummary",
     "SelfCreateAPIKeyRequest",
     "SetSandboxTimeoutRequest",
-    "SyncTemplatePreviewResult",
     "TeamsResult",
     "UpdateSandboxEnvRequest",
     "UpdateSandboxPoolRequest",

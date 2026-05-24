@@ -16,45 +16,20 @@ package service
 
 import (
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
 
-// overridesFromGen projects the caller-supplied gen.PoolTemplateOverrides into the
-// internal annotation-storage shape. Returns nil when the gen value has no effect
-// (no image, no resource multiplier > 1).
-func overridesFromGen(g *gen.PoolTemplateOverrides) *PoolTemplateOverrides {
+// renderOptionsFromGen projects the caller-supplied gen.PoolTemplateOverrides
+// (wire shape used by the legacy Pool create API) into sandboxrender.Options.
+// Image-only — per-Pool resource sizing flows through
+// EnvClusterMember.InlineResources now.
+func renderOptionsFromGen(g *gen.PoolTemplateOverrides) sandboxrender.Options {
 	if g == nil {
-		return nil
+		return sandboxrender.Options{}
 	}
-	out := &PoolTemplateOverrides{}
+	out := sandboxrender.Options{}
 	if g.Image != nil {
 		out.Image = *g.Image
 	}
-	if g.ResourceMultiplier != nil {
-		out.ResourceMultiplier = *g.ResourceMultiplier
-	}
-	if out.Image == "" && out.ResourceMultiplier <= 1 {
-		return nil
-	}
 	return out
-}
-
-// PoolTemplateOverrides holds per-pool overrides applied on top of the referenced template.
-// Applied AFTER copying EmbeddedSandboxTemplate from the source template. The effective
-// computed values are stored in the pool spec, while the override intent is persisted in
-// the pool's agentbox.navix.sh/overrides annotation so SyncTemplate can re-apply it against
-// newer template versions.
-//
-// This is an internal annotation-storage shape, not a wire type. The native API exposes
-// gen.PoolTemplateOverrides (which carries only Image and ResourceMultiplier); the extra
-// ImagePullSecretName field tracked here is server-derived and never round-trips through
-// the API.
-type PoolTemplateOverrides struct {
-	// Image overrides containers[0].Image; empty = no-op.
-	Image string `json:"image,omitempty"`
-	// ResourceMultiplier uniformly scales all container CPU and memory requests+limits,
-	// and all reservation.replicaQuota values. Must be >= 1; 1 = no change.
-	ResourceMultiplier int32 `json:"resourceMultiplier,omitempty"`
-	// ImagePullSecretName is the deterministic Secret name injected into
-	// spec.template.spec.imagePullSecrets; empty = no-op.
-	ImagePullSecretName string `json:"imagePullSecretName,omitempty"`
 }

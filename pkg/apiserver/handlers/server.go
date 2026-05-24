@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -240,12 +242,10 @@ func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (
 		input.Annotations = *req.Annotations
 	}
 	if req.Overrides != nil {
-		// Only attach if at least one override is non-trivial.
-		// resourceMultiplier==1 and image=="" are no-ops; skip them so the service
-		// never sees an Overrides pointer for purely default values.
-		hasImage := req.Overrides.Image != nil && *req.Overrides.Image != ""
-		hasMultiplier := req.Overrides.ResourceMultiplier != nil && *req.Overrides.ResourceMultiplier > 1
-		if hasImage || hasMultiplier {
+		// Image-only after the ResourceMultiplier removal — per-Pool
+		// resource sizing flows through EnvClusterMember.InlineResources
+		// on the Env CRD, not through the legacy pool create payload.
+		if req.Overrides.Image != nil && *req.Overrides.Image != "" {
 			input.Overrides = req.Overrides
 		}
 	}
@@ -705,21 +705,101 @@ func (s *Server) GetSandboxEnv(ctx context.Context, req gen.GetSandboxEnvRequest
 	return gen.GetSandboxEnv200JSONResponse{Env: *result}, nil
 }
 
+func (s *Server) CreateSandboxEnv(ctx context.Context, req gen.CreateSandboxEnvRequestObject) (gen.CreateSandboxEnvResponseObject, error) {
+	if req.Body == nil {
+		return gen.CreateSandboxEnv400JSONResponse{Error: "request body is required"}, nil
+	}
+	if req.Body.Name == "" {
+		return gen.CreateSandboxEnv400JSONResponse{Error: "name is required"}, nil
+	}
+	if req.Body.TemplateRef.Name == "" {
+		return gen.CreateSandboxEnv400JSONResponse{Error: "templateRef.name is required"}, nil
+	}
+	auth := authFrom(ctx)
+
+	input := service.CreateSandboxEnvInput{
+		Name:      req.Body.Name,
+		Namespace: auth.Namespace,
+		Team:      auth.Team,
+		User:      auth.User,
+		TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{
+			Name: req.Body.TemplateRef.Name,
+		},
+	}
+	if req.Body.TemplateRef.Version != nil {
+		input.TemplateRef.Version = *req.Body.TemplateRef.Version
+	}
+	if req.Body.Mode != nil {
+		input.Mode = agentsv1alpha1.SandboxEnvMode(*req.Body.Mode)
+	}
+	if req.Body.Members != nil {
+		members, err := membersFromGen(*req.Body.Members)
+		if err != nil {
+			return gen.CreateSandboxEnv400JSONResponse{Error: err.Error()}, nil
+		}
+		input.Members = members
+		input.LocalClusterID = s.forwarder.LocalClusterID()
+	}
+	if req.Body.Overrides != nil {
+		ov, err := envOverridesFromGen(req.Body.Overrides)
+		if err != nil {
+			return gen.CreateSandboxEnv400JSONResponse{Error: err.Error()}, nil
+		}
+		input.Overrides = ov
+		input.ImagePullSecret = req.Body.Overrides.ImagePullSecret
+	}
+	if req.Body.Labels != nil {
+		input.Labels = *req.Body.Labels
+	}
+	if req.Body.Annotations != nil {
+		input.Annotations = *req.Body.Annotations
+	}
+
+	result, appErr := s.env.Create(ctx, input)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeBadRequest:
+			return gen.CreateSandboxEnv400JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeConflict:
+			return gen.CreateSandboxEnv409JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.CreateSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.CreateSandboxEnv201JSONResponse{Env: *result}, nil
+}
+
 func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvRequestObject) (gen.UpdateSandboxEnvResponseObject, error) {
 	if req.Body == nil {
 		return gen.UpdateSandboxEnv400JSONResponse{Error: "request body is required"}, nil
 	}
-	if req.Body.Autoscaling == nil {
-		// MVP only supports updating autoscaling. Reject empty bodies so the
-		// caller doesn't get a silent no-op.
-		return gen.UpdateSandboxEnv400JSONResponse{Error: "at least one editable field (autoscaling) must be provided"}, nil
-	}
 	auth := authFrom(ctx)
-	result, appErr := s.env.UpdateAutoscaling(ctx, service.UpdateEnvAutoscalingInput{
+	input := service.UpdateSandboxEnvInput{
 		Name:        req.Name,
 		Namespace:   auth.Namespace,
 		Autoscaling: req.Body.Autoscaling,
-	})
+	}
+	if req.Body.Members != nil {
+		members, err := membersFromGen(*req.Body.Members)
+		if err != nil {
+			return gen.UpdateSandboxEnv400JSONResponse{Error: err.Error()}, nil
+		}
+		input.Members = &members
+		input.LocalClusterID = s.forwarder.LocalClusterID()
+	}
+	if req.Body.Overrides != nil {
+		ov, err := envOverridesFromGen(req.Body.Overrides)
+		if err != nil {
+			return gen.UpdateSandboxEnv400JSONResponse{Error: err.Error()}, nil
+		}
+		input.Overrides = ov
+		input.ImagePullSecret = req.Body.Overrides.ImagePullSecret
+	}
+	if input.Autoscaling == nil && input.Members == nil && input.Overrides == nil && input.ImagePullSecret == nil {
+		return gen.UpdateSandboxEnv400JSONResponse{Error: "at least one editable field must be provided"}, nil
+	}
+
+	result, appErr := s.env.Update(ctx, input)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeBadRequest:
@@ -733,43 +813,159 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 	return gen.UpdateSandboxEnv200JSONResponse{Env: *result}, nil
 }
 
-// ---------------------------------------------------------------------------
-// SandboxPool sync template (continued)
-// ---------------------------------------------------------------------------
-
-func (s *Server) SyncSandboxPoolTemplate(ctx context.Context, req gen.SyncSandboxPoolTemplateRequestObject) (gen.SyncSandboxPoolTemplateResponseObject, error) {
+func (s *Server) DeleteSandboxEnv(ctx context.Context, req gen.DeleteSandboxEnvRequestObject) (gen.DeleteSandboxEnvResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.pool.SyncTemplate(ctx, auth.Namespace, req.Name)
+	result, appErr := s.env.Delete(ctx, auth.Namespace, req.Name)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
-			return gen.SyncSandboxPoolTemplate404JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeBadRequest:
-			return gen.SyncSandboxPoolTemplate400JSONResponse(errResp(ctx, appErr)), nil
+			return gen.DeleteSandboxEnv404JSONResponse(errResp(ctx, appErr)), nil
 		default:
-			return gen.SyncSandboxPoolTemplate500JSONResponse(errResp(ctx, appErr)), nil
+			return gen.DeleteSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.SyncSandboxPoolTemplate200JSONResponse{Template: *result}, nil
+	return gen.DeleteSandboxEnv202JSONResponse(*result), nil
 }
 
-func (s *Server) PreviewSyncSandboxPoolTemplate(ctx context.Context, req gen.PreviewSyncSandboxPoolTemplateRequestObject) (gen.PreviewSyncSandboxPoolTemplateResponseObject, error) {
+// membersFromGen converts wire EnvClusterMember objects (pointer fields, json
+// marshallable) into the CRD shape consumed by the service layer. Skips
+// nameless entries — the CRD spec requires a non-empty member name. The
+// second return is reserved for future validation errors (e.g. cross-field
+// member constraints); today it is always nil.
+func membersFromGen(in []gen.EnvClusterMember) ([]agentsv1alpha1.EnvClusterMember, error) { //nolint:unparam
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]agentsv1alpha1.EnvClusterMember, 0, len(in))
+	for _, m := range in {
+		if m.Name == "" {
+			continue
+		}
+		cm := agentsv1alpha1.EnvClusterMember{Name: m.Name}
+		if m.InstanceType != nil {
+			cm.InstanceType = *m.InstanceType
+		}
+		if m.Multiplier != nil {
+			cm.Multiplier = *m.Multiplier
+		}
+		if m.ScalingGroup != nil {
+			cm.ScalingGroup = *m.ScalingGroup
+		}
+		if m.MaxReplicas != nil {
+			v := *m.MaxReplicas
+			cm.MaxReplicas = &v
+		}
+		if m.Priority != nil {
+			cm.Priority = *m.Priority
+		}
+		if m.ScaleUpPriority != nil {
+			cm.ScaleUpPriority = *m.ScaleUpPriority
+		}
+		if m.ScaleDownPriority != nil {
+			cm.ScaleDownPriority = *m.ScaleDownPriority
+		}
+		if m.Replicas != nil {
+			cm.Replicas = *m.Replicas
+		}
+		if m.InlineResources != nil {
+			cm.InlineResources = inlineResourcesFromGen(m.InlineResources)
+		}
+		if m.Labels != nil {
+			cm.Labels = *m.Labels
+		}
+		if m.Annotations != nil {
+			cm.Annotations = *m.Annotations
+		}
+		out = append(out, cm)
+	}
+	return out, nil
+}
+
+// envOverridesFromGen projects the wire Env-level Overrides into the CRD
+// shape. Duration strings are parsed eagerly so a malformed value surfaces
+// at the boundary.
+func envOverridesFromGen(o *gen.EnvOverrides) (*agentsv1alpha1.EnvOverridesSpec, error) {
+	if o == nil {
+		return nil, nil
+	}
+	out := &agentsv1alpha1.EnvOverridesSpec{}
+	if o.Image != nil {
+		out.Image = *o.Image
+	}
+	if o.PodCreationImagePolicy != nil {
+		out.PodCreationImagePolicy = agentsv1alpha1.PodCreationImagePolicy(*o.PodCreationImagePolicy)
+	}
+	if o.DefaultStartupTimeout != nil {
+		d, err := time.ParseDuration(*o.DefaultStartupTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("overrides.defaultStartupTimeout: %v", err)
+		}
+		out.DefaultStartupTimeout = &metav1.Duration{Duration: d}
+	}
+	if o.DefaultIdleTimeout != nil {
+		d, err := time.ParseDuration(*o.DefaultIdleTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("overrides.defaultIdleTimeout: %v", err)
+		}
+		out.DefaultIdleTimeout = &metav1.Duration{Duration: d}
+	}
+	return out, nil
+}
+
+// inlineResourcesFromGen projects the wire ResourceRequirements (Quantity
+// strings keyed by resource name) into the corev1 shape consumed by the
+// renderer. Invalid quantities are dropped silently — the CRD validation
+// catches them when the patch reaches the apiserver.
+func inlineResourcesFromGen(in *gen.ResourceRequirements) *corev1.ResourceRequirements {
+	if in == nil {
+		return nil
+	}
+	out := &corev1.ResourceRequirements{}
+	if in.Requests != nil {
+		out.Requests = quantityMapFromGen(*in.Requests)
+	}
+	if in.Limits != nil {
+		out.Limits = quantityMapFromGen(*in.Limits)
+	}
+	if len(out.Requests) == 0 && len(out.Limits) == 0 {
+		return nil
+	}
+	return out
+}
+
+func quantityMapFromGen(m map[string]string) corev1.ResourceList {
+	if len(m) == 0 {
+		return nil
+	}
+	out := corev1.ResourceList{}
+	for k, v := range m {
+		q, err := resource.ParseQuantity(v)
+		if err != nil {
+			continue
+		}
+		out[corev1.ResourceName(k)] = q
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// SandboxEnv sync template
+// ---------------------------------------------------------------------------
+
+func (s *Server) SyncSandboxEnvTemplate(ctx context.Context, req gen.SyncSandboxEnvTemplateRequestObject) (gen.SyncSandboxEnvTemplateResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.pool.SyncTemplatePreview(ctx, auth.Namespace, req.Name)
+	result, appErr := s.env.SyncTemplate(ctx, auth.Namespace, req.Name)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
-			return gen.PreviewSyncSandboxPoolTemplate404JSONResponse(errResp(ctx, appErr)), nil
+			return gen.SyncSandboxEnvTemplate404JSONResponse(errResp(ctx, appErr)), nil
 		case domain.ErrCodeBadRequest:
-			return gen.PreviewSyncSandboxPoolTemplate400JSONResponse(errResp(ctx, appErr)), nil
+			return gen.SyncSandboxEnvTemplate400JSONResponse(errResp(ctx, appErr)), nil
 		default:
-			return gen.PreviewSyncSandboxPoolTemplate500JSONResponse(errResp(ctx, appErr)), nil
+			return gen.SyncSandboxEnvTemplate500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.PreviewSyncSandboxPoolTemplate200JSONResponse{
-		SpecYaml: result.SpecYaml,
-		Version:  result.Version,
-	}, nil
+	return gen.SyncSandboxEnvTemplate200JSONResponse{Env: *result}, nil
 }
 
 // ---------------------------------------------------------------------------

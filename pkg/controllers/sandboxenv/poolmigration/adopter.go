@@ -300,13 +300,13 @@ func hasOwningEnvReference(ownerRefs []metav1.OwnerReference, env *agentsv1alpha
 	return false
 }
 
-// ownerReferenceForEnv builds a non-controlling, non-block-owner-deletion
-// reference. Phase 1 deliberately does NOT use controlling references — Env
-// deletion must not cascade to Pools (Dashboard provides an explicit opt-in
-// later).
+// ownerReferenceForEnv builds a controlling OwnerReference so deleting the
+// Env cascades to its member Pools via Kubernetes garbage collection. Phase 1
+// adopter and Phase A1 Env Reconciler both stamp the same shape so the
+// cluster converges regardless of which path created the Pool.
 func ownerReferenceForEnv(env *agentsv1alpha1.SandboxEnv) metav1.OwnerReference {
-	isController := false
-	blockOwnerDeletion := false
+	isController := true
+	blockOwnerDeletion := true
 	return metav1.OwnerReference{
 		APIVersion:         agentsv1alpha1.GroupVersion.String(),
 		Kind:               agentsv1alpha1.SandboxEnvOwnerKind,

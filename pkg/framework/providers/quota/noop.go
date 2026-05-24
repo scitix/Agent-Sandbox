@@ -16,6 +16,7 @@ package quota
 
 import (
 	"context"
+	"strings"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
@@ -44,4 +45,76 @@ func (Noop) Enabled() bool { return false }
 
 func (Noop) ListForUser(_ context.Context, _, _ string) ([]gen.Quota, *domain.AppError) {
 	return nil, nil
+}
+
+func (Noop) DeriveShortName(quotaURL string) string {
+	return DeriveDefaultShortName(quotaURL)
+}
+
+// DeriveDefaultShortName is the open-source short-name extractor.
+//
+// The convention for QuotaURLs in this project is `{tenant/lab}.{pool}.{type}`
+// (e.g. "zxli.ai-lab.math.exclusive", "upgrader.autoupg.test.ondemand").
+// The most useful identifier for naming a member SandboxPool is the trailing
+// segment — it identifies the resource class (ondemand / spot / exclusive /
+// preempt etc.) that the Pool draws from.
+//
+// Algorithm:
+//  1. Strip any URL scheme + host prefix (we accept either "scheme://host/x.y.z"
+//     or bare "x.y.z" forms).
+//  2. Split the remainder on '.', return the last segment.
+//  3. Sanitise to RFC 1123 label characters: lower-case, keep [a-z0-9-],
+//     collapse runs of '-' and trim leading/trailing '-'.
+//  4. Empty result → return "" so the caller falls back to a hash-based suffix.
+//
+// Closed-source providers (e.g. Scitix) can override this with a richer
+// catalog lookup; they typically delegate here for unknown URLs.
+func DeriveDefaultShortName(quotaURL string) string {
+	if quotaURL == "" {
+		return ""
+	}
+	raw := quotaURL
+	// Strip scheme + host (best effort — empty when no "://" present).
+	if i := strings.Index(raw, "://"); i >= 0 {
+		raw = raw[i+3:]
+		if slash := strings.Index(raw, "/"); slash >= 0 {
+			raw = raw[slash+1:]
+		}
+	}
+	// Drop query / fragment, then return the trailing dot-segment.
+	for _, sep := range []string{"?", "#"} {
+		if i := strings.Index(raw, sep); i >= 0 {
+			raw = raw[:i]
+		}
+	}
+	last := raw
+	if i := strings.LastIndex(raw, "."); i >= 0 {
+		last = raw[i+1:]
+	}
+	return sanitiseLabel(last)
+}
+
+// sanitiseLabel lower-cases and reduces s to RFC 1123 label characters.
+// Non-alphanumeric runs become a single '-'; leading/trailing '-' is
+// trimmed. An empty / unrecoverable input returns "".
+func sanitiseLabel(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	dash := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			dash = false
+		case r == '-' || r == '_' || r == '.' || r == ' ':
+			if !dash && b.Len() > 0 {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+	}
+	out := b.String()
+	out = strings.TrimRight(out, "-")
+	return out
 }

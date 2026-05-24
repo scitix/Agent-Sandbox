@@ -77,6 +77,42 @@ type SandboxEnvSpec struct {
 	// Autoscaling.Enabled=false, member Pool replicas are managed manually.
 	// +optional
 	Autoscaling *EnvAutoscalingSpec `json:"autoscaling,omitempty"`
+
+	// Overrides carries the Env-wide overrides that uniformly replace
+	// fields of the referenced SandboxTemplate for every member Pool.
+	// Per-Pool variations (resource multiplier, replicas, plugin metadata
+	// like quota URLs) live on each EnvClusterMember instead.
+	// +optional
+	Overrides *EnvOverridesSpec `json:"overrides,omitempty"`
+}
+
+// EnvOverridesSpec captures the SandboxTemplate fields this Env replaces
+// uniformly across every member Pool. The Env represents a single class of
+// sandbox runtime (e.g. an E2B-compatible sandbox or a SWE-ReX sandbox), so
+// image / startup / idle / image-creation policy are expected to be shared;
+// only per-Pool resource sizing and plugin metadata vary on the Member.
+type EnvOverridesSpec struct {
+	// Image overrides the main container (containers[0]) image of the
+	// rendered Template. Applied before any per-Member overrides.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// PodCreationImagePolicy overrides the Template's
+	// spec.podCreationImagePolicy. Applied to every member Pool.
+	// +optional
+	// +kubebuilder:validation:Enum=PoolDefaultImage;IdleImage
+	PodCreationImagePolicy PodCreationImagePolicy `json:"podCreationImagePolicy,omitempty"`
+
+	// DefaultStartupTimeout overrides the Template's
+	// spec.defaultStartupTimeout. Applied to Sandbox.Create requests that
+	// don't carry an explicit startupTimeout.
+	// +optional
+	DefaultStartupTimeout *metav1.Duration `json:"defaultStartupTimeout,omitempty"`
+
+	// DefaultIdleTimeout overrides the Template's spec.defaultIdleTimeout.
+	// Applied to Sandboxes that don't carry an explicit idleTimeout.
+	// +optional
+	DefaultIdleTimeout *metav1.Duration `json:"defaultIdleTimeout,omitempty"`
 }
 
 // SandboxEnvTemplateRef points at a cluster-scoped SandboxTemplate.
@@ -130,6 +166,25 @@ type EnvClusterMember struct {
 	// +required
 	Name string `json:"name"`
 
+	// Labels are stamped verbatim onto the member SandboxPool's metadata.labels
+	// at create time. The Env Reconciler also propagates updates so a label
+	// added/removed here propagates onto the live Pool.
+	//
+	// This is the canonical extension point for plugin-driven metadata that
+	// the Env itself doesn't need to interpret. For example, the Scitix quota
+	// reservation plugin consumes the "quota.scitix.ai/url" label on a Pool
+	// to look up the backing ScitixQuota CR — putting that label here keeps
+	// the Env CRD plugin-agnostic.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// Annotations are stamped verbatim onto the member SandboxPool's
+	// metadata.annotations at create time, with the same propagation
+	// semantics as Labels. Use for non-identifying plugin payloads (e.g.
+	// reservation hints, audit metadata).
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+
 	// InstanceType references an entry in the cluster-wide InstanceType catalog.
 	// Mutually informative with InlineResources: if both are set, InstanceType
 	// wins and InlineResources serves as a transitional record for migration.
@@ -178,6 +233,16 @@ type EnvClusterMember struct {
 	// Reserved for Phase 2; Phase 1 ignores it.
 	// +optional
 	ScaleDownPriority int32 `json:"scaleDownPriority,omitempty"`
+
+	// Replicas is the initial spec.replicas value applied to this member
+	// Pool when the Env Reconciler creates it. Different members can have
+	// different replica counts (e.g. small T4 pool + large A100 pool in
+	// the same E2B Env). Autoscaling owns the replica value afterwards —
+	// the Reconciler does NOT force this baseline back on subsequent
+	// reconciles.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	Replicas int32 `json:"replicas,omitempty"`
 }
 
 // EnvAutoscalingSpec configures the Env-level autoscaler.

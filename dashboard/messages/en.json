@@ -854,6 +854,7 @@
   "datasets.tagBenchmark": "Benchmark",
 
   "envs.newEnv": "New Env",
+  "envs.searchAll": "Search envs…",
   "envs.action.edit": "Edit",
   "envs.action.delete": "Delete",
   "envs.delete.title": "Delete Env",

@@ -23,7 +23,12 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
+from typing import cast
 
+if TYPE_CHECKING:
+  from ..models.env_cluster_member_annotations import EnvClusterMemberAnnotations
+  from ..models.env_cluster_member_labels import EnvClusterMemberLabels
+  from ..models.resource_requirements import ResourceRequirements
 
 
 
@@ -49,6 +54,14 @@ class EnvClusterMember:
             scale_up_priority (int | Unset): Scale-up order within the scaling group — lower scaled first. Same-value
                 tiebreak by name.
             scale_down_priority (int | Unset): Scale-down order within the scaling group — lower shrunk first.
+            labels (EnvClusterMemberLabels | Unset): Labels stamped onto this member's SandboxPool. Use for plugin-driven
+                metadata (e.g. quota.scitix.ai/url) that the Env itself doesn't need to interpret.
+            annotations (EnvClusterMemberAnnotations | Unset): Annotations stamped onto this member's SandboxPool. Same
+                propagation semantics as labels.
+            replicas (int | Unset): Initial replica count for this member Pool. Autoscaling owns subsequent changes — the
+                Reconciler does not force this value back on later reconciles.
+            inline_resources (ResourceRequirements | Unset): Subset of Kubernetes corev1.ResourceRequirements used for per-
+                Pool resource sizing on EnvClusterMember.inlineResources.
      """
 
     name: str
@@ -59,6 +72,10 @@ class EnvClusterMember:
     priority: int | Unset = UNSET
     scale_up_priority: int | Unset = UNSET
     scale_down_priority: int | Unset = UNSET
+    labels: EnvClusterMemberLabels | Unset = UNSET
+    annotations: EnvClusterMemberAnnotations | Unset = UNSET
+    replicas: int | Unset = UNSET
+    inline_resources: ResourceRequirements | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -66,6 +83,9 @@ class EnvClusterMember:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.env_cluster_member_annotations import EnvClusterMemberAnnotations
+        from ..models.env_cluster_member_labels import EnvClusterMemberLabels
+        from ..models.resource_requirements import ResourceRequirements
         name = self.name
 
         instance_type = self.instance_type
@@ -81,6 +101,20 @@ class EnvClusterMember:
         scale_up_priority = self.scale_up_priority
 
         scale_down_priority = self.scale_down_priority
+
+        labels: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.labels, Unset):
+            labels = self.labels.to_dict()
+
+        annotations: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.annotations, Unset):
+            annotations = self.annotations.to_dict()
+
+        replicas = self.replicas
+
+        inline_resources: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.inline_resources, Unset):
+            inline_resources = self.inline_resources.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -102,6 +136,14 @@ class EnvClusterMember:
             field_dict["scaleUpPriority"] = scale_up_priority
         if scale_down_priority is not UNSET:
             field_dict["scaleDownPriority"] = scale_down_priority
+        if labels is not UNSET:
+            field_dict["labels"] = labels
+        if annotations is not UNSET:
+            field_dict["annotations"] = annotations
+        if replicas is not UNSET:
+            field_dict["replicas"] = replicas
+        if inline_resources is not UNSET:
+            field_dict["inlineResources"] = inline_resources
 
         return field_dict
 
@@ -109,6 +151,9 @@ class EnvClusterMember:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.env_cluster_member_annotations import EnvClusterMemberAnnotations
+        from ..models.env_cluster_member_labels import EnvClusterMemberLabels
+        from ..models.resource_requirements import ResourceRequirements
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -126,6 +171,38 @@ class EnvClusterMember:
 
         scale_down_priority = d.pop("scaleDownPriority", UNSET)
 
+        _labels = d.pop("labels", UNSET)
+        labels: EnvClusterMemberLabels | Unset
+        if isinstance(_labels,  Unset):
+            labels = UNSET
+        else:
+            labels = EnvClusterMemberLabels.from_dict(_labels)
+
+
+
+
+        _annotations = d.pop("annotations", UNSET)
+        annotations: EnvClusterMemberAnnotations | Unset
+        if isinstance(_annotations,  Unset):
+            annotations = UNSET
+        else:
+            annotations = EnvClusterMemberAnnotations.from_dict(_annotations)
+
+
+
+
+        replicas = d.pop("replicas", UNSET)
+
+        _inline_resources = d.pop("inlineResources", UNSET)
+        inline_resources: ResourceRequirements | Unset
+        if isinstance(_inline_resources,  Unset):
+            inline_resources = UNSET
+        else:
+            inline_resources = ResourceRequirements.from_dict(_inline_resources)
+
+
+
+
         env_cluster_member = cls(
             name=name,
             instance_type=instance_type,
@@ -135,6 +212,10 @@ class EnvClusterMember:
             priority=priority,
             scale_up_priority=scale_up_priority,
             scale_down_priority=scale_down_priority,
+            labels=labels,
+            annotations=annotations,
+            replicas=replicas,
+            inline_resources=inline_resources,
         )
 
 
