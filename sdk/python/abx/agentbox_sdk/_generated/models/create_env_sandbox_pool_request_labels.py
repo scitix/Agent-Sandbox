@@ -28,13 +28,15 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="CreateSandboxPoolRequestAnnotations")
+T = TypeVar("T", bound="CreateEnvSandboxPoolRequestLabels")
 
 
 
 @_attrs_define
-class CreateSandboxPoolRequestAnnotations:
-    """ 
+class CreateEnvSandboxPoolRequestLabels:
+    """ Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by
+    the server to derive the pool-name suffix).
+
      """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
@@ -55,12 +57,12 @@ class CreateSandboxPoolRequestAnnotations:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        create_sandbox_pool_request_annotations = cls(
+        create_env_sandbox_pool_request_labels = cls(
         )
 
 
-        create_sandbox_pool_request_annotations.additional_properties = d
-        return create_sandbox_pool_request_annotations
+        create_env_sandbox_pool_request_labels.additional_properties = d
+        return create_env_sandbox_pool_request_labels
 
     @property
     def additional_keys(self) -> list[str]:

@@ -768,45 +768,70 @@ components:
         template:
           $ref: "#/components/schemas/SandboxPool"
 
-    CreateSandboxPoolRequest:
+    CreateEnvSandboxPoolRequest:
       type: object
-      required: [name]
+      description: |
+        Add a member SandboxPool to an Env. The server derives:
+          - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+          - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
+
+        where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+        `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+        Members in the same `scalingGroup` share an autoscaling policy.
+
+        Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
+        be supplied. The two paths are mutually exclusive — the server picks
+        `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
       properties:
-        name:
+        instanceType:
           type: string
-          minLength: 1
-          maxLength: 63
-          pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
-          description: "RFC 1123 DNS label (letter-start): lowercase letters, digits, hyphens; start with a letter, end with alphanumeric"
-        templateName:
-          type: string
+          description: "InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied."
+        multiplier:
+          type: integer
+          format: int32
+          minimum: 1
+          description: "Multiplier applied to the InstanceType base resources. Defaults to 1."
+        inlineResources:
+          $ref: "#/components/schemas/ResourceRequirements"
+          description: "Explicit per-Pool resource requests/limits. Used when instanceType is not supplied. Sets both requests and limits."
         replicas:
           type: integer
           format: int32
+          minimum: 0
+          description: "Initial replica count. Autoscaling, once enabled on this scalingGroup, owns subsequent changes."
+        maxReplicas:
+          type: integer
+          format: int32
+          description: "Upper bound on this pool's replicas, enforced when the Env autoscaler distributes scale-up delta."
         labels:
           type: object
           additionalProperties:
             type: string
+          description: "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix)."
         annotations:
           type: object
           additionalProperties:
             type: string
-        spec:
-          $ref: "#/components/schemas/SandboxPoolSpec"
-        quotaUrl:
-          type: string
-          deprecated: true
-          description: 'Deprecated: pass quota URL via labels["quota.scitix.ai/url"] instead.'
-        overrides:
-          $ref: "#/components/schemas/PoolTemplateOverrides"
-        imagePullSecret:
-          $ref: "#/components/schemas/ImagePullSecretInput"
-          description: |
-            Optional registry credentials to attach to this pool. When provided, the server creates a Kubernetes
-            `kubernetes.io/dockerconfigjson` Secret named `ips-{poolName}` in the pool's namespace with an
-            OwnerReference to the pool (auto-deleted when the pool is deleted), and wires its name into
-            `spec.template.spec.imagePullSecrets`. Credentials are stored server-side only and are not retrievable
-            via the API.
+          description: "Annotations stamped onto this member's SandboxPool."
+
+    UpdateEnvSandboxPoolRequest:
+      type: object
+      description: |
+        Update a member SandboxPool. Resource shape, instanceType, labels and
+        annotations are immutable post-create; this PUT only accepts replica
+        adjustments. When the scalingGroup has autoscaling enabled (via
+        env.spec.autoscaling.enabled + a matching group entry), only
+        `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+      properties:
+        replicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Initial / desired replica count. Rejected when this pool's scalingGroup has autoscaling enabled."
+        maxReplicas:
+          type: integer
+          format: int32
+          description: "Upper bound on this pool's replicas. Always accepted."
 
     ImagePullSecretInput:
       type: object
@@ -830,25 +855,6 @@ components:
         password:
           type: string
           format: password
-
-    UpdateSandboxPoolRequest:
-      type: object
-      properties:
-        replicas:
-          type: integer
-          format: int32
-        podCreationImagePolicy:
-          type: string
-          enum: [PoolDefaultImage, IdleImage]
-          description: "Update the pod creation image policy. Omit to leave unchanged."
-        overrides:
-          type: object
-          description: "Partial overrides to update. Only image can be updated after pool creation."
-          properties:
-            image:
-              type: string
-              description: "Override the main container (containers[0]) image"
-          additionalProperties: false
 
     DeleteSandboxPoolResult:
       type: object
@@ -1312,9 +1318,9 @@ components:
         name:
           type: string
           minLength: 1
-          maxLength: 63
+          maxLength: 24
           pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
-          description: "RFC 1123 DNS label."
+          description: "RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit."
         templateRef:
           $ref: "#/components/schemas/SandboxEnvTemplateRef"
         mode:
@@ -2565,267 +2571,6 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
-  # SandboxPools
-  # =========================================================
-  /sandboxpools:
-    post:
-      operationId: CreateSandboxPool
-      summary: Create a sandbox pool
-      tags: [pools]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateSandboxPoolRequest"
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxPoolEnvelope"
-              example:
-                template:
-                  name: "my-pool"
-                  namespace: "t-team1-user1"
-                  team: "team1"
-                  user: "user1"
-                  cpu: "2000m"
-                  memory: "4Gi"
-                  templateVersion: "v1"
-                  createdAt: "2026-04-21T10:00:00Z"
-        "400":
-          description: |
-            Bad Request. Common causes:
-
-            * Validation failure (missing `name`, invalid image override, etc.)
-            * Referenced `templateName` does not exist — in this case `detail` carries
-              `availableTemplates` so the client can pick one and retry.
-            * `spec.reservation` is set but the pool lacks a `quota.scitix.ai/url` label —
-              `detail.availableQuotaURLs` surfaces quotas visible to the caller.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              examples:
-                missingTemplate:
-                  summary: Template not found
-                  value:
-                    error: 'sandbox template "default-template" not found'
-                    detail:
-                      availableTemplates:
-                        - name: "gpu-runtime"
-                          description: "GPU-accelerated runtime with CUDA 12"
-                          syncSource: "global"
-                        - name: "nodejs20"
-                          description: "Node.js 20 baseline runtime"
-                      hint: "Template not found. Pick a name from availableTemplates, or omit templateName to define the pool inline."
-                missingQuotaURL:
-                  summary: Reservation requires quotaURL
-                  value:
-                    error: "template requires a quota URL (spec.reservation is set)"
-                    detail:
-                      availableQuotaURLs:
-                        - url: "alice.bob.carol.ted"
-                          queue: "ted"
-                          free: "cpu=32"
-                        - url: "alice.bob.carol.det"
-                          queue: "det"
-                          free: "cpu=0"
-                      hint: "spec.reservation is set but the pool is missing the quota.scitix.ai/url label. Pick one of availableQuotaURLs and set it as a label on the pool before retrying."
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: "invalid API key"
-        "409":
-          description: Conflict — a pool with this name already exists in the caller's namespace.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: 'pool "my-pool" already exists'
-        "429":
-          description: Too Many Requests — SI Scheduler rejected the reservation submission.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: "scale failed: QUOTA_EXCEEDED"
-                detail:
-                  errCode: "QUOTA_EXCEEDED"
-        "422":
-          description: |
-            Unprocessable Entity — caller has no API Key; `errorCode=API_KEY_REQUIRED` tells
-            the frontend to redirect to API-key creation rather than show a generic error.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: "API key required for this operation"
-                errorCode: "API_KEY_REQUIRED"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    get:
-      operationId: ListSandboxPools
-      summary: List sandbox pools
-      tags: [pools]
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListSandboxPoolsResult"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /sandboxpools/{name}:
-    get:
-      operationId: GetSandboxPool
-      summary: Get a sandbox pool
-      tags: [pools]
-      parameters:
-        - $ref: "#/components/parameters/PathPoolName"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxPoolEnvelope"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: |
-            Unprocessable Entity. Returned with errorCode `API_KEY_REQUIRED`
-            when the pool's `poolDocs` template references `${AGBX_API_KEY}` and the
-            current user has no API key with a recoverable plaintext token
-            (e.g. only legacy hash-only keys exist). The frontend should guide
-            the user to the API Keys page to create a new key.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    put:
-      operationId: UpdateSandboxPool
-      summary: Update a sandbox pool
-      tags: [pools]
-      parameters:
-        - $ref: "#/components/parameters/PathPoolName"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateSandboxPoolRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxPoolEnvelope"
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "429":
-          description: Too Many Requests – resource quota exceeded on scale-out
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    delete:
-      operationId: DeleteSandboxPool
-      summary: Delete a sandbox pool
-      tags: [pools]
-      parameters:
-        - $ref: "#/components/parameters/PathPoolName"
-      responses:
-        "202":
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteSandboxPoolResult"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  # =========================================================
   # SandboxEnvs
   # =========================================================
   /envs:
@@ -3059,6 +2804,232 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # =========================================================
+  # Env-scoped SandboxPools
+  # Every "Pool" is a member of a SandboxEnv. CRUD here mutates
+  # SandboxEnv.spec.clusters[].members[]; the Env Reconciler then
+  # materialises the underlying SandboxPool CR (OwnerRef → Env).
+  # =========================================================
+  /envs/{name}/sandboxpools:
+    post:
+      operationId: CreateEnvSandboxPool
+      summary: Add a member SandboxPool to an Env
+      tags: [pools]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEnvSandboxPoolRequest"
+      responses:
+        "202":
+          description: Accepted — the member entry was added to the Env spec; the SandboxPool CR is materialised asynchronously by the Env Reconciler. Response body returns the projected Pool (status fields may be unset until the next reconcile).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxPoolEnvelope"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Env not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Conflict — a member with this name already exists in the Env
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Server misconfigured (LOCAL_CLUSTER_ID not set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: ListEnvSandboxPools
+      summary: List member SandboxPools of an Env
+      tags: [pools]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSandboxPoolsResult"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Env not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /envs/{name}/sandboxpools/{poolName}:
+    parameters:
+      - in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: poolName
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: GetEnvSandboxPool
+      summary: Get a member SandboxPool
+      tags: [pools]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxPoolEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: UpdateEnvSandboxPool
+      summary: Update a member SandboxPool
+      tags: [pools]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEnvSandboxPoolRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxPoolEnvelope"
+        "400":
+          description: Bad Request — name in body does not match path, or invalid field combinations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Env or member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Server misconfigured (LOCAL_CLUSTER_ID not set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: DeleteEnvSandboxPool
+      summary: Remove a member SandboxPool from an Env
+      tags: [pools]
+      responses:
+        "202":
+          description: Accepted — the member entry was removed from the Env spec; the SandboxPool CR is cascade-deleted by the Env Reconciler.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSandboxPoolResult"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Env or member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Server misconfigured (LOCAL_CLUSTER_ID not set)
           content:
             application/json:
               schema:

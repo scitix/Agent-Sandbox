@@ -22,9 +22,9 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.create_env_sandbox_pool_request import CreateEnvSandboxPoolRequest
 from ...models.error_response import ErrorResponse
 from ...models.sandbox_pool_envelope import SandboxPoolEnvelope
-from ...models.update_sandbox_pool_request import UpdateSandboxPoolRequest
 from typing import cast
 
 
@@ -32,7 +32,7 @@ from typing import cast
 def _get_kwargs(
     name: str,
     *,
-    body: UpdateSandboxPoolRequest,
+    body: CreateEnvSandboxPoolRequest,
 
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -43,8 +43,8 @@ def _get_kwargs(
     
 
     _kwargs: dict[str, Any] = {
-        "method": "put",
-        "url": "/sandboxpools/{name}".format(name=quote(str(name), safe=""),),
+        "method": "post",
+        "url": "/envs/{name}/sandboxpools".format(name=quote(str(name), safe=""),),
     }
 
     _kwargs["json"] = body.to_dict()
@@ -58,12 +58,12 @@ def _get_kwargs(
 
 
 def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | SandboxPoolEnvelope | None:
-    if response.status_code == 200:
-        response_200 = SandboxPoolEnvelope.from_dict(response.json())
+    if response.status_code == 202:
+        response_202 = SandboxPoolEnvelope.from_dict(response.json())
 
 
 
-        return response_200
+        return response_202
 
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
@@ -86,12 +86,12 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_404
 
-    if response.status_code == 429:
-        response_429 = ErrorResponse.from_dict(response.json())
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
 
 
 
-        return response_429
+        return response_409
 
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
@@ -99,6 +99,13 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
         return response_500
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+
+
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -119,14 +126,25 @@ def sync_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxPoolRequest,
+    body: CreateEnvSandboxPoolRequest,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
-    """ Update a sandbox pool
+    """ Add a member SandboxPool to an Env
 
     Args:
-        name (str):  Example: my-pool.
-        body (UpdateSandboxPoolRequest):
+        name (str):
+        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
+            derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
+
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
+
+            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
+            be supplied. The two paths are mutually exclusive — the server picks
+            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,14 +171,25 @@ def sync(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxPoolRequest,
+    body: CreateEnvSandboxPoolRequest,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
-    """ Update a sandbox pool
+    """ Add a member SandboxPool to an Env
 
     Args:
-        name (str):  Example: my-pool.
-        body (UpdateSandboxPoolRequest):
+        name (str):
+        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
+            derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
+
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
+
+            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
+            be supplied. The two paths are mutually exclusive — the server picks
+            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,14 +211,25 @@ async def asyncio_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxPoolRequest,
+    body: CreateEnvSandboxPoolRequest,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
-    """ Update a sandbox pool
+    """ Add a member SandboxPool to an Env
 
     Args:
-        name (str):  Example: my-pool.
-        body (UpdateSandboxPoolRequest):
+        name (str):
+        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
+            derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
+
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
+
+            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
+            be supplied. The two paths are mutually exclusive — the server picks
+            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,14 +256,25 @@ async def asyncio(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxPoolRequest,
+    body: CreateEnvSandboxPoolRequest,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
-    """ Update a sandbox pool
+    """ Add a member SandboxPool to an Env
 
     Args:
-        name (str):  Example: my-pool.
-        body (UpdateSandboxPoolRequest):
+        name (str):
+        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
+            derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
+
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
+
+            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
+            be supplied. The two paths are mutually exclusive — the server picks
+            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

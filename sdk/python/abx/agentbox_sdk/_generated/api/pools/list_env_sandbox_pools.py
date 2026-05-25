@@ -22,8 +22,8 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
-from ...models.delete_sandbox_pool_result import DeleteSandboxPoolResult
 from ...models.error_response import ErrorResponse
+from ...models.list_sandbox_pools_result import ListSandboxPoolsResult
 from typing import cast
 
 
@@ -39,8 +39,8 @@ def _get_kwargs(
     
 
     _kwargs: dict[str, Any] = {
-        "method": "delete",
-        "url": "/sandboxpools/{name}".format(name=quote(str(name), safe=""),),
+        "method": "get",
+        "url": "/envs/{name}/sandboxpools".format(name=quote(str(name), safe=""),),
     }
 
 
@@ -48,13 +48,13 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> DeleteSandboxPoolResult | ErrorResponse | None:
-    if response.status_code == 202:
-        response_202 = DeleteSandboxPoolResult.from_dict(response.json())
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | ListSandboxPoolsResult | None:
+    if response.status_code == 200:
+        response_200 = ListSandboxPoolsResult.from_dict(response.json())
 
 
 
-        return response_202
+        return response_200
 
     if response.status_code == 401:
         response_401 = ErrorResponse.from_dict(response.json())
@@ -83,7 +83,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[DeleteSandboxPoolResult | ErrorResponse]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | ListSandboxPoolsResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,18 +97,18 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[DeleteSandboxPoolResult | ErrorResponse]:
-    """ Delete a sandbox pool
+) -> Response[ErrorResponse | ListSandboxPoolsResult]:
+    """ List member SandboxPools of an Env
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DeleteSandboxPoolResult | ErrorResponse]
+        Response[ErrorResponse | ListSandboxPoolsResult]
      """
 
 
@@ -128,18 +128,18 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 
-) -> DeleteSandboxPoolResult | ErrorResponse | None:
-    """ Delete a sandbox pool
+) -> ErrorResponse | ListSandboxPoolsResult | None:
+    """ List member SandboxPools of an Env
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DeleteSandboxPoolResult | ErrorResponse
+        ErrorResponse | ListSandboxPoolsResult
      """
 
 
@@ -154,18 +154,18 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[DeleteSandboxPoolResult | ErrorResponse]:
-    """ Delete a sandbox pool
+) -> Response[ErrorResponse | ListSandboxPoolsResult]:
+    """ List member SandboxPools of an Env
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DeleteSandboxPoolResult | ErrorResponse]
+        Response[ErrorResponse | ListSandboxPoolsResult]
      """
 
 
@@ -185,18 +185,18 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 
-) -> DeleteSandboxPoolResult | ErrorResponse | None:
-    """ Delete a sandbox pool
+) -> ErrorResponse | ListSandboxPoolsResult | None:
+    """ List member SandboxPools of an Env
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DeleteSandboxPoolResult | ErrorResponse
+        ErrorResponse | ListSandboxPoolsResult
      """
 
 

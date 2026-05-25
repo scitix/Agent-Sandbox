@@ -146,7 +146,7 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 	svcs := router.Services{
 		Sandbox:              sandboxSvc,
 		SandboxPool:          service.NewSandboxPoolService(k8sClient, nil, pluginManager),
-		SandboxEnv:           service.NewSandboxEnvService(k8sClient),
+		SandboxEnv:           service.NewSandboxEnvService(k8sClient, service.NewPoolAdmitter(pluginManager), instanceTypeProv, quotaProv),
 		SandboxTemplate:      service.NewSandboxTemplateService(k8sClient),
 		APIKey:               service.NewAPIKeyServiceWithSync(cfg.KeyStore, syncSvc),
 		Quota:                service.NewQuotaServiceFromProvider(quotaProv),

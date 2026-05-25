@@ -66,7 +66,10 @@ controller:
     pullPolicy: IfNotPresent
 
   # LOCAL_CLUSTER_ID uniquely identifies this worker cluster in a multi-cluster
-  # setup. Must match the cluster id configured in the dashboard's clusters.yaml.
+  # setup. Must match the cluster id configured in the dashboard's
+  # clusters.yaml. REQUIRED — env-scoped Pool ops (POST /v1/envs/{name}/sandboxpools
+  # etc.) return 503 server-misconfigured when this is empty, and the env
+  # member reconciler cannot place Pools on a cluster segment without it.
   localClusterId: ""
 
   # extprocInternalApiUrl is the gRPC endpoint of the data-plane extproc manager.

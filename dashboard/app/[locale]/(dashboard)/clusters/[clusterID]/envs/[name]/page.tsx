@@ -33,10 +33,13 @@ import {
 } from "@/components/envs/env-detail-sections"
 import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
+import { UpsertPoolSheet } from "@/components/envs/upsert-pool-sheet"
+import { DeletePoolDialog } from "@/components/envs/delete-pool-dialog"
+import { EditPoolAutoscalingSheet } from "@/components/envs/edit-pool-autoscaling-sheet"
 import { PoolMetricsSheet } from "@/components/prometheus/pool-metrics-sheet"
-import { PoolDocsSheet, POOL_DOCS_PARAM } from "@/components/pools/pool-docs-sheet"
+import { PoolDocsSheet, POOL_DOCS_PARAM, formatPoolDocsParam } from "@/components/pools/pool-docs-sheet"
 import { envQueryOptions, useSyncEnvTemplate } from "@/lib/queries"
-import type { AgentSandboxPool } from "@/lib/api/client"
+import type { AgentSandboxEnv, AgentSandboxPool } from "@/lib/api/client"
 import { clusterPath } from "@/lib/cluster-path"
 import { useTranslation } from "@/lib/i18n"
 
@@ -62,6 +65,10 @@ export default function EnvDetailPage({ params }: PageProps) {
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [metricsTarget, setMetricsTarget] = useState<AgentSandboxPool | null>(null)
+  const [createPoolOpen, setCreatePoolOpen] = useState(false)
+  const [editPoolTarget, setEditPoolTarget] = useState<AgentSandboxPool | null>(null)
+  const [deletePoolTarget, setDeletePoolTarget] = useState<AgentSandboxPool | null>(null)
+  const [poolAutoscalingGroup, setPoolAutoscalingGroup] = useState<string | null>(null)
   const [, setPoolDocsName] = useQueryState(
     POOL_DOCS_PARAM,
     parseAsString.withOptions({ scroll: false, shallow: true }),
@@ -152,8 +159,15 @@ export default function EnvDetailPage({ params }: PageProps) {
             <Separator />
             <EnvPoolsSection
               env={env}
+              onCreatePool={() => setCreatePoolOpen(true)}
+              onEditPool={(pool) => setEditPoolTarget(pool)}
+              onEditAutoscaling={(pool) => {
+                const sg = findScalingGroupForPool(env, pool.name)
+                if (sg) setPoolAutoscalingGroup(sg)
+              }}
+              onDeletePool={(pool) => setDeletePoolTarget(pool)}
               onViewMetrics={(pool) => setMetricsTarget(pool)}
-              onViewDocs={(pool) => void setPoolDocsName(pool.name)}
+              onViewDocs={(pool) => void setPoolDocsName(formatPoolDocsParam(name, pool.name))}
             />
             <Separator />
             <AutoscalingSummary env={env} onEdit={() => setEditOpen(true)} />
@@ -176,6 +190,53 @@ export default function EnvDetailPage({ params }: PageProps) {
         }}
       />
       <PoolDocsSheet />
+
+      {/* Pool sheets — only rendered while env is loaded so the children can
+          rely on a non-null env reference. */}
+      {env && (
+        <>
+          <UpsertPoolSheet
+            env={env}
+            pool={null}
+            open={createPoolOpen}
+            onOpenChange={setCreatePoolOpen}
+          />
+          <UpsertPoolSheet
+            env={env}
+            pool={editPoolTarget}
+            open={!!editPoolTarget}
+            onOpenChange={(open) => {
+              if (!open) setEditPoolTarget(null)
+            }}
+          />
+          <DeletePoolDialog
+            envName={env.name}
+            pool={deletePoolTarget}
+            onOpenChange={(open) => {
+              if (!open) setDeletePoolTarget(null)
+            }}
+          />
+          <EditPoolAutoscalingSheet
+            env={env}
+            scalingGroupName={poolAutoscalingGroup}
+            onOpenChange={(open) => {
+              if (!open) setPoolAutoscalingGroup(null)
+            }}
+          />
+        </>
+      )}
     </div>
   )
+}
+
+// findScalingGroupForPool reads env.spec.clusters[].members[] to find the
+// ScalingGroup name attached to poolName. Returns "" when the pool isn't a
+// member yet (shouldn't happen — table rows come from the same env).
+function findScalingGroupForPool(env: AgentSandboxEnv, poolName: string): string {
+  for (const c of env.spec.clusters ?? []) {
+    for (const m of c.members ?? []) {
+      if (m.name === poolName) return m.scalingGroup ?? ""
+    }
+  }
+  return ""
 }

@@ -17,8 +17,6 @@ package service
 import (
 	"time"
 
-	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
-	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 )
 
@@ -41,31 +39,4 @@ type CreateSandboxInput struct {
 	// PostStartHooks are actions to run after the sandbox transitions Starting → Running.
 	// Serialized to a pod annotation at claim time; consumed by the controller.
 	PostStartHooks []poststarthooks.Action
-}
-
-// CreateSandboxPoolInput carries all parameters needed to create a new SandboxPool.
-// Service-internal: Spec is the fully resolved (template-merged) CRD spec; Team/User
-// come from the authenticated caller.
-type CreateSandboxPoolInput struct {
-	Name            string
-	Namespace       string
-	TemplateName    string // references a cluster-scoped SandboxTemplate (optional)
-	Labels          map[string]string
-	Annotations     map[string]string
-	Spec            agentsv1alpha1.SandboxPoolSpec
-	Team            string                     // from auth.Team, propagated to pod label
-	User            string                     // from auth.User, propagated to pod label
-	Overrides       *gen.PoolTemplateOverrides // nil = no overrides
-	ImagePullSecret *gen.ImagePullSecretInput  // nil = no pull secret to materialise
-}
-
-// UpdateSandboxPoolInput carries parameters for updating an existing SandboxPool.
-// Service-internal because PodCreationImagePolicy is typed against the CRD
-// package rather than the gen wire shape.
-type UpdateSandboxPoolInput struct {
-	Name                   string
-	Namespace              string
-	Replicas               *int32                                 // nil = don't modify
-	PodCreationImagePolicy *agentsv1alpha1.PodCreationImagePolicy // nil = don't modify
-	OverrideImage          string                                 // empty = don't modify
 }

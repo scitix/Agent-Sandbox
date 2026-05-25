@@ -51,7 +51,9 @@ export function useCreateSandbox() {
   return currentApiClient().useMutation("post", "/sandboxes", {
     onSuccess: () => {
       delayedInvalidate(qc, ["get", "/sandboxes"])
-      delayedInvalidate(qc, ["get", "/sandboxpools"])
+      // Env-scoped pool lists pick up replica/idle deltas from a new sandbox
+      // claim — refresh the envs cache so the per-env pool table sees it.
+      delayedInvalidate(qc, ["get", "/envs"])
     },
   })
 }

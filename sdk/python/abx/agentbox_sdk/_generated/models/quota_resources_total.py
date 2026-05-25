@@ -28,13 +28,13 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="QuotaReserved")
+T = TypeVar("T", bound="QuotaResourcesTotal")
 
 
 
 @_attrs_define
-class QuotaReserved:
-    """ Resources reserved but not yet actively used, keyed by resource name.
+class QuotaResourcesTotal:
+    """ Total capacity allocated to this quota.
 
      """
 
@@ -56,12 +56,12 @@ class QuotaReserved:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        quota_reserved = cls(
+        quota_resources_total = cls(
         )
 
 
-        quota_reserved.additional_properties = d
-        return quota_reserved
+        quota_resources_total.additional_properties = d
+        return quota_resources_total
 
     @property
     def additional_keys(self) -> list[str]:

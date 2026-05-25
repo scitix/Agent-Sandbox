@@ -28,13 +28,14 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="CreateSandboxPoolRequestLabels")
+T = TypeVar("T", bound="QuotaResourcesReserved")
 
 
 
 @_attrs_define
-class CreateSandboxPoolRequestLabels:
-    """ 
+class QuotaResourcesReserved:
+    """ Reserved but not yet actively consumed amount.
+
      """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
@@ -55,12 +56,12 @@ class CreateSandboxPoolRequestLabels:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        create_sandbox_pool_request_labels = cls(
+        quota_resources_reserved = cls(
         )
 
 
-        create_sandbox_pool_request_labels.additional_properties = d
-        return create_sandbox_pool_request_labels
+        quota_resources_reserved.additional_properties = d
+        return quota_resources_reserved
 
     @property
     def additional_keys(self) -> list[str]:

@@ -113,6 +113,17 @@ func (r *PoolAdoptionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if ok, err := r.poolFullyAdopted(ctx, pool); err != nil {
 		return ctrl.Result{}, err
 	} else if ok {
+		// Backfill drift on already-adopted Pools: if member.ScalingGroup
+		// is empty / legacy "default" / disagrees with the value derived
+		// from the Pool's resources, patch it. Same for the
+		// InlineResources → InstanceType+Multiplier conversion when the
+		// catalog now matches a known entry.
+		if err := r.backfillMemberDrift(ctx, pool); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -252,6 +263,72 @@ func (r *PoolAdoptionReconciler) adoptOrphanPool(ctx context.Context, pool *agen
 
 	// Stamp Pool with a non-controlling OwnerReference back to the Env.
 	return r.ensureEnvOwnerReference(ctx, pool, env)
+}
+
+// backfillMemberDrift reconciles an already-adopted Pool's EnvClusterMember
+// entry against the current InstanceType catalog + ResourceKey derivation:
+//
+//   - If member.ScalingGroup is empty or differs from the derived key, patch
+//     it. This migrates pre-2026.06 Envs that used the literal "default"
+//     fallback group.
+//   - If member.InstanceType is empty but the Pool's resources resolve to a
+//     known catalog entry, persist (InstanceType, Multiplier) on the member
+//     and clear member.InlineResources so future renders take the catalog
+//     path. Idempotent: when no drift is detected the call is a no-op.
+func (r *PoolAdoptionReconciler) backfillMemberDrift(ctx context.Context, pool *agentsv1alpha1.SandboxPool) error {
+	envName := ""
+	var envUID types.UID
+	for _, ref := range pool.OwnerReferences {
+		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind {
+			envName = ref.Name
+			envUID = ref.UID
+			break
+		}
+	}
+	if envName == "" {
+		return nil
+	}
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: envName}, env); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if env.UID != envUID {
+		return nil // owner ref UID mismatch — handled by re-adoption path
+	}
+
+	itName, mul, err := resolvePoolShape(ctx, r.InstanceTypes, pool)
+	if err != nil {
+		return fmt.Errorf("resolve pool shape: %w", err)
+	}
+	derivedGroup := deriveScalingGroupName(r.InstanceTypes, pool)
+
+	base := env.DeepCopy()
+	changed := false
+	mutateLocalClusterSpec(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterSpec) {
+		for i := range local.Members {
+			m := &local.Members[i]
+			if m.Name != pool.Name {
+				continue
+			}
+			if m.ScalingGroup != derivedGroup && derivedGroup != "" {
+				m.ScalingGroup = derivedGroup
+				changed = true
+			}
+			// Convert InlineResources to (InstanceType, Multiplier) when
+			// the catalog matches. Leave InlineResources alone when the
+			// provider has nothing for these resources.
+			if m.InstanceType == "" && itName != "" {
+				m.InstanceType = itName
+				m.Multiplier = mul
+				m.InlineResources = nil
+				changed = true
+			}
+		}
+	})
+	if !changed {
+		return nil
+	}
+	return r.Patch(ctx, env, client.MergeFrom(base))
 }
 
 // ensureMember appends member into env.Spec.Clusters[local].Members when not
@@ -413,23 +490,26 @@ func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multip
 	return m
 }
 
-// deriveScalingGroupName resolves the ScalingGroup name for a Pool by asking
-// the InstanceType provider to derive a stable identifier from the Pool's
-// effective resources. Returns the fallback "default" name when the provider
-// is nil, returns its own "default", or the Pool has no observable resources.
+// deriveScalingGroupName resolves the ScalingGroup name for a Pool. Prefers
+// the InstanceType provider's DeriveScalingGroupName when the catalog is
+// enabled (it may return a backend-specific name such as "sci.c22-2"); else
+// falls back to the resource-key form ("2c8Gi"). Returns
+// fallbackScalingGroup only when the Pool has no observable resources at
+// all — a state the controller fixes by reading the Pool spec later.
 func deriveScalingGroupName(provider instancetype.Provider, pool *agentsv1alpha1.SandboxPool) string {
-	if provider == nil {
-		return fallbackScalingGroup
-	}
 	res := firstContainerResources(pool)
 	if res == nil {
 		return fallbackScalingGroup
 	}
-	name := provider.DeriveScalingGroupName(*res)
-	if name == "" {
-		return fallbackScalingGroup
+	if provider != nil {
+		if name := provider.DeriveScalingGroupName(*res); name != "" {
+			return name
+		}
 	}
-	return name
+	if key := instancetype.DeriveResourceKey(*res); key != "" && key != "default" {
+		return key
+	}
+	return fallbackScalingGroup
 }
 
 // envLabelsFromPool propagates the team/user labels (and any other discovery

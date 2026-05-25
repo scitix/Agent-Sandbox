@@ -22,41 +22,32 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-from ..types import UNSET, Unset
 
 
 
 
 
 
-T = TypeVar("T", bound="UpdateSandboxPoolRequestOverrides")
+T = TypeVar("T", bound="QuotaResourcesUsed")
 
 
 
 @_attrs_define
-class UpdateSandboxPoolRequestOverrides:
-    """ Partial overrides to update. Only image can be updated after pool creation.
+class QuotaResourcesUsed:
+    """ Currently consumed amount.
 
-        Attributes:
-            image (str | Unset): Override the main container (containers[0]) image
      """
 
-    image: str | Unset = UNSET
+    additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        image = self.image
-
-
+        
         field_dict: dict[str, Any] = {}
-
-        field_dict.update({
-        })
-        if image is not UNSET:
-            field_dict["image"] = image
+        field_dict.update(self.additional_properties)
 
         return field_dict
 
@@ -65,11 +56,25 @@ class UpdateSandboxPoolRequestOverrides:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        image = d.pop("image", UNSET)
-
-        update_sandbox_pool_request_overrides = cls(
-            image=image,
+        quota_resources_used = cls(
         )
 
-        return update_sandbox_pool_request_overrides
 
+        quota_resources_used.additional_properties = d
+        return quota_resources_used
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> str:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: str) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

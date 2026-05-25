@@ -197,95 +197,6 @@ func parseCRDJSON(jsonStr string) (*agentsv1alpha1.SandboxTemplate, error) {
 	return &tmpl, nil
 }
 
-// toCreatePoolInput converts a gen.CreateSandboxPoolRequest to a service.CreateSandboxPoolInput.
-// Returns an error if any duration field contains an invalid value.
-func toCreatePoolInput(req gen.CreateSandboxPoolRequest, auth domain.AuthInfo) (service.CreateSandboxPoolInput, error) { //nolint:gocyclo
-	spec := agentsv1alpha1.SandboxPoolSpec{}
-	if req.Spec != nil {
-		spec = agentsv1alpha1.SandboxPoolSpec{
-			Replicas: req.Spec.Replicas,
-		}
-		if req.Spec.TemplateName != nil {
-			spec.TemplateName = *req.Spec.TemplateName
-		}
-		if req.Spec.PodCreationImagePolicy != nil {
-			spec.PodCreationImagePolicy = agentsv1alpha1.PodCreationImagePolicy(*req.Spec.PodCreationImagePolicy)
-		}
-		if req.Spec.DefaultStartupTimeout != nil && *req.Spec.DefaultStartupTimeout != "" {
-			d, err := time.ParseDuration(*req.Spec.DefaultStartupTimeout)
-			if err != nil || d <= 0 {
-				return service.CreateSandboxPoolInput{}, fmt.Errorf("defaultStartupTimeout must be a positive duration string (e.g. '2m')")
-			}
-			spec.DefaultStartupTimeout = &metav1.Duration{Duration: d}
-		}
-		if req.Spec.DefaultIdleTimeout != nil && *req.Spec.DefaultIdleTimeout != "" {
-			d, err := time.ParseDuration(*req.Spec.DefaultIdleTimeout)
-			if err != nil || d <= 0 {
-				return service.CreateSandboxPoolInput{}, fmt.Errorf("defaultIdleTimeout must be a positive duration string (e.g. '30m')")
-			}
-			spec.DefaultIdleTimeout = &metav1.Duration{Duration: d}
-		}
-	}
-	// Also support top-level replicas/templateName fields
-	if req.Replicas != nil {
-		spec.Replicas = *req.Replicas
-	}
-
-	templateName := ""
-	if req.TemplateName != nil {
-		templateName = *req.TemplateName
-	} else if req.Spec != nil && req.Spec.TemplateName != nil {
-		templateName = *req.Spec.TemplateName
-	}
-	if templateName != "" {
-		spec.TemplateName = templateName
-	}
-
-	input := service.CreateSandboxPoolInput{
-		Name:         req.Name,
-		Namespace:    auth.Namespace,
-		TemplateName: templateName,
-		Spec:         spec,
-		Team:         auth.Team,
-		User:         auth.User,
-	}
-	if req.Labels != nil {
-		input.Labels = *req.Labels
-	}
-	if req.Annotations != nil {
-		input.Annotations = *req.Annotations
-	}
-	if req.Overrides != nil {
-		// Image-only after the ResourceMultiplier removal — per-Pool
-		// resource sizing flows through EnvClusterMember.InlineResources
-		// on the Env CRD, not through the legacy pool create payload.
-		if req.Overrides.Image != nil && *req.Overrides.Image != "" {
-			input.Overrides = req.Overrides
-		}
-	}
-	if req.ImagePullSecret != nil && len(req.ImagePullSecret.Registries) > 0 {
-		regs := make([]gen.RegistryCredential, 0, len(req.ImagePullSecret.Registries))
-		for i, r := range req.ImagePullSecret.Registries {
-			if strings.TrimSpace(r.Registry) == "" {
-				return service.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].registry is required", i)
-			}
-			if r.Username == "" {
-				return service.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].username is required", i)
-			}
-			if r.Password == "" {
-				return service.CreateSandboxPoolInput{}, fmt.Errorf("imagePullSecret.registries[%d].password is required", i)
-			}
-			regs = append(regs, gen.RegistryCredential{
-				Registry: strings.TrimSpace(r.Registry),
-				Username: r.Username,
-				Password: r.Password,
-			})
-		}
-		input.ImagePullSecret = &gen.ImagePullSecretInput{Registries: regs}
-	}
-	return input, nil
-}
-
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
@@ -536,163 +447,6 @@ func (s *Server) CreateSandboxExecToken(ctx context.Context, req gen.CreateSandb
 // ---------------------------------------------------------------------------
 // SandboxPools
 // ---------------------------------------------------------------------------
-
-func (s *Server) CreateSandboxPool(ctx context.Context, req gen.CreateSandboxPoolRequestObject) (gen.CreateSandboxPoolResponseObject, error) {
-	if req.Body == nil || strings.TrimSpace(req.Body.Name) == "" {
-		return gen.CreateSandboxPool400JSONResponse{Error: "name is required"}, nil
-	}
-	if err := k8sname.Validate(req.Body.Name); err != nil {
-		return gen.CreateSandboxPool400JSONResponse{Error: err.Error()}, nil
-	}
-
-	auth := authFrom(ctx)
-	input, err := toCreatePoolInput(*req.Body, auth)
-	if err != nil {
-		return gen.CreateSandboxPool400JSONResponse{Error: err.Error()}, nil
-	}
-
-	// Require the acting user to have at least one API Key before creating a Pool.
-	// This ensures every Pool owner is visible in the admin Teams/Users interfaces,
-	// which are now backed by API Key secrets rather than ScitixQuota CRDs.
-	//
-	// Skip only when the caller is a pure admin (User="admin"), not when impersonating:
-	// impersonation replaces auth.User with the target user, so the check naturally
-	// applies to the impersonated identity — enforcing data consistency across the board.
-	if auth.Role != apikey.RoleAdmin || auth.User != adminUser {
-		keys, apiKeyErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
-		if apiKeyErr != nil {
-			return gen.CreateSandboxPool500JSONResponse(errResp(ctx, apiKeyErr)), nil
-		}
-		if len(keys) == 0 {
-			apiKeyAppErr := domain.NewAPIKeyRequired(
-				"no API key found for this user; please create one on the API Keys page before creating a SandboxPool",
-			)
-			return gen.CreateSandboxPool422JSONResponse(errResp(ctx, apiKeyAppErr)), nil
-		}
-	}
-
-	result, appErr := s.pool.Create(ctx, input)
-	if appErr != nil {
-		switch appErr.Code {
-		case domain.ErrCodeBadRequest:
-			return gen.CreateSandboxPool400JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeNotFound:
-			// Template not found — return as 400 with availableTemplates
-			// discovery hint. (404 on a write endpoint is confusing because the
-			// caller is not reading; we keep the status as 400 and convey the
-			// missing-resource signal via the error message + detail.)
-			return gen.CreateSandboxPool400JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeConflict:
-			return gen.CreateSandboxPool409JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeTooManyRequests:
-			return gen.CreateSandboxPool429JSONResponse(errResp(ctx, appErr)), nil
-		default:
-			return gen.CreateSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
-		}
-	}
-	return gen.CreateSandboxPool201JSONResponse{Template: *result}, nil
-}
-
-func (s *Server) ListSandboxPools(ctx context.Context, _ gen.ListSandboxPoolsRequestObject) (gen.ListSandboxPoolsResponseObject, error) {
-	auth := authFrom(ctx)
-	items, appErr := s.pool.List(ctx, auth.Namespace, auth.Team, auth.User)
-	if appErr != nil {
-		return gen.ListSandboxPools500JSONResponse(errResp(ctx, appErr)), nil
-	}
-	return gen.ListSandboxPools200JSONResponse{
-		Items:  items,
-		Total:  len(items),
-		Limit:  0,
-		Offset: 0,
-	}, nil
-}
-
-func (s *Server) GetSandboxPool(ctx context.Context, req gen.GetSandboxPoolRequestObject) (gen.GetSandboxPoolResponseObject, error) {
-	auth := authFrom(ctx)
-	result, appErr := s.pool.Get(ctx, auth.Namespace, req.Name)
-	if appErr != nil {
-		if appErr.Code == domain.ErrCodeNotFound {
-			return gen.GetSandboxPool404JSONResponse(errResp(ctx, appErr)), nil
-		}
-		return gen.GetSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
-	}
-
-	// Render pool docs template on the server so the client gets a ready-to-copy
-	// snippet. When the raw docs reference ${apiKey} and the user has no key
-	// with a recoverable plaintext token, return API_KEY_REQUIRED (422) so the
-	// frontend can guide them to the API Keys page.
-	rendered, renderErr := s.renderPoolDocs(ctx, derefString(result.PoolDocs), result.Name, s.forwarder.LocalClusterID(), auth)
-	if renderErr != nil {
-		switch renderErr.Code {
-		case domain.ErrCodeUnprocessableEntity:
-			return gen.GetSandboxPool422JSONResponse(errResp(ctx, renderErr)), nil
-		default:
-			return gen.GetSandboxPool500JSONResponse(errResp(ctx, renderErr)), nil
-		}
-	}
-	if rendered != "" {
-		result.PoolDocs = ptr.To(rendered)
-	} else {
-		result.PoolDocs = nil
-	}
-
-	return gen.GetSandboxPool200JSONResponse{Template: *result}, nil
-}
-
-func (s *Server) UpdateSandboxPool(ctx context.Context, req gen.UpdateSandboxPoolRequestObject) (gen.UpdateSandboxPoolResponseObject, error) {
-	if req.Body == nil {
-		return gen.UpdateSandboxPool400JSONResponse{Error: "request body is required"}, nil
-	}
-	hasReplicas := req.Body.Replicas != nil
-	hasImage := req.Body.Overrides != nil && req.Body.Overrides.Image != nil && *req.Body.Overrides.Image != ""
-	hasPodCreationImagePolicy := req.Body.PodCreationImagePolicy != nil
-	if !hasReplicas && !hasImage && !hasPodCreationImagePolicy {
-		return gen.UpdateSandboxPool400JSONResponse{Error: "at least one of replicas, overrides.image, or podCreationImagePolicy is required"}, nil
-	}
-	auth := authFrom(ctx)
-	input := service.UpdateSandboxPoolInput{
-		Name:      req.Name,
-		Namespace: auth.Namespace,
-		Replicas:  req.Body.Replicas,
-	}
-	if hasImage {
-		input.OverrideImage = *req.Body.Overrides.Image
-	}
-	if hasPodCreationImagePolicy {
-		pol := agentsv1alpha1.PodCreationImagePolicy(*req.Body.PodCreationImagePolicy)
-		input.PodCreationImagePolicy = &pol
-	}
-	result, appErr := s.pool.Update(ctx, input)
-	if appErr != nil {
-		switch appErr.Code {
-		case domain.ErrCodeBadRequest:
-			return gen.UpdateSandboxPool400JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeNotFound:
-			return gen.UpdateSandboxPool404JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeTooManyRequests:
-			return gen.UpdateSandboxPool429JSONResponse(errResp(ctx, appErr)), nil
-		default:
-			return gen.UpdateSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
-		}
-	}
-	return gen.UpdateSandboxPool200JSONResponse{Template: *result}, nil
-}
-
-func (s *Server) DeleteSandboxPool(ctx context.Context, req gen.DeleteSandboxPoolRequestObject) (gen.DeleteSandboxPoolResponseObject, error) {
-	auth := authFrom(ctx)
-	result, appErr := s.pool.Delete(ctx, auth.Namespace, req.Name)
-	if appErr != nil {
-		if appErr.Code == domain.ErrCodeNotFound {
-			return gen.DeleteSandboxPool404JSONResponse(errResp(ctx, appErr)), nil
-		}
-		return gen.DeleteSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
-	}
-	return gen.DeleteSandboxPool202JSONResponse{
-		Name:      result.Name,
-		Namespace: result.Namespace,
-		Status:    "Terminating",
-	}, nil
-}
 
 // ---------------------------------------------------------------------------
 // SandboxEnv
@@ -980,6 +734,148 @@ func (s *Server) SyncSandboxEnvTemplate(ctx context.Context, req gen.SyncSandbox
 		}
 	}
 	return gen.SyncSandboxEnvTemplate200JSONResponse{Env: *result}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Env-scoped SandboxPools
+// ---------------------------------------------------------------------------
+
+// memberFromCreateEnvPoolRequest converts the wire create-request into the
+// CRD shape consumed by AddMemberPool. The server derives Name and
+// ScalingGroup downstream — those fields are intentionally not populated
+// here.
+func memberFromCreateEnvPoolRequest(body *gen.CreateEnvSandboxPoolRequest) agentsv1alpha1.EnvClusterMember {
+	var cm agentsv1alpha1.EnvClusterMember
+	if body.InstanceType != nil {
+		cm.InstanceType = *body.InstanceType
+	}
+	if body.Multiplier != nil {
+		cm.Multiplier = *body.Multiplier
+	}
+	if body.MaxReplicas != nil {
+		v := *body.MaxReplicas
+		cm.MaxReplicas = &v
+	}
+	if body.Replicas != nil {
+		cm.Replicas = *body.Replicas
+	}
+	if body.InlineResources != nil {
+		cm.InlineResources = inlineResourcesFromGen(body.InlineResources)
+	}
+	if body.Labels != nil {
+		cm.Labels = *body.Labels
+	}
+	if body.Annotations != nil {
+		cm.Annotations = *body.Annotations
+	}
+	return cm
+}
+
+func (s *Server) CreateEnvSandboxPool(ctx context.Context, req gen.CreateEnvSandboxPoolRequestObject) (gen.CreateEnvSandboxPoolResponseObject, error) {
+	if req.Body == nil {
+		return gen.CreateEnvSandboxPool400JSONResponse{Error: "request body is required"}, nil
+	}
+	auth := authFrom(ctx)
+	member := memberFromCreateEnvPoolRequest(req.Body)
+	result, appErr := s.env.AddMemberPool(ctx, auth.Namespace, req.Name, s.forwarder.LocalClusterID(), member)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeBadRequest:
+			return gen.CreateEnvSandboxPool400JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeNotFound:
+			return gen.CreateEnvSandboxPool404JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeConflict:
+			return gen.CreateEnvSandboxPool409JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeServiceUnavailable:
+			return gen.CreateEnvSandboxPool503JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.CreateEnvSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.CreateEnvSandboxPool202JSONResponse{Template: *result}, nil
+}
+
+func (s *Server) ListEnvSandboxPools(ctx context.Context, req gen.ListEnvSandboxPoolsRequestObject) (gen.ListEnvSandboxPoolsResponseObject, error) {
+	auth := authFrom(ctx)
+	items, appErr := s.env.ListMemberPools(ctx, auth.Namespace, req.Name)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.ListEnvSandboxPools404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.ListEnvSandboxPools500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.ListEnvSandboxPools200JSONResponse{
+		Items:  items,
+		Total:  len(items),
+		Limit:  0,
+		Offset: 0,
+	}, nil
+}
+
+func (s *Server) GetEnvSandboxPool(ctx context.Context, req gen.GetEnvSandboxPoolRequestObject) (gen.GetEnvSandboxPoolResponseObject, error) {
+	auth := authFrom(ctx)
+	result, appErr := s.env.GetMemberPool(ctx, auth.Namespace, req.Name, req.PoolName)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.GetEnvSandboxPool404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.GetEnvSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.GetEnvSandboxPool200JSONResponse{Template: *result}, nil
+}
+
+func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSandboxPoolRequestObject) (gen.UpdateEnvSandboxPoolResponseObject, error) {
+	if req.Body == nil {
+		return gen.UpdateEnvSandboxPool400JSONResponse{Error: "request body is required"}, nil
+	}
+	auth := authFrom(ctx)
+	patch := service.MemberPoolPatch{}
+	if req.Body.Replicas != nil {
+		v := *req.Body.Replicas
+		patch.Replicas = &v
+	}
+	if req.Body.MaxReplicas != nil {
+		v := *req.Body.MaxReplicas
+		patch.MaxReplicas = &v
+	}
+	result, appErr := s.env.UpdateMemberPool(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID(), patch)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeBadRequest:
+			return gen.UpdateEnvSandboxPool400JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeNotFound:
+			return gen.UpdateEnvSandboxPool404JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeServiceUnavailable:
+			return gen.UpdateEnvSandboxPool503JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.UpdateEnvSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.UpdateEnvSandboxPool200JSONResponse{Template: *result}, nil
+}
+
+func (s *Server) DeleteEnvSandboxPool(ctx context.Context, req gen.DeleteEnvSandboxPoolRequestObject) (gen.DeleteEnvSandboxPoolResponseObject, error) {
+	auth := authFrom(ctx)
+	result, appErr := s.env.DeleteMemberPool(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID())
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.DeleteEnvSandboxPool404JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeServiceUnavailable:
+			return gen.DeleteEnvSandboxPool503JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.DeleteEnvSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.DeleteEnvSandboxPool202JSONResponse{
+		Name:      result.Name,
+		Namespace: result.Namespace,
+		Status:    result.Status,
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

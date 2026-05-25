@@ -41,6 +41,10 @@ const (
 	testNamespace = "default"
 	testCluster   = "local"
 	testPoolName  = "pool-a"
+	// testDerivedKey is the resource-key value derived from newPool()'s
+	// container resources (2 CPU / 4 GiB). Used as the expected
+	// ScalingGroup in adoption + migration tests.
+	testDerivedKey = "2c4Gi"
 )
 
 func newScheme(t *testing.T) *runtime.Scheme {
@@ -247,7 +251,9 @@ func TestReconcile_C_AdminPreCreatedEnv(t *testing.T) {
 				{
 					ClusterID: testCluster,
 					Members: []agentsv1alpha1.EnvClusterMember{
-						{Name: testPoolName, ScalingGroup: fallbackScalingGroup},
+						// Stored with the derived group already — second
+						// reconcile then sees no drift and is a no-op.
+						{Name: testPoolName, ScalingGroup: testDerivedKey},
 					},
 				},
 			},
@@ -269,12 +275,50 @@ func TestReconcile_C_AdminPreCreatedEnv(t *testing.T) {
 		t.Fatalf("expected owner ref on Pool, got %+v", poolAfter.OwnerReferences)
 	}
 
-	// Second reconcile must be a pure no-op (poolFullyAdopted short-circuits).
+	// Second reconcile must be a pure no-op — Env is fully adopted and the
+	// stored ScalingGroup matches the value derived from the Pool's
+	// resources, so backfillMemberDrift has nothing to write.
 	reconcileOnce(t, r)
 	envAfter2 := &agentsv1alpha1.SandboxEnv{}
 	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter2)
 	if envAfter2.ResourceVersion != envAfter.ResourceVersion {
 		t.Errorf("env was modified on second reconcile (RV %s → %s)", envAfter.ResourceVersion, envAfter2.ResourceVersion)
+	}
+}
+
+// TestReconcile_BackfillsLegacyDefaultGroup confirms the adopter's
+// backfillMemberDrift path migrates a pre-2026.06 member whose ScalingGroup
+// is the literal "default" fallback to the derived resource-key form.
+func TestReconcile_BackfillsLegacyDefaultGroup(t *testing.T) {
+	pool := newPool()
+	preExistingEnv := &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testPoolName,
+			Namespace: testNamespace,
+			UID:       "uid-admin-legacy",
+		},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "tmpl-1"},
+			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
+			Clusters: []agentsv1alpha1.EnvClusterSpec{
+				{
+					ClusterID: testCluster,
+					Members: []agentsv1alpha1.EnvClusterMember{
+						{Name: testPoolName, ScalingGroup: fallbackScalingGroup},
+					},
+				},
+			},
+		},
+	}
+	r := newReconciler(t, pool, preExistingEnv)
+	reconcileOnce(t, r) // adopt
+	reconcileOnce(t, r) // backfill drift
+
+	envAfter := &agentsv1alpha1.SandboxEnv{}
+	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
+	got := envAfter.Spec.Clusters[0].Members[0].ScalingGroup
+	if got != testDerivedKey {
+		t.Errorf("ScalingGroup not migrated: got %q, want %q", got, testDerivedKey)
 	}
 }
 
@@ -389,12 +433,12 @@ func TestPoolFullyAdopted_UIDMismatch(t *testing.T) {
 
 func TestBuildMemberFromPool_InlineFallback(t *testing.T) {
 	pool := newPool()
-	m := buildMemberFromPool(pool, "", 0, "2c4Gi")
+	m := buildMemberFromPool(pool, "", 0, testDerivedKey)
 	if m.InstanceType != "" || m.Multiplier != 0 {
 		t.Errorf("unexpected catalog metadata: %+v", m)
 	}
-	if m.ScalingGroup != "2c4Gi" {
-		t.Errorf("ScalingGroup = %q, want %q", m.ScalingGroup, "2c4Gi")
+	if m.ScalingGroup != testDerivedKey {
+		t.Errorf("ScalingGroup = %q, want %q", m.ScalingGroup, testDerivedKey)
 	}
 	if m.InlineResources == nil {
 		t.Fatalf("expected InlineResources, got nil")
@@ -420,11 +464,11 @@ func TestBuildMemberFromPool_CatalogMatch(t *testing.T) {
 }
 
 func TestDeriveScalingGroupName_ProviderDerives(t *testing.T) {
-	// Real Noop provider returns "2c4Gi" for the newPool resources.
+	// Real Noop provider returns testDerivedKey for the newPool resources.
 	pool := newPool()
 	name := deriveScalingGroupName(instancetype.NewNoop(), pool)
-	if name != "2c4Gi" {
-		t.Errorf("deriveScalingGroupName = %q, want %q", name, "2c4Gi")
+	if name != testDerivedKey {
+		t.Errorf("deriveScalingGroupName = %q, want %q", name, testDerivedKey)
 	}
 }
 

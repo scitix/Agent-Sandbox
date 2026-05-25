@@ -672,20 +672,6 @@ func (r *SandboxEnvReconciler) oldestIdlePodSince(ctx context.Context, pool *age
 	return oldest, nil
 }
 
-// autoscalingGroup looks up a group by name. Phase 1 always uses
-// defaultScalingGroup; the function is general for forward compatibility.
-func autoscalingGroup(env *agentsv1alpha1.SandboxEnv, name string) *agentsv1alpha1.EnvAutoscalingGroup {
-	if env == nil || env.Spec.Autoscaling == nil {
-		return nil
-	}
-	for i := range env.Spec.Autoscaling.Groups {
-		if env.Spec.Autoscaling.Groups[i].Name == name {
-			return &env.Spec.Autoscaling.Groups[i]
-		}
-	}
-	return nil
-}
-
 func effectiveMaxReplicas(group *agentsv1alpha1.EnvAutoscalingGroup) int32 {
 	if group == nil || group.MaxReplicas == nil {
 		return 0

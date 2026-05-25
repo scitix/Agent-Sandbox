@@ -45,7 +45,8 @@ T = TypeVar("T", bound="CreateSandboxEnvRequest")
 class CreateSandboxEnvRequest:
     """ 
         Attributes:
-            name (str): RFC 1123 DNS label.
+            name (str): RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey +
+                QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit.
             template_ref (SandboxEnvTemplateRef):
             mode (CreateSandboxEnvRequestMode | Unset):  Default: CreateSandboxEnvRequestMode.WARMPOOL.
             members (list[EnvClusterMember] | Unset): Member SandboxPools materialised by the Env Reconciler in the local

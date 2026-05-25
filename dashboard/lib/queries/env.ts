@@ -51,7 +51,7 @@ export function useCreateEnv() {
   return currentApiClient().useMutation("post", "/envs", {
     onSuccess: () => {
       delayedInvalidate(qc, ["get", "/envs"])
-      delayedInvalidate(qc, ["get", "/sandboxpools"])
+      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools"])
     },
   })
 }
@@ -67,7 +67,7 @@ export function useUpdateEnv() {
     onSuccess: () => {
       delayedInvalidate(qc, ["get", "/envs"])
       delayedInvalidate(qc, ["get", "/envs/{name}"])
-      delayedInvalidate(qc, ["get", "/sandboxpools"])
+      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools"])
     },
   })
 }
@@ -88,7 +88,7 @@ export function useDeleteEnv() {
   return currentApiClient().useMutation("delete", "/envs/{name}", {
     onSuccess: () => {
       delayedInvalidate(qc, ["get", "/envs"])
-      delayedInvalidate(qc, ["get", "/sandboxpools"])
+      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools"])
     },
   })
 }
@@ -105,7 +105,7 @@ export function useSyncEnvTemplate() {
     onSuccess: () => {
       delayedInvalidate(qc, ["get", "/envs"])
       delayedInvalidate(qc, ["get", "/envs/{name}"])
-      delayedInvalidate(qc, ["get", "/sandboxpools"])
+      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools"])
     },
   })
 }

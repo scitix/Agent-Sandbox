@@ -38,9 +38,11 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 	localSpec, _ := findLocalClusterSpec(env, r.LocalClusterID)
 
 	observed := make([]agentsv1alpha1.EnvObservedMember, 0, len(localSpec.Members))
-	totalIdle := int32(0)
-	totalRunning := int32(0)
-	totalDesired := int32(0)
+	// Per-scaling-group rollup. Each member contributes to the group named by
+	// member.ScalingGroup. Empty group names are skipped — those entries are
+	// legacy / pre-migration and the autoscaler ignores them anyway.
+	type groupTotals struct{ idle, running, desired int32 }
+	byGroup := map[string]*groupTotals{}
 	for _, member := range localSpec.Members {
 		pool := &agentsv1alpha1.SandboxPool{}
 		err := r.Get(ctx, types.NamespacedName{Namespace: env.Namespace, Name: member.Name}, pool)
@@ -73,9 +75,16 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 			DesiredReplicas:    pool.Spec.Replicas,
 			CurrentReplicas:    pool.Spec.Replicas,
 		})
-		totalIdle += pool.Status.IdleReplicas
-		totalRunning += pool.Status.RunningReplicas
-		totalDesired += pool.Spec.Replicas
+		if member.ScalingGroup != "" {
+			g, ok := byGroup[member.ScalingGroup]
+			if !ok {
+				g = &groupTotals{}
+				byGroup[member.ScalingGroup] = g
+			}
+			g.idle += pool.Status.IdleReplicas
+			g.running += pool.Status.RunningReplicas
+			g.desired += pool.Spec.Replicas
+		}
 	}
 
 	base := env.DeepCopy()
@@ -85,9 +94,12 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		local.LastSnapshotTime = &now
 	})
 
-	// Group rollup (Phase 1: single group named defaultScalingGroup).
-	if grp := autoscalingGroup(env, defaultScalingGroup); grp != nil || len(observed) > 0 {
-		setScalingGroupStatus(env, defaultScalingGroup, totalIdle, totalRunning, totalDesired)
+	// Group rollup by member.ScalingGroup. Drop any stale group entries that
+	// no longer have a contributing member so the rollup reflects current
+	// spec, not a snapshot.
+	env.Status.ScalingGroups = env.Status.ScalingGroups[:0]
+	for name, totals := range byGroup {
+		setScalingGroupStatus(env, name, totals.idle, totals.running, totals.desired)
 	}
 
 	env.Status.LocalMemberCount = int32(len(observed))

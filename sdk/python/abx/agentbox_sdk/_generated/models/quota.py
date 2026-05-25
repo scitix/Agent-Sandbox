@@ -26,10 +26,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.quota_free import QuotaFree
-  from ..models.quota_reserved import QuotaReserved
   from ..models.quota_resources import QuotaResources
-  from ..models.quota_used import QuotaUsed
 
 
 
@@ -43,31 +40,21 @@ T = TypeVar("T", bound="Quota")
 class Quota:
     """ 
         Attributes:
-            name (str): Name of the quota entry.
-            quota_url (str): URL of the SI Scheduler quota resource.
-            queue (str): SI Scheduler queue name associated with this quota.
-            label (str): Display label for this quota entry.
-            pool_name (str | Unset): Name of the SandboxPool bound to this quota, if any.
-            team (str | Unset): Team that owns this quota.
-            user (str | Unset): User that owns this quota.
-            resources (QuotaResources | Unset): Total resource capacity for this quota, keyed by resource name (e.g. cpu,
-                memory, nvidia.com/gpu).
-            used (QuotaUsed | Unset): Currently consumed resources, keyed by resource name.
-            reserved (QuotaReserved | Unset): Resources reserved but not yet actively used, keyed by resource name.
-            free (QuotaFree | Unset): Available (unreserved) resources, keyed by resource name.
+            id (str): Stable identifier for this quota. Used by clients to reference the quota in subsequent API calls (e.g.
+                as the reservation target). Opaque from the caller's perspective.
+            name (str): Human-readable display name for this quota. Suitable for showing in UI; not guaranteed to be unique
+                across providers.
+            team (str | Unset): Team that owns this quota, if applicable.
+            user (str | Unset): User that owns this quota, if applicable.
+            resources (QuotaResources | Unset): Resource accounting for a single quota, keyed by resource name (e.g. cpu,
+                memory, nvidia.com/gpu, sci.c22-2).
      """
 
+    id: str
     name: str
-    quota_url: str
-    queue: str
-    label: str
-    pool_name: str | Unset = UNSET
     team: str | Unset = UNSET
     user: str | Unset = UNSET
     resources: QuotaResources | Unset = UNSET
-    used: QuotaUsed | Unset = UNSET
-    reserved: QuotaReserved | Unset = UNSET
-    free: QuotaFree | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -75,19 +62,10 @@ class Quota:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.quota_free import QuotaFree
-        from ..models.quota_reserved import QuotaReserved
         from ..models.quota_resources import QuotaResources
-        from ..models.quota_used import QuotaUsed
+        id = self.id
+
         name = self.name
-
-        quota_url = self.quota_url
-
-        queue = self.queue
-
-        label = self.label
-
-        pool_name = self.pool_name
 
         team = self.team
 
@@ -97,41 +75,19 @@ class Quota:
         if not isinstance(self.resources, Unset):
             resources = self.resources.to_dict()
 
-        used: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.used, Unset):
-            used = self.used.to_dict()
-
-        reserved: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.reserved, Unset):
-            reserved = self.reserved.to_dict()
-
-        free: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.free, Unset):
-            free = self.free.to_dict()
-
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({
+            "id": id,
             "name": name,
-            "quotaUrl": quota_url,
-            "queue": queue,
-            "label": label,
         })
-        if pool_name is not UNSET:
-            field_dict["poolName"] = pool_name
         if team is not UNSET:
             field_dict["team"] = team
         if user is not UNSET:
             field_dict["user"] = user
         if resources is not UNSET:
             field_dict["resources"] = resources
-        if used is not UNSET:
-            field_dict["used"] = used
-        if reserved is not UNSET:
-            field_dict["reserved"] = reserved
-        if free is not UNSET:
-            field_dict["free"] = free
 
         return field_dict
 
@@ -139,20 +95,11 @@ class Quota:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.quota_free import QuotaFree
-        from ..models.quota_reserved import QuotaReserved
         from ..models.quota_resources import QuotaResources
-        from ..models.quota_used import QuotaUsed
         d = dict(src_dict)
+        id = d.pop("id")
+
         name = d.pop("name")
-
-        quota_url = d.pop("quotaUrl")
-
-        queue = d.pop("queue")
-
-        label = d.pop("label")
-
-        pool_name = d.pop("poolName", UNSET)
 
         team = d.pop("team", UNSET)
 
@@ -168,48 +115,12 @@ class Quota:
 
 
 
-        _used = d.pop("used", UNSET)
-        used: QuotaUsed | Unset
-        if isinstance(_used,  Unset):
-            used = UNSET
-        else:
-            used = QuotaUsed.from_dict(_used)
-
-
-
-
-        _reserved = d.pop("reserved", UNSET)
-        reserved: QuotaReserved | Unset
-        if isinstance(_reserved,  Unset):
-            reserved = UNSET
-        else:
-            reserved = QuotaReserved.from_dict(_reserved)
-
-
-
-
-        _free = d.pop("free", UNSET)
-        free: QuotaFree | Unset
-        if isinstance(_free,  Unset):
-            free = UNSET
-        else:
-            free = QuotaFree.from_dict(_free)
-
-
-
-
         quota = cls(
+            id=id,
             name=name,
-            quota_url=quota_url,
-            queue=queue,
-            label=label,
-            pool_name=pool_name,
             team=team,
             user=user,
             resources=resources,
-            used=used,
-            reserved=reserved,
-            free=free,
         )
 
 

@@ -17,7 +17,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { Settings2 } from "lucide-react"
+import { Plus, Settings2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -72,10 +72,18 @@ function Row({ label, value }: { label: string; value: string }) {
 
 export function EnvPoolsSection({
   env,
+  onCreatePool,
+  onEditPool,
+  onEditAutoscaling,
+  onDeletePool,
   onViewMetrics,
   onViewDocs,
 }: {
   env: AgentSandboxEnv
+  onCreatePool: () => void
+  onEditPool: (pool: AgentSandboxPool) => void
+  onEditAutoscaling: (pool: AgentSandboxPool) => void
+  onDeletePool: (pool: AgentSandboxPool) => void
   onViewMetrics: (pool: AgentSandboxPool) => void
   onViewDocs: (pool: AgentSandboxPool) => void
 }) {
@@ -108,8 +116,20 @@ export function EnvPoolsSection({
         hideOwningEnv: true,
         envObservedByPool: observedByPool,
         scalingGroupByPool: scalingGroupByPool,
+        onEditPool,
+        onEditAutoscaling,
+        onDeletePool,
       }),
-    [t, onViewMetrics, onViewDocs, observedByPool, scalingGroupByPool],
+    [
+      t,
+      onViewMetrics,
+      onViewDocs,
+      observedByPool,
+      scalingGroupByPool,
+      onEditPool,
+      onEditAutoscaling,
+      onDeletePool,
+    ],
   )
 
   const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
@@ -117,12 +137,17 @@ export function EnvPoolsSection({
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
-          {t("envs.detail.section.pools")}
-        </h3>
-        <span className="text-muted-foreground font-mono text-[10px]">
-          {t("envs.detail.pools.memberCount", { count: memberCount })}
-        </span>
+        <div className="flex items-center gap-3">
+          <h3 className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
+            {t("envs.detail.section.pools")}
+          </h3>
+          <span className="text-muted-foreground font-mono text-[10px]">
+            {t("envs.detail.pools.memberCount", { count: memberCount })}
+          </span>
+        </div>
+        <Button onClick={onCreatePool} size="sm" className="h-7 gap-1 px-2 text-xs">
+          <Plus className="h-3 w-3" /> {t("envs.poolForm.createAction")}
+        </Button>
       </div>
       <QueryTable
         columns={columns}

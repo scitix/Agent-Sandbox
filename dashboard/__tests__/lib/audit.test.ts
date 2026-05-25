@@ -53,7 +53,7 @@ describe("AuditWriter abstraction", () => {
       timestamp: "2026-04-02T08:00:00.000Z",
       action: "api.create" as const,
       method: "POST",
-      path: "/v1/sandboxpools",
+      path: "/v1/envs/env-prod/sandboxpools",
       clusterID: "cluster-prod",
       statusCode: 201,
       actor: { role: "admin" as const, user: "alice", team: "team-ops", authMethod: "oidc" },
@@ -81,7 +81,7 @@ describe("AuditWriter abstraction", () => {
         timestamp: "2026-04-02T08:00:00.000Z",
         action: "api.delete" as const,
         method: "DELETE",
-        path: "/v1/sandboxpools/x",
+        path: "/v1/envs/env-1/sandboxpools/x",
         statusCode: 200,
         actor: { role: "tenant" as const },
       }),
@@ -127,7 +127,7 @@ describe("FileAuditWriter formatting", () => {
       timestamp: "2026-04-02T08:15:33.421Z",
       action: "api.create",
       method: "POST",
-      path: "/v1/sandboxpools",
+      path: "/v1/envs/env-prod/sandboxpools",
       clusterID: "cluster-prod",
       statusCode: 201,
       actor: {
@@ -143,7 +143,7 @@ describe("FileAuditWriter formatting", () => {
     expect(log).toContain("[CREATE]")
     expect(log).toContain("POST")
     expect(log).toContain("cluster-prod")
-    expect(log).toContain("/v1/sandboxpools")
+    expect(log).toContain("/v1/envs/env-prod/sandboxpools")
     expect(log).toContain("→ 201")
     expect(log).toContain("admin")
     expect(log).toContain("alice")
@@ -159,7 +159,7 @@ describe("FileAuditWriter formatting", () => {
       timestamp: "2026-04-02T08:22:11.003Z",
       action: "api.delete",
       method: "DELETE",
-      path: "/v1/sandboxpools/pool-abc",
+      path: "/v1/envs/env-prod/sandboxpools/pool-abc",
       clusterID: "cluster-prod",
       statusCode: 200,
       actor: {
@@ -235,7 +235,7 @@ describe("FileAuditWriter formatting", () => {
       timestamp: "2026-04-02T10:00:00.000Z",
       action: "api.create",
       method: "POST",
-      path: "/v1/sandboxpools",
+      path: "/v1/envs/env-prod/sandboxpools",
       clusterID: "c1",
       statusCode: 201,
       actor: { role: "admin", user: "u1" },
@@ -244,7 +244,7 @@ describe("FileAuditWriter formatting", () => {
       timestamp: "2026-04-02T10:01:00.000Z",
       action: "api.delete",
       method: "DELETE",
-      path: "/v1/sandboxpools/p1",
+      path: "/v1/envs/env-1/sandboxpools/p1",
       clusterID: "c1",
       statusCode: 200,
       actor: { role: "admin", user: "u1" },
@@ -354,14 +354,17 @@ describe("Cluster proxy route — audit integration", () => {
     const { POST } = await getClusterRoute()
     // Pass signal directly in the Request constructor — Object.assign cannot
     // override the read-only signal property of the native Request class.
-    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/sandboxpools", {
+    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ spec: {} }),
       signal: new AbortController().signal,
     })
     const res = await POST(req as never, {
-      params: Promise.resolve({ clusterID: "cluster-prod", path: ["v1", "sandboxpools"] }),
+      params: Promise.resolve({
+        clusterID: "cluster-prod",
+        path: ["v1", "envs", "env-prod", "sandboxpools"],
+      }),
     })
     expect(res.status).toBe(201)
 
@@ -369,7 +372,7 @@ describe("Cluster proxy route — audit integration", () => {
     expect(log).toContain("[CREATE]")
     expect(log).toContain("POST")
     expect(log).toContain("cluster-prod")
-    expect(log).toContain("/v1/sandboxpools")
+    expect(log).toContain("/v1/envs/env-prod/sandboxpools")
     expect(log).toContain("→ 201")
     expect(log).toContain("alice")
     expect(log).toContain("t1")
@@ -386,7 +389,7 @@ describe("Cluster proxy route — audit integration", () => {
     mockUndici.mockResolvedValueOnce(fakeUndiciResponse(200, {}))
 
     const { DELETE } = await getClusterRoute()
-    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/sandboxpools/pool-abc", {
+    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools/pool-abc", {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
       signal: new AbortController().signal,
@@ -394,13 +397,13 @@ describe("Cluster proxy route — audit integration", () => {
     await DELETE(req as never, {
       params: Promise.resolve({
         clusterID: "cluster-prod",
-        path: ["v1", "sandboxpools", "pool-abc"],
+        path: ["v1", "envs", "env-prod", "sandboxpools", "pool-abc"],
       }),
     })
 
     const log = readLog()
     expect(log).toContain("[DELETE]")
-    expect(log).toContain("/v1/sandboxpools/pool-abc")
+    expect(log).toContain("/v1/envs/env-prod/sandboxpools/pool-abc")
   })
 
   it("writes api.error for 4xx backend response", async () => {
@@ -471,12 +474,15 @@ describe("Cluster proxy route — audit integration", () => {
     mockUndici.mockResolvedValueOnce(fakeUndiciResponse(200, { items: [] }))
 
     const { GET } = await getClusterRoute()
-    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/sandboxpools", {
+    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools", {
       headers: { Authorization: `Bearer ${token}` },
       signal: new AbortController().signal,
     })
     await GET(req as never, {
-      params: Promise.resolve({ clusterID: "cluster-prod", path: ["v1", "sandboxpools"] }),
+      params: Promise.resolve({
+        clusterID: "cluster-prod",
+        path: ["v1", "envs", "env-prod", "sandboxpools"],
+      }),
     })
 
     const log = readLog()

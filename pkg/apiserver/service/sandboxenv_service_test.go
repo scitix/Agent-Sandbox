@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -70,7 +71,7 @@ func newEnvService(t *testing.T, envs ...*agentsv1alpha1.SandboxEnv) SandboxEnvS
 	for _, e := range envs {
 		cb = cb.WithObjects(e)
 	}
-	return NewSandboxEnvService(cb.Build())
+	return NewSandboxEnvService(cb.Build(), nil, nil, nil)
 }
 
 func TestSandboxEnvService_List_FiltersByTeamAndUser(t *testing.T) {
@@ -230,14 +231,15 @@ func TestSandboxEnvService_UpdateAutoscaling_RejectsEmptyGroupName(t *testing.T)
 	}
 }
 
-// poolWithOwner returns a SandboxPool whose OwnerReferences include the
-// supplied SandboxEnv name — used to validate the poolToGen OwningEnv
-// projection.
-func poolWithOwner(name, ns, envName string) *agentsv1alpha1.SandboxPool {
+// poolWithOwner returns a SandboxPool (in envTestNamespace) whose
+// OwnerReferences include the supplied SandboxEnv name — used to validate
+// the poolToGen OwningEnv projection and the env-scoped Pool lookups.
+// Pass envName="" to produce an unowned pool.
+func poolWithOwner(name, envName string) *agentsv1alpha1.SandboxPool {
 	pool := &agentsv1alpha1.SandboxPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: ns,
+			Namespace: envTestNamespace,
 		},
 		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 1},
 	}
@@ -253,7 +255,7 @@ func poolWithOwner(name, ns, envName string) *agentsv1alpha1.SandboxPool {
 }
 
 func TestPoolToGen_SetsOwningEnvFromOwnerRef(t *testing.T) {
-	pool := poolWithOwner("pool-a", envTestNamespace, envTestName)
+	pool := poolWithOwner("pool-a", envTestName)
 	result := poolToGen(context.Background(), pool, nil)
 	if result.OwningEnv == nil || *result.OwningEnv != "env-a" {
 		t.Errorf("OwningEnv = %v, want env-a", result.OwningEnv)
@@ -261,7 +263,7 @@ func TestPoolToGen_SetsOwningEnvFromOwnerRef(t *testing.T) {
 }
 
 func TestPoolToGen_OwningEnvNilWhenNoOwnerRef(t *testing.T) {
-	pool := poolWithOwner("pool-a", "default", "")
+	pool := poolWithOwner("pool-a", "")
 	result := poolToGen(context.Background(), pool, nil)
 	if result.OwningEnv != nil {
 		t.Errorf("OwningEnv = %v, want nil", *result.OwningEnv)
@@ -316,7 +318,7 @@ func envSyncTestSetup(t *testing.T, podImage string) (SandboxEnvService, *agents
 		t.Fatalf("client builder: %v", err)
 	}
 	cli := cb.WithObjects(env, tmpl, pool).Build()
-	return NewSandboxEnvService(cli), env
+	return NewSandboxEnvService(cli, nil, nil, nil), env
 }
 
 func podTemplateWithImage(image string) *corev1.PodTemplateSpec {
@@ -350,5 +352,393 @@ func TestSandboxEnvService_SyncTemplate_NotFound(t *testing.T) {
 	_, err := svc.SyncTemplate(context.Background(), "default", "ghost")
 	if err == nil || err.Code != domain.ErrCodeNotFound {
 		t.Fatalf("expected NotFound, got %+v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Env-scoped Pool CRUD
+// ---------------------------------------------------------------------------
+
+const envLocalCluster = "local"
+
+// newEnvForPoolOps returns an Env named "env-x" with an empty members slice
+// on the local cluster — the canonical starting point for the AddMember
+// tests. The fixed name keeps the tests readable; spin up a hand-written
+// env when a different name is required.
+func newEnvForPoolOps() *agentsv1alpha1.SandboxEnv {
+	return &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "env-x",
+			Namespace: envTestNamespace,
+		},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "envd-runtime"},
+			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
+			Clusters: []agentsv1alpha1.EnvClusterSpec{
+				{ClusterID: envLocalCluster},
+			},
+		},
+	}
+}
+
+// memberWithResources returns an EnvClusterMember whose InlineResources let
+// derivePoolMember compute a "2c8Gi" key (no instanceType catalog needed).
+func memberWithResources(replicas int32) agentsv1alpha1.EnvClusterMember {
+	return agentsv1alpha1.EnvClusterMember{
+		Replicas: replicas,
+		InlineResources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resourceMustParse("2"),
+				corev1.ResourceMemory: resourceMustParse("8Gi"),
+			},
+		},
+	}
+}
+
+func resourceMustParse(s string) resource.Quantity {
+	q, err := resource.ParseQuantity(s)
+	if err != nil {
+		panic(err)
+	}
+	return q
+}
+
+func TestSandboxEnvService_AddMemberPool_DerivesNameAndScalingGroup(t *testing.T) {
+	svc := newEnvService(t, newEnvForPoolOps())
+
+	res, err := svc.AddMemberPool(context.Background(), envTestNamespace, "env-x", envLocalCluster, memberWithResources(2))
+	if err != nil {
+		t.Fatalf("AddMemberPool: %+v", err)
+	}
+	if res.Name != "env-x-2c8Gi" {
+		t.Fatalf("derived name = %q, want env-x-2c8Gi", res.Name)
+	}
+	if res.Spec.Replicas != 2 {
+		t.Fatalf("expected replicas 2, got %d", res.Spec.Replicas)
+	}
+	if res.OwningEnv == nil || *res.OwningEnv != "env-x" {
+		t.Fatalf("OwningEnv missing")
+	}
+	cli := svc.(*k8sSandboxEnvService).client
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: "env-x"}, got); err != nil {
+		t.Fatalf("Get env: %v", err)
+	}
+	if len(got.Spec.Clusters[0].Members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(got.Spec.Clusters[0].Members))
+	}
+	m := got.Spec.Clusters[0].Members[0]
+	if m.Name != "env-x-2c8Gi" || m.ScalingGroup != "2c8Gi" {
+		t.Fatalf("derived fields wrong: %+v", m)
+	}
+}
+
+func TestSandboxEnvService_AddMemberPool_RejectsMissingResources(t *testing.T) {
+	svc := newEnvService(t, newEnvForPoolOps())
+	_, err := svc.AddMemberPool(context.Background(), envTestNamespace, "env-x", envLocalCluster, agentsv1alpha1.EnvClusterMember{})
+	if err == nil || err.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected BadRequest, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_AddMemberPool_NoLocalClusterID_503(t *testing.T) {
+	svc := newEnvService(t, newEnvForPoolOps())
+	_, err := svc.AddMemberPool(context.Background(), envTestNamespace, "env-x", "", memberWithResources(1))
+	if err == nil || err.Code != domain.ErrCodeServiceUnavailable {
+		t.Fatalf("expected ServiceUnavailable, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_AddMemberPool_Duplicate_409(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{Name: "env-x-2c8Gi"}}
+	svc := newEnvService(t, env)
+
+	_, err := svc.AddMemberPool(context.Background(), envTestNamespace, "env-x", envLocalCluster, memberWithResources(1))
+	if err == nil || err.Code != domain.ErrCodeConflict {
+		t.Fatalf("expected Conflict, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_AddMemberPool_EnvNotFound_404(t *testing.T) {
+	svc := newEnvService(t)
+	_, err := svc.AddMemberPool(context.Background(), envTestNamespace, "ghost", envLocalCluster, memberWithResources(1))
+	if err == nil || err.Code != domain.ErrCodeNotFound {
+		t.Fatalf("expected NotFound, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_UpdateMemberPool_AdjustsReplicas(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
+		{Name: "m1", Replicas: 1, ScalingGroup: "1c4Gi"},
+	}
+	svc := newEnvService(t, env)
+
+	r := int32(5)
+	res, err := svc.UpdateMemberPool(context.Background(), envTestNamespace, "env-x", "m1", envLocalCluster, MemberPoolPatch{Replicas: &r})
+	if err != nil {
+		t.Fatalf("UpdateMemberPool: %+v", err)
+	}
+	if res.Spec.Replicas != 5 {
+		t.Fatalf("expected replicas 5, got %d", res.Spec.Replicas)
+	}
+	cli := svc.(*k8sSandboxEnvService).client
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: "env-x"}, got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	m := got.Spec.Clusters[0].Members[0]
+	if m.Replicas != 5 || m.ScalingGroup != "1c4Gi" {
+		t.Fatalf("expected only replicas changed, got %+v", m)
+	}
+}
+
+func TestSandboxEnvService_UpdateMemberPool_RejectsReplicasWhenAutoscalingOn(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
+		{Name: "m1", Replicas: 1, ScalingGroup: "2c8Gi"},
+	}
+	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
+		Enabled: true,
+		Groups:  []agentsv1alpha1.EnvAutoscalingGroup{{Name: "2c8Gi"}},
+	}
+	svc := newEnvService(t, env)
+
+	r := int32(7)
+	_, err := svc.UpdateMemberPool(context.Background(), envTestNamespace, "env-x", "m1", envLocalCluster, MemberPoolPatch{Replicas: &r})
+	if err == nil || err.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected BadRequest, got %+v", err)
+	}
+
+	// MaxReplicas is always editable.
+	mr := int32(20)
+	if _, err := svc.UpdateMemberPool(context.Background(), envTestNamespace, "env-x", "m1", envLocalCluster, MemberPoolPatch{MaxReplicas: &mr}); err != nil {
+		t.Fatalf("MaxReplicas update should be accepted, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_UpdateMemberPool_NotFound_404(t *testing.T) {
+	svc := newEnvService(t, newEnvForPoolOps())
+
+	r := int32(1)
+	_, err := svc.UpdateMemberPool(context.Background(), envTestNamespace, "env-x", "missing", envLocalCluster, MemberPoolPatch{Replicas: &r})
+	if err == nil || err.Code != domain.ErrCodeNotFound {
+		t.Fatalf("expected NotFound, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_DeleteMemberPool_Removes(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{Name: "m1"}, {Name: "m2"}}
+	svc := newEnvService(t, env)
+
+	res, err := svc.DeleteMemberPool(context.Background(), envTestNamespace, "env-x", "m1", envLocalCluster)
+	if err != nil {
+		t.Fatalf("DeleteMemberPool: %+v", err)
+	}
+	if res.Name != "m1" || res.Status != "Terminating" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	cli := svc.(*k8sSandboxEnvService).client
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: "env-x"}, got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Spec.Clusters[0].Members) != 1 || got.Spec.Clusters[0].Members[0].Name != "m2" {
+		t.Fatalf("member not removed: %+v", got.Spec.Clusters[0].Members)
+	}
+}
+
+func TestSandboxEnvService_DeleteMemberPool_NotFound_404(t *testing.T) {
+	svc := newEnvService(t, newEnvForPoolOps())
+
+	_, err := svc.DeleteMemberPool(context.Background(), envTestNamespace, "env-x", "missing", envLocalCluster)
+	if err == nil || err.Code != domain.ErrCodeNotFound {
+		t.Fatalf("expected NotFound, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_ListMemberPools_FiltersByOwnerRef(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.UID = types.UID("uid-env-x")
+	mine := poolWithOwner("p-mine", "env-x")
+	other := poolWithOwner("p-other", "env-y")
+	orphan := poolWithOwner("p-orphan", "")
+
+	cb, err := indexer.GetFakeClientBuilderWithIndexers()
+	if err != nil {
+		t.Fatalf("client builder: %v", err)
+	}
+	cli := cb.WithObjects(env, mine, other, orphan).Build()
+	svc := NewSandboxEnvService(cli, nil, nil, nil)
+
+	items, appErr := svc.ListMemberPools(context.Background(), envTestNamespace, "env-x")
+	if appErr != nil {
+		t.Fatalf("ListMemberPools: %+v", appErr)
+	}
+	if len(items) != 1 || items[0].Name != "p-mine" {
+		t.Fatalf("expected only p-mine, got %+v", items)
+	}
+}
+
+func TestSandboxEnvService_GetMemberPool_RejectsForeignOwner(t *testing.T) {
+	env := newEnvForPoolOps()
+	foreign := poolWithOwner("p-foreign", "other-env")
+	cb, err := indexer.GetFakeClientBuilderWithIndexers()
+	if err != nil {
+		t.Fatalf("client builder: %v", err)
+	}
+	cli := cb.WithObjects(env, foreign).Build()
+	svc := NewSandboxEnvService(cli, nil, nil, nil)
+
+	_, appErr := svc.GetMemberPool(context.Background(), envTestNamespace, "env-x", "p-foreign")
+	if appErr == nil || appErr.Code != domain.ErrCodeNotFound {
+		t.Fatalf("expected NotFound for foreign-owned pool, got %+v", appErr)
+	}
+}
+
+// keep ptr import referenced even when only some tests use it.
+var _ = ptr.To[int32]
+
+// fakeAdmitter records every admission call and lets the test override the
+// behaviour via callbacks. Used to verify that env-scoped pool ops fire the
+// expected hook and propagate plugin mutations back to the member.
+type fakeAdmitter struct {
+	createCalls int
+	updateCalls int
+	deleteCalls int
+
+	createFn func(p *agentsv1alpha1.SandboxPool) *domain.AppError
+	updateFn func(p *agentsv1alpha1.SandboxPool) (bool, *domain.AppError)
+	deleteFn func(p *agentsv1alpha1.SandboxPool) *domain.AppError
+}
+
+func (a *fakeAdmitter) AdmitCreate(_ context.Context, p *agentsv1alpha1.SandboxPool) *domain.AppError {
+	a.createCalls++
+	if a.createFn != nil {
+		return a.createFn(p)
+	}
+	return nil
+}
+func (a *fakeAdmitter) AdmitUpdate(_ context.Context, p *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
+	a.updateCalls++
+	if a.updateFn != nil {
+		return a.updateFn(p)
+	}
+	return false, nil
+}
+func (a *fakeAdmitter) AdmitDelete(_ context.Context, p *agentsv1alpha1.SandboxPool) *domain.AppError {
+	a.deleteCalls++
+	if a.deleteFn != nil {
+		return a.deleteFn(p)
+	}
+	return nil
+}
+
+func newEnvServiceWithAdmitter(t *testing.T, admitter PoolAdmitter, envs ...*agentsv1alpha1.SandboxEnv) SandboxEnvService {
+	t.Helper()
+	cb, err := indexer.GetFakeClientBuilderWithIndexers()
+	if err != nil {
+		t.Fatalf("client builder: %v", err)
+	}
+	for _, e := range envs {
+		cb = cb.WithObjects(e)
+	}
+	return NewSandboxEnvService(cb.Build(), admitter, nil, nil)
+}
+
+func TestSandboxEnvService_AddMemberPool_RunsAdmitter(t *testing.T) {
+	admitter := &fakeAdmitter{}
+	svc := newEnvServiceWithAdmitter(t, admitter, newEnvForPoolOps())
+
+	_, err := svc.AddMemberPool(context.Background(), envTestNamespace, "env-x", envLocalCluster,
+		memberWithResources(1))
+	if err != nil {
+		t.Fatalf("AddMemberPool: %+v", err)
+	}
+	if admitter.createCalls != 1 {
+		t.Fatalf("expected 1 AdmitCreate call, got %d", admitter.createCalls)
+	}
+}
+
+func TestSandboxEnvService_AddMemberPool_AdmitterRejection_Bubbles(t *testing.T) {
+	admitter := &fakeAdmitter{
+		createFn: func(_ *agentsv1alpha1.SandboxPool) *domain.AppError {
+			return domain.NewTooManyRequests("quota exceeded", nil, nil)
+		},
+	}
+	svc := newEnvServiceWithAdmitter(t, admitter, newEnvForPoolOps())
+
+	_, err := svc.AddMemberPool(context.Background(), envTestNamespace, "env-x", envLocalCluster,
+		memberWithResources(1))
+	if err == nil || err.Code != domain.ErrCodeTooManyRequests {
+		t.Fatalf("expected TooManyRequests bubble-up, got %+v", err)
+	}
+}
+
+func TestSandboxEnvService_AddMemberPool_PropagatesPluginLabelMutation(t *testing.T) {
+	admitter := &fakeAdmitter{
+		createFn: func(p *agentsv1alpha1.SandboxPool) *domain.AppError {
+			if p.Labels == nil {
+				p.Labels = map[string]string{}
+			}
+			p.Labels["quota.scitix.ai/reservation-id"] = "res-xyz"
+			return nil
+		},
+	}
+	svc := newEnvServiceWithAdmitter(t, admitter, newEnvForPoolOps())
+
+	_, err := svc.AddMemberPool(context.Background(), envTestNamespace, "env-x", envLocalCluster,
+		memberWithResources(1))
+	if err != nil {
+		t.Fatalf("AddMemberPool: %+v", err)
+	}
+	cli := svc.(*k8sSandboxEnvService).client
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: "env-x"}, got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	persisted := got.Spec.Clusters[0].Members[0]
+	if persisted.Labels["quota.scitix.ai/reservation-id"] != "res-xyz" {
+		t.Fatalf("plugin label not propagated to member: %+v", persisted.Labels)
+	}
+}
+
+func TestSandboxEnvService_DeleteMemberPool_SkipsAdmitterWhenPoolMissing(t *testing.T) {
+	admitter := &fakeAdmitter{}
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{Name: "m1"}}
+	svc := newEnvServiceWithAdmitter(t, admitter, env)
+
+	_, err := svc.DeleteMemberPool(context.Background(), envTestNamespace, "env-x", "m1", envLocalCluster)
+	if err != nil {
+		t.Fatalf("DeleteMemberPool: %+v", err)
+	}
+	if admitter.deleteCalls != 0 {
+		t.Fatalf("expected 0 AdmitDelete calls when Pool not materialised, got %d", admitter.deleteCalls)
+	}
+}
+
+func TestSandboxEnvService_DeleteMemberPool_CallsAdmitterWhenPoolExists(t *testing.T) {
+	admitter := &fakeAdmitter{}
+	env := newEnvForPoolOps()
+	env.UID = types.UID("uid-env-x")
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{Name: "p1"}}
+	pool := poolWithOwner("p1", "env-x")
+
+	cb, err := indexer.GetFakeClientBuilderWithIndexers()
+	if err != nil {
+		t.Fatalf("client builder: %v", err)
+	}
+	cli := cb.WithObjects(env, pool).Build()
+	svc := NewSandboxEnvService(cli, admitter, nil, nil)
+
+	_, appErr := svc.DeleteMemberPool(context.Background(), envTestNamespace, "env-x", "p1", envLocalCluster)
+	if appErr != nil {
+		t.Fatalf("DeleteMemberPool: %+v", appErr)
+	}
+	if admitter.deleteCalls != 1 {
+		t.Fatalf("expected 1 AdmitDelete call, got %d", admitter.deleteCalls)
 	}
 }

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for agentbox_sdk.pool (PoolsAPI + SandboxPool resource).
+Unit tests for agentbox_sdk.pool (env-scoped PoolsAPI + SandboxPool).
 """
 
 from __future__ import annotations
@@ -29,9 +29,11 @@ from agentbox_sdk.exceptions import PoolNotFoundError
 
 
 BASE_URL = "http://agentbox.test/v1"
+ENV_NAME = "env-a"
+POOL_NAME = "env-a-2c8Gi"  # derived: envName + "-" + resourceKey
 
 POOL_FIXTURE: dict = {
-    "name": "test-pool",
+    "name": POOL_NAME,
     "namespace": "default",
     "spec": {"replicas": 3, "templateName": "gpu-v100"},
     "status": {
@@ -63,14 +65,15 @@ def make_api(base_url: str = BASE_URL) -> PoolsAPI:
 @pytest.mark.asyncio
 async def test_get_pool_ok():
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.get("/sandboxpools/test-pool").mock(
+        mock.get(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
             return_value=httpx.Response(200, json=POOL_ENVELOPE)
         )
         api = make_api()
-        pool = await api.get("test-pool")
+        pool = await api.get(ENV_NAME, POOL_NAME)
 
     assert isinstance(pool, SandboxPool)
-    assert pool.name == "test-pool"
+    assert pool.env_name == ENV_NAME
+    assert pool.name == POOL_NAME
     assert pool.replicas == 3
     assert pool.idle_replicas == 2
     assert pool.running_replicas == 1
@@ -80,12 +83,12 @@ async def test_get_pool_ok():
 @pytest.mark.asyncio
 async def test_get_pool_not_found():
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.get("/sandboxpools/missing").mock(
+        mock.get(f"/envs/{ENV_NAME}/sandboxpools/missing").mock(
             return_value=httpx.Response(404, json={"error": "pool not found"})
         )
         api = make_api()
         with pytest.raises(PoolNotFoundError):
-            await api.get("missing")
+            await api.get(ENV_NAME, "missing")
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +99,7 @@ async def test_get_pool_not_found():
 @pytest.mark.asyncio
 async def test_list_pools():
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.get("/sandboxpools").mock(
+        mock.get(f"/envs/{ENV_NAME}/sandboxpools").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -108,12 +111,12 @@ async def test_list_pools():
             )
         )
         api = make_api()
-        result = await api.list()
+        result = await api.list(ENV_NAME)
 
     assert result.total == 1
     assert len(result.items) == 1
     assert isinstance(result.items[0], SandboxPoolData)
-    assert result.items[0].name == "test-pool"
+    assert result.items[0].name == POOL_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -122,22 +125,56 @@ async def test_list_pools():
 
 
 @pytest.mark.asyncio
-async def test_create_pool():
+async def test_create_pool_with_inline_resources():
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/sandboxpools").mock(
-            return_value=httpx.Response(201, json=POOL_ENVELOPE)
+        route = mock.post(f"/envs/{ENV_NAME}/sandboxpools").mock(
+            return_value=httpx.Response(202, json=POOL_ENVELOPE)
         )
         api = make_api()
         pool = await api.create(
-            "test-pool", template_name="gpu-v100", replicas=3
+            ENV_NAME,
+            cpu="2",
+            memory="8Gi",
+            replicas=3,
         )
 
-    assert pool.name == "test-pool"
+    assert pool.name == POOL_NAME
     assert pool.replicas == 3
+    # Verify inlineResources made it into the body.
+    sent = route.calls.last.request
+    import json as _json
+
+    body = _json.loads(sent.content)
+    assert body["replicas"] == 3
+    assert body["inlineResources"]["requests"] == {"cpu": "2", "memory": "8Gi"}
+    assert body["inlineResources"]["limits"] == {"cpu": "2", "memory": "8Gi"}
+
+
+@pytest.mark.asyncio
+async def test_create_pool_with_instance_type_and_quota():
+    with respx.mock(base_url=BASE_URL) as mock:
+        route = mock.post(f"/envs/{ENV_NAME}/sandboxpools").mock(
+            return_value=httpx.Response(202, json=POOL_ENVELOPE)
+        )
+        api = make_api()
+        await api.create(
+            ENV_NAME,
+            instance_type="sci.c22-2",
+            multiplier=2,
+            quota_url="alice.bob.exclusive",
+        )
+
+    sent = route.calls.last.request
+    import json as _json
+
+    body = _json.loads(sent.content)
+    assert body["instanceType"] == "sci.c22-2"
+    assert body["multiplier"] == 2
+    assert body["labels"] == {"quota.scitix.ai/url": "alice.bob.exclusive"}
 
 
 # ---------------------------------------------------------------------------
-# PoolsAPI.scale — now uses PUT /sandboxpools/{name} (not PATCH /pools/{name})
+# PoolsAPI.scale — uses PUT /envs/{env}/sandboxpools/{pool}
 # ---------------------------------------------------------------------------
 
 
@@ -148,13 +185,29 @@ async def test_scale_pool():
     scaled_envelope = {"template": scaled_fixture}
 
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.put("/sandboxpools/test-pool").mock(
+        mock.put(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
             return_value=httpx.Response(200, json=scaled_envelope)
         )
         api = make_api()
-        pool = await api.scale("test-pool", 5)
+        pool = await api.scale(ENV_NAME, POOL_NAME, 5)
 
     assert pool.replicas == 5
+
+
+@pytest.mark.asyncio
+async def test_scale_pool_max_replicas_only():
+    with respx.mock(base_url=BASE_URL) as mock:
+        route = mock.put(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
+            return_value=httpx.Response(200, json=POOL_ENVELOPE)
+        )
+        api = make_api()
+        await api.scale(ENV_NAME, POOL_NAME, max_replicas=20)
+
+    sent = route.calls.last.request
+    import json as _json
+
+    body = _json.loads(sent.content)
+    assert body == {"maxReplicas": 20}
 
 
 # ---------------------------------------------------------------------------
@@ -165,18 +218,18 @@ async def test_scale_pool():
 @pytest.mark.asyncio
 async def test_delete_pool():
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.delete("/sandboxpools/test-pool").mock(
+        mock.delete(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
             return_value=httpx.Response(
                 202,
                 json={
-                    "name": "test-pool",
+                    "name": POOL_NAME,
                     "namespace": "default",
-                    "status": "Deleting",
+                    "status": "Terminating",
                 },
             )
         )
         api = make_api()
-        await api.delete("test-pool")  # should not raise
+        await api.delete(ENV_NAME, POOL_NAME)  # should not raise
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +240,9 @@ async def test_delete_pool():
 def test_pool_repr():
     data = SandboxPoolData.model_validate(POOL_FIXTURE)
     api = PoolsAPI.__new__(PoolsAPI)
-    pool = SandboxPool(data, api)
-    assert "test-pool" in repr(pool)
+    pool = SandboxPool(data, api, ENV_NAME)
+    assert POOL_NAME in repr(pool)
+    assert ENV_NAME in repr(pool)
     assert "replicas=3" in repr(pool)
 
 
@@ -202,11 +256,11 @@ async def test_server_error_raises():
     from agentbox_sdk.exceptions import ServerError
 
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.get("/sandboxpools/bad").mock(
+        mock.get(f"/envs/{ENV_NAME}/sandboxpools/bad").mock(
             return_value=httpx.Response(
                 500, json={"error": "internal server error"}
             )
         )
         api = make_api()
         with pytest.raises(ServerError):
-            await api.get("bad")
+            await api.get(ENV_NAME, "bad")

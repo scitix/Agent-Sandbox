@@ -19,13 +19,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { useAtomValue } from "jotai"
-import { LayoutDashboard, Box, RefreshCw, Database } from "lucide-react"
+import { LayoutDashboard, Box, RefreshCw } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
   userSandboxStatsQueryOptions,
   sandboxesQueryOptions,
-  poolsQueryOptions,
   replicasOverviewQueryOptions,
 } from "@/lib/queries"
 import { PrometheusSection } from "@/components/prometheus/prometheus-section"
@@ -106,11 +105,9 @@ export default function OverviewPage() {
 
   const statsOptions = userSandboxStatsQueryOptions()
   const sandboxOptions = sandboxesQueryOptions({ limit: 10, offset: 0 })
-  const poolOptions = poolsQueryOptions()
 
   const { data: statsData, isFetching: statsFetching } = useQuery(statsOptions)
   const { data: sandboxes, isFetching: sandboxFetching } = useQuery(sandboxOptions)
-  const { data: pools, isFetching: poolsFetching } = useQuery(poolOptions)
 
   const stats = statsData?.statistics ?? null
   const loading = !statsData && statsFetching
@@ -118,7 +115,6 @@ export default function OverviewPage() {
   const handleRefresh = () => {
     void qc.refetchQueries({ queryKey: statsOptions.queryKey })
     void qc.refetchQueries({ queryKey: sandboxOptions.queryKey })
-    void qc.refetchQueries({ queryKey: poolOptions.queryKey })
   }
 
   const runningCount = stats?.byStatus?.["Running"] ?? 0
@@ -150,7 +146,7 @@ export default function OverviewPage() {
               size="icon-sm"
               onClick={handleRefresh}
               className="text-muted-foreground h-7 w-7"
-              disabled={statsFetching || sandboxFetching || poolsFetching}
+              disabled={statsFetching || sandboxFetching}
             >
               <RefreshCw
                 className={`h-3.5 w-3.5 ${statsFetching || sandboxFetching ? "animate-spin" : ""}`}
@@ -262,50 +258,6 @@ export default function OverviewPage() {
                 </div>
               )}
 
-              {/* Pool Status */}
-              {pools && pools.length > 0 && (
-                <div>
-                  <h2 className="text-muted-foreground mb-3 flex items-center gap-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
-                    <Database className="h-3.5 w-3.5" />
-                    {t("overview.availablePools")}
-                  </h2>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    {pools?.map((pool) => (
-                      <div key={pool.name} className="border-border bg-card border p-4">
-                        <div className="text-foreground mb-2 font-mono text-sm font-semibold">
-                          {pool.name}
-                        </div>
-                        <div className="text-muted-foreground flex flex-col gap-1 font-mono text-xs">
-                          <div className="flex justify-between">
-                            <span>{t("pools.col.replicas")}</span>
-                            <span className="text-foreground">{pool.spec.replicas}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>{t("status.idle")}</span>
-                            <span className="text-green-600 dark:text-green-400">
-                              {pool.status?.idleReplicas ?? 0}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>{t("status.running")}</span>
-                            <span className="text-yellow-600 dark:text-yellow-400">
-                              {pool.status?.runningReplicas ?? 0}
-                            </span>
-                          </div>
-                          {(pool.status?.failedReplicas ?? 0) > 0 && (
-                            <div className="flex justify-between">
-                              <span>{t("status.failed")}</span>
-                              <span className="text-red-600 dark:text-red-400">
-                                {pool.status?.failedReplicas}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </>
           )}
 

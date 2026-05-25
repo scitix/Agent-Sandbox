@@ -28,13 +28,13 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="QuotaUsed")
+T = TypeVar("T", bound="QuotaResourcesFree")
 
 
 
 @_attrs_define
-class QuotaUsed:
-    """ Currently consumed resources, keyed by resource name.
+class QuotaResourcesFree:
+    """ Available amount (total - used - reserved).
 
      """
 
@@ -56,12 +56,12 @@ class QuotaUsed:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        quota_used = cls(
+        quota_resources_free = cls(
         )
 
 
-        quota_used.additional_properties = d
-        return quota_used
+        quota_resources_free.additional_properties = d
+        return quota_resources_free
 
     @property
     def additional_keys(self) -> list[str]:

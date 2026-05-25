@@ -14,44 +14,57 @@
  * limitations under the License.
  */
 
-// Query options for Sandbox Pool resources. Pools are now read-only at the
-// HTTP layer — creation / deletion / template-sync go through SandboxEnv,
-// which materialises member Pools via the Env Reconciler.
+// Query options for SandboxPools (now env-scoped only). The top-level
+// /v1/sandboxpools endpoints were removed in the 2026.06 refactor — every
+// Pool lives under an Env and is reached via /v1/envs/{name}/sandboxpools.
 
+import { useQueryClient } from "@tanstack/react-query"
 import { currentApiClient } from "@/lib/api/client"
-import { impersonationHeaders } from "./utils"
+import { delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
 
-export const poolsQueryOptions = () =>
-  currentApiClient().queryOptions("get", "/sandboxpools", undefined, {
-    select: (data) => data.items ?? [],
-  })
-
-// Env-scoped pool list: reuses /sandboxpools (which already carries `owningEnv`
-// stamped by the Phase 1 PoolAdoption reconciler) and filters client-side, so
-// the cache stays shared with the top-level pools query.
 export const envPoolsQueryOptions = (envName: string) =>
-  currentApiClient().queryOptions("get", "/sandboxpools", undefined, {
+  currentApiClient().queryOptions("get", "/envs/{name}/sandboxpools", {
+    params: { path: { name: envName } },
+  }, {
     select: (data) =>
-      (data.items ?? [])
-        .filter((p) => p.owningEnv === envName)
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      (data.items ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)),
   })
 
-export const poolQueryOptions = (name: string) =>
-  currentApiClient().queryOptions("get", "/sandboxpools/{name}", {
-    params: { path: { name } },
+export const envPoolQueryOptions = (envName: string, poolName: string) =>
+  currentApiClient().queryOptions("get", "/envs/{name}/sandboxpools/{poolName}", {
+    params: { path: { name: envName, poolName } },
   })
 
-// Admin impersonation variant: calls the regular /sandboxpools endpoint with
-// X-Impersonate-Team and X-Impersonate-User headers.
-export const adminUserPoolsQueryOptions = (team: string, user: string) =>
-  currentApiClient().queryOptions(
-    "get",
-    "/sandboxpools",
-    { headers: impersonationHeaders(team, user) },
-    {
-      select: (data) => data.items ?? [],
+// ─── Mutations ────────────────────────────────────────────────────────────────
+
+export function useCreateEnvPool(envName: string) {
+  const qc = useQueryClient()
+  return currentApiClient().useMutation("post", "/envs/{name}/sandboxpools", {
+    onSuccess: () => {
+      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, ["get", "/envs"])
     },
-  )
+  })
+}
+
+export function useUpdateEnvPool(envName: string) {
+  const qc = useQueryClient()
+  return currentApiClient().useMutation("put", "/envs/{name}/sandboxpools/{poolName}", {
+    onSuccess: () => {
+      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, ["get", "/envs"])
+    },
+  })
+}
+
+export function useDeleteEnvPool(envName: string) {
+  const qc = useQueryClient()
+  return currentApiClient().useMutation("delete", "/envs/{name}/sandboxpools/{poolName}", {
+    onSuccess: () => {
+      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, ["get", "/envs"])
+    },
+  })
+}

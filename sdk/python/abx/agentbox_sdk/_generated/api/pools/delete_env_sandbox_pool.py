@@ -22,14 +22,16 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.delete_sandbox_pool_result import DeleteSandboxPoolResult
 from ...models.error_response import ErrorResponse
-from ...models.list_sandbox_pools_result import ListSandboxPoolsResult
 from typing import cast
 
 
 
 def _get_kwargs(
-    
+    name: str,
+    pool_name: str,
+
 ) -> dict[str, Any]:
     
 
@@ -38,8 +40,8 @@ def _get_kwargs(
     
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/sandboxpools",
+        "method": "delete",
+        "url": "/envs/{name}/sandboxpools/{pool_name}".format(name=quote(str(name), safe=""),pool_name=quote(str(pool_name), safe=""),),
     }
 
 
@@ -47,13 +49,13 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorResponse | ListSandboxPoolsResult | None:
-    if response.status_code == 200:
-        response_200 = ListSandboxPoolsResult.from_dict(response.json())
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> DeleteSandboxPoolResult | ErrorResponse | None:
+    if response.status_code == 202:
+        response_202 = DeleteSandboxPoolResult.from_dict(response.json())
 
 
 
-        return response_200
+        return response_202
 
     if response.status_code == 401:
         response_401 = ErrorResponse.from_dict(response.json())
@@ -62,6 +64,13 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_401
 
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+
+
+        return response_404
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -69,13 +78,20 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_500
 
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[ErrorResponse | ListSandboxPoolsResult]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[DeleteSandboxPoolResult | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -85,23 +101,31 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
 def sync_detailed(
+    name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | ListSandboxPoolsResult]:
-    """ List sandbox pools
+) -> Response[DeleteSandboxPoolResult | ErrorResponse]:
+    """ Remove a member SandboxPool from an Env
+
+    Args:
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | ListSandboxPoolsResult]
+        Response[DeleteSandboxPoolResult | ErrorResponse]
      """
 
 
     kwargs = _get_kwargs(
-        
+        name=name,
+pool_name=pool_name,
+
     )
 
     response = client.get_httpx_client().request(
@@ -111,44 +135,60 @@ def sync_detailed(
     return _build_response(client=client, response=response)
 
 def sync(
+    name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | ListSandboxPoolsResult | None:
-    """ List sandbox pools
+) -> DeleteSandboxPoolResult | ErrorResponse | None:
+    """ Remove a member SandboxPool from an Env
+
+    Args:
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | ListSandboxPoolsResult
+        DeleteSandboxPoolResult | ErrorResponse
      """
 
 
     return sync_detailed(
-        client=client,
+        name=name,
+pool_name=pool_name,
+client=client,
 
     ).parsed
 
 async def asyncio_detailed(
+    name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
-) -> Response[ErrorResponse | ListSandboxPoolsResult]:
-    """ List sandbox pools
+) -> Response[DeleteSandboxPoolResult | ErrorResponse]:
+    """ Remove a member SandboxPool from an Env
+
+    Args:
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | ListSandboxPoolsResult]
+        Response[DeleteSandboxPoolResult | ErrorResponse]
      """
 
 
     kwargs = _get_kwargs(
-        
+        name=name,
+pool_name=pool_name,
+
     )
 
     response = await client.get_async_httpx_client().request(
@@ -158,22 +198,30 @@ async def asyncio_detailed(
     return _build_response(client=client, response=response)
 
 async def asyncio(
+    name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
-) -> ErrorResponse | ListSandboxPoolsResult | None:
-    """ List sandbox pools
+) -> DeleteSandboxPoolResult | ErrorResponse | None:
+    """ Remove a member SandboxPool from an Env
+
+    Args:
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | ListSandboxPoolsResult
+        DeleteSandboxPoolResult | ErrorResponse
      """
 
 
     return (await asyncio_detailed(
-        client=client,
+        name=name,
+pool_name=pool_name,
+client=client,
 
     )).parsed

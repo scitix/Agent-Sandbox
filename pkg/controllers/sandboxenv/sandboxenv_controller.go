@@ -62,11 +62,6 @@ const (
 	// RequeueAfter is the periodic re-evaluation interval for an Env that
 	// otherwise sees no events. Matches the SandboxPool controller's cadence.
 	RequeueAfter = 10 * time.Second
-
-	// defaultScalingGroup is the canonical name of the single autoscaling
-	// group used by Phase 1 (one group per Env). Kept as a const here so the
-	// autoscaler and status code don't need to import poolmigration.
-	defaultScalingGroup = "default"
 )
 
 // EnvRouterSync is the minimal contract the SandboxEnv Reconciler uses to

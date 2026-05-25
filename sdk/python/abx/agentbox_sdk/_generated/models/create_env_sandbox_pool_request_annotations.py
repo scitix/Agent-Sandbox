@@ -28,13 +28,13 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="QuotaFree")
+T = TypeVar("T", bound="CreateEnvSandboxPoolRequestAnnotations")
 
 
 
 @_attrs_define
-class QuotaFree:
-    """ Available (unreserved) resources, keyed by resource name.
+class CreateEnvSandboxPoolRequestAnnotations:
+    """ Annotations stamped onto this member's SandboxPool.
 
      """
 
@@ -56,12 +56,12 @@ class QuotaFree:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        quota_free = cls(
+        create_env_sandbox_pool_request_annotations = cls(
         )
 
 
-        quota_free.additional_properties = d
-        return quota_free
+        create_env_sandbox_pool_request_annotations.additional_properties = d
+        return create_env_sandbox_pool_request_annotations
 
     @property
     def additional_keys(self) -> list[str]:

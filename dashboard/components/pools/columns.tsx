@@ -24,6 +24,9 @@ import {
   ArrowUpRight,
   Activity,
   AlertTriangle,
+  Pencil,
+  Settings2,
+  Trash2,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -169,6 +172,10 @@ export interface PoolColumnsOptions {
   // Optional scaling-group lookup (sourced from env.spec.clusters.members).
   // Falls back to "" when missing.
   scalingGroupByPool?: Map<string, string>
+  // Env-scoped row actions. Each appears in the row dropdown when set.
+  onEditPool?: (pool: AgentSandboxPool) => void
+  onEditAutoscaling?: (pool: AgentSandboxPool) => void
+  onDeletePool?: (pool: AgentSandboxPool) => void
 }
 
 export function createPoolColumns(
@@ -507,7 +514,12 @@ export function createPoolColumns(
     {
       id: "actions",
       cell: ({ row }) => {
-        if (!onViewMetrics && !onViewDocs) return null
+        const onEditPool = options?.onEditPool
+        const onEditAutoscaling = options?.onEditAutoscaling
+        const onDeletePool = options?.onDeletePool
+        const hasAny =
+          onViewMetrics || onViewDocs || onEditPool || onEditAutoscaling || onDeletePool
+        if (!hasAny) return null
         return (
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -535,6 +547,33 @@ export function createPoolColumns(
                 >
                   <FileText className="mr-2 h-3.5 w-3.5" />
                   {t("pools.docs")}
+                </DropdownMenuItem>
+              )}
+              {onEditPool && (
+                <DropdownMenuItem
+                  onClick={() => onEditPool(row.original)}
+                  className="cursor-pointer font-mono text-xs"
+                >
+                  <Pencil className="mr-2 h-3.5 w-3.5" />
+                  {t("envs.poolForm.editAction")}
+                </DropdownMenuItem>
+              )}
+              {onEditAutoscaling && (
+                <DropdownMenuItem
+                  onClick={() => onEditAutoscaling(row.original)}
+                  className="cursor-pointer font-mono text-xs"
+                >
+                  <Settings2 className="mr-2 h-3.5 w-3.5" />
+                  {t("envs.poolAutoscaling.editAction")}
+                </DropdownMenuItem>
+              )}
+              {onDeletePool && (
+                <DropdownMenuItem
+                  onClick={() => onDeletePool(row.original)}
+                  className="text-destructive cursor-pointer font-mono text-xs"
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  {t("common.delete")}
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>

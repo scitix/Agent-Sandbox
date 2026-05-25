@@ -14,11 +14,17 @@
 
 """
 SandboxPool resource and PoolsAPI namespace for agentbox_sdk.
+
+Breaking change in 2026.06: every Pool lives under a SandboxEnv. The API
+moved from /v1/sandboxpools to /v1/envs/{env}/sandboxpools, and the server
+now derives the PoolName + ScalingGroup from the supplied resources +
+quota label. Callers must pass ``env_name`` to every method on PoolsAPI;
+the ``create`` method no longer accepts ``name``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from agentbox_sdk._http import raise_for_status
 from agentbox_sdk.models import PagedResult, SandboxPoolData
@@ -28,11 +34,16 @@ if TYPE_CHECKING:
 
 
 class SandboxPool:
-    """A SandboxPool resource object."""
+    """A SandboxPool resource object scoped to a SandboxEnv."""
 
-    def __init__(self, data: SandboxPoolData, api: "PoolsAPI") -> None:
+    def __init__(self, data: SandboxPoolData, api: "PoolsAPI", env_name: str) -> None:
         self._data = data
         self._api = api
+        self._env_name = env_name
+
+    @property
+    def env_name(self) -> str:
+        return self._env_name
 
     @property
     def name(self) -> str:
@@ -60,119 +71,152 @@ class SandboxPool:
 
     async def refresh(self) -> "SandboxPool":
         """Fetch the latest state from the API."""
-        updated = await self._api.get(self.name)
+        updated = await self._api.get(self._env_name, self.name)
         self._data = updated._data
         return self
 
     async def scale(self, replicas: int) -> "SandboxPool":
-        """Scale this pool to *replicas* pods."""
-        return await self._api.scale(self.name, replicas)
+        """Scale this pool to *replicas* pods (rejected when the pool's
+        scalingGroup has autoscaling enabled — only max_replicas is editable
+        in that mode)."""
+        return await self._api.scale(self._env_name, self.name, replicas)
 
     async def delete(self) -> None:
-        """Delete this pool."""
-        await self._api.delete(self.name)
+        """Delete this pool from its env."""
+        await self._api.delete(self._env_name, self.name)
 
     def __repr__(self) -> str:
         return (
-            f"<SandboxPool name={self.name!r} replicas={self.replicas} "
-            f"idle={self.idle_replicas} running={self.running_replicas}>"
+            f"<SandboxPool env={self._env_name!r} name={self.name!r} "
+            f"replicas={self.replicas} idle={self.idle_replicas} "
+            f"running={self.running_replicas}>"
         )
 
 
 class PoolsAPI:
-    """Operations on SandboxPool resources (accessed via ``client.pools``)."""
+    """Env-scoped operations on SandboxPool resources (``client.pools``)."""
 
     def __init__(self, client: "AuthenticatedClient") -> None:
         self._client = client
 
-    def _make(self, raw: dict) -> SandboxPool:
-        # API wraps pool in {"template": {...}}
+    def _make(self, raw: dict, env_name: str) -> SandboxPool:
+        # The envelope wraps the pool in {"template": {...}}.
         if "template" in raw and isinstance(raw["template"], dict):
             raw = raw["template"]
-        return SandboxPool(SandboxPoolData.model_validate(raw), self)
+        return SandboxPool(SandboxPoolData.model_validate(raw), self, env_name)
 
     async def create(
         self,
-        name: str,
+        env_name: str,
         *,
-        template_name: Optional[str] = None,
+        instance_type: Optional[str] = None,
+        multiplier: Optional[int] = None,
+        cpu: Optional[str] = None,
+        memory: Optional[str] = None,
         replicas: Optional[int] = None,
-        min_replicas: Optional[int] = None,
         max_replicas: Optional[int] = None,
         labels: Optional[Dict[str, str]] = None,
         annotations: Optional[Dict[str, str]] = None,
         quota_url: Optional[str] = None,
     ) -> SandboxPool:
-        """Create a new SandboxPool.
+        """Add a member SandboxPool to ``env_name``.
 
-        The ``quota_url`` parameter is passed via labels
-        (``quota.scitix.ai/url``) rather than the deprecated top-level
-        ``quotaUrl`` field.
+        Pass exactly one of:
+          * ``instance_type`` + optional ``multiplier`` (requires the
+            InstanceType catalog to be configured server-side), or
+          * ``cpu`` + ``memory`` (Kubernetes quantity strings, e.g. "2" /
+            "8Gi"); both are written to ``inlineResources`` requests + limits.
+
+        ``quota_url`` is shipped via labels[``quota.scitix.ai/url``] and
+        drives the derived pool-name suffix.
+
+        The server derives the PoolName and ScalingGroup — they are NOT
+        accepted as inputs.
         """
-        from agentbox_sdk._generated.api.pools import create_sandbox_pool
-        from agentbox_sdk._generated.models.create_sandbox_pool_request import (
-            CreateSandboxPoolRequest,
+        from agentbox_sdk._generated.api.pools import create_env_sandbox_pool
+        from agentbox_sdk._generated.models.create_env_sandbox_pool_request import (
+            CreateEnvSandboxPoolRequest,
         )
-        from agentbox_sdk._generated.models.create_sandbox_pool_request_annotations import (
-            CreateSandboxPoolRequestAnnotations,
+        from agentbox_sdk._generated.models.create_env_sandbox_pool_request_annotations import (
+            CreateEnvSandboxPoolRequestAnnotations,
         )
-        from agentbox_sdk._generated.models.create_sandbox_pool_request_labels import (
-            CreateSandboxPoolRequestLabels,
+        from agentbox_sdk._generated.models.create_env_sandbox_pool_request_labels import (
+            CreateEnvSandboxPoolRequestLabels,
+        )
+        from agentbox_sdk._generated.models.resource_requirements import (
+            ResourceRequirements,
+        )
+        from agentbox_sdk._generated.models.resource_requirements_limits import (
+            ResourceRequirementsLimits,
+        )
+        from agentbox_sdk._generated.models.resource_requirements_requests import (
+            ResourceRequirementsRequests,
         )
         from agentbox_sdk._generated.types import UNSET
 
-        # Merge quota_url into labels (replaces the deprecated top-level quotaUrl field).
         merged_labels = dict(labels) if labels else {}
         if quota_url:
             merged_labels["quota.scitix.ai/url"] = quota_url
 
-        body = CreateSandboxPoolRequest(
-            name=name,
-            template_name=template_name if template_name is not None else UNSET,
+        inline = UNSET
+        if cpu is not None or memory is not None:
+            qty: Dict[str, str] = {}
+            if cpu is not None:
+                qty["cpu"] = cpu
+            if memory is not None:
+                qty["memory"] = memory
+            inline = ResourceRequirements(
+                requests=ResourceRequirementsRequests.from_dict(qty),
+                limits=ResourceRequirementsLimits.from_dict(qty),
+            )
+
+        body = CreateEnvSandboxPoolRequest(
+            instance_type=instance_type if instance_type is not None else UNSET,
+            multiplier=multiplier if multiplier is not None else UNSET,
+            inline_resources=inline,
             replicas=replicas if replicas is not None else UNSET,
-            min_replicas=min_replicas if min_replicas is not None else UNSET,
             max_replicas=max_replicas if max_replicas is not None else UNSET,
             labels=(
-                CreateSandboxPoolRequestLabels.from_dict(merged_labels)
+                CreateEnvSandboxPoolRequestLabels.from_dict(merged_labels)
                 if merged_labels
                 else UNSET
             ),
             annotations=(
-                CreateSandboxPoolRequestAnnotations.from_dict(annotations)
+                CreateEnvSandboxPoolRequestAnnotations.from_dict(annotations)
                 if annotations is not None
                 else UNSET
             ),
-            # quota_url is now passed via labels; keep the field unset.
         )
 
-        resp = await create_sandbox_pool.asyncio_detailed(
-            client=self._client, body=body
+        resp = await create_env_sandbox_pool.asyncio_detailed(
+            env_name, client=self._client, body=body
         )
-        raise_for_status(resp, context=f"create pool {name!r}")
+        raise_for_status(resp, context=f"create pool in env {env_name!r}")
         assert resp.parsed is not None
-        return self._make(resp.parsed.to_dict())
+        return self._make(resp.parsed.to_dict(), env_name)
 
-    async def get(self, name: str) -> SandboxPool:
-        """Fetch a pool by name."""
-        from agentbox_sdk._generated.api.pools import get_sandbox_pool
+    async def get(self, env_name: str, name: str) -> SandboxPool:
+        """Fetch a pool by name from the given env."""
+        from agentbox_sdk._generated.api.pools import get_env_sandbox_pool
 
-        resp = await get_sandbox_pool.asyncio_detailed(
-            name, client=self._client
+        resp = await get_env_sandbox_pool.asyncio_detailed(
+            env_name, name, client=self._client
         )
-        raise_for_status(resp, context=f"get pool {name!r}")
+        raise_for_status(resp, context=f"get pool {name!r} in env {env_name!r}")
         assert resp.parsed is not None
-        return self._make(resp.parsed.to_dict())
+        return self._make(resp.parsed.to_dict(), env_name)
 
     async def list(
         self,
+        env_name: str,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
     ) -> "PagedResult[SandboxPoolData]":
-        """List all pools."""
-        from agentbox_sdk._generated.api.pools import list_sandbox_pools
+        """List the member pools of ``env_name``."""
+        from agentbox_sdk._generated.api.pools import list_env_sandbox_pools
 
-        resp = await list_sandbox_pools.asyncio_detailed(client=self._client)
-        raise_for_status(resp, context="list pools")
+        resp = await list_env_sandbox_pools.asyncio_detailed(env_name, client=self._client)
+        raise_for_status(resp, context=f"list pools in env {env_name!r}")
         assert resp.parsed is not None
         items = [
             SandboxPoolData.model_validate(p.to_dict())
@@ -185,26 +229,42 @@ class PoolsAPI:
             offset=resp.parsed.offset,
         )
 
-    async def scale(self, name: str, replicas: int) -> SandboxPool:
-        """Scale a pool to *replicas* pods."""
-        from agentbox_sdk._generated.api.pools import update_sandbox_pool
-        from agentbox_sdk._generated.models.update_sandbox_pool_request import (
-            UpdateSandboxPoolRequest,
-        )
+    async def scale(
+        self,
+        env_name: str,
+        name: str,
+        replicas: Optional[int] = None,
+        *,
+        max_replicas: Optional[int] = None,
+    ) -> SandboxPool:
+        """Adjust a pool's replica counts.
 
-        body = UpdateSandboxPoolRequest(replicas=replicas)
-        resp = await update_sandbox_pool.asyncio_detailed(
-            name, client=self._client, body=body
+        When the pool's scalingGroup has autoscaling enabled, only
+        ``max_replicas`` is accepted — passing ``replicas`` returns 400 from
+        the server.
+        """
+        from agentbox_sdk._generated.api.pools import update_env_sandbox_pool
+        from agentbox_sdk._generated.models.update_env_sandbox_pool_request import (
+            UpdateEnvSandboxPoolRequest,
         )
-        raise_for_status(resp, context=f"scale pool {name!r}")
+        from agentbox_sdk._generated.types import UNSET
+
+        body = UpdateEnvSandboxPoolRequest(
+            replicas=replicas if replicas is not None else UNSET,
+            max_replicas=max_replicas if max_replicas is not None else UNSET,
+        )
+        resp = await update_env_sandbox_pool.asyncio_detailed(
+            env_name, name, client=self._client, body=body
+        )
+        raise_for_status(resp, context=f"scale pool {name!r} in env {env_name!r}")
         assert resp.parsed is not None
-        return self._make(resp.parsed.to_dict())
+        return self._make(resp.parsed.to_dict(), env_name)
 
-    async def delete(self, name: str) -> None:
-        """Delete a pool."""
-        from agentbox_sdk._generated.api.pools import delete_sandbox_pool
+    async def delete(self, env_name: str, name: str) -> None:
+        """Remove a pool from its env (Reconciler cascades the SandboxPool CR)."""
+        from agentbox_sdk._generated.api.pools import delete_env_sandbox_pool
 
-        resp = await delete_sandbox_pool.asyncio_detailed(
-            name, client=self._client
+        resp = await delete_env_sandbox_pool.asyncio_detailed(
+            env_name, name, client=self._client
         )
-        raise_for_status(resp, context=f"delete pool {name!r}")
+        raise_for_status(resp, context=f"delete pool {name!r} in env {env_name!r}")

@@ -57,7 +57,7 @@ import { Field, FieldLabel, FieldError, FieldDescription } from "@/components/ui
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { useCreateSandbox } from "@/lib/queries/sandbox"
-import { poolsQueryOptions } from "@/lib/queries"
+import { envsQueryOptions } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -90,8 +90,11 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
   const { mutate, isPending: isMutating } = useCreateSandbox()
   const [createTimeout, setCreateTimeout] = useState(false)
 
-  // Fetch pools fresh on every open — component mounts only when dialog is open
-  const { data: pools } = useQuery(poolsQueryOptions())
+  // Fetch envs fresh on every open — component mounts only when dialog is
+  // open. The backend's envRouter (sandbox_service.go) resolves an Env name
+  // passed as body.poolName to one of its member pools, so the form ships
+  // the selected env name in the legacy poolName slot.
+  const { data: envs } = useQuery(envsQueryOptions())
 
   const {
     register,
@@ -146,20 +149,20 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-1 py-2">
           <Field data-invalid={!!errors.poolName}>
             <FieldLabel className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
-              {t("sandboxes.form.poolName")} <span className="text-destructive">*</span>
+              {t("sandboxes.form.envName")} <span className="text-destructive">*</span>
             </FieldLabel>
             <Controller
               control={control}
               name="poolName"
               render={({ field, fieldState }) => {
-                const selectedPool = pools?.find((p) => p.name === field.value)
+                const selectedEnv = envs?.find((e) => e.name === field.value)
                 return (
                   <Combobox
                     autoHighlight
-                    value={selectedPool ?? null}
+                    value={selectedEnv ?? null}
                     onValueChange={(val) => field.onChange(val?.name ?? "")}
-                    items={pools}
-                    itemToStringLabel={(p) => p.name}
+                    items={envs}
+                    itemToStringLabel={(e) => e.name}
                   >
                     <ComboboxInput
                       aria-invalid={fieldState.invalid}
@@ -169,11 +172,11 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
                     <ComboboxContent>
                       <ComboboxEmpty>{t("common.noResultsFound")}</ComboboxEmpty>
                       <ComboboxList>
-                        {(p) => (
-                          <ComboboxItem key={p.name} value={p}>
-                            <span>{p.name}</span>
+                        {(e) => (
+                          <ComboboxItem key={e.name} value={e}>
+                            <span>{e.name}</span>
                             <span className="text-muted-foreground ml-auto font-mono text-xs">
-                              {p.status?.idleReplicas ?? 0} {t("status.idle").toLowerCase()}
+                              {e.spec.templateRef.name}
                             </span>
                           </ComboboxItem>
                         )}
@@ -184,7 +187,7 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
               }}
             />
             <FieldError errors={[errors.poolName]} className="font-mono text-xs" />
-            <FieldDescription>{t("sandboxes.form.selectPrewarmPool")}</FieldDescription>
+            <FieldDescription>{t("sandboxes.form.selectEnv")}</FieldDescription>
           </Field>
 
           <Field>

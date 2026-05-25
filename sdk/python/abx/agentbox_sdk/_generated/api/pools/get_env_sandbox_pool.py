@@ -30,6 +30,7 @@ from typing import cast
 
 def _get_kwargs(
     name: str,
+    pool_name: str,
 
 ) -> dict[str, Any]:
     
@@ -40,7 +41,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/sandboxpools/{name}".format(name=quote(str(name), safe=""),),
+        "url": "/envs/{name}/sandboxpools/{pool_name}".format(name=quote(str(name), safe=""),pool_name=quote(str(pool_name), safe=""),),
     }
 
 
@@ -70,13 +71,6 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_404
 
-    if response.status_code == 422:
-        response_422 = ErrorResponse.from_dict(response.json())
-
-
-
-        return response_422
-
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -101,14 +95,16 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 def sync_detailed(
     name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
-    """ Get a sandbox pool
+    """ Get a member SandboxPool
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,6 +117,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         name=name,
+pool_name=pool_name,
 
     )
 
@@ -132,14 +129,16 @@ def sync_detailed(
 
 def sync(
     name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
-    """ Get a sandbox pool
+    """ Get a member SandboxPool
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,20 +151,23 @@ def sync(
 
     return sync_detailed(
         name=name,
+pool_name=pool_name,
 client=client,
 
     ).parsed
 
 async def asyncio_detailed(
     name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
-    """ Get a sandbox pool
+    """ Get a member SandboxPool
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,6 +180,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         name=name,
+pool_name=pool_name,
 
     )
 
@@ -189,14 +192,16 @@ async def asyncio_detailed(
 
 async def asyncio(
     name: str,
+    pool_name: str,
     *,
     client: AuthenticatedClient | Client,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
-    """ Get a sandbox pool
+    """ Get a member SandboxPool
 
     Args:
-        name (str):  Example: my-pool.
+        name (str):
+        pool_name (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,6 +214,7 @@ async def asyncio(
 
     return (await asyncio_detailed(
         name=name,
+pool_name=pool_name,
 client=client,
 
     )).parsed

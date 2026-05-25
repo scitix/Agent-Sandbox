@@ -43,7 +43,10 @@ export function useInvalidate() {
   const qc = useQueryClient()
   return {
     sandboxes: () => void qc.invalidateQueries({ queryKey: ["get", "/sandboxes"] }),
-    pools: () => void qc.invalidateQueries({ queryKey: ["get", "/sandboxpools"] }),
+    // envPools: refresh every env's pool list (no per-env filter — react-query
+    // matches by key-prefix). For a single env, prefer the per-mutation
+    // invalidate inside useCreate/Update/DeleteEnvPool.
+    envPools: () => void qc.invalidateQueries({ queryKey: ["get", "/envs/{name}/sandboxpools"] }),
     envs: () => void qc.invalidateQueries({ queryKey: ["get", "/envs"] }),
     templates: () => void qc.invalidateQueries({ queryKey: ["get", "/sandbox-templates"] }),
     apiKeys: () => void qc.invalidateQueries({ queryKey: ["get", "/admin/api-keys"] }),

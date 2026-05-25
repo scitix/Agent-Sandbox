@@ -22,21 +22,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"k8s.io/utils/ptr"
-
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
-	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
-func newTestSandboxPoolService(t *testing.T, objs ...any) SandboxPoolService {
-	t.Helper()
-	svc, _ := newTestSandboxPoolServiceWithClient(t, objs...)
-	return svc
-}
+// SandboxPoolService is read-only now: write operations moved to the
+// env-scoped surface on SandboxEnvService (AddMemberPool / UpdateMemberPool /
+// DeleteMemberPool). These tests cover List and Get only.
 
-func newTestSandboxPoolServiceWithClient(t *testing.T, objs ...any) (SandboxPoolService, client.Client) {
+func newTestSandboxPoolService(t *testing.T, objs ...any) SandboxPoolService {
 	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
 	if err != nil {
@@ -53,19 +48,7 @@ func newTestSandboxPoolServiceWithClient(t *testing.T, objs ...any) (SandboxPool
 		}
 	}
 	cli := cb.Build()
-	return NewSandboxPoolService(cli, nil, nil), cli
-}
-
-// fetchCRDPool reads the underlying CRD from the test client so tests can
-// verify CRD-spec fields that are no longer exposed via gen.SandboxPool.
-// Tests in this file all use namespace "default".
-func fetchCRDPool(t *testing.T, cli client.Client, name string) *agentsv1alpha1.SandboxPool {
-	t.Helper()
-	p := &agentsv1alpha1.SandboxPool{}
-	if err := cli.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: name}, p); err != nil {
-		t.Fatalf("get pool default/%s: %v", name, err)
-	}
-	return p
+	return NewSandboxPoolService(cli, nil, nil)
 }
 
 func makePoolObj(name string, replicas int32) *agentsv1alpha1.SandboxPool {
@@ -85,87 +68,8 @@ func makePoolObj(name string, replicas int32) *agentsv1alpha1.SandboxPool {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// existing CRUD tests (unchanged)
-// ---------------------------------------------------------------------------
-
-func TestSandboxPoolService_Create_DuplicateName(t *testing.T) {
-	existing := makePoolObj("pool-a", 1)
-	svc := newTestSandboxPoolService(t, existing)
-
-	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
-		Name:      "pool-a",
-		Namespace: "default",
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 2,
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				Template: &corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{},
-				},
-			},
-		},
-	})
-	if appErr == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if appErr.Code != domain.ErrCodeConflict {
-		t.Fatalf("expected ErrCodeConflict, got %d", appErr.Code)
-	}
-}
-
-func TestSandboxPoolService_Create_IdleImageValidation(t *testing.T) {
-	svc := newTestSandboxPoolService(t)
-
-	// Missing idleImage
-	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
-		Name:      "pool-no-idle",
-		Namespace: "default",
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 1,
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				Template: &corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{{Name: "sandbox", Image: "myapp:v1"}},
-					},
-				},
-			},
-		},
-	})
-	if appErr == nil {
-		t.Fatal("expected error for missing idleImage, got nil")
-	}
-	if appErr.Code != domain.ErrCodeBadRequest {
-		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
-	}
-
-	// IdleImage same as container image
-	_, appErr = svc.Create(context.Background(), CreateSandboxPoolInput{
-		Name:      "pool-same-image",
-		Namespace: "default",
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 1,
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				IdleImage: "myapp:v1",
-				Template: &corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{{Name: "sandbox", Image: "myapp:v1"}},
-					},
-				},
-			},
-		},
-	})
-	if appErr == nil {
-		t.Fatal("expected error for idleImage == containerImage, got nil")
-	}
-	if appErr.Code != domain.ErrCodeBadRequest {
-		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
-	}
-}
-
 func TestSandboxPoolService_List(t *testing.T) {
-	pool1 := makePoolObj("pool-a", 1)
-	pool2 := makePoolObj("pool-b", 2)
-	svc := newTestSandboxPoolService(t, pool1, pool2)
+	svc := newTestSandboxPoolService(t, makePoolObj("pool-a", 1), makePoolObj("pool-b", 2))
 
 	items, appErr := svc.List(context.Background(), "default", "", "")
 	if appErr != nil {
@@ -174,35 +78,42 @@ func TestSandboxPoolService_List(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(items))
 	}
+	if items[0].Name != "pool-a" || items[1].Name != "pool-b" {
+		t.Fatalf("expected sorted by name, got %s, %s", items[0].Name, items[1].Name)
+	}
 }
 
-func TestSandboxPoolService_Update_Replicas(t *testing.T) {
-	pool := makePoolObj("pool-a", 1)
-	svc := newTestSandboxPoolService(t, pool)
+func TestSandboxPoolService_List_FilteredByTeamUser(t *testing.T) {
+	p1 := makePoolObj("p1", 1)
+	p1.Labels = map[string]string{
+		agentsv1alpha1.LabelTeam: "team-x",
+		agentsv1alpha1.LabelUser: "alice",
+	}
+	p2 := makePoolObj("p2", 1)
+	p2.Labels = map[string]string{
+		agentsv1alpha1.LabelTeam: "team-y",
+		agentsv1alpha1.LabelUser: "bob",
+	}
+	svc := newTestSandboxPoolService(t, p1, p2)
 
-	replicas := int32(5)
-	result, appErr := svc.Update(context.Background(), UpdateSandboxPoolInput{
-		Name:      "pool-a",
-		Namespace: "default",
-		Replicas:  &replicas,
-	})
+	items, appErr := svc.List(context.Background(), "default", "team-x", "alice")
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if result.Spec.Replicas != 5 {
-		t.Fatalf("expected replicas 5, got %d", result.Spec.Replicas)
+	if len(items) != 1 || items[0].Name != "p1" {
+		t.Fatalf("expected only p1, got %+v", items)
 	}
 }
 
-func TestSandboxPoolService_Delete_NotFound(t *testing.T) {
-	svc := newTestSandboxPoolService(t)
+func TestSandboxPoolService_Get(t *testing.T) {
+	svc := newTestSandboxPoolService(t, makePoolObj("pool-a", 3))
 
-	_, appErr := svc.Delete(context.Background(), "default", "nonexistent")
-	if appErr == nil {
-		t.Fatal("expected error, got nil")
+	result, appErr := svc.Get(context.Background(), "default", "pool-a")
+	if appErr != nil {
+		t.Fatalf("unexpected error: %v", appErr)
 	}
-	if appErr.Code != domain.ErrCodeNotFound {
-		t.Fatalf("expected ErrCodeNotFound, got %d", appErr.Code)
+	if result.Name != "pool-a" || result.Spec.Replicas != 3 {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 
@@ -218,160 +129,22 @@ func TestSandboxPoolService_Get_NotFound(t *testing.T) {
 	}
 }
 
-func makeTemplateForPool(name, version string) *agentsv1alpha1.SandboxTemplate {
-	return &agentsv1alpha1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-		Spec: agentsv1alpha1.SandboxTemplateSpec{
-			Version:     version,
-			Description: "Test template",
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				IdleImage: "template-idle:latest",
-				Template: &corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{
-							{Name: "sandbox", Image: "template-base:latest"},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func TestSandboxPoolService_Create_FromTemplate(t *testing.T) {
-	tmpl := makeTemplateForPool("bench-template", "v1.0.0")
-	svc, cli := newTestSandboxPoolServiceWithClient(t, tmpl)
-
-	result, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
-		Name:         "pool-from-template",
-		Namespace:    "default",
-		TemplateName: "bench-template",
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 3,
-		},
-	})
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if result.Name != "pool-from-template" {
-		t.Fatalf("expected name pool-from-template, got %s", result.Name)
-	}
-	if result.Spec.Replicas != 3 {
-		t.Fatalf("expected replicas 3, got %d", result.Spec.Replicas)
-	}
-
-	crd := fetchCRDPool(t, cli, "pool-from-template")
-	if crd.Spec.IdleImage != "template-idle:latest" {
-		t.Fatalf("expected idleImage from template 'template-idle:latest', got %s", crd.Spec.IdleImage)
-	}
-	if len(crd.Spec.Template.Spec.Containers) == 0 {
-		t.Fatal("expected containers from template")
-	}
-	if crd.Spec.Template.Spec.Containers[0].Image != "template-base:latest" {
-		t.Fatalf("expected container image 'template-base:latest', got %s",
-			crd.Spec.Template.Spec.Containers[0].Image)
-	}
-}
-
-func TestSandboxPoolService_Create_FromTemplate_WithOverride(t *testing.T) {
-	tmpl := makeTemplateForPool("base-template", "v1.0.0")
-	svc, cli := newTestSandboxPoolServiceWithClient(t, tmpl)
-
-	result, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
-		Name:         "pool-override",
-		Namespace:    "default",
-		TemplateName: "base-template",
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 2,
-		},
-	})
-	if appErr != nil {
-		t.Fatalf("unexpected error: %v", appErr)
-	}
-	if result.Spec.Replicas != 2 {
-		t.Fatalf("expected replicas 2, got %d", result.Spec.Replicas)
-	}
-	crd := fetchCRDPool(t, cli, "pool-override")
-	if crd.Spec.IdleImage != "template-idle:latest" {
-		t.Fatalf("expected idleImage from template 'template-idle:latest', got %s", crd.Spec.IdleImage)
-	}
-}
-
-func TestSandboxPoolService_Create_TemplateNotFound(t *testing.T) {
-	svc := newTestSandboxPoolService(t)
-
-	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
-		Name:         "pool-missing-tmpl",
-		Namespace:    "default",
-		TemplateName: "does-not-exist",
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 1,
-		},
-	})
-	if appErr == nil {
-		t.Fatal("expected error for missing template, got nil")
-	}
-	if appErr.Code != domain.ErrCodeNotFound {
-		t.Fatalf("expected ErrCodeNotFound, got %d", appErr.Code)
-	}
-}
-
-func TestSandboxPoolService_Update_InvalidImage_Returns400(t *testing.T) {
-	pool := makePoolObj("pool-a", 1)
+func TestSandboxPoolService_Get_ProjectsOwningEnv(t *testing.T) {
+	pool := makePoolObj("p-owned", 1)
+	pool.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: agentsv1alpha1.GroupVersion.Group + "/v1alpha1",
+		Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
+		Name:       "my-env",
+	}}
 	svc := newTestSandboxPoolService(t, pool)
 
-	_, appErr := svc.Update(context.Background(), UpdateSandboxPoolInput{
-		Name:          "pool-a",
-		Namespace:     "default",
-		OverrideImage: "INVALID@@IMAGE",
-	})
-	if appErr == nil {
-		t.Fatal("expected error for invalid image, got nil")
-	}
-	if appErr.Code != domain.ErrCodeBadRequest {
-		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
-	}
-}
-
-func TestSandboxPoolService_Update_ValidImage(t *testing.T) {
-	pool := makePoolObj("pool-a", 1)
-	svc, cli := newTestSandboxPoolServiceWithClient(t, pool)
-
-	_, appErr := svc.Update(context.Background(), UpdateSandboxPoolInput{
-		Name:          "pool-a",
-		Namespace:     "default",
-		OverrideImage: "ghcr.io/org/repo:v2.0.0",
-	})
+	result, appErr := svc.Get(context.Background(), "default", "p-owned")
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
 	}
-	crd := fetchCRDPool(t, cli, "pool-a")
-	if crd.Spec.Template.Spec.Containers[0].Image != "ghcr.io/org/repo:v2.0.0" {
-		t.Fatalf("expected image ghcr.io/org/repo:v2.0.0, got %s", crd.Spec.Template.Spec.Containers[0].Image)
+	if result.OwningEnv == nil || *result.OwningEnv != "my-env" {
+		t.Fatalf("expected owningEnv=my-env, got %v", result.OwningEnv)
 	}
 }
 
-func TestSandboxPoolService_Create_FromTemplate_InvalidOverrideImage(t *testing.T) {
-	tmpl := makeTemplateForPool("base-template", "v1.0.0")
-	svc := newTestSandboxPoolService(t, tmpl)
-
-	_, appErr := svc.Create(context.Background(), CreateSandboxPoolInput{
-		Name:         "pool-bad-image",
-		Namespace:    "default",
-		TemplateName: "base-template",
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas: 1,
-		},
-		Overrides: &gen.PoolTemplateOverrides{
-			Image: ptr.To("INVALID@@IMAGE"),
-		},
-	})
-	if appErr == nil {
-		t.Fatal("expected error for invalid override image, got nil")
-	}
-	if appErr.Code != domain.ErrCodeBadRequest {
-		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
-	}
-}
+var _ client.Client // keep import referenced when ConfMap helpers grow

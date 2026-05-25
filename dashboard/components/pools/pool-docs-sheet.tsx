@@ -32,7 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { poolQueryOptions } from "@/lib/queries/pool"
+import { envPoolQueryOptions } from "@/lib/queries/pool"
 import { useTranslation } from "@/lib/i18n"
 import { useLocale } from "@/hooks/use-locale"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -40,8 +40,24 @@ import { clusterPath } from "@/lib/cluster-path"
 import { cn } from "@/lib/utils"
 
 // ─── nuqs URL param ────────────────────────────────────────────────────────────
+//
+// Value shape: "envName/poolName" — env-scoped pools require both pieces to
+// hit /v1/envs/{name}/sandboxpools/{poolName}. Callers (env detail page) set
+// the param via openPoolDocs(envName, poolName).
 
 export const POOL_DOCS_PARAM = "poolDocs"
+
+function parsePoolDocsParam(raw: string | null): { envName: string; poolName: string } | null {
+  if (!raw) return null
+  const idx = raw.indexOf("/")
+  if (idx <= 0 || idx === raw.length - 1) return null
+  return { envName: raw.slice(0, idx), poolName: raw.slice(idx + 1) }
+}
+
+/** Build the URL-param value the sheet expects. */
+export function formatPoolDocsParam(envName: string, poolName: string): string {
+  return `${envName}/${poolName}`
+}
 
 // ─── Copy button (page content) ───────────────────────────────────────────────
 
@@ -87,10 +103,10 @@ function InlineCopyButton({ value }: { value: string }) {
 
 // ─── Inner content (only mounted when sheet is open → triggers fetch) ─────────
 
-function PoolDocsContent({ poolName }: { poolName: string }) {
+function PoolDocsContent({ envName, poolName }: { envName: string; poolName: string }) {
   const { t } = useTranslation()
 
-  const { data: poolEnvelope, isLoading: poolLoading } = useQuery(poolQueryOptions(poolName))
+  const { data: poolEnvelope, isLoading: poolLoading } = useQuery(envPoolQueryOptions(envName, poolName))
 
   const pool = poolEnvelope?.template
   const renderedDocs = pool?.poolDocs ?? ""
@@ -125,10 +141,10 @@ function PoolDocsContent({ poolName }: { poolName: string }) {
 // error, we close the Sheet and raise the API-Keys-Required Dialog instead.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function useApiKeyRequired(poolName: string | null): boolean {
+function useApiKeyRequired(target: { envName: string; poolName: string } | null): boolean {
   const { error } = useQuery({
-    ...poolQueryOptions(poolName ?? ""),
-    enabled: !!poolName,
+    ...envPoolQueryOptions(target?.envName ?? "", target?.poolName ?? ""),
+    enabled: !!target,
   })
   const errorCode = error?.errorCode
   return errorCode === "API_KEY_REQUIRED"
@@ -141,27 +157,29 @@ export function PoolDocsSheet() {
   const locale = useLocale()
   const clusterID = useClusterID()
 
-  const [poolName, setPoolName] = useQueryState(
+  const [rawParam, setRawParam] = useQueryState(
     POOL_DOCS_PARAM,
     parseAsString.withOptions({ scroll: false, shallow: true }),
   )
+  const target = parsePoolDocsParam(rawParam)
 
   // Probe the pool query from the sheet level (not the inner Sheet children) so
   // we can swap the Sheet for a Dialog when the backend returns 422
   // API_KEY_REQUIRED. Otherwise the Sheet stays mounted and the Dialog close
   // button has no effect.
-  const needsApiKey = useApiKeyRequired(poolName)
+  const needsApiKey = useApiKeyRequired(target)
 
-  const isOpen = !!poolName && !needsApiKey
-  const isApiKeyDialogOpen = !!poolName && needsApiKey
+  const isOpen = !!target && !needsApiKey
+  const isApiKeyDialogOpen = !!target && needsApiKey
 
   const handleOpenChange = (open: boolean) => {
-    if (!open) void setPoolName(null)
+    if (!open) void setRawParam(null)
   }
 
   const handleDialogOpenChange = (open: boolean) => {
-    if (!open) void setPoolName(null)
+    if (!open) void setRawParam(null)
   }
+  const poolName = target?.poolName ?? ""
 
   return (
     <>
@@ -185,7 +203,7 @@ export function PoolDocsSheet() {
             </p>
           </SheetHeader>
 
-          {isOpen && poolName && <PoolDocsContent poolName={poolName} />}
+          {isOpen && target && <PoolDocsContent envName={target.envName} poolName={target.poolName} />}
         </SheetContent>
       </Sheet>
 
@@ -198,7 +216,7 @@ export function PoolDocsSheet() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => void setPoolName(null)}>
+            <Button variant="outline" onClick={() => void setRawParam(null)}>
               {t("common.cancel")}
             </Button>
             <Button render={<Link href={clusterPath(clusterID, "api-keys", locale)} />}>
