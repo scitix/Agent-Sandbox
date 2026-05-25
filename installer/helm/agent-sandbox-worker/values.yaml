@@ -115,6 +115,15 @@ controller:
   nodeAffinity: {}
   tolerations: []
 
+  # rbac.extraRules appends rules to the controller's manager ClusterRole.
+  # Use this when an enabled extension (provider/plugin in
+  # extensionsConfig.content) needs to watch a CRD that is not part of the
+  # core chart — e.g. a quota provider that lists a vendor-specific
+  # ScitixQuota CRD. Each entry follows the standard rbac.authorization.k8s.io
+  # PolicyRule schema (apiGroups / resources / verbs / [resourceNames]).
+  rbac:
+    extraRules: []
+
 # ---------------------------------------------------------------------------
 # ExtProc (Envoy External Processor + data-plane manager)
 # ---------------------------------------------------------------------------

@@ -174,8 +174,19 @@ def sync_manager_role() -> None:
             {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
         """)
 
+    # Append a Helm hook that lets values.yaml inject extra PolicyRules into
+    # the manager ClusterRole. Used by extensions (provider/plugin in
+    # extensionsConfig.content) that watch CRDs outside the core chart's
+    # vocabulary — e.g. a vendor-specific ScitixQuota.
+    extra_rules_tmpl = textwrap.dedent("""\
+
+        {{- with .Values.controller.rbac.extraRules }}
+        {{ toYaml . }}
+        {{- end }}
+        """)
+
     MANAGER_ROLE_DST.parent.mkdir(parents=True, exist_ok=True)
-    MANAGER_ROLE_DST.write_text(helm_template + rules_yaml + "\n")
+    MANAGER_ROLE_DST.write_text(helm_template + rules_yaml + extra_rules_tmpl)
     print(
         f"  {RBAC_SRC.relative_to(REPO_ROOT)} -> "
         f"{MANAGER_ROLE_DST.relative_to(REPO_ROOT)}"

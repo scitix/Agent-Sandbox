@@ -108,3 +108,6 @@ rules:
   verbs:
   - create
   - patch
+{{- with .Values.controller.rbac.extraRules }}
+{{ toYaml . }}
+{{- end }}
