@@ -1952,46 +1952,6 @@ components:
         statistics:
           $ref: "#/components/schemas/SandboxStatistics"
 
-    SandboxPoolStatistics:
-      type: object
-      required:
-        [
-          total,
-          totalReplicas,
-          totalIdleReplicas,
-          totalRunningReplicas,
-          totalFailedReplicas,
-          byNamespace,
-        ]
-      properties:
-        total:
-          type: integer
-          description: "Total number of SandboxPools across all namespaces."
-        totalReplicas:
-          type: integer
-          description: "Total pod replica count across all pools."
-        totalIdleReplicas:
-          type: integer
-          description: "Total number of idle pod replicas across all pools."
-        totalRunningReplicas:
-          type: integer
-          description: "Total number of running (sandbox-serving) pod replicas across all pools."
-        totalFailedReplicas:
-          type: integer
-          description: "Total number of failed pod replicas across all pools."
-        byNamespace:
-          type: object
-          description: "Pool count broken down by Kubernetes namespace."
-          additionalProperties:
-            type: integer
-
-    SandboxPoolStatisticsEnvelope:
-      type: object
-      required: [statistics]
-      properties:
-        statistics:
-          $ref: "#/components/schemas/SandboxPoolStatistics"
-
     UserSandboxStatistics:
       type: object
       required: [namespace, total, byStatus]
@@ -3908,35 +3868,3 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /admin/statistics/sandboxpools:
-    get:
-      operationId: AdminGetSandboxPoolStatistics
-      summary: Get cluster-wide sandbox pool statistics (admin)
-      security:
-        - AdminKeyAuth: []
-      tags: [admin]
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxPoolStatisticsEnvelope"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"

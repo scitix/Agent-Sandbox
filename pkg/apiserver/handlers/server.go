@@ -36,6 +36,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envmember"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
@@ -54,8 +55,8 @@ const adminUser = "admin"
 // Services bundles all service interfaces needed by the handler Server.
 type Services struct {
 	Sandbox         service.SandboxService
-	SandboxPool     service.SandboxPoolService
 	SandboxEnv      service.SandboxEnvService
+	EnvMemberPool   envmember.Service
 	SandboxTemplate service.SandboxTemplateService
 	APIKey          service.APIKeyService
 	Quota           service.QuotaService
@@ -81,8 +82,8 @@ type Services struct {
 // Server implements gen.StrictServerInterface.
 type Server struct {
 	sandbox      service.SandboxService
-	pool         service.SandboxPoolService
 	env          service.SandboxEnvService
+	envMember    envmember.Service
 	template     service.SandboxTemplateService
 	apikey       service.APIKeyService
 	quota        service.QuotaService
@@ -114,8 +115,8 @@ func NewServer(svcs Services) *Server {
 	}
 	return &Server{
 		sandbox:              svcs.Sandbox,
-		pool:                 svcs.SandboxPool,
 		env:                  svcs.SandboxEnv,
+		envMember:            svcs.EnvMemberPool,
 		template:             svcs.SandboxTemplate,
 		apikey:               svcs.APIKey,
 		quota:                svcs.Quota,
@@ -777,7 +778,7 @@ func (s *Server) CreateEnvSandboxPool(ctx context.Context, req gen.CreateEnvSand
 	}
 	auth := authFrom(ctx)
 	member := memberFromCreateEnvPoolRequest(req.Body)
-	result, appErr := s.env.AddMemberPool(ctx, auth.Namespace, req.Name, s.forwarder.LocalClusterID(), member)
+	result, appErr := s.envMember.Add(ctx, auth.Namespace, req.Name, s.forwarder.LocalClusterID(), member)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeBadRequest:
@@ -797,7 +798,7 @@ func (s *Server) CreateEnvSandboxPool(ctx context.Context, req gen.CreateEnvSand
 
 func (s *Server) ListEnvSandboxPools(ctx context.Context, req gen.ListEnvSandboxPoolsRequestObject) (gen.ListEnvSandboxPoolsResponseObject, error) {
 	auth := authFrom(ctx)
-	items, appErr := s.env.ListMemberPools(ctx, auth.Namespace, req.Name)
+	items, appErr := s.envMember.List(ctx, auth.Namespace, req.Name)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -816,7 +817,7 @@ func (s *Server) ListEnvSandboxPools(ctx context.Context, req gen.ListEnvSandbox
 
 func (s *Server) GetEnvSandboxPool(ctx context.Context, req gen.GetEnvSandboxPoolRequestObject) (gen.GetEnvSandboxPoolResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.env.GetMemberPool(ctx, auth.Namespace, req.Name, req.PoolName)
+	result, appErr := s.envMember.Get(ctx, auth.Namespace, req.Name, req.PoolName)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -833,7 +834,7 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 		return gen.UpdateEnvSandboxPool400JSONResponse{Error: "request body is required"}, nil
 	}
 	auth := authFrom(ctx)
-	patch := service.MemberPoolPatch{}
+	patch := envmember.Patch{}
 	if req.Body.Replicas != nil {
 		v := *req.Body.Replicas
 		patch.Replicas = &v
@@ -842,7 +843,7 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 		v := *req.Body.MaxReplicas
 		patch.MaxReplicas = &v
 	}
-	result, appErr := s.env.UpdateMemberPool(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID(), patch)
+	result, appErr := s.envMember.Update(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID(), patch)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeBadRequest:
@@ -860,7 +861,7 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 
 func (s *Server) DeleteEnvSandboxPool(ctx context.Context, req gen.DeleteEnvSandboxPoolRequestObject) (gen.DeleteEnvSandboxPoolResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.env.DeleteMemberPool(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID())
+	result, appErr := s.envMember.Delete(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID())
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -1402,32 +1403,6 @@ func (s *Server) AdminGetSandboxStatistics(ctx context.Context, _ gen.AdminGetSa
 		stats.ByNamespace[sb.Namespace]++
 	}
 	return gen.AdminGetSandboxStatistics200JSONResponse{Statistics: stats}, nil
-}
-
-func (s *Server) AdminGetSandboxPoolStatistics(ctx context.Context, _ gen.AdminGetSandboxPoolStatisticsRequestObject) (gen.AdminGetSandboxPoolStatisticsResponseObject, error) {
-	// Admin statistics: list all pools across all namespaces (empty team/user = no label filter)
-	items, appErr := s.pool.List(ctx, "", "", "")
-	if appErr != nil {
-		return gen.AdminGetSandboxPoolStatistics500JSONResponse(errResp(ctx, appErr)), nil
-	}
-	stats := gen.SandboxPoolStatistics{
-		Total:       len(items),
-		ByNamespace: make(map[string]int),
-	}
-	for _, pool := range items {
-		stats.ByNamespace[pool.Namespace]++
-		stats.TotalReplicas += int(pool.Spec.Replicas)
-		if pool.Status.IdleReplicas != nil {
-			stats.TotalIdleReplicas += int(*pool.Status.IdleReplicas)
-		}
-		if pool.Status.RunningReplicas != nil {
-			stats.TotalRunningReplicas += int(*pool.Status.RunningReplicas)
-		}
-		if pool.Status.FailedReplicas != nil {
-			stats.TotalFailedReplicas += int(*pool.Status.FailedReplicas)
-		}
-	}
-	return gen.AdminGetSandboxPoolStatistics200JSONResponse{Statistics: stats}, nil
 }
 
 // ---------------------------------------------------------------------------

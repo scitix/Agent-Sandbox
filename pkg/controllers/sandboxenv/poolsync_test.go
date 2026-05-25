@@ -16,11 +16,9 @@ package sandboxenv
 
 import (
 	"context"
-	"sort"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,16 +27,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolrender"
 )
 
 const (
-	testLocalCluster  = "local"
-	testEnvUID        = "env-uid-1"
-	testOverrideImage = "ghcr.io/foo:1.2"
+	testLocalCluster = "local"
+	testEnvUID       = "env-uid-1"
 )
 
 // envWithMembers returns a SandboxEnv whose local cluster segment carries
-// the supplied member entries. Used by tests that exercise buildDesiredPools.
+// the supplied member entries. Used by tests that exercise reconcilePools.
 func envWithMembers(members ...agentsv1alpha1.EnvClusterMember) *agentsv1alpha1.SandboxEnv {
 	env := &agentsv1alpha1.SandboxEnv{
 		ObjectMeta: metav1.ObjectMeta{
@@ -61,191 +59,6 @@ func envWithMembers(members ...agentsv1alpha1.EnvClusterMember) *agentsv1alpha1.
 		}}
 	}
 	return env
-}
-
-func sortedKeys(m map[string]desiredPool) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func TestBuildDesiredPools_NoMembersFallsBackToNamesakePool(t *testing.T) {
-	env := envWithMembers()
-	got := buildDesiredPools(env, testLocalCluster)
-	if len(got) != 1 {
-		t.Fatalf("expected 1 pool, got %d", len(got))
-	}
-	d, ok := got["env-a"]
-	if !ok {
-		t.Fatalf("expected pool name=env-a, got %v", sortedKeys(got))
-	}
-	if d.TemplateName != "tmpl" {
-		t.Errorf("TemplateName = %q, want tmpl", d.TemplateName)
-	}
-	// Identity labels still flow through so List filters work.
-	if d.Labels[agentsv1alpha1.LabelTeam] != "team-1" || d.Labels[agentsv1alpha1.LabelUser] != "user-1" {
-		t.Errorf("Identity labels not propagated: %+v", d.Labels)
-	}
-	if len(d.Annotations) != 0 {
-		t.Errorf("expected no annotations for namesake pool, got %+v", d.Annotations)
-	}
-}
-
-func TestBuildDesiredPools_OnePoolPerMember(t *testing.T) {
-	env := envWithMembers(
-		agentsv1alpha1.EnvClusterMember{
-			Name:   "env-a-exclusive",
-			Labels: map[string]string{"quota.scitix.ai/url": "zxli.ai-lab.math.exclusive"},
-		},
-		agentsv1alpha1.EnvClusterMember{
-			Name:        "env-a-ondemand",
-			Labels:      map[string]string{"quota.scitix.ai/url": "upgrader.autoupg.test.ondemand"},
-			Annotations: map[string]string{"agentbox.io/reservation": "preferred"},
-		},
-	)
-	got := buildDesiredPools(env, testLocalCluster)
-	keys := sortedKeys(got)
-	want := []string{"env-a-exclusive", "env-a-ondemand"}
-	if len(keys) != 2 || keys[0] != want[0] || keys[1] != want[1] {
-		t.Fatalf("pool names = %v, want %v", keys, want)
-	}
-	d := got["env-a-exclusive"]
-	if d.Labels["quota.scitix.ai/url"] != "zxli.ai-lab.math.exclusive" {
-		t.Errorf("quota label not propagated: %+v", d.Labels)
-	}
-	if d.Labels[agentsv1alpha1.LabelTeam] != "team-1" {
-		t.Errorf("env identity labels not merged: %+v", d.Labels)
-	}
-	d2 := got["env-a-ondemand"]
-	if d2.Annotations["agentbox.io/reservation"] != "preferred" {
-		t.Errorf("member annotation not propagated: %+v", d2.Annotations)
-	}
-}
-
-func TestBuildDesiredPools_MemberLabelOverridesEnvIdentityWhenConflicts(t *testing.T) {
-	// Member declares its own team label — should win over env's team.
-	env := envWithMembers(agentsv1alpha1.EnvClusterMember{
-		Name:   "env-a-foo",
-		Labels: map[string]string{agentsv1alpha1.LabelTeam: "team-override"},
-	})
-	got := buildDesiredPools(env, testLocalCluster)
-	d := got["env-a-foo"]
-	if d.Labels[agentsv1alpha1.LabelTeam] != "team-override" {
-		t.Errorf("expected member label to win, got %q", d.Labels[agentsv1alpha1.LabelTeam])
-	}
-}
-
-func TestBuildDesiredPools_IgnoresForeignClusterMembers(t *testing.T) {
-	env := envWithMembers()
-	env.Spec.Clusters = []agentsv1alpha1.EnvClusterSpec{
-		{
-			ClusterID: "remote",
-			Members: []agentsv1alpha1.EnvClusterMember{
-				{Name: "remote-pool"},
-			},
-		},
-	}
-	got := buildDesiredPools(env, testLocalCluster)
-	if _, ok := got["remote-pool"]; ok {
-		t.Errorf("foreign-cluster member must not produce a local Pool: %v", sortedKeys(got))
-	}
-	// Falls back to namesake pool when local segment is missing.
-	if _, ok := got["env-a"]; !ok {
-		t.Errorf("expected namesake fallback when local segment is empty, got %v", sortedKeys(got))
-	}
-}
-
-func TestBuildDesiredPools_PropagatesEnvLevelOverrides(t *testing.T) {
-	// Env-wide image / policy / timeouts come from Env.Spec.Overrides.
-	env := envWithMembers(agentsv1alpha1.EnvClusterMember{Name: "env-a-ondemand"})
-	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{
-		Image:                  testOverrideImage,
-		PodCreationImagePolicy: agentsv1alpha1.PodCreationImagePolicyIdleImage,
-		DefaultStartupTimeout:  &metav1.Duration{Duration: 90_000_000_000},
-		DefaultIdleTimeout:     &metav1.Duration{Duration: 600_000_000_000},
-	}
-
-	got := buildDesiredPools(env, testLocalCluster)
-	d, ok := got["env-a-ondemand"]
-	if !ok {
-		t.Fatalf("missing pool; got %v", sortedKeys(got))
-	}
-	if d.RenderOptions.Image != testOverrideImage {
-		t.Errorf("RenderOptions.Image not propagated from Env.Spec.Overrides: %+v", d.RenderOptions)
-	}
-	if d.PodCreationImagePolicy != agentsv1alpha1.PodCreationImagePolicyIdleImage {
-		t.Errorf("PodCreationImagePolicy = %q", d.PodCreationImagePolicy)
-	}
-	if d.DefaultStartupTimeout == nil || d.DefaultStartupTimeout.Seconds() != 90 {
-		t.Errorf("DefaultStartupTimeout = %+v", d.DefaultStartupTimeout)
-	}
-	if d.DefaultIdleTimeout == nil || d.DefaultIdleTimeout.Minutes() != 10 {
-		t.Errorf("DefaultIdleTimeout = %+v", d.DefaultIdleTimeout)
-	}
-}
-
-func TestBuildDesiredPools_PerMemberReplicasAndInlineResources(t *testing.T) {
-	// Two members with different replicas and InlineResources; Env image
-	// stays uniform.
-	smallResources := &corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("500m"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
-		},
-	}
-	largeResources := &corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("4"),
-			corev1.ResourceMemory: resource.MustParse("16Gi"),
-		},
-	}
-	env := envWithMembers(
-		agentsv1alpha1.EnvClusterMember{
-			Name:            "small",
-			Replicas:        2,
-			InlineResources: smallResources,
-		},
-		agentsv1alpha1.EnvClusterMember{
-			Name:            "large",
-			Replicas:        8,
-			InlineResources: largeResources,
-		},
-	)
-	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{Image: testOverrideImage}
-	got := buildDesiredPools(env, testLocalCluster)
-	if got["small"].Replicas != 2 || got["large"].Replicas != 8 {
-		t.Errorf("per-member replicas not propagated: small=%d large=%d", got["small"].Replicas, got["large"].Replicas)
-	}
-	if got["small"].RenderOptions.InlineResources == nil || got["large"].RenderOptions.InlineResources == nil {
-		t.Fatalf("per-member InlineResources not propagated: %+v %+v", got["small"].RenderOptions, got["large"].RenderOptions)
-	}
-	if got["small"].RenderOptions.InlineResources.Requests[corev1.ResourceCPU] != resource.MustParse("500m") {
-		t.Errorf("small InlineResources.cpu = %v", got["small"].RenderOptions.InlineResources.Requests[corev1.ResourceCPU])
-	}
-	if got["large"].RenderOptions.InlineResources.Requests[corev1.ResourceCPU] != resource.MustParse("4") {
-		t.Errorf("large InlineResources.cpu = %v", got["large"].RenderOptions.InlineResources.Requests[corev1.ResourceCPU])
-	}
-	if got["small"].RenderOptions.Image != testOverrideImage || got["large"].RenderOptions.Image != testOverrideImage {
-		t.Errorf("Env-level image must apply to every member, got %+v %+v", got["small"].RenderOptions, got["large"].RenderOptions)
-	}
-}
-
-func TestMergeStringMaps_OverlayWins(t *testing.T) {
-	base := map[string]string{"a": "1", "b": "2"}
-	overlay := map[string]string{"b": "override", "c": "3"}
-	got := mergeStringMaps(base, overlay)
-	if got["a"] != "1" || got["b"] != "override" || got["c"] != "3" {
-		t.Errorf("merge result wrong: %+v", got)
-	}
-}
-
-func TestMergeStringMaps_BothNilReturnsNil(t *testing.T) {
-	if got := mergeStringMaps(nil, nil); got != nil {
-		t.Errorf("nil+nil should yield nil, got %v", got)
-	}
 }
 
 func TestMapsDifferOnKeys_IgnoresForeignKeys(t *testing.T) {
@@ -607,7 +420,7 @@ func TestMergeOwnedMapKeys_PreservesForeignKeys(t *testing.T) {
 	dst := map[string]string{
 		"foreign": "kept",
 	}
-	mergeOwnedMapKeys(&dst, map[string]string{"managed": "v"})
+	poolrender.MergeOwnedMapKeys(&dst, map[string]string{"managed": "v"})
 	if dst["foreign"] != "kept" {
 		t.Errorf("foreign keys must be preserved, got %+v", dst)
 	}

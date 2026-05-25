@@ -19,14 +19,10 @@
 import { useAtomValue } from "jotai"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo } from "react"
-import { BarChart3, RefreshCw, Users, Box, Database } from "lucide-react"
+import { BarChart3, RefreshCw, Users, Box } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { isAdminAtom } from "@/lib/atoms"
-import {
-  sandboxStatsQueryOptions,
-  poolStatsQueryOptions,
-  replicasOverviewQueryOptions,
-} from "@/lib/queries"
+import { sandboxStatsQueryOptions, replicasOverviewQueryOptions } from "@/lib/queries"
 import { Button } from "@/components/ui/button"
 import { PrometheusSection } from "@/components/prometheus/prometheus-section"
 import { useRouter } from "next/navigation"
@@ -87,18 +83,14 @@ export default function AdminPage() {
   const showFallback = promResolved && !prometheusConfigured
 
   const sandboxStatsOptions = sandboxStatsQueryOptions()
-  const poolStatsOptions = poolStatsQueryOptions()
 
   const { data: sandboxStatsData, isFetching: sandboxFetching } = useQuery(sandboxStatsOptions)
-  const { data: poolStatsData, isFetching: poolFetching } = useQuery(poolStatsOptions)
 
   const sandboxStats = sandboxStatsData?.statistics ?? null
-  const poolStats = poolStatsData?.statistics ?? null
   const loading = !sandboxStatsData && sandboxFetching
 
   const handleRefresh = () => {
     void qc.refetchQueries({ queryKey: sandboxStatsOptions.queryKey })
-    void qc.refetchQueries({ queryKey: poolStatsOptions.queryKey })
   }
 
   if (!isAdmin) return null
@@ -108,7 +100,6 @@ export default function AdminPage() {
   const activatingCount = sandboxStats?.byStatus?.["Starting"] ?? 0
 
   const namespaceEntries = sandboxStats?.byNamespace ? Object.entries(sandboxStats.byNamespace) : []
-  const poolNsEntries = poolStats?.byNamespace ? Object.entries(poolStats.byNamespace) : []
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
@@ -127,11 +118,9 @@ export default function AdminPage() {
               size="icon-sm"
               onClick={handleRefresh}
               className="text-muted-foreground h-7 w-7"
-              disabled={sandboxFetching || poolFetching}
+              disabled={sandboxFetching}
             >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${sandboxFetching || poolFetching ? "animate-spin" : ""}`}
-              />
+              <RefreshCw className={`h-3.5 w-3.5 ${sandboxFetching ? "animate-spin" : ""}`} />
             </Button>
           </div>
         </div>
@@ -185,43 +174,8 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Pool Stats */}
-              <div>
-                <h2 className="text-muted-foreground mb-3 flex items-center gap-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
-                  <Database className="h-3.5 w-3.5" />
-                  {t("admin.sandboxPools")}
-                </h2>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  <StatCard
-                    label={t("admin.totalPools")}
-                    value={poolStats?.total ?? 0}
-                    icon={Database}
-                    color="text-foreground"
-                  />
-                  <StatCard
-                    label={t("admin.totalReplicas")}
-                    value={poolStats?.totalReplicas ?? 0}
-                    sub={t("admin.acrossAllPools")}
-                    icon={Database}
-                    color="text-brand"
-                  />
-                  <StatCard
-                    label={t("admin.idleReplicas")}
-                    value={poolStats?.totalIdleReplicas ?? 0}
-                    icon={Database}
-                    color="text-green-600 dark:text-green-400"
-                  />
-                  <StatCard
-                    label={t("admin.failedReplicas")}
-                    value={poolStats?.totalFailedReplicas ?? 0}
-                    icon={Database}
-                    color="text-red-600 dark:text-red-400"
-                  />
-                </div>
-              </div>
-
               {/* Namespace breakdown */}
-              {(namespaceEntries.length > 0 || poolNsEntries.length > 0) && (
+              {namespaceEntries.length > 0 && (
                 <div>
                   <h2 className="text-muted-foreground mb-3 flex items-center gap-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
                     <Users className="h-3.5 w-3.5" />
@@ -237,29 +191,16 @@ export default function AdminPage() {
                           <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
                             {t("admin.sandboxes")}
                           </th>
-                          <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
-                            {t("pools.title")}
-                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {Array.from(
-                          new Set([
-                            ...namespaceEntries.map(([ns]) => ns),
-                            ...poolNsEntries.map(([ns]) => ns),
-                          ]),
-                        ).map((ns) => (
+                        {namespaceEntries.map(([ns, count]) => (
                           <tr
                             key={ns}
                             className="border-border hover:bg-secondary/50 border-b last:border-0"
                           >
                             <td className="text-foreground px-4 py-2.5 font-mono text-sm">{ns}</td>
-                            <td className="px-4 py-2.5 text-right font-mono text-sm">
-                              {sandboxStats?.byNamespace?.[ns] ?? 0}
-                            </td>
-                            <td className="px-4 py-2.5 text-right font-mono text-sm">
-                              {poolStats?.byNamespace?.[ns] ?? 0}
-                            </td>
+                            <td className="px-4 py-2.5 text-right font-mono text-sm">{count}</td>
                           </tr>
                         ))}
                       </tbody>

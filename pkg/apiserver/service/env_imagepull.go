@@ -30,52 +30,15 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/dockerconfig"
 )
 
-// envNameFromOwnerRefs returns the Env name from a Pool's owner references,
+// EnvNameFromOwnerRefs returns the Env name from a Pool's owner references,
 // or "" when the Pool is unowned (e.g. mid-adoption).
-func envNameFromOwnerRefs(refs []metav1.OwnerReference) string {
+func EnvNameFromOwnerRefs(refs []metav1.OwnerReference) string {
 	for _, ref := range refs {
 		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind {
 			return ref.Name
 		}
 	}
 	return ""
-}
-
-// stampPoolImagePullSecretIfPresent mutates emb.Template.Spec.ImagePullSecrets
-// to include {Name: secretName} when the Secret exists in the namespace;
-// removes the existing reference when the Secret is missing. Idempotent.
-// Mirror of the same-named helper in pkg/controllers/sandboxenv; duplicated
-// here so the SyncTemplate path stays independent of controller internals.
-func stampPoolImagePullSecretIfPresent(
-	ctx context.Context,
-	c client.Client,
-	namespace, secretName string,
-	emb *agentsv1alpha1.EmbeddedSandboxTemplate,
-) error {
-	if emb == nil || emb.Template == nil {
-		return nil
-	}
-	secret := &corev1.Secret{}
-	err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: secretName}, secret)
-	want := err == nil
-	if err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("lookup image pull secret %q: %w", secretName, err)
-	}
-	refs := emb.Template.Spec.ImagePullSecrets
-	idx := -1
-	for i, r := range refs {
-		if r.Name == secretName {
-			idx = i
-			break
-		}
-	}
-	switch {
-	case want && idx < 0:
-		emb.Template.Spec.ImagePullSecrets = append(refs, corev1.LocalObjectReference{Name: secretName})
-	case !want && idx >= 0:
-		emb.Template.Spec.ImagePullSecrets = append(refs[:idx], refs[idx+1:]...)
-	}
-	return nil
 }
 
 // upsertEnvImagePullSecret materialises the dockerconfigjson Secret backing

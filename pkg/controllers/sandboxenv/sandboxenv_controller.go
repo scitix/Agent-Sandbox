@@ -129,7 +129,7 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// When it happens (e.g. someone edited the Env in the future Hub mode),
 	// emit an informational log; never refuse to reconcile the local segment.
 	if hasForeignClusterSegments(env, r.LocalClusterID) {
-		log.V(2).Info("Env contains foreign cluster segments; local Reconciler will only touch the local segment")
+		log.V(3).Info("Env contains foreign cluster segments; local Reconciler will only touch the local segment")
 	}
 
 	// Materialise / reconcile member Pools from spec.Clusters[local].Members.

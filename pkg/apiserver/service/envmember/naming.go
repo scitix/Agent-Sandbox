@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package service
+package envmember
 
 import (
 	"context"
@@ -25,11 +25,6 @@ import (
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
-
-// QuotaURLLabel is the label key carrying the quota identifier on a member.
-// The QuotaProvider parses it via DeriveShortName when constructing the
-// PoolName suffix.
-const QuotaURLLabel = "quota.scitix.ai/url"
 
 // derivePoolMember resolves the supplied member input to a fully populated
 // EnvClusterMember: it picks instanceType or inlineResources, computes the
@@ -48,14 +43,16 @@ const QuotaURLLabel = "quota.scitix.ai/url"
 //
 // Validation:
 //   - When the InstanceType catalog is enabled, prefer m.InstanceType. The
-//     server resolves it via the provider and persists the catalog name +
-//     multiplier on the member (InlineResources is cleared so the Reconciler
-//     can keep deriving from the catalog at render time).
+//     server resolves it via the provider, persists the catalog name +
+//     multiplier on the member, AND stamps the resolved resources into
+//     Member.InlineResources so the renderer (which still consumes
+//     InlineResources in Phase 1) sees a consistent picture even before the
+//     catalog-driven renderer lands in Phase 2.
 //   - Otherwise the caller must supply InlineResources directly.
 //   - Both paths empty → BadRequest.
 //
-// envName is checked against the 24-char limit (matches openapi.yaml) so the
-// composed PoolName stays under the 63-char DNS-label cap.
+// envName is checked against the 24-char limit (matches openapi.yaml) so
+// the composed PoolName stays under the 63-char DNS-label cap.
 func derivePoolMember(
 	ctx context.Context,
 	instProv instancetypeplugin.Provider,
@@ -78,10 +75,13 @@ func derivePoolMember(
 		}
 		resources = resolved
 		in.Multiplier = mult
-		// Catalog path persists InstanceType + Multiplier on the member —
-		// the Reconciler re-resolves resources at render time so catalog
-		// updates flow through without needing API rewrites.
-		in.InlineResources = nil
+		// Stamp the resolved resources onto InlineResources so the Phase 1
+		// renderer (which consumes InlineResources) sees the catalog's
+		// picture. InstanceType + Multiplier are preserved so when the
+		// catalog-aware renderer ships in Phase 2 it can re-derive on
+		// catalog updates without needing API rewrites.
+		req := resolved.DeepCopy()
+		in.InlineResources = req
 	case in.InlineResources != nil:
 		resources = *in.InlineResources
 		in.InstanceType = ""
@@ -109,10 +109,11 @@ func derivePoolMember(
 	return in, nil
 }
 
-// scalingGroupHasAutoscaling reports whether autoscaling is enabled for the
-// supplied group name on env. Returns true only when env.spec.autoscaling is
-// enabled AND a group with that name exists. Used by UpdateMemberPool to
-// decide whether `replicas` is editable (it isn't when autoscaling owns it).
+// scalingGroupHasAutoscaling reports whether autoscaling is enabled for
+// the supplied group name on env. Returns true only when
+// env.spec.autoscaling is enabled AND a group with that name exists. Used
+// by Update to decide whether `replicas` is editable (it isn't when
+// autoscaling owns it).
 func scalingGroupHasAutoscaling(env *agentsv1alpha1.SandboxEnv, groupName string) bool {
 	if env == nil || env.Spec.Autoscaling == nil || !env.Spec.Autoscaling.Enabled || groupName == "" {
 		return false

@@ -28,14 +28,6 @@ export const sandboxStatsQueryOptions = (options?: { refetchInterval?: number })
     options?.refetchInterval ? { refetchInterval: options.refetchInterval } : undefined,
   )
 
-export const poolStatsQueryOptions = (options?: { refetchInterval?: number }) =>
-  currentApiClient().queryOptions(
-    "get",
-    "/admin/statistics/sandboxpools",
-    undefined,
-    options?.refetchInterval ? { refetchInterval: options.refetchInterval } : undefined,
-  )
-
 export const userSandboxStatsQueryOptions = (options?: { refetchInterval?: number }) =>
   currentApiClient().queryOptions(
     "get",

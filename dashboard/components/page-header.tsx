@@ -49,7 +49,7 @@ export function PageHeader({ title, children }: PageHeaderProps) {
   }, [statsData, setRunningCount])
 
   return (
-    <div className="border-border flex flex-col border-b">
+    <div className="flex flex-col">
       <div className="flex items-center justify-between px-6 pt-5 pb-0">
         <div className="flex items-center gap-1">
           {isMobile && (

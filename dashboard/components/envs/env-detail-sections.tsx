@@ -145,17 +145,18 @@ export function EnvPoolsSection({
             {t("envs.detail.pools.memberCount", { count: memberCount })}
           </span>
         </div>
-        <Button onClick={onCreatePool} size="sm" className="h-7 gap-1 px-2 text-xs">
-          <Plus className="h-3 w-3" /> {t("envs.poolForm.createAction")}
-        </Button>
       </div>
       <QueryTable
         columns={columns}
         idFn={(row: AgentSandboxPool) => row.name}
         queryOptions={queryOptions}
         toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
-      />
-    </section>
+      >
+        <Button onClick={onCreatePool} size="sm" className="h-9 gap-1 px-2 text-xs" variant="secondary">
+          <Plus className="h-3 w-3" /> {t("envs.poolForm.createAction")}
+        </Button>
+      </QueryTable>
+    </section >
   )
 }
 

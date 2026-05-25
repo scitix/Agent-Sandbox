@@ -91,12 +91,12 @@ func hasForeignClusterSegments(env *agentsv1alpha1.SandboxEnv, localClusterID st
 		return false
 	}
 	for _, c := range env.Spec.Clusters {
-		if c.ClusterID != localClusterID {
+		if c.ClusterID != "" && c.ClusterID != localClusterID {
 			return true
 		}
 	}
 	for _, c := range env.Status.Clusters {
-		if c.ClusterID != localClusterID {
+		if c.ClusterID != "" && c.ClusterID != localClusterID {
 			return true
 		}
 	}

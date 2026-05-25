@@ -25,6 +25,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/handlers"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envmember"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
@@ -32,8 +33,8 @@ import (
 // Services bundles all service interfaces needed by the router.
 type Services struct {
 	Sandbox         service.SandboxService
-	SandboxPool     service.SandboxPoolService
 	SandboxEnv      service.SandboxEnvService
+	EnvMemberPool   envmember.Service
 	SandboxTemplate service.SandboxTemplateService
 	APIKey          service.APIKeyService
 	Quota           service.QuotaService
@@ -74,8 +75,8 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 	r.Use(middleware.NewServerVersionMiddleware(svcs.ServerVersion))
 	srv := handlers.NewServer(handlers.Services{
 		Sandbox:              svcs.Sandbox,
-		SandboxPool:          svcs.SandboxPool,
 		SandboxEnv:           svcs.SandboxEnv,
+		EnvMemberPool:        svcs.EnvMemberPool,
 		SandboxTemplate:      svcs.SandboxTemplate,
 		APIKey:               svcs.APIKey,
 		Quota:                svcs.Quota,

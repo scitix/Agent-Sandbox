@@ -17,13 +17,19 @@
 "use client"
 
 import { Fragment, useMemo } from "react"
-import { Controller, useFieldArray, useForm } from "react-hook-form"
+import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form"
 import { useQuery } from "@tanstack/react-query"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { toast } from "sonner"
 import { Plus, Save, Trash2 } from "lucide-react"
 
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
 import {
   Combobox,
@@ -174,13 +180,9 @@ function UpsertEnvInner({ env, onClose }: InnerProps) {
       <Separator />
 
       <form onSubmit={onSubmit} className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
-          {/* Basics */}
-          <section className="space-y-3">
-            <h3 className="font-mono text-[11px] tracking-wider uppercase text-muted-foreground">
-              {t("envs.form.section.basics")}
-            </h3>
-
+        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+          {/* Basics — always visible */}
+          <section className="space-y-4">
             <Field>
               <FieldLabel htmlFor="env-name">{t("envs.form.name")}</FieldLabel>
               <Input
@@ -212,66 +214,104 @@ function UpsertEnvInner({ env, onClose }: InnerProps) {
               {errors.templateName && (
                 <FieldError>{t(errors.templateName.message as never)}</FieldError>
               )}
+              <SelectedTemplateInfo templates={templates} control={control} />
             </Field>
           </section>
 
-          <Separator />
+          {/* Advanced — collapsed by default */}
+          <div className="rounded-md border border-border">
+            <Accordion>
+              <AccordionItem value="advanced">
+                <AccordionTrigger className="text-muted-foreground px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
+                  {t("common.advanced")}
+                </AccordionTrigger>
+                <AccordionContent className="px-3">
+                  <div className="flex flex-col gap-5 pb-2">
+                    {/* Env-level overrides */}
+                    <section className="space-y-3">
+                      <div>
+                        <h4 className="font-mono text-[11px] tracking-wider uppercase text-muted-foreground">
+                          {t("envs.form.section.overrides")}
+                        </h4>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t("envs.form.overridesHint")}
+                        </p>
+                      </div>
 
-          {/* Env-level overrides */}
-          <section className="space-y-3">
-            <h3 className="font-mono text-[11px] tracking-wider uppercase text-muted-foreground">
-              {t("envs.form.section.overrides")}
-            </h3>
-            <p className="text-xs text-muted-foreground">{t("envs.form.overridesHint")}</p>
+                      <Field>
+                        <FieldLabel htmlFor="env-image">{t("envs.form.image")}</FieldLabel>
+                        <Input
+                          id="env-image"
+                          {...register("image")}
+                          placeholder="ghcr.io/org/runtime:1.2"
+                          className="font-mono text-sm"
+                        />
+                        <FieldDescription>{t("envs.form.imageDescription")}</FieldDescription>
+                      </Field>
 
-            <Field>
-              <FieldLabel htmlFor="env-image">{t("envs.form.image")}</FieldLabel>
-              <Input
-                id="env-image"
-                {...register("image")}
-                placeholder="ghcr.io/org/runtime:1.2"
-              />
-            </Field>
+                      <Field>
+                        <FieldLabel>{t("envs.form.podCreationImagePolicy")}</FieldLabel>
+                        <Controller
+                          control={control}
+                          name="podCreationImagePolicy"
+                          render={({ field }) => (
+                            <Select
+                              value={field.value ?? ""}
+                              onValueChange={(v) => field.onChange(v || undefined)}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder={t("envs.form.imagePolicyDefault")} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="IdleImage">IdleImage</SelectItem>
+                                <SelectItem value="PoolDefaultImage">PoolDefaultImage</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                        />
+                        <FieldDescription>
+                          {t("envs.form.podCreationImagePolicyDescription")}
+                        </FieldDescription>
+                      </Field>
 
-            <Field>
-              <FieldLabel>{t("envs.form.podCreationImagePolicy")}</FieldLabel>
-              <Controller
-                control={control}
-                name="podCreationImagePolicy"
-                render={({ field }) => (
-                  <Select
-                    value={field.value ?? ""}
-                    onValueChange={(v) => field.onChange(v || undefined)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={t("envs.form.imagePolicyDefault")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="IdleImage">IdleImage</SelectItem>
-                      <SelectItem value="PoolDefaultImage">PoolDefaultImage</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-            </Field>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field>
+                          <FieldLabel htmlFor="env-startup">
+                            {t("envs.form.defaultStartupTimeout")}
+                          </FieldLabel>
+                          <Input
+                            id="env-startup"
+                            placeholder="5m"
+                            {...register("defaultStartupTimeout")}
+                          />
+                          <FieldDescription>
+                            {t("envs.form.defaultStartupTimeoutDescription")}
+                          </FieldDescription>
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="env-idle">
+                            {t("envs.form.defaultIdleTimeout")}
+                          </FieldLabel>
+                          <Input
+                            id="env-idle"
+                            placeholder="30m"
+                            {...register("defaultIdleTimeout")}
+                          />
+                          <FieldDescription>
+                            {t("envs.form.defaultIdleTimeoutDescription")}
+                          </FieldDescription>
+                        </Field>
+                      </div>
+                    </section>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Field>
-                <FieldLabel htmlFor="env-startup">
-                  {t("envs.form.defaultStartupTimeout")}
-                </FieldLabel>
-                <Input id="env-startup" placeholder="5m" {...register("defaultStartupTimeout")} />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="env-idle">{t("envs.form.defaultIdleTimeout")}</FieldLabel>
-                <Input id="env-idle" placeholder="30m" {...register("defaultIdleTimeout")} />
-              </Field>
-            </div>
-          </section>
+                    <Separator />
 
-          <Separator />
-
-          <ImagePullSecretSection control={control} register={register} />
+                    <ImagePullSecretSection control={control} register={register} />
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </div>
         </div>
 
         <Separator />
@@ -318,13 +358,66 @@ function TemplateCombobox({
         <ComboboxList>
           {(item: AgentSandboxTemplateSummary) => (
             <ComboboxItem key={item.name} value={item}>
-              {item.name}
+              <div className="flex w-full min-w-0 flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs">{item.name}</span>
+                  {item.version && (
+                    <span className="rounded border border-border bg-muted px-1 font-mono text-[10px] text-muted-foreground">
+                      {item.version}
+                    </span>
+                  )}
+                </div>
+                {item.description && (
+                  <span className="truncate text-[10px] text-muted-foreground">
+                    {item.description}
+                  </span>
+                )}
+              </div>
             </ComboboxItem>
           )}
         </ComboboxList>
         <ComboboxEmpty />
       </ComboboxContent>
     </Combobox>
+  )
+}
+
+function SelectedTemplateInfo({
+  templates,
+  control,
+}: {
+  templates: AgentSandboxTemplateSummary[]
+  control: ReturnType<typeof useForm<FormValues>>["control"]
+}) {
+  const { t } = useTranslation()
+  const name = useWatch({ control, name: "templateName" })
+  const tpl = templates.find((it) => it.name === name)
+  if (!tpl) {
+    return <FieldDescription>{t("envs.form.templateDescription")}</FieldDescription>
+  }
+  return (
+    <div className="mt-1 space-y-1 rounded border border-dashed border-border bg-muted/30 px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px]">
+        <span className="text-foreground">{tpl.name}</span>
+        {tpl.version && (
+          <span className="rounded border border-border bg-background px-1 text-[10px] text-muted-foreground">
+            {tpl.version}
+          </span>
+        )}
+        {(tpl.cpu || tpl.memory) && (
+          <span className="text-[10px] text-muted-foreground">
+            {[tpl.cpu && `${tpl.cpu}c`, tpl.memory].filter(Boolean).join(" / ")}
+          </span>
+        )}
+      </div>
+      {tpl.description ? (
+        <p className="text-[11px] leading-snug text-muted-foreground">{tpl.description}</p>
+      ) : (
+        <p className="text-[11px] italic text-muted-foreground">
+          {t("envs.form.templateNoDescription")}
+        </p>
+      )}
+    </div>
   )
 }
 

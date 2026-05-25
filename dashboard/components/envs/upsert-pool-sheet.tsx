@@ -480,14 +480,30 @@ function QuotaCombobox({
       <ComboboxInput placeholder="(none)" />
       <ComboboxContent>
         <ComboboxList>
-          {(item: QuotaItem) => (
-            <ComboboxItem key={item.id} value={item}>
-              <div className="flex flex-col">
-                <span className="font-mono text-xs">{item.name || item.id}</span>
-                <span className="text-[10px] text-muted-foreground">{item.id}</span>
-              </div>
-            </ComboboxItem>
-          )}
+          {(item: QuotaItem) => {
+            const total = item.resources?.total ?? {}
+            const used = item.resources?.used ?? {}
+            const usageLine =
+              Object.keys(total).length > 0
+                ? Object.entries(total)
+                    .map(([k, v]) => `${used[k] ?? "0"}/${v ?? "?"} ${k}`)
+                    .join(" · ")
+                : null
+            return (
+              <ComboboxItem key={item.id} value={item}>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-mono text-xs leading-tight">
+                    {item.name || item.id}
+                  </span>
+                  {usageLine && (
+                    <span className="text-muted-foreground text-[10px] leading-tight">
+                      {usageLine}
+                    </span>
+                  )}
+                </div>
+              </ComboboxItem>
+            )
+          }}
         </ComboboxList>
         <ComboboxEmpty />
       </ComboboxContent>
