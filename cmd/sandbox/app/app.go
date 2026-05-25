@@ -499,19 +499,23 @@ func buildInstanceTypeProvider(
 	extCfg *extconfig.ExtensionConfig,
 	handle framework.Handle,
 ) plugininstancetype.Provider {
-	if factory == nil || extCfg.InstanceTypeProvider == nil {
+	cfg := (*extconfig.ProviderConfig)(nil)
+	if extCfg.Providers != nil {
+		cfg = extCfg.Providers.InstanceType
+	}
+	if factory == nil || cfg == nil {
 		log.Info("InstanceType provider: noop (no out-of-tree provider configured)")
 		return plugininstancetype.NewNoop()
 	}
-	if factory.Name != extCfg.InstanceTypeProvider.Name {
+	if factory.Name != cfg.Name {
 		log.Info("InstanceType provider: noop (registered factory name does not match config)",
-			"registered", factory.Name, "configured", extCfg.InstanceTypeProvider.Name)
+			"registered", factory.Name, "configured", cfg.Name)
 		return plugininstancetype.NewNoop()
 	}
 
 	plugininstancetype.Register(factory.Name, factory.Factory)
 
-	args, err := factory.DecodeArgs(extCfg.InstanceTypeProvider.Args)
+	args, err := factory.DecodeArgs(cfg.Args)
 	if err != nil {
 		log.Error(err, "Failed to decode instancetype provider args", "name", factory.Name)
 		os.Exit(1)
@@ -539,19 +543,23 @@ func buildQuotaProvider(
 	extCfg *extconfig.ExtensionConfig,
 	handle framework.Handle,
 ) pluginquota.Provider {
-	if factory == nil || extCfg.QuotaProvider == nil {
+	cfg := (*extconfig.ProviderConfig)(nil)
+	if extCfg.Providers != nil {
+		cfg = extCfg.Providers.Quota
+	}
+	if factory == nil || cfg == nil {
 		log.Info("Quota provider: noop (no out-of-tree provider configured)")
 		return pluginquota.NewNoop()
 	}
-	if factory.Name != extCfg.QuotaProvider.Name {
+	if factory.Name != cfg.Name {
 		log.Info("Quota provider: noop (registered factory name does not match config)",
-			"registered", factory.Name, "configured", extCfg.QuotaProvider.Name)
+			"registered", factory.Name, "configured", cfg.Name)
 		return pluginquota.NewNoop()
 	}
 
 	pluginquota.Register(factory.Name, factory.Factory)
 
-	args, err := factory.DecodeArgs(extCfg.QuotaProvider.Args)
+	args, err := factory.DecodeArgs(cfg.Args)
 	if err != nil {
 		log.Error(err, "Failed to decode quota provider args", "name", factory.Name)
 		os.Exit(1)

@@ -18,24 +18,21 @@
 //
 // Schema (YAML):
 //
-//	quotaProvider:
-//	  name: bob
-//	  args:
-//	    namespace: bob-namespace
-//
-//	instanceTypeProvider:
-//	  name: dave
-//	  args:
-//	    configMapNamespace: alice-namespace
-//	    configMapName: alice-config
+//	providers:
+//	  quota:
+//	    name: bob
+//	    args:
+//	      namespace: bob-namespace
+//	  instanceType:
+//	    name: dave
+//	    args:
+//	      configMapNamespace: alice-namespace
+//	      configMapName: alice-config
 //
 //	plugins:
 //	  - name: carol
 //	    args:
 //	      schedulerURL: http://...
-//	      instanceCMNamespace: alice-namespace
-//	      instanceCMName: alice-config
-//	      quotaNamespace: bob-namespace
 package extconfig
 
 import (
@@ -47,9 +44,14 @@ import (
 
 // ExtensionConfig is the top-level structure of the extension config file.
 type ExtensionConfig struct {
-	QuotaProvider        *ProviderConfig `json:"quotaProvider,omitempty"`
-	InstanceTypeProvider *ProviderConfig `json:"instanceTypeProvider,omitempty"`
-	Plugins              []PluginConfig  `json:"plugins,omitempty"`
+	Providers *ProvidersConfig `json:"providers,omitempty"`
+	Plugins   []PluginConfig   `json:"plugins,omitempty"`
+}
+
+// ProvidersConfig groups all data-source provider configurations.
+type ProvidersConfig struct {
+	Quota        *ProviderConfig `json:"quota,omitempty"`
+	InstanceType *ProviderConfig `json:"instanceType,omitempty"`
 }
 
 // ProviderConfig holds the name and raw args for a provider (quota,
