@@ -21,7 +21,7 @@
 // keyed by env name (unique within namespace, which the API scopes us to).
 
 import type { ColumnDef } from "@tanstack/react-table"
-import { Eye, MoreVertical, Pencil, Settings2, Trash2 } from "lucide-react"
+import { Eye, MoreVertical, Pencil, Trash2 } from "lucide-react"
 
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
 import { RelativeTime } from "@/components/custom/relative-time"
@@ -66,7 +66,6 @@ function pickLocalClusterStatus(env: AgentSandboxEnv) {
 export function createEnvColumns(
   t: TranslationFn,
   onViewDetail: (env: AgentSandboxEnv) => void,
-  onEditAutoscaling: (env: AgentSandboxEnv) => void,
   onEditEnv?: (env: AgentSandboxEnv) => void,
   onDeleteEnv?: (env: AgentSandboxEnv) => void,
 ): ColumnDef<AgentSandboxEnv>[] {
@@ -205,9 +204,6 @@ export function createEnvColumns(
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => onViewDetail(row.original)}>
               <Eye className="mr-2 h-3.5 w-3.5" /> {t("envs.action.viewDetails")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onEditAutoscaling(row.original)}>
-              <Settings2 className="mr-2 h-3.5 w-3.5" /> {t("envs.action.editAutoscaling")}
             </DropdownMenuItem>
             {onEditEnv && (
               <DropdownMenuItem onClick={() => onEditEnv(row.original)}>

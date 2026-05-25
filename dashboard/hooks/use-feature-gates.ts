@@ -37,5 +37,7 @@ export function useFeatureGates() {
   return {
     /** True when a non-noop quota provider is active (pool quota selector, /quotas endpoint). */
     quota: data?.quota ?? false,
+    /** True when a non-noop InstanceType catalog provider is active (Env upsert sheet, /instancetypes endpoint). */
+    instanceType: data?.instanceType ?? false,
   }
 }

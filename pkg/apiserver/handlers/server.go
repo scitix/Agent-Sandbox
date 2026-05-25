@@ -36,6 +36,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -71,6 +72,10 @@ type Services struct {
 	// may be used to short-circuit feature-specific handlers when disabled).
 	// Nil is treated as Noop.
 	QuotaProvider quotaplugin.Provider
+	// InstanceTypeProvider backs the /v1/instancetypes listing and the
+	// matching `instanceType` boolean on /v1/feature-gates. Nil is treated as
+	// Noop (catalog reported disabled, list returns empty).
+	InstanceTypeProvider instancetypeplugin.Provider
 }
 
 // Server implements gen.StrictServerInterface.
@@ -91,6 +96,10 @@ type Server struct {
 	// quotaProvider backs the /v1/feature-gates report.
 	// Never nil — NewServer defaults it to Noop when the caller omits it.
 	quotaProvider quotaplugin.Provider
+	// instanceTypeProvider backs the /v1/instancetypes listing and the
+	// `instanceType` boolean on /v1/feature-gates. Never nil — NewServer
+	// defaults it to Noop when the caller omits it.
+	instanceTypeProvider instancetypeplugin.Provider
 }
 
 // NewServer creates a new handler Server.
@@ -99,18 +108,23 @@ func NewServer(svcs Services) *Server {
 	if qp == nil {
 		qp = quotaplugin.NewNoop()
 	}
+	itp := svcs.InstanceTypeProvider
+	if itp == nil {
+		itp = instancetypeplugin.NewNoop()
+	}
 	return &Server{
-		sandbox:       svcs.Sandbox,
-		pool:          svcs.SandboxPool,
-		env:           svcs.SandboxEnv,
-		template:      svcs.SandboxTemplate,
-		apikey:        svcs.APIKey,
-		quota:         svcs.Quota,
-		organization:  svcs.Organization,
-		sync:          svcs.Sync,
-		forwarder:     svcs.Forwarder,
-		cluster:       svcs.Cluster,
-		quotaProvider: qp,
+		sandbox:              svcs.Sandbox,
+		pool:                 svcs.SandboxPool,
+		env:                  svcs.SandboxEnv,
+		template:             svcs.SandboxTemplate,
+		apikey:               svcs.APIKey,
+		quota:                svcs.Quota,
+		organization:         svcs.Organization,
+		sync:                 svcs.Sync,
+		forwarder:            svcs.Forwarder,
+		cluster:              svcs.Cluster,
+		quotaProvider:        qp,
+		instanceTypeProvider: itp,
 	}
 }
 

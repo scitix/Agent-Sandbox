@@ -435,18 +435,19 @@ func Run(opts Options) {
 
 	// ---- servers -------------------------------------------------------------
 	apiServer := apiserver.New(apiserver.Config{
-		BindAddress:       apiBindAddress,
-		KeyStore:          keyStore,
-		AdminKeyManager:   adminKeyMgr,
-		IAMService:        iamSvc,
-		Secret:            secret,
-		ClusterConfigSink: clusterConfigSink,
-		RestConfig:        restCfg,
-		Forwarder:         ccForwarder,
-		ClusterStore:      clusterStore,
-		LocalClusterID:    localClusterID,
-		QuotaProvider:     quotaPluginProvider,
-		ServerVersion:     version.Version,
+		BindAddress:          apiBindAddress,
+		KeyStore:             keyStore,
+		AdminKeyManager:      adminKeyMgr,
+		IAMService:           iamSvc,
+		Secret:               secret,
+		ClusterConfigSink:    clusterConfigSink,
+		RestConfig:           restCfg,
+		Forwarder:            ccForwarder,
+		ClusterStore:         clusterStore,
+		LocalClusterID:       localClusterID,
+		QuotaProvider:        quotaPluginProvider,
+		InstanceTypeProvider: itProvider,
+		ServerVersion:        version.Version,
 	}, mgr.GetClient(), clientset, sandboxStore, pluginManager, envoyGatewayBaseURL, sandboxSvc)
 
 	numProcesses := 2

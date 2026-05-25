@@ -69,6 +69,20 @@ export const oidcConfigQueryOptions = () =>
   })
 
 /**
+ * InstanceType catalog. Use only when `useFeatureGates().instanceType` is
+ * true — on noop deployments the endpoint still returns 200 with an empty
+ * items array, but consumers should branch on the gate to avoid rendering
+ * empty UI.
+ */
+export const instanceTypesQueryOptions = (options?: { enabled?: boolean }) =>
+  currentApiClient().queryOptions("get", "/instancetypes", undefined, {
+    enabled: options?.enabled ?? true,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    select: (data) => data.items ?? [],
+  })
+
+/**
  * Reports which optional features are enabled on the currently selected
  * cluster. The backend inspects its wired `quota.Provider` and returns
  * booleans like `{ quota: true }`.

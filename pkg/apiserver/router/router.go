@@ -25,6 +25,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/handlers"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
 
@@ -56,6 +57,10 @@ type Services struct {
 	// QuotaProvider drives the /v1/feature-gates endpoint.
 	// Nil is accepted and treated as Noop downstream.
 	QuotaProvider quotaplugin.Provider
+	// InstanceTypeProvider drives the /v1/instancetypes endpoint and the
+	// matching `instanceType` flag on /v1/feature-gates. Nil is accepted and
+	// treated as Noop downstream.
+	InstanceTypeProvider instancetypeplugin.Provider
 	// ServerVersion is stamped onto every response via X-AgentBox-Server-Version.
 	// Comes from pkg/version.Version (injected at build time via -ldflags).
 	ServerVersion string
@@ -68,17 +73,18 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 	// Stamp every response (including /ping) with the running server version.
 	r.Use(middleware.NewServerVersionMiddleware(svcs.ServerVersion))
 	srv := handlers.NewServer(handlers.Services{
-		Sandbox:         svcs.Sandbox,
-		SandboxPool:     svcs.SandboxPool,
-		SandboxEnv:      svcs.SandboxEnv,
-		SandboxTemplate: svcs.SandboxTemplate,
-		APIKey:          svcs.APIKey,
-		Quota:           svcs.Quota,
-		Organization:    svcs.Organization,
-		Sync:            svcs.Sync,
-		Forwarder:       svcs.Forwarder,
-		Cluster:         svcs.Cluster,
-		QuotaProvider:   svcs.QuotaProvider,
+		Sandbox:              svcs.Sandbox,
+		SandboxPool:          svcs.SandboxPool,
+		SandboxEnv:           svcs.SandboxEnv,
+		SandboxTemplate:      svcs.SandboxTemplate,
+		APIKey:               svcs.APIKey,
+		Quota:                svcs.Quota,
+		Organization:         svcs.Organization,
+		Sync:                 svcs.Sync,
+		Forwarder:            svcs.Forwarder,
+		Cluster:              svcs.Cluster,
+		QuotaProvider:        svcs.QuotaProvider,
+		InstanceTypeProvider: svcs.InstanceTypeProvider,
 	})
 
 	strictHandler := gen.NewStrictHandler(srv, nil)

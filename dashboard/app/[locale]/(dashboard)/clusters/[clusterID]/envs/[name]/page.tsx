@@ -20,7 +20,7 @@ import { use, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { parseAsString, useQueryState } from "nuqs"
 import Link from "next/link"
-import { ArrowLeft, Boxes, Pencil, RefreshCw, Settings2, Trash2 } from "lucide-react"
+import { ArrowLeft, Boxes, Pencil, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -31,9 +31,8 @@ import {
   SpecSection,
   StatusSection,
 } from "@/components/envs/env-detail-sections"
-import { CreateEnvSheet } from "@/components/envs/create-env-sheet"
+import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
-import { EditAutoscalingSheet } from "@/components/envs/edit-autoscaling-sheet"
 import { PoolMetricsSheet } from "@/components/prometheus/pool-metrics-sheet"
 import { PoolDocsSheet, POOL_DOCS_PARAM } from "@/components/pools/pool-docs-sheet"
 import { envQueryOptions, useSyncEnvTemplate } from "@/lib/queries"
@@ -62,7 +61,6 @@ export default function EnvDetailPage({ params }: PageProps) {
 
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [autoscaleOpen, setAutoscaleOpen] = useState(false)
   const [metricsTarget, setMetricsTarget] = useState<AgentSandboxPool | null>(null)
   const [, setPoolDocsName] = useQueryState(
     POOL_DOCS_PARAM,
@@ -122,16 +120,6 @@ export default function EnvDetailPage({ params }: PageProps) {
               variant="outline"
               size="sm"
               disabled={!env}
-              onClick={() => setAutoscaleOpen(true)}
-              className="h-8 gap-1 text-xs"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              {t("envs.detail.actions.editAutoscaling")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!env}
               onClick={() => setEditOpen(true)}
               className="h-8 gap-1 text-xs"
             >
@@ -168,22 +156,18 @@ export default function EnvDetailPage({ params }: PageProps) {
               onViewDocs={(pool) => void setPoolDocsName(pool.name)}
             />
             <Separator />
-            <AutoscalingSummary env={env} onEdit={() => setAutoscaleOpen(true)} />
+            <AutoscalingSummary env={env} onEdit={() => setEditOpen(true)} />
             <Separator />
             <StatusSection env={env} />
           </div>
         )}
       </div>
 
-      {/* Edit / Delete / Autoscaling sheets */}
-      <CreateEnvSheet env={env ?? null} open={editOpen} onOpenChange={setEditOpen} />
+      {/* Edit / Delete sheets */}
+      <UpsertEnvSheet env={env ?? null} open={editOpen} onOpenChange={setEditOpen} />
       <DeleteEnvDialog
         env={deleteOpen ? (env ?? null) : null}
         onOpenChange={(open) => setDeleteOpen(open)}
-      />
-      <EditAutoscalingSheet
-        env={autoscaleOpen ? (env ?? null) : null}
-        onOpenChange={(open) => setAutoscaleOpen(open)}
       />
       <PoolMetricsSheet
         pool={metricsTarget}

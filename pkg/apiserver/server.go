@@ -32,6 +32,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
+	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/metrics"
 	"github.com/scitix/agent-sandbox/pkg/store"
@@ -80,6 +81,10 @@ type Config struct {
 	// inspected by the /v1/feature-gates endpoint. When nil, a Noop provider
 	// is used (feature disabled).
 	QuotaProvider quotaplugin.Provider
+	// InstanceTypeProvider selects the InstanceType catalog backend exposed
+	// by GET /v1/instancetypes and inspected by the /v1/feature-gates
+	// endpoint. When nil, a Noop provider is used (feature disabled).
+	InstanceTypeProvider instancetypeplugin.Provider
 	// ServerVersion is the build-time version string stamped on every response
 	// via X-AgentBox-Server-Version. Set from pkg/version.Version in app.go.
 	ServerVersion string
@@ -133,24 +138,29 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 	if quotaProv == nil {
 		quotaProv = quotaplugin.NewNoop()
 	}
+	instanceTypeProv := cfg.InstanceTypeProvider
+	if instanceTypeProv == nil {
+		instanceTypeProv = instancetypeplugin.NewNoop()
+	}
 
 	svcs := router.Services{
-		Sandbox:         sandboxSvc,
-		SandboxPool:     service.NewSandboxPoolService(k8sClient, nil, pluginManager),
-		SandboxEnv:      service.NewSandboxEnvService(k8sClient),
-		SandboxTemplate: service.NewSandboxTemplateService(k8sClient),
-		APIKey:          service.NewAPIKeyServiceWithSync(cfg.KeyStore, syncSvc),
-		Quota:           service.NewQuotaServiceFromProvider(quotaProv),
-		Organization:    service.NewOrganizationService(k8sClient, cfg.KeyStore),
-		IAM:             cfg.IAMService,
-		KubeClientset:   clientset,
-		RestConfig:      cfg.RestConfig,
-		Sync:            syncSvc,
-		SyncToken:       cfg.Secret,
-		Forwarder:       cfg.Forwarder,
-		Cluster:         service.NewClusterService(cfg.ClusterStore, cfg.LocalClusterID),
-		QuotaProvider:   quotaProv,
-		ServerVersion:   cfg.ServerVersion,
+		Sandbox:              sandboxSvc,
+		SandboxPool:          service.NewSandboxPoolService(k8sClient, nil, pluginManager),
+		SandboxEnv:           service.NewSandboxEnvService(k8sClient),
+		SandboxTemplate:      service.NewSandboxTemplateService(k8sClient),
+		APIKey:               service.NewAPIKeyServiceWithSync(cfg.KeyStore, syncSvc),
+		Quota:                service.NewQuotaServiceFromProvider(quotaProv),
+		Organization:         service.NewOrganizationService(k8sClient, cfg.KeyStore),
+		IAM:                  cfg.IAMService,
+		KubeClientset:        clientset,
+		RestConfig:           cfg.RestConfig,
+		Sync:                 syncSvc,
+		SyncToken:            cfg.Secret,
+		Forwarder:            cfg.Forwarder,
+		Cluster:              service.NewClusterService(cfg.ClusterStore, cfg.LocalClusterID),
+		QuotaProvider:        quotaProv,
+		InstanceTypeProvider: instanceTypeProv,
+		ServerVersion:        cfg.ServerVersion,
 	}
 
 	authMw := middleware.NewAuthenticateMiddleware(cfg.AdminKeyManager, cfg.KeyStore, cfg.Secret, svcs.IAM)

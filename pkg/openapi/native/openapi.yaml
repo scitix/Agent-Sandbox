@@ -48,6 +48,13 @@ tags:
       Each pool holds a configurable number of idle sandboxes ready for
       instant allocation. Admin callers may impersonate via
       `X-Impersonate-Team` / `X-Impersonate-User`.
+  - name: sandbox-envs
+    x-displayName: Envs
+    description: >
+      SandboxEnv management — declarative environments that fan out into one or
+      more member SandboxPools. The Env Reconciler materialises a member pool
+      per entry in `members`, or a single quota-less pool named after the Env
+      when `members` is empty.
   - name: sandbox-templates
     x-displayName: Templates
     description: >
@@ -59,6 +66,14 @@ tags:
     description: >
       SI Scheduler quota information for the authenticated user. Returns
       resource allocations, usage, and free capacity per quota entry.
+  - name: instancetypes
+    x-displayName: Instance Types
+    description: >
+      Catalog of named base resource shapes that a sandbox can scale up from by
+      an integer multiplier. Returned entries are read-only; resolution of
+      (name, multiplier) into Pod resources happens server-side. The
+      `instanceType` flag on `/feature-gates` reports whether the catalog
+      backend is wired in.
   - name: clusters
     x-displayName: Clusters
     description: >
@@ -88,6 +103,13 @@ tags:
       Admin-only operations: cross-namespace sandbox/pool inspection, API key
       provisioning, template management, and organization queries. All endpoints
       require an admin-role API key (`AGENTBOX-API-KEY` header).
+
+# Group related tags in tools that render x-tagGroups (Redoc, Stoplight). Other
+# tools simply ignore this block and render the flat tag list above.
+x-tagGroups:
+  - name: providers
+    x-displayName: Providers
+    tags: [quotas, instancetypes]
 
 servers:
   - url: "{protocol}://{path}"
@@ -317,7 +339,17 @@ components:
           description: "Name of the Kubernetes Pod backing this sandbox."
         status:
           type: string
-          enum: [Pending, Starting, Running, Stopping, Failed, Completed, Canceled, Released]
+          enum:
+            [
+              Pending,
+              Starting,
+              Running,
+              Stopping,
+              Failed,
+              Completed,
+              Canceled,
+              Released,
+            ]
           description: "Current lifecycle phase of the sandbox."
         claimedAt:
           type: string
@@ -341,13 +373,13 @@ components:
           type: object
           description: "Map of runtime name to its endpoint URL, populated once the sandbox is Running."
           additionalProperties:
-            $ref: '#/components/schemas/SandboxEndpoint'
+            $ref: "#/components/schemas/SandboxEndpoint"
         cpu:
           type: string
-          description: "CPU resource allocated to the sandbox (Kubernetes resource quantity, e.g. \"1\", \"100m\")."
+          description: 'CPU resource allocated to the sandbox (Kubernetes resource quantity, e.g. "1", "100m").'
         memory:
           type: string
-          description: "Memory resource allocated to the sandbox (Kubernetes resource quantity, e.g. \"16Gi\", \"512Mi\")."
+          description: 'Memory resource allocated to the sandbox (Kubernetes resource quantity, e.g. "16Gi", "512Mi").'
         terminatedAt:
           type: string
           format: date-time
@@ -371,7 +403,7 @@ components:
           type: string
           description: "Human-readable message describing the failure cause."
         statusDetail:
-          $ref: '#/components/schemas/SandboxStatusDetail'
+          $ref: "#/components/schemas/SandboxStatusDetail"
         team:
           type: string
           description: "Team label of the sandbox owner (from pod label)"
@@ -383,7 +415,7 @@ components:
           description: "Kubernetes node the sandbox Pod was scheduled onto."
         containerId:
           type: string
-          description: "Runtime container ID (e.g. \"docker://abc123\") of the primary container, captured when the sandbox entered Running state."
+          description: 'Runtime container ID (e.g. "docker://abc123") of the primary container, captured when the sandbox entered Running state.'
       example:
         sandboxId: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
         namespace: "t-team-user"
@@ -407,7 +439,7 @@ components:
       required: [sandbox]
       properties:
         sandbox:
-          $ref: '#/components/schemas/Sandbox'
+          $ref: "#/components/schemas/Sandbox"
 
     # =========================================================
     # Sandbox Logs
@@ -451,7 +483,7 @@ components:
           type: array
           description: "Ordered list of log lines (oldest first)."
           items:
-            $ref: '#/components/schemas/SandboxLogEntry'
+            $ref: "#/components/schemas/SandboxLogEntry"
         truncated:
           type: boolean
           description: "True when the response was truncated due to the `lines` limit or internal size cap."
@@ -584,7 +616,7 @@ components:
           type: array
           description: "Page of sandbox objects matching the query."
           items:
-            $ref: '#/components/schemas/Sandbox'
+            $ref: "#/components/schemas/Sandbox"
         total:
           type: integer
           description: "Total number of sandboxes matching the query (before pagination)."
@@ -678,15 +710,15 @@ components:
           type: string
           description: "Kubernetes namespace the pool is deployed in."
         spec:
-          $ref: '#/components/schemas/SandboxPoolSpec'
+          $ref: "#/components/schemas/SandboxPoolSpec"
         status:
-          $ref: '#/components/schemas/SandboxPoolStatus'
+          $ref: "#/components/schemas/SandboxPoolStatus"
         cpu:
           type: string
-          description: "CPU resource per pod in the pool (Kubernetes resource quantity, e.g. \"1\", \"100m\")."
+          description: 'CPU resource per pod in the pool (Kubernetes resource quantity, e.g. "1", "100m").'
         memory:
           type: string
-          description: "Memory resource per pod in the pool (Kubernetes resource quantity, e.g. \"16Gi\", \"512Mi\")."
+          description: 'Memory resource per pod in the pool (Kubernetes resource quantity, e.g. "16Gi", "512Mi").'
         team:
           type: string
           description: "Team label of the pool owner (from CRD label)"
@@ -697,7 +729,7 @@ components:
           type: string
           description: "Version of the source SandboxTemplate at last sync (from annotation)"
         overrides:
-          $ref: '#/components/schemas/PoolTemplateOverrides'
+          $ref: "#/components/schemas/PoolTemplateOverrides"
         specYaml:
           type: string
           description: "Full EmbeddedSandboxTemplate (idleImage, runtimes, reservation, template) serialized as YAML for diff comparison."
@@ -734,7 +766,7 @@ components:
       required: [template]
       properties:
         template:
-          $ref: '#/components/schemas/SandboxPool'
+          $ref: "#/components/schemas/SandboxPool"
 
     CreateSandboxPoolRequest:
       type: object
@@ -744,7 +776,7 @@ components:
           type: string
           minLength: 1
           maxLength: 63
-          pattern: '^[a-z]([a-z0-9-]*[a-z0-9])?$'
+          pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
           description: "RFC 1123 DNS label (letter-start): lowercase letters, digits, hyphens; start with a letter, end with alphanumeric"
         templateName:
           type: string
@@ -760,15 +792,15 @@ components:
           additionalProperties:
             type: string
         spec:
-          $ref: '#/components/schemas/SandboxPoolSpec'
+          $ref: "#/components/schemas/SandboxPoolSpec"
         quotaUrl:
           type: string
           deprecated: true
-          description: "Deprecated: pass quota URL via labels[\"quota.scitix.ai/url\"] instead."
+          description: 'Deprecated: pass quota URL via labels["quota.scitix.ai/url"] instead.'
         overrides:
-          $ref: '#/components/schemas/PoolTemplateOverrides'
+          $ref: "#/components/schemas/PoolTemplateOverrides"
         imagePullSecret:
-          $ref: '#/components/schemas/ImagePullSecretInput'
+          $ref: "#/components/schemas/ImagePullSecretInput"
           description: |
             Optional registry credentials to attach to this pool. When provided, the server creates a Kubernetes
             `kubernetes.io/dockerconfigjson` Secret named `ips-{poolName}` in the pool's namespace with an
@@ -784,7 +816,7 @@ components:
           type: array
           minItems: 1
           items:
-            $ref: '#/components/schemas/RegistryCredential'
+            $ref: "#/components/schemas/RegistryCredential"
 
     RegistryCredential:
       type: object
@@ -837,7 +869,7 @@ components:
           type: array
           description: "Page of SandboxPool objects."
           items:
-            $ref: '#/components/schemas/SandboxPool'
+            $ref: "#/components/schemas/SandboxPool"
         total:
           type: integer
           description: "Total number of pools matching the query (before pagination)."
@@ -973,7 +1005,7 @@ components:
           minimum: 0
           description: "Initial replica count for this member Pool. Autoscaling owns subsequent changes — the Reconciler does not force this value back on later reconciles."
         inlineResources:
-          $ref: '#/components/schemas/ResourceRequirements'
+          $ref: "#/components/schemas/ResourceRequirements"
           description: "Per-Pool resource sizing. When set, the Env Reconciler replaces containers[0].resources of the rendered Template with this value. Use this (or — once wired — InstanceType + Multiplier) to express resource regions across members."
 
     ResourceRequirements:
@@ -1009,7 +1041,7 @@ components:
           type: string
           description: "Mirrored onto every member Pool's spec.defaultIdleTimeout. Duration string, e.g. '30m'."
         imagePullSecret:
-          $ref: '#/components/schemas/ImagePullSecretInput'
+          $ref: "#/components/schemas/ImagePullSecretInput"
           description: |
             Write-only image-pull credentials. On create / update the server materialises a
             dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an
@@ -1035,7 +1067,7 @@ components:
           type: array
           description: "Member Pools in this cluster. MVP allows multiple members per cluster but a single ScalingGroup."
           items:
-            $ref: '#/components/schemas/EnvClusterMember'
+            $ref: "#/components/schemas/EnvClusterMember"
 
     EnvAutoscalingGroup:
       type: object
@@ -1054,9 +1086,9 @@ components:
           format: int32
           description: "Upper bound on the group's aggregate desired replicas."
         scaleUpPolicy:
-          $ref: '#/components/schemas/PoolScaleUpPolicy'
+          $ref: "#/components/schemas/PoolScaleUpPolicy"
         scaleDownPolicy:
-          $ref: '#/components/schemas/PoolScaleDownPolicy'
+          $ref: "#/components/schemas/PoolScaleDownPolicy"
 
     EnvAutoscalingSpec:
       type: object
@@ -1068,28 +1100,28 @@ components:
           type: array
           description: "Per-scaling-group policies. MVP only consults groups[0]; multi-group support arrives with multi-resource Envs."
           items:
-            $ref: '#/components/schemas/EnvAutoscalingGroup'
+            $ref: "#/components/schemas/EnvAutoscalingGroup"
 
     SandboxEnvSpec:
       type: object
       required: [templateRef, mode]
       properties:
         templateRef:
-          $ref: '#/components/schemas/SandboxEnvTemplateRef'
+          $ref: "#/components/schemas/SandboxEnvTemplateRef"
         mode:
           type: string
           enum: [WarmPool, OnDemandJob]
           description: "Routing mode — WarmPool dispatches to pre-warmed member Pools; OnDemandJob (Phase 3) creates a SandboxJob per request."
         defaults:
-          $ref: '#/components/schemas/SandboxEnvDefaults'
+          $ref: "#/components/schemas/SandboxEnvDefaults"
         clusters:
           type: array
           items:
-            $ref: '#/components/schemas/EnvClusterSpec'
+            $ref: "#/components/schemas/EnvClusterSpec"
         autoscaling:
-          $ref: '#/components/schemas/EnvAutoscalingSpec'
+          $ref: "#/components/schemas/EnvAutoscalingSpec"
         overrides:
-          $ref: '#/components/schemas/EnvOverrides'
+          $ref: "#/components/schemas/EnvOverrides"
 
     EnvObservedMember:
       type: object
@@ -1144,7 +1176,7 @@ components:
         observedMembers:
           type: array
           items:
-            $ref: '#/components/schemas/EnvObservedMember'
+            $ref: "#/components/schemas/EnvObservedMember"
         lastScaleUpTime:
           type: string
           format: date-time
@@ -1200,15 +1232,15 @@ components:
         conditions:
           type: array
           items:
-            $ref: '#/components/schemas/EnvCondition'
+            $ref: "#/components/schemas/EnvCondition"
         clusters:
           type: array
           items:
-            $ref: '#/components/schemas/EnvClusterStatus'
+            $ref: "#/components/schemas/EnvClusterStatus"
         scalingGroups:
           type: array
           items:
-            $ref: '#/components/schemas/EnvScalingGroupStatus'
+            $ref: "#/components/schemas/EnvScalingGroupStatus"
         pendingRequests:
           type: integer
           format: int32
@@ -1229,9 +1261,9 @@ components:
           additionalProperties:
             type: string
         spec:
-          $ref: '#/components/schemas/SandboxEnvSpec'
+          $ref: "#/components/schemas/SandboxEnvSpec"
         status:
-          $ref: '#/components/schemas/SandboxEnvStatus'
+          $ref: "#/components/schemas/SandboxEnvStatus"
         team:
           type: string
         user:
@@ -1248,7 +1280,7 @@ components:
       required: [env]
       properties:
         env:
-          $ref: '#/components/schemas/SandboxEnv'
+          $ref: "#/components/schemas/SandboxEnv"
 
     ListSandboxEnvsResult:
       type: object
@@ -1257,21 +1289,21 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/SandboxEnv'
+            $ref: "#/components/schemas/SandboxEnv"
 
     UpdateSandboxEnvRequest:
       type: object
       description: "Patch one or more editable Env spec fields. Omitted fields are left unchanged."
       properties:
         autoscaling:
-          $ref: '#/components/schemas/EnvAutoscalingSpec'
+          $ref: "#/components/schemas/EnvAutoscalingSpec"
         members:
           type: array
           description: "Replaces the local cluster's member list. Each member carries its own replicas and per-Pool overrides. Plugin-relevant metadata (e.g. quota URLs) belongs in each member's labels/annotations."
           items:
-            $ref: '#/components/schemas/EnvClusterMember'
+            $ref: "#/components/schemas/EnvClusterMember"
         overrides:
-          $ref: '#/components/schemas/EnvOverrides'
+          $ref: "#/components/schemas/EnvOverrides"
 
     CreateSandboxEnvRequest:
       type: object
@@ -1281,10 +1313,10 @@ components:
           type: string
           minLength: 1
           maxLength: 63
-          pattern: '^[a-z]([a-z0-9-]*[a-z0-9])?$'
+          pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
           description: "RFC 1123 DNS label."
         templateRef:
-          $ref: '#/components/schemas/SandboxEnvTemplateRef'
+          $ref: "#/components/schemas/SandboxEnvTemplateRef"
         mode:
           type: string
           enum: [WarmPool, OnDemandJob]
@@ -1293,9 +1325,9 @@ components:
           type: array
           description: "Member SandboxPools materialised by the Env Reconciler in the local cluster segment. Each member becomes one Pool with member.labels/annotations stamped verbatim and per-Pool fields (replicas, overrides.resourceMultiplier) applied to that Pool only."
           items:
-            $ref: '#/components/schemas/EnvClusterMember'
+            $ref: "#/components/schemas/EnvClusterMember"
         overrides:
-          $ref: '#/components/schemas/EnvOverrides'
+          $ref: "#/components/schemas/EnvOverrides"
         labels:
           type: object
           additionalProperties:
@@ -1360,7 +1392,7 @@ components:
           type: string
           description: "Path to the runtime log file inside the container (e.g. /tmp/envd.log)"
         readinessProbe:
-          $ref: '#/components/schemas/RuntimeReadinessProbe'
+          $ref: "#/components/schemas/RuntimeReadinessProbe"
           description: "Optional readiness probe for this runtime endpoint"
       additionalProperties: false
 
@@ -1384,7 +1416,7 @@ components:
           type: array
           description: "List of visibility rules controlling which teams and users can see this template."
           items:
-            $ref: '#/components/schemas/VisibilityRule'
+            $ref: "#/components/schemas/VisibilityRule"
       additionalProperties: false
 
     SandboxTemplateSpec:
@@ -1392,7 +1424,7 @@ components:
       properties:
         version:
           type: string
-          description: "User-defined version string for the template (e.g. \"v1.2.3\")."
+          description: 'User-defined version string for the template (e.g. "v1.2.3").'
         description:
           type: string
           description: "Human-readable description of the template and its intended use."
@@ -1405,10 +1437,10 @@ components:
         runtimes:
           type: array
           items:
-            $ref: '#/components/schemas/Runtime'
+            $ref: "#/components/schemas/Runtime"
           description: "Runtime port mappings for the sandbox"
         visibility:
-          $ref: '#/components/schemas/VisibilityConfig'
+          $ref: "#/components/schemas/VisibilityConfig"
           description: "Access visibility rules"
 
     SandboxTemplateStatus:
@@ -1441,10 +1473,10 @@ components:
           description: "RFC 3339 timestamp when the template was created."
         cpu:
           type: string
-          description: "CPU resource quantity derived from the template's pod spec (e.g. \"1\", \"100m\")."
+          description: 'CPU resource quantity derived from the template''s pod spec (e.g. "1", "100m").'
         memory:
           type: string
-          description: "Memory resource quantity derived from the template's pod spec (e.g. \"16Gi\", \"512Mi\")."
+          description: 'Memory resource quantity derived from the template''s pod spec (e.g. "16Gi", "512Mi").'
         syncSource:
           type: string
           description: "Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on worker)."
@@ -1476,10 +1508,10 @@ components:
           description: "RFC 3339 timestamp when the template was created."
         cpu:
           type: string
-          description: "CPU resource quantity derived from the template's pod spec (e.g. \"1\", \"100m\")."
+          description: 'CPU resource quantity derived from the template''s pod spec (e.g. "1", "100m").'
         memory:
           type: string
-          description: "Memory resource quantity derived from the template's pod spec (e.g. \"16Gi\", \"512Mi\")."
+          description: 'Memory resource quantity derived from the template''s pod spec (e.g. "16Gi", "512Mi").'
         syncSource:
           type: string
           description: "Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on worker). Empty for legacy resources."
@@ -1495,7 +1527,7 @@ components:
       required: [template]
       properties:
         template:
-          $ref: '#/components/schemas/SandboxTemplate'
+          $ref: "#/components/schemas/SandboxTemplate"
 
     UpsertSandboxTemplateRequest:
       type: object
@@ -1522,7 +1554,7 @@ components:
           type: array
           description: "Page of SandboxTemplateSummary objects (lightweight — use GET /sandbox-templates/{name} for full details)."
           items:
-            $ref: '#/components/schemas/SandboxTemplateSummary'
+            $ref: "#/components/schemas/SandboxTemplateSummary"
         total:
           type: integer
           description: "Total number of templates (before pagination)."
@@ -1681,7 +1713,7 @@ components:
       type: array
       description: "List of API key objects. Returned in full — the endpoint does not paginate."
       items:
-        $ref: '#/components/schemas/APIKeyItem'
+        $ref: "#/components/schemas/APIKeyItem"
 
     # =========================================================
     # Quota
@@ -1740,7 +1772,7 @@ components:
           type: array
           description: "Page of quota objects."
           items:
-            $ref: '#/components/schemas/Quota'
+            $ref: "#/components/schemas/Quota"
         total:
           type: integer
           description: "Total number of quota entries (before pagination)."
@@ -1773,7 +1805,7 @@ components:
     # =========================================================
     FeatureGates:
       type: object
-      required: [quota]
+      required: [quota, instanceType]
       description: >-
         Boolean switches that tell clients which optional features are wired
         into the current deployment. Dashboards gate feature UI on these
@@ -1787,6 +1819,64 @@ components:
             pool creation, quota listing endpoint). False on deployments with
             no quota backend wired in.
           example: true
+        instanceType:
+          type: boolean
+          description: >-
+            True when a non-noop InstanceType catalog provider is active
+            (catalog-driven member sizing in the Env upsert sheet,
+            `/instancetypes` listing endpoint). False on deployments with no
+            InstanceType backend wired in.
+          example: true
+
+    # =========================================================
+    # InstanceType catalog
+    # =========================================================
+    InstanceTypeItem:
+      type: object
+      required: [name, baseResources]
+      description: >-
+        Catalog entry exposing a named base resource shape. Sandboxes pick an
+        entry by `name` and a positive integer multiplier; resolution to Pod
+        resources happens server-side.
+      properties:
+        name:
+          type: string
+          description: "Catalog key. Unique within a deployment."
+        showName:
+          type: string
+          description: "User-facing label. Falls back to `name` when empty."
+        description:
+          type: string
+          description: "Free-form description for tooltips."
+        baseResources:
+          $ref: "#/components/schemas/ResourceRequirements"
+          description: "Pod resource requirements at multiplier=1. Numeric keys (cpu, memory, nvidia.com/gpu, ...) scale linearly with the multiplier."
+        maxMultiplier:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Maximum allowed multiplier. 0 means no cap."
+        cost:
+          type: string
+          description: "Free-form cost weight for client-side sorting / display."
+        extensions:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Backend-specific key/value pairs (e.g. `gpu-type`). Open clients pass these through unchanged for display only."
+
+    ListInstanceTypesResult:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          description: "Available InstanceType entries, sorted by name."
+          items:
+            $ref: "#/components/schemas/InstanceTypeItem"
+        total:
+          type: integer
+          description: "Number of returned entries."
 
     # =========================================================
     # Organization
@@ -1856,11 +1946,19 @@ components:
       required: [statistics]
       properties:
         statistics:
-          $ref: '#/components/schemas/SandboxStatistics'
+          $ref: "#/components/schemas/SandboxStatistics"
 
     SandboxPoolStatistics:
       type: object
-      required: [total, totalReplicas, totalIdleReplicas, totalRunningReplicas, totalFailedReplicas, byNamespace]
+      required:
+        [
+          total,
+          totalReplicas,
+          totalIdleReplicas,
+          totalRunningReplicas,
+          totalFailedReplicas,
+          byNamespace,
+        ]
       properties:
         total:
           type: integer
@@ -1888,7 +1986,7 @@ components:
       required: [statistics]
       properties:
         statistics:
-          $ref: '#/components/schemas/SandboxPoolStatistics'
+          $ref: "#/components/schemas/SandboxPoolStatistics"
 
     UserSandboxStatistics:
       type: object
@@ -1911,7 +2009,7 @@ components:
       required: [statistics]
       properties:
         statistics:
-          $ref: '#/components/schemas/UserSandboxStatistics'
+          $ref: "#/components/schemas/UserSandboxStatistics"
 
     # =========================================================
     # Errors
@@ -1948,7 +2046,7 @@ components:
         clusters:
           type: array
           items:
-            $ref: '#/components/schemas/ClusterSummary'
+            $ref: "#/components/schemas/ClusterSummary"
 
     ErrorResponse:
       type: object
@@ -1996,13 +2094,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WhoAmIResult'
+                $ref: "#/components/schemas/WhoAmIResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Sandboxes
@@ -2017,14 +2115,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateSandboxRequest'
+              $ref: "#/components/schemas/CreateSandboxRequest"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxEnvelope'
+                $ref: "#/components/schemas/SandboxEnvelope"
               example:
                 sandbox:
                   sandboxId: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
@@ -2040,7 +2138,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "poolName is required"
         "401":
@@ -2048,7 +2146,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "invalid API key"
         "404":
@@ -2059,7 +2157,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "sandbox pool t-team1-user1/missing-pool not found"
                 detail:
@@ -2083,7 +2181,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "no idle pods available in pool my-pool"
                 detail:
@@ -2100,7 +2198,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "scale failed: QUOTA_EXCEEDED"
                 detail:
@@ -2112,7 +2210,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "failed to generate sandbox UUID"
     get:
@@ -2120,29 +2218,29 @@ paths:
       summary: List sandboxes
       tags: [sandboxes]
       parameters:
-        - $ref: '#/components/parameters/QueryPoolName'
-        - $ref: '#/components/parameters/QuerySandboxStatus'
-        - $ref: '#/components/parameters/QueryLimit'
-        - $ref: '#/components/parameters/QueryOffset'
+        - $ref: "#/components/parameters/QueryPoolName"
+        - $ref: "#/components/parameters/QuerySandboxStatus"
+        - $ref: "#/components/parameters/QueryLimit"
+        - $ref: "#/components/parameters/QueryOffset"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListSandboxesResult'
+                $ref: "#/components/schemas/ListSandboxesResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandboxes/{sandboxId}:
     get:
@@ -2150,14 +2248,14 @@ paths:
       summary: Get a sandbox
       tags: [sandboxes]
       parameters:
-        - $ref: '#/components/parameters/PathSandboxId'
+        - $ref: "#/components/parameters/PathSandboxId"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxEnvelope'
+                $ref: "#/components/schemas/SandboxEnvelope"
               example:
                 sandbox:
                   sandboxId: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
@@ -2175,7 +2273,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "invalid API key"
         "404":
@@ -2183,7 +2281,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "sandbox t-team1-user1/5de15c92-8fb5-440f-a9ea-7f62f734f1b9 not found or already terminated"
         "500":
@@ -2191,38 +2289,38 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: DeleteSandbox
       summary: Delete a sandbox
       tags: [sandboxes]
       parameters:
-        - $ref: '#/components/parameters/PathSandboxId'
+        - $ref: "#/components/parameters/PathSandboxId"
       responses:
         "202":
           description: Accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteSandboxResult'
+                $ref: "#/components/schemas/DeleteSandboxResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandboxes/{sandboxId}/timeout:
     put:
@@ -2232,34 +2330,34 @@ paths:
       security:
         - ApiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/PathSandboxId'
+        - $ref: "#/components/parameters/PathSandboxId"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SetSandboxTimeoutRequest'
+              $ref: "#/components/schemas/SetSandboxTimeoutRequest"
       responses:
-        '204':
+        "204":
           description: Timeout updated
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandboxes/{sandboxId}/logs:
     get:
@@ -2269,7 +2367,7 @@ paths:
       security:
         - ApiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/PathSandboxId'
+        - $ref: "#/components/parameters/PathSandboxId"
         - name: container
           in: query
           required: false
@@ -2300,31 +2398,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxLogsResult'
+                $ref: "#/components/schemas/SandboxLogsResult"
         "400":
           description: Bad Request (e.g. runtime not found, logDir not configured, sandbox not Running)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandboxes/{sandboxId}/exec-token:
     post:
@@ -2336,38 +2434,38 @@ paths:
         The sandbox must be in Running phase.
       tags: [sandboxes]
       parameters:
-        - $ref: '#/components/parameters/PathSandboxId'
+        - $ref: "#/components/parameters/PathSandboxId"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExecTokenResponse'
+                $ref: "#/components/schemas/ExecTokenResponse"
         "400":
           description: Bad Request (sandbox not Running)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandboxes/{sandboxId}/is_ready:
     get:
@@ -2385,32 +2483,32 @@ paths:
         probes fail. If a runtime has no ReadinessProbe configured, it is considered ready.
       tags: [sandboxes]
       parameters:
-        - $ref: '#/components/parameters/PathSandboxId'
+        - $ref: "#/components/parameters/PathSandboxId"
       responses:
         "200":
           description: All configured readiness probes passed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxReadinessResult'
+                $ref: "#/components/schemas/SandboxReadinessResult"
         "503":
           description: One or more endpoints are not ready
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxReadinessResult'
+                $ref: "#/components/schemas/SandboxReadinessResult"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandboxes/{sandboxId}/exec:
     post:
@@ -2429,44 +2527,44 @@ paths:
         The sandbox must be in Running phase. The command runs in a non-interactive shell (no TTY).
       tags: [sandboxes]
       parameters:
-        - $ref: '#/components/parameters/PathSandboxId'
+        - $ref: "#/components/parameters/PathSandboxId"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ExecCommandRequest'
+              $ref: "#/components/schemas/ExecCommandRequest"
       responses:
         "200":
           description: Command executed (check exitCode for success/failure)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExecCommandResult'
+                $ref: "#/components/schemas/ExecCommandResult"
         "400":
           description: Bad Request (sandbox not Running or invalid request)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # SandboxPools
@@ -2481,14 +2579,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateSandboxPoolRequest'
+              $ref: "#/components/schemas/CreateSandboxPoolRequest"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxPoolEnvelope'
+                $ref: "#/components/schemas/SandboxPoolEnvelope"
               example:
                 template:
                   name: "my-pool"
@@ -2511,7 +2609,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               examples:
                 missingTemplate:
                   summary: Template not found
@@ -2543,7 +2641,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "invalid API key"
         "409":
@@ -2551,7 +2649,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: 'pool "my-pool" already exists'
         "429":
@@ -2559,7 +2657,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "scale failed: QUOTA_EXCEEDED"
                 detail:
@@ -2571,7 +2669,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "API key required for this operation"
                 errorCode: "API_KEY_REQUIRED"
@@ -2580,7 +2678,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     get:
       operationId: ListSandboxPools
       summary: List sandbox pools
@@ -2591,19 +2689,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListSandboxPoolsResult'
+                $ref: "#/components/schemas/ListSandboxPoolsResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandboxpools/{name}:
     get:
@@ -2611,26 +2709,26 @@ paths:
       summary: Get a sandbox pool
       tags: [pools]
       parameters:
-        - $ref: '#/components/parameters/PathPoolName'
+        - $ref: "#/components/parameters/PathPoolName"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxPoolEnvelope'
+                $ref: "#/components/schemas/SandboxPoolEnvelope"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: |
             Unprocessable Entity. Returned with errorCode `API_KEY_REQUIRED`
@@ -2641,93 +2739,93 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     put:
       operationId: UpdateSandboxPool
       summary: Update a sandbox pool
       tags: [pools]
       parameters:
-        - $ref: '#/components/parameters/PathPoolName'
+        - $ref: "#/components/parameters/PathPoolName"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateSandboxPoolRequest'
+              $ref: "#/components/schemas/UpdateSandboxPoolRequest"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxPoolEnvelope'
+                $ref: "#/components/schemas/SandboxPoolEnvelope"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "429":
           description: Too Many Requests – resource quota exceeded on scale-out
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: DeleteSandboxPool
       summary: Delete a sandbox pool
       tags: [pools]
       parameters:
-        - $ref: '#/components/parameters/PathPoolName'
+        - $ref: "#/components/parameters/PathPoolName"
       responses:
         "202":
           description: Accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteSandboxPoolResult'
+                $ref: "#/components/schemas/DeleteSandboxPoolResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # SandboxEnvs
@@ -2743,19 +2841,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListSandboxEnvsResult'
+                $ref: "#/components/schemas/ListSandboxEnvsResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: CreateSandboxEnv
       summary: Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in `members` (or a single quota-less pool named after the Env when `members` is empty).
@@ -2765,38 +2863,38 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateSandboxEnvRequest'
+              $ref: "#/components/schemas/CreateSandboxEnvRequest"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxEnvEnvelope'
+                $ref: "#/components/schemas/SandboxEnvEnvelope"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Already Exists
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /envs/{name}:
     get:
@@ -2815,31 +2913,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxEnvEnvelope'
+                $ref: "#/components/schemas/SandboxEnvEnvelope"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Unprocessable Entity (e.g. docs reference ${AGBX_API_KEY} but caller has no key with a recoverable plaintext token; errorCode = API_KEY_REQUIRED)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: DeleteSandboxEnv
       summary: Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
@@ -2856,25 +2954,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteSandboxEnvResult'
+                $ref: "#/components/schemas/DeleteSandboxEnvResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: UpdateSandboxEnv
       summary: Update editable SandboxEnv fields (autoscaling, members, overrides, replicas, podCreationImagePolicy, default timeouts)
@@ -2890,38 +2988,38 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateSandboxEnvRequest'
+              $ref: "#/components/schemas/UpdateSandboxEnvRequest"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxEnvEnvelope'
+                $ref: "#/components/schemas/SandboxEnvEnvelope"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /envs/{name}/sync-template:
     post:
@@ -2948,31 +3046,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxEnvEnvelope'
+                $ref: "#/components/schemas/SandboxEnvEnvelope"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # SandboxTemplates
@@ -2988,19 +3086,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListSandboxTemplatesResult'
+                $ref: "#/components/schemas/ListSandboxTemplatesResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /sandbox-templates/{name}:
     get:
@@ -3008,32 +3106,32 @@ paths:
       summary: Get a sandbox template
       tags: [sandbox-templates]
       parameters:
-        - $ref: '#/components/parameters/PathTemplateName'
+        - $ref: "#/components/parameters/PathTemplateName"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+                $ref: "#/components/schemas/SandboxTemplateEnvelope"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Clusters
@@ -3062,19 +3160,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListClustersResult'
+                $ref: "#/components/schemas/ListClustersResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # FeatureGates
@@ -3095,7 +3193,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FeatureGates'
+                $ref: "#/components/schemas/FeatureGates"
               example:
                 quota: true
         "401":
@@ -3103,13 +3201,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Quotas
@@ -3125,7 +3223,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListQuotasResult'
+                $ref: "#/components/schemas/ListQuotasResult"
               example:
                 items:
                   - name: "team1-user1-ondemand"
@@ -3151,19 +3249,66 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # =========================================================
+  # InstanceTypes
+  # =========================================================
+  /instancetypes:
+    get:
+      operationId: ListInstanceTypes
+      summary: List InstanceType catalog entries
+      description: >-
+        Returns the full InstanceType catalog. Empty when the configured
+        provider is the noop (see `instanceType` on `/feature-gates`).
+      tags: [instancetypes]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListInstanceTypesResult"
+              example:
+                total: 1
+                items:
+                  - name: "sci.c23-2"
+                    showName: "sci.c23-2"
+                    description: "Standard CPU shape."
+                    baseResources:
+                      requests:
+                        cpu: "1"
+                        memory: "8Gi"
+                      limits:
+                        cpu: "1"
+                        memory: "8Gi"
+                    maxMultiplier: 8
+                    extensions:
+                      gpu-type: ""
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Statistics
@@ -3179,19 +3324,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserSandboxStatisticsEnvelope'
+                $ref: "#/components/schemas/UserSandboxStatisticsEnvelope"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Self-service API Keys (tenant — namespace locked to caller's namespace)
@@ -3206,26 +3351,26 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SelfCreateAPIKeyRequest'
+              $ref: "#/components/schemas/SelfCreateAPIKeyRequest"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateAPIKeyResult'
+                $ref: "#/components/schemas/CreateAPIKeyResult"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Service Unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     get:
       operationId: SelfListAPIKeys
       summary: List your own API keys (tenant)
@@ -3236,13 +3381,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListAPIKeysResult'
+                $ref: "#/components/schemas/ListAPIKeysResult"
         "503":
           description: Service Unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api-keys/{name}:
     delete:
@@ -3250,32 +3395,32 @@ paths:
       summary: Delete one of your own API keys (tenant)
       tags: [apikeys]
       parameters:
-        - $ref: '#/components/parameters/PathAPIKeyName'
+        - $ref: "#/components/parameters/PathAPIKeyName"
       responses:
         "200":
           description: Deleted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteAPIKeyResult'
+                $ref: "#/components/schemas/DeleteAPIKeyResult"
         "403":
           description: Forbidden (not your key)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Service Unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Admin: API Keys
@@ -3292,38 +3437,38 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateAPIKeyRequest'
+              $ref: "#/components/schemas/CreateAPIKeyRequest"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateAPIKeyResult'
+                $ref: "#/components/schemas/CreateAPIKeyResult"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Service Unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     get:
       operationId: ListAPIKeys
       summary: List API keys (admin)
@@ -3331,32 +3476,32 @@ paths:
         - AdminKeyAuth: []
       tags: [admin]
       parameters:
-        - $ref: '#/components/parameters/QueryNamespace'
+        - $ref: "#/components/parameters/QueryNamespace"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListAPIKeysResult'
+                $ref: "#/components/schemas/ListAPIKeysResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Service Unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/api-keys/{name}:
     delete:
@@ -3366,38 +3511,38 @@ paths:
         - AdminKeyAuth: []
       tags: [admin]
       parameters:
-        - $ref: '#/components/parameters/PathAPIKeyName'
+        - $ref: "#/components/parameters/PathAPIKeyName"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteAPIKeyResult'
+                $ref: "#/components/schemas/DeleteAPIKeyResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Service Unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/api-keys/{name}/promote:
     post:
@@ -3411,44 +3556,44 @@ paths:
         - AdminKeyAuth: []
       tags: [admin]
       parameters:
-        - $ref: '#/components/parameters/PathAPIKeyName'
+        - $ref: "#/components/parameters/PathAPIKeyName"
       responses:
         "200":
           description: Promoted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromoteAPIKeyResult'
+                $ref: "#/components/schemas/PromoteAPIKeyResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Conflict (key is already global)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Service Unavailable (ws-proxy not connected)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Admin: SandboxTemplate CRUD
@@ -3481,25 +3626,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListSandboxTemplatesResult'
+                $ref: "#/components/schemas/ListSandboxTemplatesResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: AdminCreateSandboxTemplate
       summary: Create a sandbox template (admin)
@@ -3511,44 +3656,44 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpsertSandboxTemplateRequest'
+              $ref: "#/components/schemas/UpsertSandboxTemplateRequest"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+                $ref: "#/components/schemas/SandboxTemplateEnvelope"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Conflict
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/sandbox-templates/{name}:
     put:
@@ -3558,56 +3703,56 @@ paths:
         - AdminKeyAuth: []
       tags: [admin]
       parameters:
-        - $ref: '#/components/parameters/PathTemplateName'
+        - $ref: "#/components/parameters/PathTemplateName"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpsertSandboxTemplateRequest'
+              $ref: "#/components/schemas/UpsertSandboxTemplateRequest"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxTemplateEnvelope'
+                $ref: "#/components/schemas/SandboxTemplateEnvelope"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Conflict (resourceVersion mismatch — refresh and retry)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: AdminDeleteSandboxTemplate
       summary: Delete a sandbox template (admin)
@@ -3615,38 +3760,38 @@ paths:
         - AdminKeyAuth: []
       tags: [admin]
       parameters:
-        - $ref: '#/components/parameters/PathTemplateName'
+        - $ref: "#/components/parameters/PathTemplateName"
       responses:
         "202":
           description: Accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteSandboxTemplateResult'
+                $ref: "#/components/schemas/DeleteSandboxTemplateResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Admin: Organization
@@ -3664,25 +3809,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TeamsResult'
+                $ref: "#/components/schemas/TeamsResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/teams/{team}/users:
     get:
@@ -3692,38 +3837,38 @@ paths:
         - AdminKeyAuth: []
       tags: [admin]
       parameters:
-        - $ref: '#/components/parameters/PathTeam'
+        - $ref: "#/components/parameters/PathTeam"
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UsersResult'
+                $ref: "#/components/schemas/UsersResult"
         "400":
           description: Bad Request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/namespaces:
     get:
@@ -3738,25 +3883,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NamespacesResult'
+                $ref: "#/components/schemas/NamespacesResult"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   # =========================================================
   # Admin: Statistics
@@ -3774,25 +3919,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxStatisticsEnvelope'
+                $ref: "#/components/schemas/SandboxStatisticsEnvelope"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/statistics/sandboxpools:
     get:
@@ -3807,22 +3952,22 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxPoolStatisticsEnvelope'
+                $ref: "#/components/schemas/SandboxPoolStatisticsEnvelope"
         "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Forbidden
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"

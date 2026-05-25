@@ -22,31 +22,29 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from typing import cast
+
+if TYPE_CHECKING:
+  from ..models.instance_type_item import InstanceTypeItem
 
 
 
 
 
-
-T = TypeVar("T", bound="FeatureGates")
+T = TypeVar("T", bound="ListInstanceTypesResult")
 
 
 
 @_attrs_define
-class FeatureGates:
-    """ Boolean switches that tell clients which optional features are wired into the current deployment. Dashboards gate
-    feature UI on these values; SDKs can short-circuit feature-specific calls when a gate is false.
-
+class ListInstanceTypesResult:
+    """ 
         Attributes:
-            quota (bool): True when a non-noop quota provider is active (quota selection on pool creation, quota listing
-                endpoint). False on deployments with no quota backend wired in. Example: True.
-            instance_type (bool): True when a non-noop InstanceType catalog provider is active (catalog-driven member sizing
-                in the Env upsert sheet, `/instancetypes` listing endpoint). False on deployments with no InstanceType backend
-                wired in. Example: True.
+            items (list[InstanceTypeItem]): Available InstanceType entries, sorted by name.
+            total (int): Number of returned entries.
      """
 
-    quota: bool
-    instance_type: bool
+    items: list[InstanceTypeItem]
+    total: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -54,16 +52,22 @@ class FeatureGates:
 
 
     def to_dict(self) -> dict[str, Any]:
-        quota = self.quota
+        from ..models.instance_type_item import InstanceTypeItem
+        items = []
+        for items_item_data in self.items:
+            items_item = items_item_data.to_dict()
+            items.append(items_item)
 
-        instance_type = self.instance_type
+
+
+        total = self.total
 
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({
-            "quota": quota,
-            "instanceType": instance_type,
+            "items": items,
+            "total": total,
         })
 
         return field_dict
@@ -72,19 +76,28 @@ class FeatureGates:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.instance_type_item import InstanceTypeItem
         d = dict(src_dict)
-        quota = d.pop("quota")
+        items = []
+        _items = d.pop("items")
+        for items_item_data in (_items):
+            items_item = InstanceTypeItem.from_dict(items_item_data)
 
-        instance_type = d.pop("instanceType")
 
-        feature_gates = cls(
-            quota=quota,
-            instance_type=instance_type,
+
+            items.append(items_item)
+
+
+        total = d.pop("total")
+
+        list_instance_types_result = cls(
+            items=items,
+            total=total,
         )
 
 
-        feature_gates.additional_properties = d
-        return feature_gates
+        list_instance_types_result.additional_properties = d
+        return list_instance_types_result
 
     @property
     def additional_keys(self) -> list[str]:

@@ -72,3 +72,6 @@ jobs:
         run: |
           python3 hack/scripts/check-openapi-compat.py \
             --diff-base "${{ steps.base.outputs.ref }}"
+
+      - name: Run FumaDocs tag check
+        run: python3 hack/scripts/check-openapi-fumadocs.py

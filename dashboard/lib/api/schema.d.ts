@@ -386,6 +386,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/instancetypes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List InstanceType catalog entries
+         * @description Returns the full InstanceType catalog. Empty when the configured provider is the noop (see `instanceType` on `/feature-gates`).
+         */
+        get: operations["ListInstanceTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/statistics/sandboxes": {
         parameters: {
             query?: never;
@@ -1671,6 +1691,39 @@ export interface components {
              * @example true
              */
             quota: boolean;
+            /**
+             * @description True when a non-noop InstanceType catalog provider is active (catalog-driven member sizing in the Env upsert sheet, `/instancetypes` listing endpoint). False on deployments with no InstanceType backend wired in.
+             * @example true
+             */
+            instanceType: boolean;
+        };
+        /** @description Catalog entry exposing a named base resource shape. Sandboxes pick an entry by `name` and a positive integer multiplier; resolution to Pod resources happens server-side. */
+        InstanceTypeItem: {
+            /** @description Catalog key. Unique within a deployment. */
+            name: string;
+            /** @description User-facing label. Falls back to `name` when empty. */
+            showName?: string;
+            /** @description Free-form description for tooltips. */
+            description?: string;
+            /** @description Pod resource requirements at multiplier=1. Numeric keys (cpu, memory, nvidia.com/gpu, ...) scale linearly with the multiplier. */
+            baseResources: components["schemas"]["ResourceRequirements"];
+            /**
+             * Format: int32
+             * @description Maximum allowed multiplier. 0 means no cap.
+             */
+            maxMultiplier?: number;
+            /** @description Free-form cost weight for client-side sorting / display. */
+            cost?: string;
+            /** @description Backend-specific key/value pairs (e.g. `gpu-type`). Open clients pass these through unchanged for display only. */
+            extensions?: {
+                [key: string]: string;
+            };
+        };
+        ListInstanceTypesResult: {
+            /** @description Available InstanceType entries, sorted by name. */
+            items: components["schemas"]["InstanceTypeItem"][];
+            /** @description Number of returned entries. */
+            total: number;
         };
         TeamsResult: {
             /** @description List of team names. */
@@ -3529,6 +3582,70 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ListInstanceTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "total": 1,
+                     *       "items": [
+                     *         {
+                     *           "name": "sci.c23-2",
+                     *           "showName": "sci.c23-2",
+                     *           "description": "Standard CPU shape.",
+                     *           "baseResources": {
+                     *             "requests": {
+                     *               "cpu": "1",
+                     *               "memory": "8Gi"
+                     *             },
+                     *             "limits": {
+                     *               "cpu": "1",
+                     *               "memory": "8Gi"
+                     *             }
+                     *           },
+                     *           "maxMultiplier": 8,
+                     *           "extensions": {
+                     *             "gpu-type": ""
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListInstanceTypesResult"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

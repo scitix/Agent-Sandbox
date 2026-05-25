@@ -24,8 +24,7 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
 import { createEnvColumns } from "@/components/envs/columns"
-import { EditAutoscalingSheet } from "@/components/envs/edit-autoscaling-sheet"
-import { CreateEnvSheet } from "@/components/envs/create-env-sheet"
+import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
 import { envsQueryOptions } from "@/lib/queries"
 import type { AgentSandboxEnv } from "@/lib/api/client"
@@ -44,7 +43,6 @@ export default function EnvsPage() {
   const { t } = useTranslation()
   const router = useRouter()
   const clusterID = useClusterID()
-  const [editTarget, setEditTarget] = useState<AgentSandboxEnv | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [editEnvTarget, setEditEnvTarget] = useState<AgentSandboxEnv | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AgentSandboxEnv | null>(null)
@@ -62,7 +60,6 @@ export default function EnvsPage() {
       createEnvColumns(
         t,
         goToDetail,
-        (env) => setEditTarget(env),
         (env) => setEditEnvTarget(env),
         (env) => setDeleteTarget(env),
       ),
@@ -100,8 +97,8 @@ export default function EnvsPage() {
         </QueryTable>
       </div>
 
-      <CreateEnvSheet open={createOpen} onOpenChange={setCreateOpen} />
-      <CreateEnvSheet
+      <UpsertEnvSheet open={createOpen} onOpenChange={setCreateOpen} />
+      <UpsertEnvSheet
         env={editEnvTarget}
         open={!!editEnvTarget}
         onOpenChange={(open) => {
@@ -112,12 +109,6 @@ export default function EnvsPage() {
         env={deleteTarget}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
-        }}
-      />
-      <EditAutoscalingSheet
-        env={editTarget}
-        onOpenChange={(open: boolean) => {
-          if (!open) setEditTarget(null)
         }}
       />
     </div>

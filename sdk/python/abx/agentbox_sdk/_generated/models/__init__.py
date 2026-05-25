@@ -54,7 +54,10 @@ from .exec_command_result import ExecCommandResult
 from .exec_token_response import ExecTokenResponse
 from .feature_gates import FeatureGates
 from .image_pull_secret_input import ImagePullSecretInput
+from .instance_type_item import InstanceTypeItem
+from .instance_type_item_extensions import InstanceTypeItemExtensions
 from .list_clusters_result import ListClustersResult
+from .list_instance_types_result import ListInstanceTypesResult
 from .list_quotas_result import ListQuotasResult
 from .list_sandbox_envs_result import ListSandboxEnvsResult
 from .list_sandbox_pools_result import ListSandboxPoolsResult
@@ -175,7 +178,10 @@ __all__ = (
     "ExecTokenResponse",
     "FeatureGates",
     "ImagePullSecretInput",
+    "InstanceTypeItem",
+    "InstanceTypeItemExtensions",
     "ListClustersResult",
+    "ListInstanceTypesResult",
     "ListQuotasResult",
     "ListSandboxEnvsResult",
     "ListSandboxesResult",

@@ -31,6 +31,7 @@ import (
 // is available.
 func (s *Server) GetFeatureGates(_ context.Context, _ gen.GetFeatureGatesRequestObject) (gen.GetFeatureGatesResponseObject, error) {
 	return gen.GetFeatureGates200JSONResponse{
-		Quota: s.quotaProvider.Enabled(),
+		Quota:        s.quotaProvider.Enabled(),
+		InstanceType: s.instanceTypeProvider.Enabled(),
 	}, nil
 }

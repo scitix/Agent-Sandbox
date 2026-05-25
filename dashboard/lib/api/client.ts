@@ -75,6 +75,9 @@ export type CreateApiKeyResponse = components["schemas"]["CreateAPIKeyResult"]
 // Quota
 export type QuotaItem = components["schemas"]["Quota"]
 
+// InstanceType catalog
+export type AgentInstanceTypeItem = components["schemas"]["InstanceTypeItem"]
+
 // FeatureGates — which optional providers (quota) are wired into the
 // currently selected cluster. Drives feature toggles in the UI so the same
 // dashboard build ships against both open-source and proprietary deployments.
