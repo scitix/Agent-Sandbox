@@ -50,5 +50,13 @@ func NewQuotaServiceFromProvider(p quotaplugin.Provider) QuotaService {
 }
 
 func (s *providerBackedQuotaService) ListForUser(ctx context.Context, user, team string) ([]gen.Quota, *domain.AppError) {
-	return s.p.ListForUser(ctx, user, team)
+	infos, err := s.p.ListForUser(ctx, user, team)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]gen.Quota, len(infos))
+	for i := range infos {
+		out[i] = infos[i].Quota
+	}
+	return out, nil
 }

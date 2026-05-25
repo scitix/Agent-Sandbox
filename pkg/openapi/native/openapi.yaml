@@ -1718,51 +1718,49 @@ components:
     # =========================================================
     # Quota
     # =========================================================
-    Quota:
+    QuotaResources:
       type: object
-      required: [name, quotaUrl, queue, label]
+      description: "Resource accounting for a single quota, keyed by resource name (e.g. cpu, memory, nvidia.com/gpu, sci.c22-2)."
       properties:
-        name:
-          type: string
-          description: "Name of the quota entry."
-        quotaUrl:
-          type: string
-          description: "URL of the SI Scheduler quota resource."
-        queue:
-          type: string
-          description: "SI Scheduler queue name associated with this quota."
-        poolName:
-          type: string
-          description: "Name of the SandboxPool bound to this quota, if any."
-        label:
-          type: string
-          description: "Display label for this quota entry."
-        team:
-          type: string
-          description: "Team that owns this quota."
-        user:
-          type: string
-          description: "User that owns this quota."
-        resources:
+        total:
           type: object
-          description: "Total resource capacity for this quota, keyed by resource name (e.g. cpu, memory, nvidia.com/gpu)."
+          description: "Total capacity allocated to this quota."
           additionalProperties:
             type: string
         used:
           type: object
-          description: "Currently consumed resources, keyed by resource name."
+          description: "Currently consumed amount."
           additionalProperties:
             type: string
         reserved:
           type: object
-          description: "Resources reserved but not yet actively used, keyed by resource name."
+          description: "Reserved but not yet actively consumed amount."
           additionalProperties:
             type: string
         free:
           type: object
-          description: "Available (unreserved) resources, keyed by resource name."
+          description: "Available amount (total - used - reserved)."
           additionalProperties:
             type: string
+
+    Quota:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: "Stable identifier for this quota. Used by clients to reference the quota in subsequent API calls (e.g. as the reservation target). Opaque from the caller's perspective."
+        name:
+          type: string
+          description: "Human-readable display name for this quota. Suitable for showing in UI; not guaranteed to be unique across providers."
+        team:
+          type: string
+          description: "Team that owns this quota, if applicable."
+        user:
+          type: string
+          description: "User that owns this quota, if applicable."
+        resources:
+          $ref: "#/components/schemas/QuotaResources"
 
     ListQuotasResult:
       type: object

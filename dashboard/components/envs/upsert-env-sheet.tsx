@@ -32,7 +32,6 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
-  ComboboxTrigger,
 } from "@/components/ui/combobox"
 import {
   Collapsible,
@@ -912,9 +911,7 @@ function TemplateCombobox({
       onValueChange={(v) => onChange(v?.name ?? "")}
       disabled={disabled}
     >
-      <ComboboxTrigger>
-        <ComboboxInput aria-invalid={invalid} placeholder="select template" />
-      </ComboboxTrigger>
+      <ComboboxInput aria-invalid={invalid} placeholder="select template" />
       <ComboboxContent>
         <ComboboxList>
           {(item: AgentSandboxTemplateSummary) => (
@@ -938,24 +935,36 @@ function QuotaCombobox({
   value: string | null
   onChange: (v: string | undefined) => void
 }) {
-  const selected = items.find((q) => q.quotaUrl === value) ?? null
+  // The provider may surface the same quota via multiple visibility paths
+  // (team + user scope), producing entries that share `id`. Dedupe so the
+  // dropdown has unique React keys and controlled-value matching stays
+  // deterministic; an empty `id` is also dropped since it would collide.
+  const uniqueItems = useMemo(() => {
+    const seen = new Set<string>()
+    const out: QuotaItem[] = []
+    for (const it of items) {
+      if (!it.id || seen.has(it.id)) continue
+      seen.add(it.id)
+      out.push(it)
+    }
+    return out
+  }, [items])
+  const selected = uniqueItems.find((q) => q.id === value) ?? null
   return (
     <Combobox
-      items={items}
-      itemToStringLabel={(item) => item.label || item.quotaUrl}
+      items={uniqueItems}
+      itemToStringLabel={(item) => item.name || item.id}
       value={selected}
-      onValueChange={(v) => onChange(v?.quotaUrl ?? undefined)}
+      onValueChange={(v) => onChange(v?.id ?? undefined)}
     >
-      <ComboboxTrigger>
-        <ComboboxInput placeholder="(none)" />
-      </ComboboxTrigger>
+      <ComboboxInput placeholder="(none)" />
       <ComboboxContent>
         <ComboboxList>
           {(item: QuotaItem) => (
-            <ComboboxItem key={item.quotaUrl} value={item}>
+            <ComboboxItem key={item.id} value={item}>
               <div className="flex flex-col">
-                <span className="font-mono text-xs">{item.label || item.quotaUrl}</span>
-                <span className="text-[10px] text-muted-foreground">{item.quotaUrl}</span>
+                <span className="font-mono text-xs">{item.name || item.id}</span>
+                <span className="text-[10px] text-muted-foreground">{item.id}</span>
               </div>
             </ComboboxItem>
           )}
@@ -985,9 +994,7 @@ function InstanceTypeCombobox({
       value={selected}
       onValueChange={(v) => onChange(v?.name ?? undefined)}
     >
-      <ComboboxTrigger>
-        <ComboboxInput aria-invalid={invalid} placeholder="select instance type" />
-      </ComboboxTrigger>
+      <ComboboxInput aria-invalid={invalid} placeholder="select instance type" />
       <ComboboxContent>
         <ComboboxList>
           {(item: AgentInstanceTypeItem) => {

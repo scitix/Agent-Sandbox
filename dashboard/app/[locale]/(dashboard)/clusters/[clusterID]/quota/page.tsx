@@ -116,7 +116,7 @@ function QuotaMeta({ quota }: { quota: QuotaItem }) {
           user: {quota.user}
         </span>
       )}
-      <span className="text-muted-foreground font-mono text-xs break-all">{quota.quotaUrl}</span>
+      <span className="text-muted-foreground font-mono text-xs break-all">{quota.name}</span>
     </div>
   )
 }
@@ -140,42 +140,49 @@ export default function QuotaPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-8">
-            {quotas?.map((quota) => (
-              <div key={quota.quotaUrl}>
-                <QuotaMeta quota={quota} />
-                {!quota.resources || Object.keys(quota.resources).length === 0 ? (
-                  <div className="text-muted-foreground py-6 font-mono text-sm">
-                    {t("quota.noResourceData")}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {Object.entries(quota.resources).map(([key, total]) => {
-                      const used = quota.used?.[key] ?? "0"
-                      const reserved = quota.reserved?.[key] ?? "0"
-                      const usedNum = Number(used)
-                      const reservedNum = Number(reserved)
-                      const totalNum = Number(total)
-                      const freeNum = Math.max(0, totalNum - usedNum - reservedNum)
-                      const usedPct = totalNum > 0 ? (usedNum / totalNum) * 100 : 0
-                      const reservedPct = totalNum > 0 ? (reservedNum / totalNum) * 100 : 0
+            {quotas?.map((quota) => {
+              const total = quota.resources?.total ?? {}
+              const used = quota.resources?.used ?? {}
+              const reserved = quota.resources?.reserved ?? {}
+              const free = quota.resources?.free
+              return (
+                <div key={quota.id}>
+                  <QuotaMeta quota={quota} />
+                  {Object.keys(total).length === 0 ? (
+                    <div className="text-muted-foreground py-6 font-mono text-sm">
+                      {t("quota.noResourceData")}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {Object.entries(total).map(([key, totalValue]) => {
+                        const usedNum = Number(used[key] ?? "0")
+                        const reservedNum = Number(reserved[key] ?? "0")
+                        const totalNum = Number(totalValue)
+                        const freeNum =
+                          free && key in free
+                            ? Number(free[key])
+                            : Math.max(0, totalNum - usedNum - reservedNum)
+                        const usedPct = totalNum > 0 ? (usedNum / totalNum) * 100 : 0
+                        const reservedPct = totalNum > 0 ? (reservedNum / totalNum) * 100 : 0
 
-                      return (
-                        <ResourceCard
-                          key={key}
-                          resourceKey={key}
-                          used={usedNum}
-                          reserved={reservedNum}
-                          free={freeNum}
-                          total={totalNum}
-                          usedPct={usedPct}
-                          reservedPct={reservedPct}
-                        />
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            ))}
+                        return (
+                          <ResourceCard
+                            key={key}
+                            resourceKey={key}
+                            used={usedNum}
+                            reserved={reservedNum}
+                            free={freeNum}
+                            total={totalNum}
+                            usedPct={usedPct}
+                            reservedPct={reservedPct}
+                          />
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

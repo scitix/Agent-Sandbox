@@ -85,12 +85,12 @@ export const navSectionDefs: NavSectionDef[] = [
     items: [
       { labelKey: "nav.overview", page: "overview", icon: LayoutDashboard },
       { labelKey: "nav.sandboxes", page: "sandboxes", icon: Box },
-      { labelKey: "nav.envs", page: "envs", icon: Boxes },
     ],
   },
   {
     groupKey: "nav.environment",
     items: [
+      { labelKey: "nav.envs", page: "envs", icon: Boxes },
       { labelKey: "nav.templates", page: "templates", icon: Layers },
       { labelKey: "nav.datasets", page: "datasets", icon: HardDrive },
     ],
