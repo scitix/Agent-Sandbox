@@ -24,7 +24,6 @@ import { isValidLocale, type Locale } from "@/lib/i18n/config"
 export type DashboardPage =
   | "overview"
   | "sandboxes"
-  | "pools"
   | "envs"
   | "templates"
   | "datasets"

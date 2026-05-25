@@ -28,6 +28,17 @@ export const poolsQueryOptions = () =>
     select: (data) => data.items ?? [],
   })
 
+// Env-scoped pool list: reuses /sandboxpools (which already carries `owningEnv`
+// stamped by the Phase 1 PoolAdoption reconciler) and filters client-side, so
+// the cache stays shared with the top-level pools query.
+export const envPoolsQueryOptions = (envName: string) =>
+  currentApiClient().queryOptions("get", "/sandboxpools", undefined, {
+    select: (data) =>
+      (data.items ?? [])
+        .filter((p) => p.owningEnv === envName)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+  })
+
 export const poolQueryOptions = (name: string) =>
   currentApiClient().queryOptions("get", "/sandboxpools/{name}", {
     params: { path: { name } },

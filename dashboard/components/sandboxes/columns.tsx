@@ -138,10 +138,14 @@ function SandboxStatusBadge({
   )
 }
 
+// Sandbox → Pool reverse link. The standalone /pools page is gone, so we
+// jump to the Envs list — the user can drill into the owning Env from there.
+// (We can't deep-link straight to the Env detail page because Sandbox doesn't
+// carry the owning Env name yet.)
 function PoolNameCell({ poolName }: { poolName: string | undefined }) {
   const clusterID = useClusterID()
   if (!poolName) return <span className="text-muted-foreground text-xs">---</span>
-  const href = `${clusterPath(clusterID, "pools")}?poolDocs=${encodeURIComponent(poolName)}`
+  const href = clusterPath(clusterID, "envs")
   return (
     <Button
       variant="ghost"

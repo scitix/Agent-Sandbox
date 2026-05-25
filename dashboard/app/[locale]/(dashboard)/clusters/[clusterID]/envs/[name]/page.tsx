@@ -18,6 +18,7 @@
 
 import { use, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { parseAsString, useQueryState } from "nuqs"
 import Link from "next/link"
 import { ArrowLeft, Boxes, Pencil, RefreshCw, Settings2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
@@ -26,14 +27,17 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
   AutoscalingSummary,
-  MembersSection,
+  EnvPoolsSection,
   SpecSection,
   StatusSection,
 } from "@/components/envs/env-detail-sections"
 import { CreateEnvSheet } from "@/components/envs/create-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
 import { EditAutoscalingSheet } from "@/components/envs/edit-autoscaling-sheet"
+import { PoolMetricsSheet } from "@/components/prometheus/pool-metrics-sheet"
+import { PoolDocsSheet, POOL_DOCS_PARAM } from "@/components/pools/pool-docs-sheet"
 import { envQueryOptions, useSyncEnvTemplate } from "@/lib/queries"
+import type { AgentSandboxPool } from "@/lib/api/client"
 import { clusterPath } from "@/lib/cluster-path"
 import { useTranslation } from "@/lib/i18n"
 
@@ -59,6 +63,11 @@ export default function EnvDetailPage({ params }: PageProps) {
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [autoscaleOpen, setAutoscaleOpen] = useState(false)
+  const [metricsTarget, setMetricsTarget] = useState<AgentSandboxPool | null>(null)
+  const [, setPoolDocsName] = useQueryState(
+    POOL_DOCS_PARAM,
+    parseAsString.withOptions({ scroll: false, shallow: true }),
+  )
   const syncTemplate = useSyncEnvTemplate()
 
   const handleSync = () => {
@@ -153,7 +162,11 @@ export default function EnvDetailPage({ params }: PageProps) {
           <div className="space-y-6">
             <SpecSection env={env} />
             <Separator />
-            <MembersSection env={env} />
+            <EnvPoolsSection
+              env={env}
+              onViewMetrics={(pool) => setMetricsTarget(pool)}
+              onViewDocs={(pool) => void setPoolDocsName(pool.name)}
+            />
             <Separator />
             <AutoscalingSummary env={env} onEdit={() => setAutoscaleOpen(true)} />
             <Separator />
@@ -172,6 +185,13 @@ export default function EnvDetailPage({ params }: PageProps) {
         env={autoscaleOpen ? (env ?? null) : null}
         onOpenChange={(open) => setAutoscaleOpen(open)}
       />
+      <PoolMetricsSheet
+        pool={metricsTarget}
+        onOpenChange={(open) => {
+          if (!open) setMetricsTarget(null)
+        }}
+      />
+      <PoolDocsSheet />
     </div>
   )
 }

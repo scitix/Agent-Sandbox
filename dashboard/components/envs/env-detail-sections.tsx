@@ -16,23 +16,21 @@
 
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
-import Link from "next/link"
-import { ExternalLink, Settings2 } from "lucide-react"
+import { useMemo } from "react"
+import { Settings2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { RelativeTime } from "@/components/custom/relative-time"
-import { poolQueryOptions } from "@/lib/queries"
+import { QueryTable } from "@/components/custom/query-table/table-with-query"
+import { createPoolColumns } from "@/components/pools/columns"
+import { envPoolsQueryOptions } from "@/lib/queries"
 import type {
   AgentEnvObservedMember,
   AgentSandboxEnv,
   AgentSandboxPool,
 } from "@/lib/api/client"
-import { clusterPath } from "@/lib/cluster-path"
-import { useClusterID } from "@/hooks/use-cluster-id"
 import { useTranslation } from "@/lib/i18n"
-import { POOL_DOCS_PARAM } from "@/components/pools/pool-docs-sheet"
 
 // ─── Spec ────────────────────────────────────────────────────────────────────
 
@@ -70,119 +68,69 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
-// ─── Members (inline per-pool status) ────────────────────────────────────────
+// ─── Pools (full table — replaces the standalone /pools page for Env-owned pools) ──
 
-export function MembersSection({ env }: { env: AgentSandboxEnv }) {
-  const { t } = useTranslation()
-  const allMembers = env.spec.clusters?.flatMap((c) => c.members ?? []) ?? []
-  const observedByName = new Map<string, AgentEnvObservedMember>()
-  for (const cluster of env.status?.clusters ?? []) {
-    for (const om of cluster.observedMembers ?? []) {
-      observedByName.set(om.name, om)
-    }
-  }
-  if (allMembers.length === 0) {
-    return (
-      <section>
-        <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.12em] uppercase">
-          {t("envs.detail.section.members")}
-        </h3>
-        <p className="text-muted-foreground text-xs">{t("envs.empty")}</p>
-      </section>
-    )
-  }
-  return (
-    <section>
-      <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.12em] uppercase">
-        {t("envs.detail.section.members")}
-      </h3>
-      <div className="border-border divide-border divide-y overflow-hidden rounded border">
-        <div className="bg-muted/30 text-muted-foreground grid grid-cols-[1.4fr_1fr_0.7fr_0.7fr_0.7fr_0.7fr_1fr_0.5fr] gap-2 px-3 py-2 font-mono text-[10px] font-bold tracking-wider uppercase">
-          <span>{t("envs.detail.members.col.name")}</span>
-          <span>{t("envs.detail.members.col.scalingGroup")}</span>
-          <span className="text-right">{t("envs.detail.members.col.replicas")}</span>
-          <span className="text-right">{t("envs.detail.members.col.idle")}</span>
-          <span className="text-right">{t("envs.detail.members.col.running")}</span>
-          <span className="text-right">{t("envs.detail.members.col.pending")}</span>
-          <span>{t("envs.detail.members.col.state")}</span>
-          <span></span>
-        </div>
-        {allMembers.map((m) => (
-          <MemberRow
-            key={m.name}
-            memberName={m.name}
-            scalingGroup={m.scalingGroup ?? ""}
-            observed={observedByName.get(m.name)}
-            envNamespace={env.namespace}
-          />
-        ))}
-      </div>
-    </section>
-  )
-}
-
-function MemberRow({
-  memberName,
-  scalingGroup,
-  observed,
-  envNamespace,
+export function EnvPoolsSection({
+  env,
+  onViewMetrics,
+  onViewDocs,
 }: {
-  memberName: string
-  scalingGroup: string
-  observed?: AgentEnvObservedMember
-  envNamespace: string
+  env: AgentSandboxEnv
+  onViewMetrics: (pool: AgentSandboxPool) => void
+  onViewDocs: (pool: AgentSandboxPool) => void
 }) {
   const { t } = useTranslation()
-  const { data: pool } = useQuery(poolQueryOptions(memberName))
-  const p = pool?.template as AgentSandboxPool | undefined
-  const clusterID = useClusterID()
-  const replicas = p?.spec?.replicas ?? observed?.currentReplicas ?? "—"
-  const idle = p?.status?.idleReplicas ?? observed?.idleCount ?? 0
-  const running = p?.status?.runningReplicas ?? observed?.runningCount ?? 0
-  const pending = p?.status?.pendingRequests ?? observed?.pendingRequests ?? 0
-  const state = observed?.state ?? ""
-  const saturatedUntil = observed?.saturatedUntil
-  const lastResult = observed?.lastScaleUpAttemptResult
 
-  // Mirror sandboxes → pool jump pattern; opens PoolDocsSheet on the Pools page.
-  const poolHref = `${clusterPath(clusterID, "pools")}?${POOL_DOCS_PARAM}=${encodeURIComponent(memberName)}`
-  void envNamespace
+  // Build scalingGroup + observed lookups from the Env spec/status so the
+  // pool table can surface autoscaler-derived info that the bare /sandboxpools
+  // response doesn't carry.
+  const { observedByPool, scalingGroupByPool, memberCount } = useMemo(() => {
+    const observed = new Map<string, AgentEnvObservedMember>()
+    const groups = new Map<string, string>()
+    for (const cluster of env.status?.clusters ?? []) {
+      for (const om of cluster.observedMembers ?? []) {
+        observed.set(om.name, om)
+      }
+    }
+    let count = 0
+    for (const cluster of env.spec.clusters ?? []) {
+      for (const m of cluster.members ?? []) {
+        if (m.scalingGroup) groups.set(m.name, m.scalingGroup)
+        count++
+      }
+    }
+    return { observedByPool: observed, scalingGroupByPool: groups, memberCount: count }
+  }, [env])
+
+  const columns = useMemo(
+    () =>
+      createPoolColumns(t, onViewMetrics, onViewDocs, {
+        hideOwningEnv: true,
+        envObservedByPool: observedByPool,
+        scalingGroupByPool: scalingGroupByPool,
+      }),
+    [t, onViewMetrics, onViewDocs, observedByPool, scalingGroupByPool],
+  )
+
+  const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
 
   return (
-    <div className="grid grid-cols-[1.4fr_1fr_0.7fr_0.7fr_0.7fr_0.7fr_1fr_0.5fr] items-center gap-2 px-3 py-2 font-mono text-xs">
-      <span className="truncate font-semibold">{memberName}</span>
-      <span className="text-muted-foreground truncate">{scalingGroup || "—"}</span>
-      <span className="text-right">{replicas}</span>
-      <span className="text-right">{idle}</span>
-      <span className="text-right">{running}</span>
-      <span className={`text-right ${pending > 0 ? "text-amber-600" : ""}`}>{pending}</span>
-      <span className="flex flex-col gap-0.5">
-        {state ? (
-          <Badge variant="outline" className="w-fit font-mono text-[10px]">
-            {state}
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-        {saturatedUntil && (
-          <span className="text-amber-600 text-[10px]">
-            {t("envs.detail.members.col.saturatedUntil")}: <RelativeTime date={saturatedUntil} />
-          </span>
-        )}
-        {lastResult && lastResult !== "Success" && (
-          <span className="text-muted-foreground text-[10px]">{lastResult}</span>
-        )}
-      </span>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        title={t("envs.detail.members.openPool")}
-        render={<Link href={poolHref} />}
-      >
-        <ExternalLink className="h-3 w-3" />
-      </Button>
-    </div>
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
+          {t("envs.detail.section.pools")}
+        </h3>
+        <span className="text-muted-foreground font-mono text-[10px]">
+          {t("envs.detail.pools.memberCount", { count: memberCount })}
+        </span>
+      </div>
+      <QueryTable
+        columns={columns}
+        idFn={(row: AgentSandboxPool) => row.name}
+        queryOptions={queryOptions}
+        toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
+      />
+    </section>
   )
 }
 

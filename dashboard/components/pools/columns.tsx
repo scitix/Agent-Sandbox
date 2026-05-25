@@ -17,7 +17,7 @@
 "use client"
 
 import { type ColumnDef } from "@tanstack/react-table"
-import { type AgentSandboxPool } from "@/lib/api/client"
+import { type AgentEnvObservedMember, type AgentSandboxPool } from "@/lib/api/client"
 import {
   MoreVertical,
   FileText,
@@ -25,6 +25,7 @@ import {
   Activity,
   AlertTriangle,
 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -154,11 +155,27 @@ function TemplateNameCell({ name, version }: { name: string; version?: string })
   )
 }
 
+export interface PoolColumnsOptions {
+  showOwner?: boolean
+  // Hide the "Env" reverse-link column. Useful when the table is already
+  // scoped to a single Env (e.g. the Env detail page) where the column would
+  // be redundant for every row.
+  hideOwningEnv?: boolean
+  // When present, adds a "Scaling" column that surfaces the per-member
+  // observed state (scaling group, state, saturatedUntil, last attempt
+  // result) from the owning Env's status. Pools that aren't in the map
+  // render an em-dash.
+  envObservedByPool?: Map<string, AgentEnvObservedMember>
+  // Optional scaling-group lookup (sourced from env.spec.clusters.members).
+  // Falls back to "" when missing.
+  scalingGroupByPool?: Map<string, string>
+}
+
 export function createPoolColumns(
   t: (key: TranslationKey, params?: Record<string, string | number>) => string,
   onViewMetrics?: (pool: AgentSandboxPool) => void,
   onViewDocs?: (pool: AgentSandboxPool) => void,
-  options?: { showOwner?: boolean },
+  options?: PoolColumnsOptions,
 ): ColumnDef<AgentSandboxPool>[] {
   const createStatusColumn = (
     id: string,
@@ -204,6 +221,42 @@ export function createPoolColumns(
             <span className="text-muted-foreground font-mono text-xs uppercase">{team}</span>
           )}
           {user && <span className="text-foreground font-mono text-xs font-semibold">{user}</span>}
+        </div>
+      )
+    },
+  }
+
+  const scalingColumn: ColumnDef<AgentSandboxPool> = {
+    id: "scaling",
+    enableSorting: false,
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title={t("pools.col.scaling")} />
+    ),
+    cell: ({ row }) => {
+      const observed = options?.envObservedByPool?.get(row.original.name)
+      const group = options?.scalingGroupByPool?.get(row.original.name) ?? ""
+      const state = observed?.state ?? ""
+      const saturatedUntil = observed?.saturatedUntil
+      const lastResult = observed?.lastScaleUpAttemptResult
+      if (!group && !state && !saturatedUntil && !lastResult)
+        return <span className="text-muted-foreground text-xs">—</span>
+      return (
+        <div className="flex flex-col gap-0.5 font-mono text-[11px]">
+          {group && <span className="text-muted-foreground truncate">{group}</span>}
+          {state && (
+            <Badge variant="outline" className="w-fit font-mono text-[10px]">
+              {state}
+            </Badge>
+          )}
+          {saturatedUntil && (
+            <span className="text-amber-600 text-[10px]">
+              {t("envs.detail.members.col.saturatedUntil")}:{" "}
+              <RelativeTime date={saturatedUntil} />
+            </span>
+          )}
+          {lastResult && lastResult !== "Success" && (
+            <span className="text-muted-foreground text-[10px]">{lastResult}</span>
+          )}
         </div>
       )
     },
@@ -291,17 +344,23 @@ export function createPoolColumns(
         return <TemplateNameCell name={name} version={version} />
       },
     },
-    {
-      // Reverse-link to the owning SandboxEnv. The OwnerReference is stamped
-      // by the Phase 1 adopter, so every Pool created post-adoption shows a
-      // link; brand-new Pools may show "—" briefly before adoption runs.
-      id: "owningEnv",
-      accessorFn: (row) => row.owningEnv ?? "",
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t("pools.col.env")} />
-      ),
-      cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
-    },
+    ...(options?.hideOwningEnv
+      ? []
+      : [
+          {
+            // Reverse-link to the owning SandboxEnv. The OwnerReference is
+            // stamped by the Phase 1 adopter, so every Pool created
+            // post-adoption shows a link; brand-new Pools may show "—"
+            // briefly before adoption runs.
+            id: "owningEnv",
+            accessorFn: (row) => row.owningEnv ?? "",
+            header: ({ column }) => (
+              <DataTableColumnHeader column={column} title={t("pools.col.env")} />
+            ),
+            cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
+          } satisfies ColumnDef<AgentSandboxPool>,
+        ]),
+    ...(options?.envObservedByPool ? [scalingColumn] : []),
     {
       id: "replicas",
       accessorFn: (row) => row.spec?.replicas,

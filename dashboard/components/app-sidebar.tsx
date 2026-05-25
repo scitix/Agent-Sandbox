@@ -33,7 +33,6 @@ import {
   ExternalLink,
   BarChart3,
   LogOut,
-  Database,
   ReceiptTextIcon,
   LayoutDashboard,
   HardDrive,
@@ -87,7 +86,6 @@ export const navSectionDefs: NavSectionDef[] = [
       { labelKey: "nav.overview", page: "overview", icon: LayoutDashboard },
       { labelKey: "nav.sandboxes", page: "sandboxes", icon: Box },
       { labelKey: "nav.envs", page: "envs", icon: Boxes },
-      { labelKey: "nav.pools", page: "pools", icon: Database },
     ],
   },
   {
