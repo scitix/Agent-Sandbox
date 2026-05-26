@@ -131,7 +131,7 @@ func (r *SandboxEnvReconciler) syncAutoscaling(ctx context.Context, env *agentsv
 			continue
 		}
 
-		downResult, err := r.reconcileScaleDown(ctx, env, members[0], group)
+		downResult, err := r.reconcileScaleDown(ctx, env, members, group)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -644,28 +644,89 @@ func truncErr(err *domain.AppError) string {
 	return msg
 }
 
-// reconcileScaleDown mirrors the SandboxPool autoscaler's scale-down path.
-// Phase 1 single-member; runningReplicas comes from Pool.status, idle pod
-// ages are read via a List of idle Pods (same approach the legacy autoscaler
-// uses internally).
+// scaleDownCandidate carries a member that has already been admitted as a
+// scale-down candidate together with the IO-resolved age of its oldest idle
+// Pod. We resolve the timestamp once and pass it through both selection and
+// post-decision logging instead of re-listing Pods.
+type scaleDownCandidate struct {
+	view            memberView
+	oldestIdleSince time.Time
+}
+
+// pickScaleDownCandidate orders the candidate pool and returns the winner.
+//
+// Ordering (matches the strategy aligned with the user):
+//  1. EffectiveScaleDownPriority descending — higher value shrinks first, so
+//     that a single Priority value (lower wins) keeps preferred members up
+//     longer in BOTH directions.
+//  2. oldestIdleSince ascending — within a priority bucket, the member whose
+//     oldest idle Pod has been idle longest goes first.
+//  3. Name lexicographic — deterministic tie-break, matching scale-up.
+//
+// Returns (winner, requeueWait, ok):
+//   - ok=true: winner is the chosen candidate; act on it now.
+//   - ok=false, requeueWait>0: no candidate yet satisfies idleTimeout; the
+//     caller should requeue after the returned duration (smallest remaining
+//     gap across all candidates).
+//   - ok=false, requeueWait=0: empty candidate set — nothing to do.
+func pickScaleDownCandidate(candidates []scaleDownCandidate, now time.Time, idleTimeout time.Duration) (scaleDownCandidate, time.Duration, bool) {
+	if len(candidates) == 0 {
+		return scaleDownCandidate{}, 0, false
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		iPri := candidates[i].view.member.Config.EffectiveScaleDownPriority()
+		jPri := candidates[j].view.member.Config.EffectiveScaleDownPriority()
+		if iPri != jPri {
+			return iPri > jPri
+		}
+		if !candidates[i].oldestIdleSince.Equal(candidates[j].oldestIdleSince) {
+			return candidates[i].oldestIdleSince.Before(candidates[j].oldestIdleSince)
+		}
+		return candidates[i].view.member.Name < candidates[j].view.member.Name
+	})
+	var minWait time.Duration
+	for _, c := range candidates {
+		d := now.Sub(c.oldestIdleSince)
+		if d >= idleTimeout {
+			return c, 0, true
+		}
+		wait := idleTimeout - d
+		if minWait == 0 || wait < minWait {
+			minWait = wait
+		}
+	}
+	return scaleDownCandidate{}, minWait, false
+}
+
+// reconcileScaleDown evaluates the group as a whole and shrinks at most one
+// member by 1 per cycle. It is the scale-down counterpart of
+// reconcileScaleUp: aggregate floor against group.MinReplicas, per-group
+// stabilization via LastScaleDownTime, priority/idle-age driven member
+// selection. The actual Pod termination is the SandboxPool reconciler's job
+// — we only patch Member.Spec.Replicas; the Env Reconciler propagates that
+// onto the live Pool.
+//
+// runningReplicas comes from Pool.status, idle Pod ages are read via a List
+// of idle Pods scoped to each candidate's Pool.
 func (r *SandboxEnvReconciler) reconcileScaleDown(
 	ctx context.Context,
 	env *agentsv1alpha1.SandboxEnv,
-	m memberView,
+	members []memberView,
 	group *agentsv1alpha1.EnvAutoscalingGroup,
 ) (ctrl.Result, error) {
-	pool := m.pool
 	idleTimeoutSec, stabilizationSec := scaleDownPolicyOrDefault(group)
 	idleTimeout := time.Duration(idleTimeoutSec) * time.Second
 	stabilization := time.Duration(stabilizationSec) * time.Second
 
-	if pool.Status.IdleReplicas == 0 {
-		return ctrl.Result{}, nil
+	// Aggregate floor: never let the group dip below MinReplicas as a whole.
+	// Per-member min checks were removed — they conflated group policy with
+	// individual Pool state and could leave one member parked above 0 while
+	// another idled.
+	aggDesired := int32(0)
+	for _, m := range members {
+		aggDesired += m.member.Spec.Replicas
 	}
-
-	current := m.member.Spec.Replicas
-	lowerBound := max(pool.Status.RunningReplicas, effectiveMinReplicas(group))
-	if current <= lowerBound {
+	if aggDesired <= effectiveMinReplicas(group) {
 		return ctrl.Result{}, nil
 	}
 
@@ -677,32 +738,51 @@ func (r *SandboxEnvReconciler) reconcileScaleDown(
 		}
 	}
 
-	idleSince, err := r.oldestIdlePodSince(ctx, pool)
-	if err != nil {
-		return ctrl.Result{}, err
+	candidates := make([]scaleDownCandidate, 0, len(members))
+	for _, m := range members {
+		if m.pool.Status.IdleReplicas <= 0 {
+			continue
+		}
+		// Refuse to drop a member below its currently running count — we
+		// only reclaim idle slots, never terminate running sandboxes.
+		if m.member.Spec.Replicas <= m.pool.Status.RunningReplicas {
+			continue
+		}
+		idleSince, err := r.oldestIdlePodSince(ctx, m.pool)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if idleSince == nil {
+			continue
+		}
+		candidates = append(candidates, scaleDownCandidate{view: m, oldestIdleSince: *idleSince})
 	}
-	if idleSince == nil {
+
+	now := time.Now()
+	winner, requeueWait, ok := pickScaleDownCandidate(candidates, now, idleTimeout)
+	if !ok {
+		if requeueWait > 0 {
+			return ctrl.Result{RequeueAfter: clampRequeue(requeueWait)}, nil
+		}
 		return ctrl.Result{}, nil
 	}
 
-	idleDuration := time.Since(*idleSince)
-	if idleDuration < idleTimeout {
-		return ctrl.Result{RequeueAfter: clampRequeue(idleTimeout - idleDuration)}, nil
-	}
-
+	mv := winner.view
+	current := mv.member.Spec.Replicas
 	newReplicas := current - 1
-	if err := r.patchMemberSpecReplicas(ctx, env, m, newReplicas); err != nil {
+	idleDuration := now.Sub(winner.oldestIdleSince)
+	if err := r.patchMemberSpecReplicas(ctx, env, mv, newReplicas); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	r.emitEvent(env, "ScaleDown", "AutoscalerScaleDown",
 		"decreased %s/%s replicas from %d to %d (oldestIdleDuration: %s)",
-		pool.Namespace, pool.Name, current, newReplicas, idleDuration.Round(time.Second))
+		mv.pool.Namespace, mv.pool.Name, current, newReplicas, idleDuration.Round(time.Second))
 
-	now := metav1.Now()
+	tsNow := metav1.Now()
 	baseEnv := env.DeepCopy()
 	mutateScalingGroupStatus(env, group.Name, func(g *agentsv1alpha1.EnvScalingGroupStatus) {
-		g.LastScaleDownTime = &now
+		g.LastScaleDownTime = &tsNow
 	})
 	if err := r.Status().Patch(ctx, env, client.MergeFrom(baseEnv)); err != nil && !apierrors.IsConflict(err) {
 		klog.ErrorS(err, "failed to update scalingGroup.lastScaleDownTime (non-fatal)",
@@ -711,7 +791,8 @@ func (r *SandboxEnvReconciler) reconcileScaleDown(
 
 	klog.InfoS("Env autoscaler: decreased Member.Spec.Replicas",
 		"env", env.Namespace+"/"+env.Name,
-		"member", m.member.Name,
+		"group", group.Name,
+		"member", mv.member.Name,
 		"oldReplicas", current, "newReplicas", newReplicas,
 		"oldestIdleDuration", idleDuration.Round(time.Second))
 

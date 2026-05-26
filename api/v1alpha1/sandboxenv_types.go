@@ -313,8 +313,12 @@ type EnvClusterMemberConfig struct {
 	ScaleUpPriority *int32 `json:"scaleUpPriority,omitempty"`
 
 	// ScaleDownPriority overrides Priority for scale-down ordering: lower
-	// values shrink first. When nil, EffectiveScaleDownPriority falls back
-	// to Priority. Reserved for Phase 2; Phase 1 ignores it.
+	// values are retained, higher values shrink first. The value direction
+	// is intentionally inverted from ScaleUpPriority so that a single
+	// Priority value (lower wins) means "preferred member" in both
+	// directions — preferred members scale up first AND scale down last.
+	// Same-value tiebreak: oldest idle Pod first, then name lexicographic.
+	// When nil, EffectiveScaleDownPriority falls back to Priority.
 	// +optional
 	ScaleDownPriority *int32 `json:"scaleDownPriority,omitempty"`
 }
@@ -331,7 +335,9 @@ func (c EnvClusterMemberConfig) EffectiveScaleUpPriority() int32 {
 
 // EffectiveScaleDownPriority returns ScaleDownPriority when set, otherwise
 // Priority. Use this when picking which member in a scalingGroup shrinks
-// first.
+// first: HIGHER values are scaled down first (inverse of scale-up's
+// "lower wins"), so that a shared Priority field expresses "preferred to
+// retain" symmetrically across both directions.
 func (c EnvClusterMemberConfig) EffectiveScaleDownPriority() int32 {
 	if c.ScaleDownPriority != nil {
 		return *c.ScaleDownPriority

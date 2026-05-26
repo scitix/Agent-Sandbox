@@ -439,14 +439,16 @@ spec:
                                 format: int32
                                 type: integer
                               scaleDownPriority:
-                                description: 'ScaleDownPriority overrides Priority
-                                  for scale-down ordering: lower
-
-                                  values shrink first. When nil, EffectiveScaleDownPriority
-                                  falls back
-
-                                  to Priority. Reserved for Phase 2; Phase 1 ignores
-                                  it.'
+                                description: "ScaleDownPriority overrides Priority\
+                                  \ for scale-down ordering: lower\nvalues are retained,\
+                                  \ higher values shrink first. The value direction\n\
+                                  is intentionally inverted from ScaleUpPriority so\
+                                  \ that a single\nPriority value (lower wins) means\
+                                  \ \"preferred member\" in both\ndirections \u2014\
+                                  \ preferred members scale up first AND scale down\
+                                  \ last.\nSame-value tiebreak: oldest idle Pod first,\
+                                  \ then name lexicographic.\nWhen nil, EffectiveScaleDownPriority\
+                                  \ falls back to Priority."
                                 format: int32
                                 type: integer
                               scaleUpPriority:

@@ -206,6 +206,139 @@ func TestApplyMemberAttemptResult_InternalErrorPreservesSaturation(t *testing.T)
 	}
 }
 
+// TestPickScaleDownCandidate covers the group-aware scale-down ordering
+// strategy: priority desc → oldestIdleSince asc → name asc, plus the
+// timeout-not-yet-met requeue path.
+func TestPickScaleDownCandidate(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	mk := func(name string, priority int32, idleAgo time.Duration) scaleDownCandidate {
+		pri := priority
+		return scaleDownCandidate{
+			view: memberView{
+				member: agentsv1alpha1.EnvClusterMember{
+					Name: name,
+					Config: agentsv1alpha1.EnvClusterMemberConfig{
+						ScaleDownPriority: &pri,
+					},
+				},
+			},
+			oldestIdleSince: now.Add(-idleAgo),
+		}
+	}
+	cases := []struct {
+		name        string
+		candidates  []scaleDownCandidate
+		idleTimeout time.Duration
+		wantWinner  string // "" means !ok
+		wantWait    time.Duration
+	}{
+		{
+			name:        "empty candidate set",
+			candidates:  nil,
+			idleTimeout: time.Minute,
+			wantWinner:  "",
+			wantWait:    0,
+		},
+		{
+			name: "priority desc picks higher value",
+			candidates: []scaleDownCandidate{
+				mk("low", 0, 10*time.Minute),
+				mk("high", 10, 10*time.Minute),
+			},
+			idleTimeout: time.Minute,
+			wantWinner:  "high",
+		},
+		{
+			name: "priority tie: oldest idle first",
+			candidates: []scaleDownCandidate{
+				mk("young", 0, 2*time.Minute),
+				mk("old", 0, 10*time.Minute),
+			},
+			idleTimeout: time.Minute,
+			wantWinner:  "old",
+		},
+		{
+			name: "priority + idle tie: name lexicographic",
+			candidates: []scaleDownCandidate{
+				mk("b", 0, 10*time.Minute),
+				mk("a", 0, 10*time.Minute),
+			},
+			idleTimeout: time.Minute,
+			wantWinner:  "a",
+		},
+		{
+			name: "priority desc beats older idle in lower bucket",
+			candidates: []scaleDownCandidate{
+				mk("lowPri-old", 0, 30*time.Minute),
+				mk("highPri-young", 10, 2*time.Minute),
+			},
+			idleTimeout: time.Minute,
+			wantWinner:  "highPri-young",
+		},
+		{
+			name: "no candidate meets timeout → requeue min remaining",
+			candidates: []scaleDownCandidate{
+				mk("a", 0, 10*time.Second), // 50s short
+				mk("b", 0, 30*time.Second), // 30s short ← min
+			},
+			idleTimeout: time.Minute,
+			wantWinner:  "",
+			wantWait:    30 * time.Second,
+		},
+		{
+			name: "user yaml scenario: two members, default priority, alphabetical wins",
+			candidates: []scaleDownCandidate{
+				mk("abc-1c15gi-ondemand", 0, 10*time.Minute),
+				mk("abc-1c15gi-shared", 0, 10*time.Minute),
+			},
+			idleTimeout: 5 * time.Minute,
+			wantWinner:  "abc-1c15gi-ondemand",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, wait, ok := pickScaleDownCandidate(tc.candidates, now, tc.idleTimeout)
+			switch {
+			case tc.wantWinner == "" && ok:
+				t.Fatalf("expected !ok, got winner=%q", got.view.member.Name)
+			case tc.wantWinner != "" && !ok:
+				t.Fatalf("expected winner=%q, got !ok (wait=%v)", tc.wantWinner, wait)
+			case tc.wantWinner != "" && got.view.member.Name != tc.wantWinner:
+				t.Fatalf("winner = %q, want %q", got.view.member.Name, tc.wantWinner)
+			case tc.wantWinner == "" && tc.wantWait != 0 && wait != tc.wantWait:
+				t.Fatalf("wait = %v, want %v", wait, tc.wantWait)
+			}
+		})
+	}
+}
+
+// TestPickScaleDownCandidate_PriorityFallsBackToPriorityField confirms that
+// when ScaleDownPriority is nil the EnvClusterMemberConfig.Priority field
+// takes effect with the inverted "higher shrinks first" direction.
+func TestPickScaleDownCandidate_PriorityFallsBackToPriorityField(t *testing.T) {
+	now := time.Now()
+	mk := func(name string, priority int32) scaleDownCandidate {
+		return scaleDownCandidate{
+			view: memberView{
+				member: agentsv1alpha1.EnvClusterMember{
+					Name:   name,
+					Config: agentsv1alpha1.EnvClusterMemberConfig{Priority: priority},
+				},
+			},
+			oldestIdleSince: now.Add(-10 * time.Minute),
+		}
+	}
+	got, _, ok := pickScaleDownCandidate(
+		[]scaleDownCandidate{mk("preferred", 0), mk("disposable", 10)},
+		now,
+		time.Minute,
+	)
+	if !ok || got.view.member.Name != "disposable" {
+		t.Fatalf("expected disposable (Priority=10) to shrink first, got ok=%v name=%q",
+			ok, got.view.member.Name)
+	}
+}
+
 func TestTruncErr(t *testing.T) {
 	if got := truncErr(nil); got != "" {
 		t.Errorf("nil error: got %q", got)
