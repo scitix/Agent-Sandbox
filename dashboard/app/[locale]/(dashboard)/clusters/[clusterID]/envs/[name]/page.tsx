@@ -26,20 +26,20 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
-  AutoscalingSummary,
+  AutoscalingSection,
   EnvPoolsSection,
   SpecSection,
-  StatusSection,
 } from "@/components/envs/env-detail-sections"
 import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
 import { UpsertPoolSheet } from "@/components/envs/upsert-pool-sheet"
 import { DeletePoolDialog } from "@/components/envs/delete-pool-dialog"
-import { EditPoolAutoscalingSheet } from "@/components/envs/edit-pool-autoscaling-sheet"
+import { UpsertAutoscalingGroupSheet } from "@/components/envs/upsert-autoscaling-group-sheet"
+import { DeleteAutoscalingGroupDialog } from "@/components/envs/delete-autoscaling-group-dialog"
 import { PoolMetricsSheet } from "@/components/prometheus/pool-metrics-sheet"
 import { EnvDocsSheet, ENV_DOCS_PARAM } from "@/components/envs/env-docs-sheet"
 import { envQueryOptions, useSyncEnvTemplate } from "@/lib/queries"
-import type { AgentSandboxEnv, AgentSandboxPool } from "@/lib/api/client"
+import type { AgentEnvAutoscalingGroup, AgentSandboxPool } from "@/lib/api/client"
 import { clusterPath } from "@/lib/cluster-path"
 import { useTranslation } from "@/lib/i18n"
 
@@ -68,7 +68,11 @@ export default function EnvDetailPage({ params }: PageProps) {
   const [createPoolOpen, setCreatePoolOpen] = useState(false)
   const [editPoolTarget, setEditPoolTarget] = useState<AgentSandboxPool | null>(null)
   const [deletePoolTarget, setDeletePoolTarget] = useState<AgentSandboxPool | null>(null)
-  const [poolAutoscalingGroup, setPoolAutoscalingGroup] = useState<string | null>(null)
+  const [createAutoscalingOpen, setCreateAutoscalingOpen] = useState(false)
+  const [editAutoscalingTarget, setEditAutoscalingTarget] =
+    useState<AgentEnvAutoscalingGroup | null>(null)
+  const [deleteAutoscalingTarget, setDeleteAutoscalingTarget] =
+    useState<AgentEnvAutoscalingGroup | null>(null)
   const [, setEnvDocsName] = useQueryState(
     ENV_DOCS_PARAM,
     parseAsString.withOptions({ scroll: false, shallow: true }),
@@ -93,6 +97,7 @@ export default function EnvDetailPage({ params }: PageProps) {
           <Button
             variant="ghost"
             size="sm"
+            nativeButton={false}
             className="text-muted-foreground hover:text-foreground -ml-2 h-7 gap-1 font-mono text-[11px]"
             render={<Link href={clusterPath(clusterID, "envs")} />}
           >
@@ -171,17 +176,16 @@ export default function EnvDetailPage({ params }: PageProps) {
               env={env}
               onCreatePool={() => setCreatePoolOpen(true)}
               onEditPool={(pool) => setEditPoolTarget(pool)}
-              onEditAutoscaling={(pool) => {
-                const sg = findScalingGroupForPool(env, pool.name)
-                if (sg) setPoolAutoscalingGroup(sg)
-              }}
               onDeletePool={(pool) => setDeletePoolTarget(pool)}
               onViewMetrics={(pool) => setMetricsTarget(pool)}
             />
             <Separator />
-            <AutoscalingSummary env={env} onEdit={() => setEditOpen(true)} />
-            <Separator />
-            <StatusSection env={env} />
+            <AutoscalingSection
+              env={env}
+              onCreate={() => setCreateAutoscalingOpen(true)}
+              onEdit={(g) => setEditAutoscalingTarget(g)}
+              onDelete={(g) => setDeleteAutoscalingTarget(g)}
+            />
           </div>
         )}
       </div>
@@ -200,8 +204,8 @@ export default function EnvDetailPage({ params }: PageProps) {
       />
       <EnvDocsSheet />
 
-      {/* Pool sheets — only rendered while env is loaded so the children can
-          rely on a non-null env reference. */}
+      {/* Pool / Autoscaling sheets — only rendered while env is loaded so the
+          children can rely on a non-null env reference. */}
       {env && (
         <>
           <UpsertPoolSheet
@@ -225,27 +229,29 @@ export default function EnvDetailPage({ params }: PageProps) {
               if (!open) setDeletePoolTarget(null)
             }}
           />
-          <EditPoolAutoscalingSheet
+          <UpsertAutoscalingGroupSheet
             env={env}
-            scalingGroupName={poolAutoscalingGroup}
+            group={null}
+            open={createAutoscalingOpen}
+            onOpenChange={setCreateAutoscalingOpen}
+          />
+          <UpsertAutoscalingGroupSheet
+            env={env}
+            group={editAutoscalingTarget}
+            open={!!editAutoscalingTarget}
             onOpenChange={(open) => {
-              if (!open) setPoolAutoscalingGroup(null)
+              if (!open) setEditAutoscalingTarget(null)
+            }}
+          />
+          <DeleteAutoscalingGroupDialog
+            envName={env.name}
+            group={deleteAutoscalingTarget}
+            onOpenChange={(open) => {
+              if (!open) setDeleteAutoscalingTarget(null)
             }}
           />
         </>
       )}
     </div>
   )
-}
-
-// findScalingGroupForPool reads env.spec.clusters[].members[] to find the
-// ScalingGroup name attached to poolName. Returns "" when the pool isn't a
-// member yet (shouldn't happen — table rows come from the same env).
-function findScalingGroupForPool(env: AgentSandboxEnv, poolName: string): string {
-  for (const c of env.spec.clusters ?? []) {
-    for (const m of c.members ?? []) {
-      if (m.name === poolName) return m.config?.scalingGroup ?? ""
-    }
-  }
-  return ""
 }

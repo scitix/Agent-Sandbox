@@ -438,15 +438,6 @@ spec:
                                   when those are unset.'
                                 format: int32
                                 type: integer
-                              replicas:
-                                description: "Replicas is the initial spec.replicas\
-                                  \ value applied to this member\nPool when the Env\
-                                  \ Reconciler creates it. Autoscaling owns the\n\
-                                  replica value afterwards \u2014 the Reconciler does\
-                                  \ NOT force this\nbaseline back on subsequent reconciles."
-                                format: int32
-                                minimum: 0
-                                type: integer
                               scaleDownPriority:
                                 description: 'ScaleDownPriority overrides Priority
                                   for scale-down ordering: lower
@@ -511,11 +502,12 @@ spec:
                               \ after\nPreCreatePool. The Reconciler stamps the whole\
                               \ Spec verbatim when\ncreating the live Pool and uses\
                               \ equality.Semantic.DeepEqual to\ndetect drift between\
-                              \ Spec and the live Pool on subsequent\nreconciles.\
-                              \ Replicas in Spec is the initial value at AddMember\n\
-                              time \u2014 the autoscaler owns the live Pool's Replicas\
-                              \ thereafter\nand the Reconciler does NOT force Spec.Replicas\
-                              \ back onto it."
+                              \ Spec and the live Pool on subsequent\nreconciles,\
+                              \ including Spec.Replicas. The Env Reconciler is the\n\
+                              sole writer of the live Pool's Replicas \u2014 both\
+                              \ the API\n(UpdateMember) and the Env autoscaler express\
+                              \ their intent by\npatching Member.Spec.Replicas here\
+                              \ and let the Reconciler\npropagate it."
                             properties:
                               defaultIdleTimeout:
                                 description: 'DefaultIdleTimeout is the default idle
@@ -1009,16 +1001,6 @@ spec:
                       description: ClusterID matches the spec's ClusterID for the
                         same segment.
                       type: string
-                    idleZeroSince:
-                      description: 'IdleZeroSince records when the aggregated idle
-                        count for this cluster
-
-                        first dropped to zero in the current continuous-zero window.
-                        Cleared
-
-                        when idle > 0.'
-                      format: date-time
-                      type: string
                     isLocal:
                       description: 'IsLocal is true on the Worker that owns this cluster''s
                         Pools. Used to
@@ -1028,18 +1010,6 @@ spec:
 
                         Reconciler.'
                       type: boolean
-                    lastScaleDownTime:
-                      description: LastScaleDownTime records the latest cluster-local
-                        scale-down event.
-                      format: date-time
-                      type: string
-                    lastScaleUpTime:
-                      description: 'LastScaleUpTime records the latest cluster-local
-                        scale-up event. Used
-
-                        by the Env autoscaler for cooldown enforcement.'
-                      format: date-time
-                      type: string
                     lastSnapshotTime:
                       description: 'LastSnapshotTime records when this segment was
                         last updated. For
@@ -1342,8 +1312,38 @@ spec:
                   description: 'EnvScalingGroupStatus aggregates a scalingGroup''s
                     runtime state across all
 
-                    members.'
+                    members and carries the autoscaler''s per-group wall-clock bookkeeping.'
                   properties:
+                    idleZeroSince:
+                      description: 'IdleZeroSince records when this group''s aggregate
+                        idle count first
+
+                        dropped to zero in the current continuous-zero window. Drives
+                        the
+
+                        proactive (idleThresholdSeconds) scale-up trigger. Cleared
+                        when
+
+                        group idle > 0.'
+                      format: date-time
+                      type: string
+                    lastScaleDownTime:
+                      description: 'LastScaleDownTime records the latest scale-down
+                        event for this
+
+                        group. Drives the per-group scale-down stabilization window.'
+                      format: date-time
+                      type: string
+                    lastScaleUpTime:
+                      description: 'LastScaleUpTime records the latest scale-up event
+                        for this group.
+
+                        Each group has its own cooldown window so unrelated groups
+                        don''t
+
+                        block one another.'
+                      format: date-time
+                      type: string
                     name:
                       description: Name matches the autoscaling group's Name and is
                         the list map key.

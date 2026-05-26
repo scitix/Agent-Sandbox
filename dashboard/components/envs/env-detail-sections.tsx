@@ -17,15 +17,24 @@
 "use client"
 
 import { useMemo } from "react"
-import { Plus, Settings2 } from "lucide-react"
+import { type ColumnDef } from "@tanstack/react-table"
+import { MoreVertical, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { RelativeTime } from "@/components/custom/relative-time"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { DataTable } from "@/components/custom/query-table/table-without-query"
+import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
 import { createPoolColumns } from "@/components/pools/columns"
 import { envPoolsQueryOptions } from "@/lib/queries"
 import type {
+  AgentEnvAutoscalingGroup,
   AgentEnvObservedMember,
   AgentSandboxEnv,
   AgentSandboxPool,
@@ -74,14 +83,12 @@ export function EnvPoolsSection({
   env,
   onCreatePool,
   onEditPool,
-  onEditAutoscaling,
   onDeletePool,
   onViewMetrics,
 }: {
   env: AgentSandboxEnv
   onCreatePool: () => void
   onEditPool: (pool: AgentSandboxPool) => void
-  onEditAutoscaling: (pool: AgentSandboxPool) => void
   onDeletePool: (pool: AgentSandboxPool) => void
   onViewMetrics: (pool: AgentSandboxPool) => void
 }) {
@@ -115,18 +122,9 @@ export function EnvPoolsSection({
         envObservedByPool: observedByPool,
         scalingGroupByPool: scalingGroupByPool,
         onEditPool,
-        onEditAutoscaling,
         onDeletePool,
       }),
-    [
-      t,
-      onViewMetrics,
-      observedByPool,
-      scalingGroupByPool,
-      onEditPool,
-      onEditAutoscaling,
-      onDeletePool,
-    ],
+    [t, onViewMetrics, observedByPool, scalingGroupByPool, onEditPool, onDeletePool],
   )
 
   const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
@@ -153,131 +151,178 @@ export function EnvPoolsSection({
           <Plus className="h-3 w-3" /> {t("envs.poolForm.createAction")}
         </Button>
       </QueryTable>
-    </section >
+    </section>
   )
 }
 
-// ─── Autoscaling read-only summary ───────────────────────────────────────────
+// ─── Autoscaling table ───────────────────────────────────────────────────────
 
-export function AutoscalingSummary({
+export function AutoscalingSection({
   env,
+  onCreate,
   onEdit,
+  onDelete,
 }: {
   env: AgentSandboxEnv
-  onEdit: () => void
+  onCreate: () => void
+  onEdit: (group: AgentEnvAutoscalingGroup) => void
+  onDelete: (group: AgentEnvAutoscalingGroup) => void
 }) {
   const { t } = useTranslation()
-  const auto = env.spec.autoscaling
-  const groups = auto?.groups ?? []
+  const groups = env.spec.autoscaling?.groups ?? []
+
+  const columns = useMemo<ColumnDef<AgentEnvAutoscalingGroup>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title={t("envs.autoscaling.col.group")} />
+        ),
+        cell: ({ row }) => (
+          <span className="text-foreground font-mono text-xs">{row.original.name}</span>
+        ),
+      },
+      {
+        id: "enabled",
+        accessorFn: (row) => row.enabled,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title={t("envs.autoscaling.col.enabled")} />
+        ),
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.enabled ? "default" : "outline"}
+            className="font-mono text-[10px]"
+          >
+            {row.original.enabled
+              ? t("envs.detail.autoscaling.enabled")
+              : t("envs.detail.autoscaling.disabled")}
+          </Badge>
+        ),
+      },
+      {
+        id: "replicas",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title={t("envs.autoscaling.col.replicas")} />
+        ),
+        cell: ({ row }) => {
+          const min = row.original.minReplicas
+          const max = row.original.maxReplicas
+          const label = `${min ?? "—"} ~ ${max ?? "—"}`
+          return <span className="text-muted-foreground font-mono text-xs">{label}</span>
+        },
+      },
+      {
+        id: "scaleUp",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title={t("envs.autoscaling.col.scaleUp")} />
+        ),
+        cell: ({ row }) => <ScaleUpCell group={row.original} />,
+      },
+      {
+        id: "scaleDown",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title={t("envs.autoscaling.col.scaleDown")} />
+        ),
+        cell: ({ row }) => <ScaleDownCell group={row.original} />,
+      },
+      {
+        id: "actions",
+        cell: ({ row }) => (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon-sm" className="text-muted-foreground h-7 w-7" />
+              }
+            >
+              <MoreVertical className="h-4 w-4" />
+              <span className="sr-only">{t("common.actions")}</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem
+                onClick={() => onEdit(row.original)}
+                className="cursor-pointer font-mono text-xs"
+              >
+                <Pencil className="mr-2 h-3.5 w-3.5" />
+                {t("envs.upsertAutoscaling.editAction")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onDelete(row.original)}
+                className="text-destructive cursor-pointer font-mono text-xs"
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                {t("envs.upsertAutoscaling.deleteAction")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ),
+      },
+    ],
+    [t, onEdit, onDelete],
+  )
+
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
           {t("envs.detail.section.autoscaling")}
         </h3>
-        <Button variant="outline" size="sm" onClick={onEdit} className="h-7 gap-1 px-2 text-xs">
-          <Settings2 className="h-3 w-3" /> {t("envs.detail.actions.editAutoscaling")}
-        </Button>
       </div>
-      {!auto || groups.length === 0 ? (
-        <p className="text-muted-foreground text-xs">{t("envs.detail.autoscaling.empty")}</p>
-      ) : (
-        <div className="border-border bg-muted/20 divide-border space-y-3 rounded border p-3">
-          {groups.map((g, i) => (
-            <div key={i} className="space-y-1">
-              <div className="flex items-center gap-2">
-                <div className="text-muted-foreground font-mono text-[10px] uppercase">
-                  {t("envs.detail.autoscaling.group")}: {g.name}
-                </div>
-                <Badge variant={g.enabled ? "default" : "outline"} className="font-mono text-xs">
-                  {g.enabled
-                    ? t("envs.detail.autoscaling.enabled")
-                    : t("envs.detail.autoscaling.disabled")}
-                </Badge>
-              </div>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
-                <InfoCell label={t("envs.detail.autoscaling.minReplicas")} value={g.minReplicas} />
-                <InfoCell label={t("envs.detail.autoscaling.maxReplicas")} value={g.maxReplicas} />
-                <InfoCell
-                  label={t("envs.detail.autoscaling.mode")}
-                  value={g.scaleUpPolicy?.mode}
-                />
-                <InfoCell
-                  label={t("envs.detail.autoscaling.cooldown")}
-                  value={g.scaleUpPolicy?.cooldownSeconds}
-                />
-                <InfoCell
-                  label={t("envs.detail.autoscaling.idleThreshold")}
-                  value={g.scaleUpPolicy?.idleThresholdSeconds}
-                />
-                <InfoCell
-                  label={t("envs.detail.autoscaling.saturationCooldown")}
-                  value={g.scaleUpPolicy?.saturationCooldownSeconds}
-                />
-                <InfoCell
-                  label={t("envs.detail.autoscaling.idleTimeout")}
-                  value={g.scaleDownPolicy?.idleTimeoutSeconds}
-                />
-                <InfoCell
-                  label={t("envs.detail.autoscaling.stabilization")}
-                  value={g.scaleDownPolicy?.stabilizationSeconds}
-                />
-              </dl>
-            </div>
-          ))}
-        </div>
-      )}
+      <DataTable
+        data={groups}
+        dataUpdatedAt={0}
+        isLoading={false}
+        columns={columns}
+        idFn={(row: AgentEnvAutoscalingGroup) => row.name}
+        toolbarConfig={{ globalSearch: { placeholder: t("common.search") } }}
+      >
+        <Button
+          onClick={onCreate}
+          size="sm"
+          className="h-9 gap-1 px-2 text-xs"
+          variant="secondary"
+        >
+          <Plus className="h-3 w-3" /> {t("envs.upsertAutoscaling.createAction")}
+        </Button>
+      </DataTable>
     </section>
   )
 }
 
-function InfoCell({
-  label,
-  value,
-}: {
-  label: string
-  value: string | number | undefined | null
-}) {
+function ScaleUpCell({ group }: { group: AgentEnvAutoscalingGroup }) {
+  const { t } = useTranslation()
+  const mode = group.scaleUpPolicy?.mode
+  const cd = group.scaleUpPolicy?.cooldownSeconds
+  const idle = group.scaleUpPolicy?.idleThresholdSeconds
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-dashed py-1 last:border-b-0">
-      <span className="text-muted-foreground text-[10px] uppercase">{label}</span>
-      <span>{value === undefined || value === null ? "—" : String(value)}</span>
+    <div className="font-mono text-[11px] leading-tight">
+      {mode && <div className="text-foreground">{mode}</div>}
+      <div className="text-muted-foreground">
+        {t("envs.detail.autoscaling.cooldown")}: {fmt(cd, "s")}
+      </div>
+      <div className="text-muted-foreground">
+        {t("envs.detail.autoscaling.idleThreshold")}: {fmt(idle, "s")}
+      </div>
     </div>
   )
 }
 
-// ─── Status conditions ───────────────────────────────────────────────────────
-
-export function StatusSection({ env }: { env: AgentSandboxEnv }) {
+function ScaleDownCell({ group }: { group: AgentEnvAutoscalingGroup }) {
   const { t } = useTranslation()
-  const conditions = env.status?.conditions ?? []
-  const localCluster = env.status?.clusters?.find((c) => c.isLocal === true)
-  if (conditions.length === 0 && !localCluster) return null
+  const idle = group.scaleDownPolicy?.idleTimeoutSeconds
+  const stab = group.scaleDownPolicy?.stabilizationSeconds
   return (
-    <section>
-      <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.12em] uppercase">
-        {t("envs.detail.section.status")}
-      </h3>
-      <div className="border-border bg-muted/20 rounded border p-3">
-        <div className="space-y-1 font-mono text-xs">
-          {conditions.map((c, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <Badge
-                variant={c.status === "True" ? "default" : "outline"}
-                className="font-mono text-[10px]"
-              >
-                {c.type}
-              </Badge>
-              <span className="text-muted-foreground">{c.message ?? c.reason ?? ""}</span>
-            </div>
-          ))}
-          {localCluster?.lastScaleUpTime && (
-            <div className="text-muted-foreground pt-1 text-[10px]">
-              {t("envs.col.lastScaleUp")}: <RelativeTime date={localCluster.lastScaleUpTime} />
-            </div>
-          )}
-        </div>
+    <div className="font-mono text-[11px] leading-tight">
+      <div className="text-muted-foreground">
+        {t("envs.detail.autoscaling.idleTimeout")}: {fmt(idle, "s")}
       </div>
-    </section>
+      <div className="text-muted-foreground">
+        {t("envs.detail.autoscaling.stabilization")}: {fmt(stab, "s")}
+      </div>
+    </div>
   )
+}
+
+function fmt(value: number | undefined, suffix: string): string {
+  if (value === undefined || value === null) return "—"
+  return `${value}${suffix}`
 }

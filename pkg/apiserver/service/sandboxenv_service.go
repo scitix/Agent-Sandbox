@@ -651,10 +651,6 @@ func envMemberConfigToGen(c agentsv1alpha1.EnvClusterMemberConfig) *gen.EnvClust
 		out.ScaleDownPriority = ptr.To(*c.ScaleDownPriority)
 		populated = true
 	}
-	if c.Replicas > 0 {
-		out.Replicas = ptr.To(c.Replicas)
-		populated = true
-	}
 	if c.InlineResources != nil {
 		out.InlineResources = inlineResourcesToGen(c.InlineResources)
 		populated = true
@@ -729,6 +725,18 @@ func envStatusToGen(status *agentsv1alpha1.SandboxEnvStatus) *gen.SandboxEnvStat
 			if g.TotalPending > 0 {
 				eg.TotalPending = ptr.To(g.TotalPending)
 			}
+			if g.LastScaleUpTime != nil {
+				t := g.LastScaleUpTime.UTC()
+				eg.LastScaleUpTime = &t
+			}
+			if g.LastScaleDownTime != nil {
+				t := g.LastScaleDownTime.UTC()
+				eg.LastScaleDownTime = &t
+			}
+			if g.IdleZeroSince != nil {
+				t := g.IdleZeroSince.UTC()
+				eg.IdleZeroSince = &t
+			}
 			groups = append(groups, eg)
 		}
 		out.ScalingGroups = &groups
@@ -740,18 +748,6 @@ func envClusterStatusToGen(c agentsv1alpha1.EnvClusterStatus) gen.EnvClusterStat
 	out := gen.EnvClusterStatus{ClusterID: c.ClusterID}
 	if c.IsLocal {
 		out.IsLocal = ptr.To(true)
-	}
-	if c.LastScaleUpTime != nil {
-		t := c.LastScaleUpTime.UTC()
-		out.LastScaleUpTime = &t
-	}
-	if c.LastScaleDownTime != nil {
-		t := c.LastScaleDownTime.UTC()
-		out.LastScaleDownTime = &t
-	}
-	if c.IdleZeroSince != nil {
-		t := c.IdleZeroSince.UTC()
-		out.IdleZeroSince = &t
 	}
 	if c.LastSnapshotTime != nil {
 		t := c.LastSnapshotTime.UTC()

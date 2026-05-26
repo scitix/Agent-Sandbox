@@ -80,52 +80,61 @@ const intGte1 = z.preprocess(
   z.number().int().min(1).optional(),
 )
 
-const formSchema = z
-  .object({
-    resourceMode,
-    instanceType: z.string().optional(),
-    multiplier: intGte1,
-    cpuCores: intGte1,
-    memoryGiB: intGte1,
-    quotaUrl: z.string().optional(),
-    replicas: intGte0,
-    maxReplicas: intGte0,
-  })
-  .superRefine((m, ctx) => {
-    if (m.resourceMode === "instanceType") {
-      if (!m.instanceType) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "envs.poolForm.errors.instanceTypeRequired",
-          path: ["instanceType"],
-        })
-      }
-      if (m.multiplier === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "envs.poolForm.errors.multiplierRequired",
-          path: ["multiplier"],
-        })
-      }
-    } else {
-      if (m.cpuCores === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "envs.poolForm.errors.cpuRequired",
-          path: ["cpuCores"],
-        })
-      }
-      if (m.memoryGiB === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "envs.poolForm.errors.memoryRequired",
-          path: ["memoryGiB"],
-        })
-      }
-    }
-  })
+// Resource fields are immutable post-create (server rejects them on PUT) so
+// the Edit form disables them — but disabled inputs still feed into RHF as
+// undefined when the source pool lacked the corresponding shape (e.g. a pool
+// created via instanceType has no inlineResources, leaving cpuCores/memoryGiB
+// blank). Required-field validation would then fail on submit even though the
+// user can't fix the values, so we attach the resource-mode refinement only
+// in Create mode.
+const baseObject = z.object({
+  resourceMode,
+  instanceType: z.string().optional(),
+  multiplier: intGte1,
+  cpuCores: intGte1,
+  memoryGiB: intGte1,
+  quotaUrl: z.string().optional(),
+  replicas: intGte0,
+  maxReplicas: intGte0,
+})
 
-type FormValues = z.infer<typeof formSchema>
+const createSchema = baseObject.superRefine((m, ctx) => {
+  if (m.resourceMode === "instanceType") {
+    if (!m.instanceType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "envs.poolForm.errors.instanceTypeRequired",
+        path: ["instanceType"],
+      })
+    }
+    if (m.multiplier === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "envs.poolForm.errors.multiplierRequired",
+        path: ["multiplier"],
+      })
+    }
+  } else {
+    if (m.cpuCores === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "envs.poolForm.errors.cpuRequired",
+        path: ["cpuCores"],
+      })
+    }
+    if (m.memoryGiB === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "envs.poolForm.errors.memoryRequired",
+        path: ["memoryGiB"],
+      })
+    }
+  }
+})
+
+const updateSchema = baseObject
+
+type FormValues = z.infer<typeof baseObject>
 
 // ─── Sheet shell ─────────────────────────────────────────────────────────────
 
@@ -173,7 +182,7 @@ function UpsertPoolInner({
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(isEdit ? updateSchema : createSchema),
     defaultValues,
   })
 

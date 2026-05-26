@@ -493,7 +493,6 @@ func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multip
 		Spec: *pool.Spec.DeepCopy(),
 		Config: agentsv1alpha1.EnvClusterMemberConfig{
 			ScalingGroup: groupName,
-			Replicas:     pool.Spec.Replicas,
 		},
 	}
 	if itName != "" {

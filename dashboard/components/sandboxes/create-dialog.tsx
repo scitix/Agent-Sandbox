@@ -58,7 +58,23 @@ import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { useCreateSandbox } from "@/lib/queries/sandbox"
 import { envsQueryOptions } from "@/lib/queries"
+import type { AgentSandboxEnv } from "@/lib/api/client"
 import { useTranslation } from "@/lib/i18n"
+import { cn } from "@/lib/utils"
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Sum idle replicas across every scaling group on the Env's status. The
+// router dispatches Sandbox.Create requests to the first pool with capacity,
+// so the user only cares about the aggregate — picking the first group (as
+// the table on the Envs page does) would under-count multi-group Envs.
+function totalIdleFor(env: AgentSandboxEnv): number {
+  let sum = 0
+  for (const g of env.status?.scalingGroups ?? []) {
+    sum += g.totalIdle ?? 0
+  }
+  return sum
+}
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -172,14 +188,24 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
                     <ComboboxContent>
                       <ComboboxEmpty>{t("common.noResultsFound")}</ComboboxEmpty>
                       <ComboboxList>
-                        {(e) => (
-                          <ComboboxItem key={e.name} value={e}>
-                            <span>{e.name}</span>
-                            <span className="text-muted-foreground ml-auto font-mono text-xs">
-                              {e.spec.templateRef.name}
-                            </span>
-                          </ComboboxItem>
-                        )}
+                        {(e) => {
+                          const idle = totalIdleFor(e)
+                          return (
+                            <ComboboxItem key={e.name} value={e}>
+                              <span>{e.name}</span>
+                              <span
+                                className={cn(
+                                  "ml-auto font-mono text-xs",
+                                  idle > 0
+                                    ? "text-green-700 dark:text-green-400"
+                                    : "text-muted-foreground",
+                                )}
+                              >
+                                {t("sandboxes.form.envIdle", { count: idle })}
+                              </span>
+                            </ComboboxItem>
+                          )
+                        }}
                       </ComboboxList>
                     </ComboboxContent>
                   </Combobox>

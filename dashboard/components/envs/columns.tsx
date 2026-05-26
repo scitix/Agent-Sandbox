@@ -52,15 +52,19 @@ function pickAggregateGroup(env: AgentSandboxEnv) {
 }
 
 /**
- * Returns the local-cluster status segment. The Worker writes only its own
- * segment, so this is also the segment carrying lastScaleUpTime / etc. for
- * the current cluster. Returns undefined when the segment hasn't been
- * populated yet (typical right after adoption).
+ * Returns the latest LastScaleUpTime across every scaling group, or null
+ * when no group has scaled up yet. After the per-group refactor the
+ * autoscaler bookkeeping lives on EnvScalingGroupStatus, so the list
+ * column shows the max to keep one row = one Env.
  */
-function pickLocalClusterStatus(env: AgentSandboxEnv) {
-  const clusters = env.status?.clusters
-  if (!clusters || clusters.length === 0) return undefined
-  return clusters.find((c) => c.isLocal === true) ?? clusters[0]
+function latestScalingGroupScaleUp(env: AgentSandboxEnv): string | null {
+  let latest: string | null = null
+  for (const g of env.status?.scalingGroups ?? []) {
+    const ts = g.lastScaleUpTime
+    if (!ts) continue
+    if (!latest || ts > latest) latest = ts
+  }
+  return latest
 }
 
 export function createEnvColumns(
@@ -178,12 +182,12 @@ export function createEnvColumns(
     },
     {
       id: "lastScaleUp",
-      accessorFn: (row) => pickLocalClusterStatus(row)?.lastScaleUpTime ?? null,
+      accessorFn: (row) => latestScalingGroupScaleUp(row),
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t("envs.col.lastScaleUp")} />
       ),
       cell: ({ row }) => {
-        const ts = pickLocalClusterStatus(row.original)?.lastScaleUpTime
+        const ts = latestScalingGroupScaleUp(row.original)
         if (!ts) return <span className="text-muted-foreground text-xs">—</span>
         return <RelativeTime date={ts} />
       },

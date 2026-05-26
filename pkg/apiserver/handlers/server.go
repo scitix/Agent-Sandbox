@@ -711,7 +711,10 @@ func memberFromCreateEnvPoolRequest(body *gen.CreateEnvSandboxPoolRequest) agent
 		cm.Config.MaxReplicas = &v
 	}
 	if body.Replicas != nil {
-		cm.Config.Replicas = *body.Replicas
+		// Initial replica count flows directly into Member.Spec — the
+		// Reconciler is the sole writer of the live Pool's Spec.Replicas
+		// and reads it from here on every reconcile.
+		cm.Spec.Replicas = *body.Replicas
 	}
 	if body.InlineResources != nil {
 		cm.Config.InlineResources = inlineResourcesFromGen(body.InlineResources)

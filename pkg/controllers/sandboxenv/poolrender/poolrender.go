@@ -137,7 +137,7 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 			OwnerReferences: []metav1.OwnerReference{OwnerReferenceForEnv(in.Env)},
 		},
 		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas:                in.Member.Config.Replicas,
+			Replicas:                in.Member.Spec.Replicas,
 			TemplateName:            in.Template.Name,
 			EmbeddedSandboxTemplate: emb,
 		},
@@ -194,7 +194,6 @@ func MaterializeFromMember(env *agentsv1alpha1.SandboxEnv, member agentsv1alpha1
 		},
 		Spec: *member.Spec.DeepCopy(),
 	}
-	pool.Spec.Replicas = member.Config.Replicas
 	stampImagePullSecretRef(&pool.Spec.EmbeddedSandboxTemplate, agentsv1alpha1.EnvImagePullSecretName(env.Name), ipsExists)
 	return pool
 }

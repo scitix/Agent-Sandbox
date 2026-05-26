@@ -1260,11 +1260,6 @@ export interface components {
             scalingGroup?: string;
             /**
              * Format: int32
-             * @description Initial replica count for this member Pool. Autoscaling owns subsequent changes — the Reconciler does not force this value back on later reconciles.
-             */
-            replicas?: number;
-            /**
-             * Format: int32
              * @description Upper bound on this member's spec.replicas. Enforced by the Env autoscaler when distributing scale-up delta.
              */
             maxReplicas?: number;
@@ -1398,12 +1393,6 @@ export interface components {
             isLocal?: boolean;
             observedMembers?: components["schemas"]["EnvObservedMember"][];
             /** Format: date-time */
-            lastScaleUpTime?: string;
-            /** Format: date-time */
-            lastScaleDownTime?: string;
-            /** Format: date-time */
-            idleZeroSince?: string;
-            /** Format: date-time */
             lastSnapshotTime?: string;
         };
         EnvScalingGroupStatus: {
@@ -1419,6 +1408,21 @@ export interface components {
              * @description Aggregate ObservedMember.pendingRequests across all members of this group.
              */
             totalPending?: number;
+            /**
+             * Format: date-time
+             * @description Most recent scale-up event for this group. Drives the per-group cooldown window.
+             */
+            lastScaleUpTime?: string;
+            /**
+             * Format: date-time
+             * @description Most recent scale-down event for this group. Drives the per-group stabilization window.
+             */
+            lastScaleDownTime?: string;
+            /**
+             * Format: date-time
+             * @description When this group's aggregate idle count first dropped to zero in the current continuous-zero window; clears when group idle > 0. Drives the proactive scale-up trigger.
+             */
+            idleZeroSince?: string;
         };
         EnvCondition: {
             type: string;

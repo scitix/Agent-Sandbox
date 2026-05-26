@@ -39,8 +39,10 @@ import (
 //     NOT re-run plugin admission — plugin side-effects already live
 //     inside Member.Spec by construction.
 //   - Pools that exist and drifted from the Member snapshot in
-//     labels / annotations / pod spec are patched. Replicas is intentionally
-//     NOT forced — the autoscaler owns it.
+//     labels / annotations / pod spec / replicas are patched. The Env
+//     Reconciler is the sole writer of SandboxPool.Spec; both the API and
+//     the autoscaler write Member.Spec on the Env CR and let this loop
+//     propagate the change.
 //   - Pools owned by this Env but not in the desired set are deleted (the
 //     user removed the member from spec.clusters[local].members).
 //
@@ -167,10 +169,14 @@ func (r *SandboxEnvReconciler) listOwnedPools(ctx context.Context, env *agentsv1
 }
 
 // updateMemberPoolIfDrifted patches a live Pool when its labels, annotations,
-// PodCreationImagePolicy, default timeouts, or pod spec drift from the
-// desired projection (Member.Metadata + Member.Spec, with current IPS state
-// re-stamped). Replicas is intentionally NOT enforced — the autoscaler
-// owns it.
+// PodCreationImagePolicy, default timeouts, replicas, or pod spec drift from
+// the desired projection (Member.Metadata + Member.Spec, with current IPS
+// state re-stamped).
+//
+// The Env Reconciler is the sole writer of SandboxPool.Spec — both the API
+// (UpdateMember) and the Env autoscaler express their intent by patching
+// Member.Spec on the SandboxEnv CR, and this drift loop propagates it to
+// the live Pool.
 func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 	ctx context.Context,
 	pool *agentsv1alpha1.SandboxPool,
@@ -181,9 +187,10 @@ func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 	policyDrift := want.Spec.PodCreationImagePolicy != "" && pool.Spec.PodCreationImagePolicy != want.Spec.PodCreationImagePolicy
 	startupDrift := !durationsEqual(pool.Spec.DefaultStartupTimeout, want.Spec.DefaultStartupTimeout)
 	idleDrift := !durationsEqual(pool.Spec.DefaultIdleTimeout, want.Spec.DefaultIdleTimeout)
+	replicasDrift := pool.Spec.Replicas != want.Spec.Replicas
 	embeddedDrift := !equality.Semantic.DeepEqual(pool.Spec.EmbeddedSandboxTemplate, want.Spec.EmbeddedSandboxTemplate)
 
-	if !labelDrift && !annotationDrift && !policyDrift && !startupDrift && !idleDrift && !embeddedDrift {
+	if !labelDrift && !annotationDrift && !policyDrift && !startupDrift && !idleDrift && !replicasDrift && !embeddedDrift {
 		return nil
 	}
 
@@ -201,6 +208,7 @@ func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 		}
 		current.Spec.DefaultStartupTimeout = want.Spec.DefaultStartupTimeout
 		current.Spec.DefaultIdleTimeout = want.Spec.DefaultIdleTimeout
+		current.Spec.Replicas = want.Spec.Replicas
 		current.Spec.EmbeddedSandboxTemplate = *want.Spec.EmbeddedSandboxTemplate.DeepCopy()
 		return r.Patch(ctx, current, client.MergeFrom(base))
 	})

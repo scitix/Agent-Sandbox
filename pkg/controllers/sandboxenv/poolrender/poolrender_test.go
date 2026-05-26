@@ -77,7 +77,10 @@ func TestRenderSandboxPool_BasicShape(t *testing.T) {
 	pool, err := poolrender.RenderSandboxPool(poolrender.Inputs{
 		Env:      env,
 		Template: tmpl,
-		Member:   agentsv1alpha1.EnvClusterMember{Name: "env-a-foo", Config: agentsv1alpha1.EnvClusterMemberConfig{Replicas: 3}},
+		Member: agentsv1alpha1.EnvClusterMember{
+			Name: "env-a-foo",
+			Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 3},
+		},
 	})
 	if err != nil {
 		t.Fatalf("RenderSandboxPool: %v", err)

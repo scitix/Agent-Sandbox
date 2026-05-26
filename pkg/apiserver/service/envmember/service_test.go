@@ -76,8 +76,8 @@ func newTestTemplate() *agentsv1alpha1.SandboxTemplate {
 
 func memberWithResources(replicas int32) agentsv1alpha1.EnvClusterMember {
 	return agentsv1alpha1.EnvClusterMember{
+		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: replicas},
 		Config: agentsv1alpha1.EnvClusterMemberConfig{
-			Replicas: replicas,
 			InlineResources: &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("2"),
@@ -253,7 +253,11 @@ func TestAdd_AdmitterRejection_Bubbles(t *testing.T) {
 func TestUpdate_AdjustsReplicas(t *testing.T) {
 	env := newEnvForPoolOps()
 	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
-		{Name: "m1", Config: agentsv1alpha1.EnvClusterMemberConfig{Replicas: 1, ScalingGroup: "1c4Gi"}},
+		{
+			Name:   "m1",
+			Spec:   agentsv1alpha1.SandboxPoolSpec{Replicas: 1},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "1c4Gi"},
+		},
 	}
 	svc := newService(t, env)
 
@@ -270,7 +274,11 @@ func TestUpdate_AdjustsReplicas(t *testing.T) {
 func TestUpdate_RejectsReplicasWhenAutoscalingOn(t *testing.T) {
 	env := newEnvForPoolOps()
 	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
-		{Name: "m1", Config: agentsv1alpha1.EnvClusterMemberConfig{Replicas: 1, ScalingGroup: "2c8Gi"}},
+		{
+			Name:   "m1",
+			Spec:   agentsv1alpha1.SandboxPoolSpec{Replicas: 1},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "2c8Gi"},
+		},
 	}
 	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
 		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "2c8Gi", Enabled: true}},

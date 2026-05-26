@@ -45,18 +45,12 @@ class EnvClusterStatus:
             cluster_id (str):
             is_local (bool | Unset): True on the Worker that owns this segment. Other segments arrive via Hub Sync (future).
             observed_members (list[EnvObservedMember] | Unset):
-            last_scale_up_time (datetime.datetime | Unset):
-            last_scale_down_time (datetime.datetime | Unset):
-            idle_zero_since (datetime.datetime | Unset):
             last_snapshot_time (datetime.datetime | Unset):
      """
 
     cluster_id: str
     is_local: bool | Unset = UNSET
     observed_members: list[EnvObservedMember] | Unset = UNSET
-    last_scale_up_time: datetime.datetime | Unset = UNSET
-    last_scale_down_time: datetime.datetime | Unset = UNSET
-    idle_zero_since: datetime.datetime | Unset = UNSET
     last_snapshot_time: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -79,18 +73,6 @@ class EnvClusterStatus:
 
 
 
-        last_scale_up_time: str | Unset = UNSET
-        if not isinstance(self.last_scale_up_time, Unset):
-            last_scale_up_time = self.last_scale_up_time.isoformat()
-
-        last_scale_down_time: str | Unset = UNSET
-        if not isinstance(self.last_scale_down_time, Unset):
-            last_scale_down_time = self.last_scale_down_time.isoformat()
-
-        idle_zero_since: str | Unset = UNSET
-        if not isinstance(self.idle_zero_since, Unset):
-            idle_zero_since = self.idle_zero_since.isoformat()
-
         last_snapshot_time: str | Unset = UNSET
         if not isinstance(self.last_snapshot_time, Unset):
             last_snapshot_time = self.last_snapshot_time.isoformat()
@@ -105,12 +87,6 @@ class EnvClusterStatus:
             field_dict["isLocal"] = is_local
         if observed_members is not UNSET:
             field_dict["observedMembers"] = observed_members
-        if last_scale_up_time is not UNSET:
-            field_dict["lastScaleUpTime"] = last_scale_up_time
-        if last_scale_down_time is not UNSET:
-            field_dict["lastScaleDownTime"] = last_scale_down_time
-        if idle_zero_since is not UNSET:
-            field_dict["idleZeroSince"] = idle_zero_since
         if last_snapshot_time is not UNSET:
             field_dict["lastSnapshotTime"] = last_snapshot_time
 
@@ -138,36 +114,6 @@ class EnvClusterStatus:
                 observed_members.append(observed_members_item)
 
 
-        _last_scale_up_time = d.pop("lastScaleUpTime", UNSET)
-        last_scale_up_time: datetime.datetime | Unset
-        if isinstance(_last_scale_up_time,  Unset):
-            last_scale_up_time = UNSET
-        else:
-            last_scale_up_time = isoparse(_last_scale_up_time)
-
-
-
-
-        _last_scale_down_time = d.pop("lastScaleDownTime", UNSET)
-        last_scale_down_time: datetime.datetime | Unset
-        if isinstance(_last_scale_down_time,  Unset):
-            last_scale_down_time = UNSET
-        else:
-            last_scale_down_time = isoparse(_last_scale_down_time)
-
-
-
-
-        _idle_zero_since = d.pop("idleZeroSince", UNSET)
-        idle_zero_since: datetime.datetime | Unset
-        if isinstance(_idle_zero_since,  Unset):
-            idle_zero_since = UNSET
-        else:
-            idle_zero_since = isoparse(_idle_zero_since)
-
-
-
-
         _last_snapshot_time = d.pop("lastSnapshotTime", UNSET)
         last_snapshot_time: datetime.datetime | Unset
         if isinstance(_last_snapshot_time,  Unset):
@@ -182,9 +128,6 @@ class EnvClusterStatus:
             cluster_id=cluster_id,
             is_local=is_local,
             observed_members=observed_members,
-            last_scale_up_time=last_scale_up_time,
-            last_scale_down_time=last_scale_down_time,
-            idle_zero_since=idle_zero_since,
             last_snapshot_time=last_snapshot_time,
         )
 

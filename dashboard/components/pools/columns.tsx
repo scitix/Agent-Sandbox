@@ -24,7 +24,6 @@ import {
   Activity,
   AlertTriangle,
   Pencil,
-  Settings2,
   Trash2,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -173,7 +172,6 @@ export interface PoolColumnsOptions {
   scalingGroupByPool?: Map<string, string>
   // Env-scoped row actions. Each appears in the row dropdown when set.
   onEditPool?: (pool: AgentSandboxPool) => void
-  onEditAutoscaling?: (pool: AgentSandboxPool) => void
   onDeletePool?: (pool: AgentSandboxPool) => void
 }
 
@@ -508,10 +506,8 @@ export function createPoolColumns(
       id: "actions",
       cell: ({ row }) => {
         const onEditPool = options?.onEditPool
-        const onEditAutoscaling = options?.onEditAutoscaling
         const onDeletePool = options?.onDeletePool
-        const hasAny =
-          onViewMetrics || onEditPool || onEditAutoscaling || onDeletePool
+        const hasAny = onViewMetrics || onEditPool || onDeletePool
         if (!hasAny) return null
         return (
           <DropdownMenu>
@@ -540,15 +536,6 @@ export function createPoolColumns(
                 >
                   <Pencil className="mr-2 h-3.5 w-3.5" />
                   {t("envs.poolForm.editAction")}
-                </DropdownMenuItem>
-              )}
-              {onEditAutoscaling && (
-                <DropdownMenuItem
-                  onClick={() => onEditAutoscaling(row.original)}
-                  className="cursor-pointer font-mono text-xs"
-                >
-                  <Settings2 className="mr-2 h-3.5 w-3.5" />
-                  {t("envs.poolAutoscaling.editAction")}
                 </DropdownMenuItem>
               )}
               {onDeletePool && (

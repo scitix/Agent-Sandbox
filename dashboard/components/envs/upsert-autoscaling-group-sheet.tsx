@@ -24,7 +24,15 @@ import { toast } from "sonner"
 import { Save } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Field, FieldLabel } from "@/components/ui/field"
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox"
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -36,13 +44,14 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
-import type { AgentSandboxEnv } from "@/lib/api/client"
+import type { AgentEnvAutoscalingGroup, AgentSandboxEnv } from "@/lib/api/client"
 import { useAddEnvAutoscalingGroup, useUpdateEnvAutoscalingGroup } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 
 interface Props {
   env: AgentSandboxEnv
-  scalingGroupName: string | null // null = sheet closed
+  group: AgentEnvAutoscalingGroup | null // null = create
+  open: boolean
   onOpenChange: (open: boolean) => void
 }
 
@@ -52,6 +61,7 @@ const optionalSeconds = z.preprocess(
 )
 
 const formSchema = z.object({
+  name: z.string().optional(),
   enabled: z.boolean(),
   minReplicas: optionalSeconds,
   maxReplicas: optionalSeconds,
@@ -66,49 +76,64 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>
 
-export function EditPoolAutoscalingSheet({ env, scalingGroupName, onOpenChange }: Props) {
-  const open = scalingGroupName !== null
+export function UpsertAutoscalingGroupSheet({ env, group, open, onOpenChange }: Props) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
         className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-xl"
       >
-        {open && scalingGroupName && (
-          <EditAutoscalingInner
-            env={env}
-            scalingGroupName={scalingGroupName}
-            onClose={() => onOpenChange(false)}
-          />
+        {open && (
+          <UpsertInner env={env} group={group} onClose={() => onOpenChange(false)} />
         )}
       </SheetContent>
     </Sheet>
   )
 }
 
-function EditAutoscalingInner({
+function UpsertInner({
   env,
-  scalingGroupName,
+  group,
   onClose,
 }: {
   env: AgentSandboxEnv
-  scalingGroupName: string
+  group: AgentEnvAutoscalingGroup | null
   onClose: () => void
 }) {
   const { t } = useTranslation()
+  const isEdit = !!group
+
   const addGroupMutation = useAddEnvAutoscalingGroup(env.name)
   const updateGroupMutation = useUpdateEnvAutoscalingGroup(env.name)
 
-  const defaults = useMemo<FormValues>(
-    () => extractGroupForForm(env, scalingGroupName),
-    [env, scalingGroupName],
-  )
+  // Available scaling groups for create mode: every distinct ScalingGroup
+  // referenced by an EnvClusterMember minus those that already have a rule.
+  // Server requires the name to match an existing member's ScalingGroup so
+  // free-text would be silently rejected — Combobox enforces the constraint.
+  const availableGroups = useMemo<string[]>(() => {
+    if (isEdit) return []
+    const taken = new Set((env.spec.autoscaling?.groups ?? []).map((g) => g.name))
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const cluster of env.spec.clusters ?? []) {
+      for (const m of cluster.members ?? []) {
+        const sg = m.config?.scalingGroup
+        if (!sg) continue
+        if (taken.has(sg) || seen.has(sg)) continue
+        seen.add(sg)
+        out.push(sg)
+      }
+    }
+    return out
+  }, [env, isEdit])
+
+  const defaults = useMemo<FormValues>(() => extractGroupForForm(group), [group])
 
   const {
     control,
     register,
     handleSubmit,
-    formState: { isSubmitting },
+    formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: defaults,
@@ -116,25 +141,25 @@ function EditAutoscalingInner({
 
   const onSubmit = handleSubmit(async (values) => {
     try {
-      // Enabled is per-group now: include it directly in the Add/Update
-      // payload alongside policy fields. No separate SetEnabled call.
-      const groupExists = (env.spec.autoscaling?.groups ?? []).some(
-        (g) => g.name === scalingGroupName,
-      )
       const groupBody = { enabled: values.enabled, ...buildGroupBody(values) }
-      if (groupExists) {
+      if (isEdit) {
         await runMutation(updateGroupMutation, {
-          params: { path: { name: env.name, groupName: scalingGroupName } },
+          params: { path: { name: env.name, groupName: group!.name } },
           body: groupBody,
         })
+        toast.success(t("envs.poolAutoscaling.toast", { group: group!.name }))
       } else {
+        const name = values.name?.trim()
+        if (!name) {
+          toast.error(t("envs.upsertAutoscaling.errors.nameRequired"))
+          return
+        }
         await runMutation(addGroupMutation, {
           params: { path: { name: env.name } },
-          body: { name: scalingGroupName, ...groupBody },
+          body: { name, ...groupBody },
         })
+        toast.success(t("envs.upsertAutoscaling.createdToast", { group: name }))
       }
-
-      toast.success(t("envs.poolAutoscaling.toast", { group: scalingGroupName }))
       onClose()
     } catch (err: unknown) {
       toast.error(extractError(err))
@@ -145,13 +170,42 @@ function EditAutoscalingInner({
     <Fragment>
       <SheetHeader className="px-6 py-4">
         <SheetTitle className="font-mono text-sm tracking-wider uppercase">
-          {t("envs.poolAutoscaling.title", { group: scalingGroupName })}
+          {isEdit
+            ? t("envs.upsertAutoscaling.editTitle", { group: group!.name })
+            : t("envs.upsertAutoscaling.createTitle")}
         </SheetTitle>
       </SheetHeader>
       <Separator />
 
       <form onSubmit={onSubmit} className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
+          {/* ScalingGroup picker (create only) */}
+          {!isEdit && (
+            <Field>
+              <FieldLabel>{t("envs.upsertAutoscaling.field.scalingGroup")}</FieldLabel>
+              <Controller
+                control={control}
+                name="name"
+                render={({ field, fieldState }) => (
+                  <ScalingGroupCombobox
+                    items={availableGroups}
+                    value={field.value ?? null}
+                    onChange={field.onChange}
+                    invalid={fieldState.invalid}
+                  />
+                )}
+              />
+              {availableGroups.length === 0 ? (
+                <FieldError>{t("envs.upsertAutoscaling.errors.noAvailableGroups")}</FieldError>
+              ) : (
+                <FieldDescription>
+                  {t("envs.upsertAutoscaling.field.scalingGroupHint")}
+                </FieldDescription>
+              )}
+              {errors.name && <FieldError>{String(errors.name.message)}</FieldError>}
+            </Field>
+          )}
+
           <Controller
             control={control}
             name="enabled"
@@ -276,13 +330,51 @@ function EditAutoscalingInner({
           <Button type="button" variant="ghost" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" disabled={isSubmitting} className="gap-1.5">
+          <Button
+            type="submit"
+            disabled={isSubmitting || (!isEdit && availableGroups.length === 0)}
+            className="gap-1.5"
+          >
             <Save className="h-3.5 w-3.5" />
-            {t("common.save")}
+            {isEdit ? t("common.save") : t("common.create")}
           </Button>
         </div>
       </form>
     </Fragment>
+  )
+}
+
+function ScalingGroupCombobox({
+  items,
+  value,
+  onChange,
+  invalid,
+}: {
+  items: string[]
+  value: string | null
+  onChange: (v: string | undefined) => void
+  invalid?: boolean
+}) {
+  const selected = items.find((i) => i === value) ?? null
+  return (
+    <Combobox
+      items={items}
+      itemToStringLabel={(item) => item}
+      value={selected}
+      onValueChange={(v) => onChange(v ?? undefined)}
+    >
+      <ComboboxInput aria-invalid={invalid} placeholder="—" />
+      <ComboboxContent>
+        <ComboboxList>
+          {(item: string) => (
+            <ComboboxItem key={item} value={item}>
+              <span className="font-mono text-xs">{item}</span>
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+        <ComboboxEmpty />
+      </ComboboxContent>
+    </Combobox>
   )
 }
 
@@ -298,13 +390,10 @@ const SecondsField = ((
   </Field>
 )) as (props: { label: string; name: string }) => React.ReactElement
 
-// ─── Form ↔ API mapping ──────────────────────────────────────────────────────
-
-function extractGroupForForm(env: AgentSandboxEnv, groupName: string): FormValues {
-  const auto = env.spec.autoscaling
-  const group = auto?.groups?.find((g) => g.name === groupName)
+function extractGroupForForm(group: AgentEnvAutoscalingGroup | null): FormValues {
   return {
-    enabled: group?.enabled ?? false,
+    name: group?.name,
+    enabled: group?.enabled ?? true,
     minReplicas: group?.minReplicas,
     maxReplicas: group?.maxReplicas,
     scaleUpMode: (group?.scaleUpPolicy?.mode ?? undefined) as
@@ -321,10 +410,6 @@ function extractGroupForForm(env: AgentSandboxEnv, groupName: string): FormValue
   }
 }
 
-// buildGroupBody projects the form values into the shared shape used by
-// both Add (POST) and Update (PUT) — the request bodies have the same
-// fields except for the group `name`, which Add provides via the body and
-// Update via the URL path.
 function buildGroupBody(v: FormValues) {
   const body: Record<string, unknown> = {}
   if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
@@ -360,12 +445,13 @@ function buildGroupBody(v: FormValues) {
   return body
 }
 
-// runMutation wraps the openapi-react-query mutate() into a promise so the
-// submit handler can `await` it. Required because the queries package
-// exposes only the imperative .mutate(input, { onSuccess, onError })
-// callback style.
 function runMutation<TInput>(
-  mutation: { mutate: (input: TInput, opts: { onSuccess: () => void; onError: (e: unknown) => void }) => void },
+  mutation: {
+    mutate: (
+      input: TInput,
+      opts: { onSuccess: () => void; onError: (e: unknown) => void },
+    ) => void
+  },
   input: TInput,
 ): Promise<void> {
   return new Promise((resolve, reject) => {

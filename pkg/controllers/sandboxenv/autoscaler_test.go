@@ -67,61 +67,33 @@ func TestComputeScaleUpDelta_NilGroup(t *testing.T) {
 	}
 }
 
-// TestPickAutoscalingGroup confirms we pick groups[0] when present and
-// return nil otherwise — MVP single-group semantics.
-func TestPickAutoscalingGroup(t *testing.T) {
-	tests := []struct {
-		name string
-		env  *agentsv1alpha1.SandboxEnv
-		want bool // whether a group is returned
-	}{
-		{"nil env", nil, false},
-		{"no autoscaling", &agentsv1alpha1.SandboxEnv{}, false},
-		{
-			name: "empty groups",
-			env: &agentsv1alpha1.SandboxEnv{Spec: agentsv1alpha1.SandboxEnvSpec{
-				Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{},
-			}},
-			want: false,
-		},
-		{
-			name: "single group disabled",
-			env: &agentsv1alpha1.SandboxEnv{Spec: agentsv1alpha1.SandboxEnvSpec{
-				Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
-					Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "1c4Gi", Enabled: false}},
-				},
-			}},
-			want: false,
-		},
-		{
-			name: "single group enabled",
-			env: &agentsv1alpha1.SandboxEnv{Spec: agentsv1alpha1.SandboxEnvSpec{
-				Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
-					Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "1c4Gi", Enabled: true}},
-				},
-			}},
-			want: true,
-		},
-		{
-			name: "first disabled second enabled",
-			env: &agentsv1alpha1.SandboxEnv{Spec: agentsv1alpha1.SandboxEnvSpec{
-				Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
-					Groups: []agentsv1alpha1.EnvAutoscalingGroup{
-						{Name: "off", Enabled: false},
-						{Name: "on", Enabled: true},
-					},
-				},
-			}},
-			want: true,
-		},
+// TestGroupViewsByScalingGroup verifies members are partitioned by
+// Config.ScalingGroup and that empty-group members are excluded — the
+// per-group autoscaler relies on this routing.
+func TestGroupViewsByScalingGroup(t *testing.T) {
+	mk := func(name, sg string) memberView {
+		return memberView{
+			member: agentsv1alpha1.EnvClusterMember{
+				Name:   name,
+				Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: sg},
+			},
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := pickAutoscalingGroup(tt.env)
-			if (g != nil) != tt.want {
-				t.Errorf("pickAutoscalingGroup → %v, want present=%v", g, tt.want)
-			}
-		})
+	views := []memberView{
+		mk("a", "1c4Gi"),
+		mk("b", "1c4Gi"),
+		mk("c", "2c8Gi"),
+		mk("d", ""), // not in any group → dropped
+	}
+	got := groupViewsByScalingGroup(views)
+	if len(got["1c4Gi"]) != 2 {
+		t.Errorf("group 1c4Gi: want 2 members, got %d", len(got["1c4Gi"]))
+	}
+	if len(got["2c8Gi"]) != 1 {
+		t.Errorf("group 2c8Gi: want 1 member, got %d", len(got["2c8Gi"]))
+	}
+	if _, ok := got[""]; ok {
+		t.Errorf("empty-group bucket must not be populated")
 	}
 }
 

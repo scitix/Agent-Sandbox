@@ -23,6 +23,9 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
+from dateutil.parser import isoparse
+from typing import cast
+import datetime
 
 
 
@@ -42,6 +45,12 @@ class EnvScalingGroupStatus:
             total_running (int | Unset):
             total_desired (int | Unset):
             total_pending (int | Unset): Aggregate ObservedMember.pendingRequests across all members of this group.
+            last_scale_up_time (datetime.datetime | Unset): Most recent scale-up event for this group. Drives the per-group
+                cooldown window.
+            last_scale_down_time (datetime.datetime | Unset): Most recent scale-down event for this group. Drives the per-
+                group stabilization window.
+            idle_zero_since (datetime.datetime | Unset): When this group's aggregate idle count first dropped to zero in the
+                current continuous-zero window; clears when group idle > 0. Drives the proactive scale-up trigger.
      """
 
     name: str
@@ -49,6 +58,9 @@ class EnvScalingGroupStatus:
     total_running: int | Unset = UNSET
     total_desired: int | Unset = UNSET
     total_pending: int | Unset = UNSET
+    last_scale_up_time: datetime.datetime | Unset = UNSET
+    last_scale_down_time: datetime.datetime | Unset = UNSET
+    idle_zero_since: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -66,6 +78,18 @@ class EnvScalingGroupStatus:
 
         total_pending = self.total_pending
 
+        last_scale_up_time: str | Unset = UNSET
+        if not isinstance(self.last_scale_up_time, Unset):
+            last_scale_up_time = self.last_scale_up_time.isoformat()
+
+        last_scale_down_time: str | Unset = UNSET
+        if not isinstance(self.last_scale_down_time, Unset):
+            last_scale_down_time = self.last_scale_down_time.isoformat()
+
+        idle_zero_since: str | Unset = UNSET
+        if not isinstance(self.idle_zero_since, Unset):
+            idle_zero_since = self.idle_zero_since.isoformat()
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -80,6 +104,12 @@ class EnvScalingGroupStatus:
             field_dict["totalDesired"] = total_desired
         if total_pending is not UNSET:
             field_dict["totalPending"] = total_pending
+        if last_scale_up_time is not UNSET:
+            field_dict["lastScaleUpTime"] = last_scale_up_time
+        if last_scale_down_time is not UNSET:
+            field_dict["lastScaleDownTime"] = last_scale_down_time
+        if idle_zero_since is not UNSET:
+            field_dict["idleZeroSince"] = idle_zero_since
 
         return field_dict
 
@@ -98,12 +128,45 @@ class EnvScalingGroupStatus:
 
         total_pending = d.pop("totalPending", UNSET)
 
+        _last_scale_up_time = d.pop("lastScaleUpTime", UNSET)
+        last_scale_up_time: datetime.datetime | Unset
+        if isinstance(_last_scale_up_time,  Unset):
+            last_scale_up_time = UNSET
+        else:
+            last_scale_up_time = isoparse(_last_scale_up_time)
+
+
+
+
+        _last_scale_down_time = d.pop("lastScaleDownTime", UNSET)
+        last_scale_down_time: datetime.datetime | Unset
+        if isinstance(_last_scale_down_time,  Unset):
+            last_scale_down_time = UNSET
+        else:
+            last_scale_down_time = isoparse(_last_scale_down_time)
+
+
+
+
+        _idle_zero_since = d.pop("idleZeroSince", UNSET)
+        idle_zero_since: datetime.datetime | Unset
+        if isinstance(_idle_zero_since,  Unset):
+            idle_zero_since = UNSET
+        else:
+            idle_zero_since = isoparse(_idle_zero_since)
+
+
+
+
         env_scaling_group_status = cls(
             name=name,
             total_idle=total_idle,
             total_running=total_running,
             total_desired=total_desired,
             total_pending=total_pending,
+            last_scale_up_time=last_scale_up_time,
+            last_scale_down_time=last_scale_down_time,
+            idle_zero_since=idle_zero_since,
         )
 
 

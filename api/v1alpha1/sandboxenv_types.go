@@ -198,9 +198,11 @@ type EnvClusterMember struct {
 	// PreCreatePool. The Reconciler stamps the whole Spec verbatim when
 	// creating the live Pool and uses equality.Semantic.DeepEqual to
 	// detect drift between Spec and the live Pool on subsequent
-	// reconciles. Replicas in Spec is the initial value at AddMember
-	// time — the autoscaler owns the live Pool's Replicas thereafter
-	// and the Reconciler does NOT force Spec.Replicas back onto it.
+	// reconciles, including Spec.Replicas. The Env Reconciler is the
+	// sole writer of the live Pool's Replicas — both the API
+	// (UpdateMember) and the Env autoscaler express their intent by
+	// patching Member.Spec.Replicas here and let the Reconciler
+	// propagate it.
 	// +optional
 	Spec SandboxPoolSpec `json:"spec,omitempty"`
 
@@ -259,14 +261,6 @@ type EnvClusterMemberConfig struct {
 	// +optional
 	// +kubebuilder:default=default
 	ScalingGroup string `json:"scalingGroup,omitempty"`
-
-	// Replicas is the initial spec.replicas value applied to this member
-	// Pool when the Env Reconciler creates it. Autoscaling owns the
-	// replica value afterwards — the Reconciler does NOT force this
-	// baseline back on subsequent reconciles.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	Replicas int32 `json:"replicas,omitempty"`
 
 	// MaxReplicas is the upper bound on this member's spec.replicas.
 	// Enforced by the Env autoscaler when distributing scale-up delta
@@ -418,21 +412,6 @@ type EnvClusterStatus struct {
 	// +listMapKey=name
 	ObservedMembers []EnvObservedMember `json:"observedMembers,omitempty"`
 
-	// LastScaleUpTime records the latest cluster-local scale-up event. Used
-	// by the Env autoscaler for cooldown enforcement.
-	// +optional
-	LastScaleUpTime *metav1.Time `json:"lastScaleUpTime,omitempty"`
-
-	// LastScaleDownTime records the latest cluster-local scale-down event.
-	// +optional
-	LastScaleDownTime *metav1.Time `json:"lastScaleDownTime,omitempty"`
-
-	// IdleZeroSince records when the aggregated idle count for this cluster
-	// first dropped to zero in the current continuous-zero window. Cleared
-	// when idle > 0.
-	// +optional
-	IdleZeroSince *metav1.Time `json:"idleZeroSince,omitempty"`
-
 	// LastSnapshotTime records when this segment was last updated. For
 	// IsLocal=true: write time by the local Reconciler. For IsLocal=false:
 	// arrival time of the Hub Sync push.
@@ -507,7 +486,7 @@ type EnvObservedMember struct {
 }
 
 // EnvScalingGroupStatus aggregates a scalingGroup's runtime state across all
-// members.
+// members and carries the autoscaler's per-group wall-clock bookkeeping.
 type EnvScalingGroupStatus struct {
 	// Name matches the autoscaling group's Name and is the list map key.
 	// +required
@@ -526,6 +505,24 @@ type EnvScalingGroupStatus struct {
 	// the legacy annotation-based wake-up fires.
 	// +optional
 	TotalPending int32 `json:"totalPending,omitempty"`
+
+	// LastScaleUpTime records the latest scale-up event for this group.
+	// Each group has its own cooldown window so unrelated groups don't
+	// block one another.
+	// +optional
+	LastScaleUpTime *metav1.Time `json:"lastScaleUpTime,omitempty"`
+
+	// LastScaleDownTime records the latest scale-down event for this
+	// group. Drives the per-group scale-down stabilization window.
+	// +optional
+	LastScaleDownTime *metav1.Time `json:"lastScaleDownTime,omitempty"`
+
+	// IdleZeroSince records when this group's aggregate idle count first
+	// dropped to zero in the current continuous-zero window. Drives the
+	// proactive (idleThresholdSeconds) scale-up trigger. Cleared when
+	// group idle > 0.
+	// +optional
+	IdleZeroSince *metav1.Time `json:"idleZeroSince,omitempty"`
 }
 
 // Condition type constants for SandboxEnv.

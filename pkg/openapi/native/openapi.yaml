@@ -1008,11 +1008,6 @@ components:
         scalingGroup:
           type: string
           description: "ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi'). Members in the same group share autoscaling policy."
-        replicas:
-          type: integer
-          format: int32
-          minimum: 0
-          description: "Initial replica count for this member Pool. Autoscaling owns subsequent changes — the Reconciler does not force this value back on later reconciles."
         maxReplicas:
           type: integer
           format: int32
@@ -1200,15 +1195,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EnvObservedMember"
-        lastScaleUpTime:
-          type: string
-          format: date-time
-        lastScaleDownTime:
-          type: string
-          format: date-time
-        idleZeroSince:
-          type: string
-          format: date-time
         lastSnapshotTime:
           type: string
           format: date-time
@@ -1232,6 +1218,18 @@ components:
           type: integer
           format: int32
           description: "Aggregate ObservedMember.pendingRequests across all members of this group."
+        lastScaleUpTime:
+          type: string
+          format: date-time
+          description: "Most recent scale-up event for this group. Drives the per-group cooldown window."
+        lastScaleDownTime:
+          type: string
+          format: date-time
+          description: "Most recent scale-down event for this group. Drives the per-group stabilization window."
+        idleZeroSince:
+          type: string
+          format: date-time
+          description: "When this group's aggregate idle count first dropped to zero in the current continuous-zero window; clears when group idle > 0. Drives the proactive scale-up trigger."
 
     EnvCondition:
       type: object

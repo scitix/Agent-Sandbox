@@ -887,7 +887,7 @@ func (s *k8sSandboxService) resolveContainerImages(pool *agentsv1alpha1.SandboxP
 		containerImages = map[string]string{}
 	}
 
-	if len(pool.Spec.Template.Spec.Containers) == 0 {
+	if pool.Spec.Template == nil || len(pool.Spec.Template.Spec.Containers) == 0 {
 		return nil, fmt.Errorf("sandbox pool %s/%s has no containers", pool.Namespace, pool.Name)
 	}
 

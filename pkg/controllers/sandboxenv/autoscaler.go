@@ -16,6 +16,7 @@ package sandboxenv
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -24,12 +25,14 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envcommon"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 )
@@ -46,88 +49,121 @@ const (
 	defaultSaturationCooldownSeconds    = 60
 )
 
-// syncAutoscaling runs the Env-level autoscaler.
+// syncAutoscaling runs the Env-level autoscaler over every enabled
+// scaling group declared on env.Spec.Autoscaling.Groups.
 //
-// MVP scope (single ScalingGroup): the autoscaler operates on the local
-// cluster segment's members as one cohort. The chosen group config is
-// `env.Spec.Autoscaling.Groups[0]` (or empty defaults) — multi-group
-// schema is preserved for future per-resource-shape scaling but only one
-// active group is consulted today.
+// Per-group flow (within one reconcile cycle, executed in the order the
+// groups are declared on the Env):
+//  1. Pick the subset of local members whose Config.ScalingGroup matches.
+//  2. Refresh the group's IdleZeroSince based on its own aggregate idle.
+//  3. Evaluate scale-up using the group's policy + state; PATCH
+//     Member.Spec.Replicas on the Env for any member that wins delta. If
+//     any member scaled up, skip scale-down for this group this cycle.
+//  4. Otherwise evaluate scale-down on the first member of the subset
+//     (Phase 1 single-member scale-down).
 //
-// Scale-up may PATCH multiple member Pools in a single reconcile cycle:
-// the autoscaler iterates members by scaleUpPriority and consumes the
-// computed delta across them, using the plugin admission probe to converge
-// on the largest scheduler-acceptable target for each.
+// All bookkeeping (LastScaleUpTime, LastScaleDownTime, IdleZeroSince) is
+// per-group, so unrelated groups never block one another's cooldown,
+// stabilization, or idle-zero proactive triggers.
 //
-// Returns a non-zero RequeueAfter when the next decision depends on a wall
-// clock (cooldown, idle threshold, stabilization).
+// All groups are evaluated in one reconcile pass; the controller does NOT
+// spawn a goroutine per group — that would conflict with the
+// controller-runtime single-reconcile-per-Env contract and require
+// independent caches / leader election. Different Envs already reconcile
+// in parallel via MaxConcurrentReconciles.
+//
+// Returns a non-zero RequeueAfter when any group's next decision depends
+// on a wall clock.
 func (r *SandboxEnvReconciler) syncAutoscaling(ctx context.Context, env *agentsv1alpha1.SandboxEnv) (ctrl.Result, error) {
 	localSpec, ok := findLocalClusterSpec(env, r.LocalClusterID)
 	if !ok || len(localSpec.Members) == 0 {
 		return ctrl.Result{}, nil
 	}
 
-	// Load every member Pool once up front — IdleZeroSince needs the
-	// aggregate idle count across all members, and reconcileScaleUp iterates
-	// over them.
-	members, err := r.loadMemberPools(ctx, env.Namespace, localSpec.Members)
+	// Load each member's view (Env-side desired + Pool-side observed) once
+	// up front so per-group iteration doesn't re-fetch.
+	views, err := r.loadMemberViews(ctx, env.Namespace, localSpec.Members)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if len(members) == 0 {
+	if len(views) == 0 {
 		return ctrl.Result{}, nil
 	}
 
-	aggIdle := int32(0)
-	for _, m := range members {
-		aggIdle += m.pool.Status.IdleReplicas
-	}
-
-	// Always maintain IdleZeroSince so a delayed Enabled=true switch can act
-	// immediately.
-	if err := r.syncIdleZeroSince(ctx, env, aggIdle); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	group := pickAutoscalingGroup(env)
-	if group == nil {
-		// Autoscaling is per-group: when no group declares Enabled=true
-		// the autoscaler stays dormant on this cycle. IdleZeroSince
-		// bookkeeping above still runs so a delayed Enabled toggle can
-		// act immediately.
+	if env.Spec.Autoscaling == nil || len(env.Spec.Autoscaling.Groups) == 0 {
 		return ctrl.Result{}, nil
 	}
 
-	// Scale-up is evaluated first; if any Pool was actually grown, skip
-	// scale-down this cycle.
-	scaledUp, upResult, err := r.reconcileScaleUp(ctx, env, members, group, aggIdle)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if scaledUp {
-		return upResult, nil
-	}
+	byGroup := groupViewsByScalingGroup(views)
+	var combined ctrl.Result
+	for i := range env.Spec.Autoscaling.Groups {
+		group := &env.Spec.Autoscaling.Groups[i]
+		if !group.Enabled {
+			continue
+		}
+		members := byGroup[group.Name]
+		if len(members) == 0 {
+			// Group is declared + enabled but no member references it. This
+			// is a config error the user should fix; we log and skip rather
+			// than fail the reconcile.
+			klog.V(2).InfoS("Env autoscaler: enabled scaling group has no members",
+				"env", env.Namespace+"/"+env.Name, "group", group.Name)
+			continue
+		}
 
-	// Scale-down still single-member-driven for the MVP. We pick the first
-	// member as the candidate (Phase 1 adoption is 1:1). Multi-member
-	// scale-down will arrive when multi-member scale-up has bedded in.
-	downResult, err := r.reconcileScaleDown(ctx, env, members[0].pool, group)
-	if err != nil {
-		return ctrl.Result{}, err
+		// Per-group idle aggregation drives the per-group proactive trigger.
+		groupIdle := int32(0)
+		for _, m := range members {
+			groupIdle += m.pool.Status.IdleReplicas
+		}
+		if err := r.syncIdleZeroSince(ctx, env, group.Name, groupIdle); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		scaledUp, upResult, err := r.reconcileScaleUp(ctx, env, members, group, groupIdle)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		combined = minNonZeroResult(combined, upResult)
+		if scaledUp {
+			// Don't run scale-down for the same group this cycle; other
+			// groups still get their turn below.
+			continue
+		}
+
+		downResult, err := r.reconcileScaleDown(ctx, env, members[0], group)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		combined = minNonZeroResult(combined, downResult)
 	}
-	return minNonZeroResult(upResult, downResult), nil
+	return combined, nil
 }
 
-// memberWithPool pairs a member spec entry with its live Pool object.
-type memberWithPool struct {
-	spec agentsv1alpha1.EnvClusterMember
-	pool *agentsv1alpha1.SandboxPool
+// memberView pairs an Env-side member entry with a snapshot of its live
+// SandboxPool. The struct draws a clear contract between desired and
+// observed state:
+//
+//   - member: the EnvClusterMember from env.Spec.Clusters[].Members[]. This
+//     is the SoLE source of truth for "desired" — identity (Name),
+//     desired replica count (Spec.Replicas), user/admission knobs (Config:
+//     MaxReplicas, ScalingGroup, priorities, …). Reading "desired" from
+//     anywhere else is wrong.
+//   - pool: the live SandboxPool CR. Read pool.Status (idle / running
+//     counts, etc.), pool.Annotations (the PoolScaleUpPending doorbell),
+//     and pass it to plugin probes / pod-listing helpers that need a
+//     *SandboxPool. NEVER read pool.Spec — it lags member.Spec until the
+//     Env Reconciler's drift loop runs, so a same-cycle read is racy.
+type memberView struct {
+	member agentsv1alpha1.EnvClusterMember
+	pool   *agentsv1alpha1.SandboxPool
 }
 
-// loadMemberPools fetches the SandboxPool for each member name. Members
-// whose Pool is missing are skipped (typical during adopter churn).
-func (r *SandboxEnvReconciler) loadMemberPools(ctx context.Context, ns string, members []agentsv1alpha1.EnvClusterMember) ([]memberWithPool, error) {
-	out := make([]memberWithPool, 0, len(members))
+// loadMemberViews fetches the SandboxPool for each member name. Members
+// whose Pool is missing are skipped (typical during adopter churn or when
+// the Reconciler hasn't materialised the Pool yet).
+func (r *SandboxEnvReconciler) loadMemberViews(ctx context.Context, ns string, members []agentsv1alpha1.EnvClusterMember) ([]memberView, error) {
+	out := make([]memberView, 0, len(members))
 	for _, m := range members {
 		pool := &agentsv1alpha1.SandboxPool{}
 		if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: m.Name}, pool); err != nil {
@@ -136,63 +172,46 @@ func (r *SandboxEnvReconciler) loadMemberPools(ctx context.Context, ns string, m
 			}
 			return nil, err
 		}
-		out = append(out, memberWithPool{spec: m, pool: pool})
+		out = append(out, memberView{member: m, pool: pool})
 	}
 	return out, nil
 }
 
-// pickAutoscalingGroup returns the autoscaling group the Reconciler operates
-// on this cycle. MVP semantics: pick the first Enabled=true group in
-// env.Spec.Autoscaling.Groups; falls back to nil when none is enabled (which
-// short-circuits the caller). Multi-group will route per-member based on
-// member.ScalingGroup once multi-resource Envs land.
-func pickAutoscalingGroup(env *agentsv1alpha1.SandboxEnv) *agentsv1alpha1.EnvAutoscalingGroup {
-	if env == nil || env.Spec.Autoscaling == nil {
-		return nil
-	}
-	for i := range env.Spec.Autoscaling.Groups {
-		if env.Spec.Autoscaling.Groups[i].Enabled {
-			return &env.Spec.Autoscaling.Groups[i]
+// groupViewsByScalingGroup partitions members by their Config.ScalingGroup.
+// Members with empty ScalingGroup are excluded — autoscaling only operates
+// on members opted into a group.
+func groupViewsByScalingGroup(views []memberView) map[string][]memberView {
+	out := map[string][]memberView{}
+	for _, v := range views {
+		g := v.member.Config.ScalingGroup
+		if g == "" {
+			continue
 		}
+		out[g] = append(out[g], v)
 	}
-	return nil
+	return out
 }
 
 // syncIdleZeroSince mirrors the SandboxPool autoscaler's bookkeeping for the
 // Env's local cluster status segment. The timestamp drives the proactive
 // scale-up condition (idleThresholdSeconds since idle=0).
-func (r *SandboxEnvReconciler) syncIdleZeroSince(ctx context.Context, env *agentsv1alpha1.SandboxEnv, idleCount int32) error {
-	dirty := false
-	if idleCount == 0 {
-		var existing *metav1.Time
-		mutateLocalClusterStatus(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterStatus) {
-			existing = local.IdleZeroSince
-		})
-		if existing == nil {
-			now := metav1.Now()
-			mutateLocalClusterStatus(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterStatus) {
-				local.IdleZeroSince = &now
-			})
-			dirty = true
-		}
-	} else {
-		var existing *metav1.Time
-		mutateLocalClusterStatus(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterStatus) {
-			existing = local.IdleZeroSince
-		})
-		if existing != nil {
-			mutateLocalClusterStatus(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterStatus) {
-				local.IdleZeroSince = nil
-			})
-			dirty = true
-		}
-	}
-	if !dirty {
+func (r *SandboxEnvReconciler) syncIdleZeroSince(ctx context.Context, env *agentsv1alpha1.SandboxEnv, groupName string, idleCount int32) error {
+	existing := findScalingGroupStatus(env, groupName).IdleZeroSince
+	if (idleCount == 0) == (existing != nil) {
+		// Already in the desired state (zero+set, or non-zero+cleared).
 		return nil
 	}
 	base := env.DeepCopy()
-	// Reload the latest status before patching so we don't stomp concurrent
-	// updates from syncStatus.
+	if idleCount == 0 {
+		now := metav1.Now()
+		mutateScalingGroupStatus(env, groupName, func(g *agentsv1alpha1.EnvScalingGroupStatus) {
+			g.IdleZeroSince = &now
+		})
+	} else {
+		mutateScalingGroupStatus(env, groupName, func(g *agentsv1alpha1.EnvScalingGroupStatus) {
+			g.IdleZeroSince = nil
+		})
+	}
 	if err := r.Status().Patch(ctx, env, client.MergeFrom(base)); err != nil {
 		if apierrors.IsConflict(err) {
 			return nil // next reconcile picks it up
@@ -232,17 +251,17 @@ func (r *SandboxEnvReconciler) syncIdleZeroSince(ctx context.Context, env *agent
 func (r *SandboxEnvReconciler) reconcileScaleUp(
 	ctx context.Context,
 	env *agentsv1alpha1.SandboxEnv,
-	members []memberWithPool,
+	members []memberView,
 	group *agentsv1alpha1.EnvAutoscalingGroup,
 	aggIdle int32,
 ) (bool, ctrl.Result, error) {
 	cooldown, idleThresholdSec, saturationCooldown := scaleUpPolicyOrDefault(group)
 
-	if requeue, ok := scaleUpCooldownActive(env, r.LocalClusterID, cooldown); ok {
+	if requeue, ok := scaleUpCooldownActive(env, group.Name, cooldown); ok {
 		return false, requeue, nil
 	}
 
-	trigger, requeue, fired := evaluateScaleUpTriggers(env, members, r.LocalClusterID, cooldown, idleThresholdSec)
+	trigger, requeue, fired := evaluateScaleUpTriggers(env, members, group.Name, cooldown, idleThresholdSec)
 	if !fired {
 		return false, requeue, nil
 	}
@@ -250,7 +269,9 @@ func (r *SandboxEnvReconciler) reconcileScaleUp(
 	maxR := effectiveMaxReplicas(group)
 	aggDesired := int32(0)
 	for _, m := range members {
-		aggDesired += m.pool.Spec.Replicas
+		// Member.Spec.Replicas is the canonical desired count; pool's
+		// Spec.Replicas may temporarily trail it during convergence.
+		aggDesired += m.member.Spec.Replicas
 	}
 	if maxR > 0 && aggDesired >= maxR {
 		return false, ctrl.Result{}, nil
@@ -262,15 +283,15 @@ func (r *SandboxEnvReconciler) reconcileScaleUp(
 
 	// Sort: scaleUpPriority ascending (lower = try first), then name to break
 	// ties deterministically.
-	sorted := make([]memberWithPool, len(members))
+	sorted := make([]memberView, len(members))
 	copy(sorted, members)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		iPri := sorted[i].spec.Config.EffectiveScaleUpPriority()
-		jPri := sorted[j].spec.Config.EffectiveScaleUpPriority()
+		iPri := sorted[i].member.Config.EffectiveScaleUpPriority()
+		jPri := sorted[j].member.Config.EffectiveScaleUpPriority()
 		if iPri != jPri {
 			return iPri < jPri
 		}
-		return sorted[i].spec.Name < sorted[j].spec.Name
+		return sorted[i].member.Name < sorted[j].member.Name
 	})
 	_ = aggIdle // future: per-member idle weighting
 
@@ -285,7 +306,7 @@ func (r *SandboxEnvReconciler) reconcileScaleUp(
 		if deltaRemaining <= 0 {
 			break
 		}
-		om := observedByName[m.spec.Name]
+		om := observedByName[m.member.Name]
 		if om.SaturatedUntil != nil && om.SaturatedUntil.After(now) {
 			continue
 		}
@@ -305,7 +326,7 @@ func (r *SandboxEnvReconciler) reconcileScaleUp(
 
 	// Persist status updates + LastScaleUpTime on the Env.
 	if scaledUp || len(statusUpdates) > 0 {
-		if err := r.writeScaleUpStatus(ctx, env, statusUpdates, scaledUp); err != nil {
+		if err := r.writeScaleUpStatus(ctx, env, group.Name, statusUpdates, scaledUp); err != nil {
 			klog.ErrorS(err, "failed to update Env.status after scale-up attempt (non-fatal)",
 				"env", env.Namespace+"/"+env.Name)
 		}
@@ -319,12 +340,12 @@ func (r *SandboxEnvReconciler) reconcileScaleUp(
 	return scaledUp, ctrl.Result{RequeueAfter: clampRequeue(cooldown)}, nil
 }
 
-// scaleUpCooldownActive reports whether the LastScaleUp/LastScaleDown
-// timestamps still gate scale-up. When active, the caller should requeue
-// after the residual time.
-func scaleUpCooldownActive(env *agentsv1alpha1.SandboxEnv, localClusterID string, cooldown time.Duration) (ctrl.Result, bool) {
-	localStatus := findLocalClusterStatus(env, localClusterID)
-	for _, ts := range []*metav1.Time{localStatus.LastScaleUpTime, localStatus.LastScaleDownTime} {
+// scaleUpCooldownActive reports whether the group's LastScaleUpTime /
+// LastScaleDownTime still gate scale-up. When active, the caller should
+// requeue after the residual time.
+func scaleUpCooldownActive(env *agentsv1alpha1.SandboxEnv, groupName string, cooldown time.Duration) (ctrl.Result, bool) {
+	g := findScalingGroupStatus(env, groupName)
+	for _, ts := range []*metav1.Time{g.LastScaleUpTime, g.LastScaleDownTime} {
 		if ts == nil {
 			continue
 		}
@@ -336,21 +357,22 @@ func scaleUpCooldownActive(env *agentsv1alpha1.SandboxEnv, localClusterID string
 }
 
 // evaluateScaleUpTriggers checks the reactive (annotation) and proactive
-// (idle-zero) signals. Returns the trigger label (for events / logs), an
-// optional requeue suggestion, and whether any trigger fired.
+// (idle-zero) signals for a single scaling group. Returns the trigger
+// label (for events / logs), an optional requeue suggestion, and whether
+// any trigger fired.
 //
 // When no trigger fires but the idle-zero timer is mid-flight, returns a
 // non-zero requeue so we wake up exactly when the threshold elapses.
-func evaluateScaleUpTriggers(env *agentsv1alpha1.SandboxEnv, members []memberWithPool, localClusterID string, cooldown time.Duration, idleThresholdSec int32) (trigger string, requeue ctrl.Result, fired bool) {
+func evaluateScaleUpTriggers(env *agentsv1alpha1.SandboxEnv, members []memberView, groupName string, cooldown time.Duration, idleThresholdSec int32) (trigger string, requeue ctrl.Result, fired bool) {
 	for _, m := range members {
 		if isPendingScaleUpAnnotationFresh(m.pool, cooldown) {
 			return "createPending", ctrl.Result{}, true
 		}
 	}
 	idleThreshold := time.Duration(idleThresholdSec) * time.Second
-	localStatus := findLocalClusterStatus(env, localClusterID)
-	if idleThreshold > 0 && localStatus.IdleZeroSince != nil {
-		idleZero := time.Since(localStatus.IdleZeroSince.Time)
+	groupStatus := findScalingGroupStatus(env, groupName)
+	if idleThreshold > 0 && groupStatus.IdleZeroSince != nil {
+		idleZero := time.Since(groupStatus.IdleZeroSince.Time)
 		if idleZero >= idleThreshold {
 			return "idleZero", ctrl.Result{}, true
 		}
@@ -390,17 +412,22 @@ type memberAttempt struct {
 func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 	ctx context.Context,
 	env *agentsv1alpha1.SandboxEnv,
-	m memberWithPool,
+	m memberView,
 	_ *agentsv1alpha1.EnvAutoscalingGroup,
 	deltaRemaining, aggDesired, maxR int32,
 	now time.Time,
 	saturationCooldown time.Duration,
 	trigger string,
 ) memberAttempt {
-	current := m.pool.Spec.Replicas
+	// Source of truth for "current desired" is Member.Spec.Replicas on
+	// the Env — this is what API writes and what the Reconciler converges
+	// the live Pool to. The live Pool's Spec.Replicas may lag the Env if a
+	// reconcile is still in flight, so we read from Member to keep the
+	// autoscaler's decisions self-consistent across cycles.
+	current := m.member.Spec.Replicas
 	candidate := current + deltaRemaining
-	if m.spec.Config.MaxReplicas != nil && *m.spec.Config.MaxReplicas > 0 && candidate > *m.spec.Config.MaxReplicas {
-		candidate = *m.spec.Config.MaxReplicas
+	if m.member.Config.MaxReplicas != nil && *m.member.Config.MaxReplicas > 0 && candidate > *m.member.Config.MaxReplicas {
+		candidate = *m.member.Config.MaxReplicas
 	}
 	if maxR > 0 {
 		if h := maxR - aggDesired + current; candidate > h {
@@ -414,7 +441,7 @@ func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 	res := plugins.ProbeAcceptedReplicas(ctx, r.PluginManager, m.pool, nil, current, candidate)
 	switch res.Kind {
 	case plugins.ProbeOK:
-		if err := r.patchPoolReplicas(ctx, m.pool, res.Accepted); err != nil {
+		if err := r.patchMemberSpecReplicas(ctx, env, m, res.Accepted); err != nil {
 			return memberAttempt{err: err}
 		}
 		r.clearPoolScaleUpPending(ctx, m.pool)
@@ -424,7 +451,7 @@ func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 		return memberAttempt{
 			consumed: res.Accepted - current,
 			update: memberStatusUpdate{
-				name:           m.spec.Name,
+				name:           m.member.Name,
 				attemptResult:  "Success",
 				clearSaturated: true,
 			},
@@ -432,7 +459,7 @@ func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 	case plugins.ProbeInsufficientResources:
 		consumed := int32(0)
 		if res.Accepted > current {
-			if err := r.patchPoolReplicas(ctx, m.pool, res.Accepted); err != nil {
+			if err := r.patchMemberSpecReplicas(ctx, env, m, res.Accepted); err != nil {
 				return memberAttempt{err: err}
 			}
 			r.clearPoolScaleUpPending(ctx, m.pool)
@@ -445,7 +472,7 @@ func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 		return memberAttempt{
 			consumed: consumed,
 			update: memberStatusUpdate{
-				name:           m.spec.Name,
+				name:           m.member.Name,
 				attemptResult:  "InsufficientResources",
 				saturatedUntil: &until,
 				message:        truncErr(res.Err),
@@ -455,7 +482,7 @@ func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 		until := metav1.NewTime(now.Add(saturationCooldown))
 		return memberAttempt{
 			update: memberStatusUpdate{
-				name:           m.spec.Name,
+				name:           m.member.Name,
 				attemptResult:  "InvalidSpec",
 				saturatedUntil: &until,
 				message:        truncErr(res.Err),
@@ -464,7 +491,7 @@ func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 	default: // ProbeInternalError — retry next reconcile, don't mark saturated.
 		return memberAttempt{
 			update: memberStatusUpdate{
-				name:          m.spec.Name,
+				name:          m.member.Name,
 				attemptResult: "InternalError",
 				message:       truncErr(res.Err),
 			},
@@ -483,15 +510,18 @@ type memberStatusUpdate struct {
 	message        string       // verbatim short error description
 }
 
-// writeScaleUpStatus persists per-member attempt results plus LastScaleUpTime
-// to Env.Status. Single Patch through the Status subresource.
-func (r *SandboxEnvReconciler) writeScaleUpStatus(ctx context.Context, env *agentsv1alpha1.SandboxEnv, updates []memberStatusUpdate, anyScaledUp bool) error {
+// writeScaleUpStatus persists per-member attempt results (on the local
+// cluster status segment) plus the group's LastScaleUpTime. Single Patch
+// through the Status subresource.
+func (r *SandboxEnvReconciler) writeScaleUpStatus(ctx context.Context, env *agentsv1alpha1.SandboxEnv, groupName string, updates []memberStatusUpdate, anyScaledUp bool) error {
 	base := env.DeepCopy()
 	now := metav1.Now()
+	if anyScaledUp {
+		mutateScalingGroupStatus(env, groupName, func(g *agentsv1alpha1.EnvScalingGroupStatus) {
+			g.LastScaleUpTime = &now
+		})
+	}
 	mutateLocalClusterStatus(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterStatus) {
-		if anyScaledUp {
-			local.LastScaleUpTime = &now
-		}
 		for _, u := range updates {
 			applyMemberAttemptResult(local, u)
 		}
@@ -534,21 +564,55 @@ func applyMemberAttemptResult(local *agentsv1alpha1.EnvClusterStatus, u memberSt
 	}
 }
 
-// patchPoolReplicas writes spec.replicas onto pool, retrying on conflict.
-// Mutates pool in place so the caller can use the updated value for
-// aggregate accounting within the same reconcile cycle.
-func (r *SandboxEnvReconciler) patchPoolReplicas(ctx context.Context, pool *agentsv1alpha1.SandboxPool, target int32) error {
-	base := pool.DeepCopy()
-	pool.Spec.Replicas = target
-	if err := r.Patch(ctx, pool, client.MergeFrom(base)); err != nil {
-		// Restore the in-memory value so subsequent iteration sees the
-		// previous replicas count rather than the failed target.
-		pool.Spec.Replicas = base.Spec.Replicas
+// patchMemberSpecReplicas writes the desired replicas count onto the
+// matching EnvClusterMember.Spec.Replicas via a retry-on-conflict patch on
+// the SandboxEnv CR. The Env Reconciler is the sole writer of the live
+// Pool's Spec.Replicas — it picks up the new value on its next reconcile
+// pass and propagates it.
+//
+// The supplied m.member.Spec.Replicas is updated in place so subsequent
+// iterations of the scale-up loop see the new aggregate within the same
+// reconcile cycle. The live Pool (m.pool) is left untouched: anyone
+// reading pool.Spec is doing it wrong (see memberView's contract).
+func (r *SandboxEnvReconciler) patchMemberSpecReplicas(ctx context.Context, env *agentsv1alpha1.SandboxEnv, m memberView, target int32) error {
+	key := types.NamespacedName{Namespace: env.Namespace, Name: env.Name}
+	oldReplicas := m.member.Spec.Replicas
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &agentsv1alpha1.SandboxEnv{}
+		if err := r.Get(ctx, key, current); err != nil {
+			return err
+		}
+		base := current.DeepCopy()
+		ms := envcommon.LocalClusterMembers(&current.Spec, r.LocalClusterID)
+		idx := -1
+		for i := range ms {
+			if ms[i].Name == m.member.Name {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return fmt.Errorf("member %q vanished from env %s/%s", m.member.Name, env.Namespace, env.Name)
+		}
+		ms[idx].Spec.Replicas = target
+		envcommon.SetLocalClusterMembers(&current.Spec, r.LocalClusterID, ms)
+		return r.Patch(ctx, current, client.MergeFrom(base))
+	}); err != nil {
 		return err
 	}
-	klog.InfoS("Env autoscaler: patched Pool spec.replicas",
-		"pool", pool.Namespace+"/"+pool.Name,
-		"oldReplicas", base.Spec.Replicas, "newReplicas", target)
+
+	// NOTE: m is a value-copy here so mutating m.member.Spec.Replicas would
+	// not propagate to the loop in reconcileScaleUp. Aggregate accounting
+	// across loop iterations is handled via aggDesired += attempt.consumed
+	// at the call site; each member is only visited once per cycle, so we
+	// don't need to keep m in sync. The live Pool's spec catches up when
+	// the Env Reconciler runs (it observed the Env change above and will
+	// be requeued).
+
+	klog.InfoS("Env autoscaler: patched Member.Spec.Replicas",
+		"env", env.Namespace+"/"+env.Name,
+		"member", m.member.Name,
+		"oldReplicas", oldReplicas, "newReplicas", target)
 	return nil
 }
 
@@ -587,9 +651,10 @@ func truncErr(err *domain.AppError) string {
 func (r *SandboxEnvReconciler) reconcileScaleDown(
 	ctx context.Context,
 	env *agentsv1alpha1.SandboxEnv,
-	pool *agentsv1alpha1.SandboxPool,
+	m memberView,
 	group *agentsv1alpha1.EnvAutoscalingGroup,
 ) (ctrl.Result, error) {
+	pool := m.pool
 	idleTimeoutSec, stabilizationSec := scaleDownPolicyOrDefault(group)
 	idleTimeout := time.Duration(idleTimeoutSec) * time.Second
 	stabilization := time.Duration(stabilizationSec) * time.Second
@@ -598,14 +663,15 @@ func (r *SandboxEnvReconciler) reconcileScaleDown(
 		return ctrl.Result{}, nil
 	}
 
+	current := m.member.Spec.Replicas
 	lowerBound := max(pool.Status.RunningReplicas, effectiveMinReplicas(group))
-	if pool.Spec.Replicas <= lowerBound {
+	if current <= lowerBound {
 		return ctrl.Result{}, nil
 	}
 
-	localStatus := findLocalClusterStatus(env, r.LocalClusterID)
-	if localStatus.LastScaleDownTime != nil {
-		elapsed := time.Since(localStatus.LastScaleDownTime.Time)
+	groupStatus := findScalingGroupStatus(env, group.Name)
+	if groupStatus.LastScaleDownTime != nil {
+		elapsed := time.Since(groupStatus.LastScaleDownTime.Time)
 		if elapsed < stabilization {
 			return ctrl.Result{RequeueAfter: clampRequeue(stabilization - elapsed)}, nil
 		}
@@ -624,31 +690,29 @@ func (r *SandboxEnvReconciler) reconcileScaleDown(
 		return ctrl.Result{RequeueAfter: clampRequeue(idleTimeout - idleDuration)}, nil
 	}
 
-	newReplicas := pool.Spec.Replicas - 1
-	base := pool.DeepCopy()
-	pool.Spec.Replicas = newReplicas
-	if err := r.Patch(ctx, pool, client.MergeFrom(base)); err != nil {
+	newReplicas := current - 1
+	if err := r.patchMemberSpecReplicas(ctx, env, m, newReplicas); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	r.emitEvent(env, "ScaleDown", "AutoscalerScaleDown",
 		"decreased %s/%s replicas from %d to %d (oldestIdleDuration: %s)",
-		pool.Namespace, pool.Name, newReplicas+1, newReplicas, idleDuration.Round(time.Second))
+		pool.Namespace, pool.Name, current, newReplicas, idleDuration.Round(time.Second))
 
 	now := metav1.Now()
 	baseEnv := env.DeepCopy()
-	mutateLocalClusterStatus(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterStatus) {
-		local.LastScaleDownTime = &now
+	mutateScalingGroupStatus(env, group.Name, func(g *agentsv1alpha1.EnvScalingGroupStatus) {
+		g.LastScaleDownTime = &now
 	})
 	if err := r.Status().Patch(ctx, env, client.MergeFrom(baseEnv)); err != nil && !apierrors.IsConflict(err) {
-		klog.ErrorS(err, "failed to update Env.status.lastScaleDownTime (non-fatal)",
-			"env", env.Namespace+"/"+env.Name)
+		klog.ErrorS(err, "failed to update scalingGroup.lastScaleDownTime (non-fatal)",
+			"env", env.Namespace+"/"+env.Name, "group", group.Name)
 	}
 
-	klog.InfoS("Env autoscaler: decreased Pool spec.replicas",
+	klog.InfoS("Env autoscaler: decreased Member.Spec.Replicas",
 		"env", env.Namespace+"/"+env.Name,
-		"pool", pool.Namespace+"/"+pool.Name,
-		"oldReplicas", newReplicas+1, "newReplicas", newReplicas,
+		"member", m.member.Name,
+		"oldReplicas", current, "newReplicas", newReplicas,
 		"oldestIdleDuration", idleDuration.Round(time.Second))
 
 	return ctrl.Result{RequeueAfter: clampRequeue(stabilization)}, nil

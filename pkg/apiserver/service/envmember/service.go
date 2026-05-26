@@ -227,10 +227,12 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	}
 
 	// Build the updated member by overlaying patch onto existing — preserves
-	// Spec, Metadata, Config (other than Replicas / MaxReplicas), name.
+	// Metadata, Config (other than MaxReplicas), name. Replicas goes directly
+	// into Member.Spec because the Env Reconciler is the sole writer of the
+	// live Pool's Spec.Replicas and it reads it from Member.Spec.Replicas.
 	member := *existing.DeepCopy()
 	if patch.Replicas != nil {
-		member.Config.Replicas = *patch.Replicas
+		member.Spec.Replicas = *patch.Replicas
 	}
 	if patch.MaxReplicas != nil {
 		v := *patch.MaxReplicas
@@ -239,15 +241,13 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 
 	// Candidate Pool used by PreUpdatePool admission: start from the
 	// frozen Member.Metadata + Member.Spec snapshot (not a fresh render —
-	// Template upgrades do NOT auto-propagate). Overlay the patched
-	// replica count so the plugin sees the new desired state.
+	// Template upgrades do NOT auto-propagate).
 	candidate := &agentsv1alpha1.SandboxPool{
 		ObjectMeta: *member.Metadata.DeepCopy(),
 		Spec:       *member.Spec.DeepCopy(),
 	}
 	candidate.Name = member.Name
 	candidate.Namespace = env.Namespace
-	candidate.Spec.Replicas = member.Config.Replicas
 	before := candidate.DeepCopy()
 
 	// Pod list (driver-supplied for PreUpdatePool) is left empty here; the
@@ -258,18 +258,12 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 		return nil, appErr
 	}
 	if pluginUpdated && !equality.Semantic.DeepEqual(before, candidate) {
-		// Plugin really mutated something: persist the new snapshot back
-		// onto the Member, then keep the live Pool aligned (if it exists)
-		// so we don't lose the plugin's intent.
+		// Plugin mutated the candidate — persist the new snapshot back onto
+		// the Member so the Reconciler picks up the drift on its next pass.
+		// We deliberately do NOT touch the live Pool here: the Reconciler is
+		// the sole writer of SandboxPool.Spec.
 		member.Metadata = sanitizeMemberMetadata(candidate.ObjectMeta)
 		member.Spec = *candidate.Spec.DeepCopy()
-		if err := s.patchLivePoolFromMember(ctx, env.Namespace, &member); err != nil {
-			return nil, domain.NewInternal(err.Error(), err)
-		}
-	} else {
-		// No plugin mutation — propagate just the replica count into
-		// Member.Spec so the Reconciler's drift detection observes it.
-		member.Spec.Replicas = member.Config.Replicas
 	}
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -433,21 +427,27 @@ func (s *k8sService) renderCandidate(ctx context.Context, env *agentsv1alpha1.Sa
 	return pool, nil
 }
 
-// projectMemberPool returns the freshly materialised SandboxPool CR if it
-// exists, else a minimal projection from the member fields. Used by
-// Add/Update which return immediately after the Env MemberPoolPatch lands but before
-// the Reconciler has had a chance to run.
+// projectMemberPool returns a SandboxPool projection that always reflects
+// the Env-side intent (Member.Spec.Replicas), even when the live Pool CR
+// hasn't caught up yet. We Get the live Pool to inherit its status and
+// other server-populated fields, then overlay Member.Spec.Replicas so the
+// caller sees the value it just wrote rather than the stale Reconciler
+// output.
 func (s *k8sService) projectMemberPool(ctx context.Context, namespace, envName string, member agentsv1alpha1.EnvClusterMember) *gen.SandboxPool {
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: member.Name}, pool); err == nil &&
 		envcommon.EnvNameFromOwnerRefs(pool.OwnerReferences) == envName {
 		result := envcommon.PoolToGen(ctx, pool)
+		// The live Pool's Spec.Replicas trails Member.Spec.Replicas until
+		// the Env Reconciler ticks; surface the desired value so the
+		// response stays in sync with the just-written intent.
+		result.Spec.Replicas = member.Spec.Replicas
 		return &result
 	}
 	return &gen.SandboxPool{
 		Name:      member.Name,
 		Namespace: namespace,
-		Spec:      gen.SandboxPoolSpec{Replicas: member.Config.Replicas},
+		Spec:      gen.SandboxPoolSpec{Replicas: member.Spec.Replicas},
 		OwningEnv: ptr.To(envName),
 	}
 }
@@ -477,44 +477,6 @@ func cloneStringMap(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	maps.Copy(out, in)
 	return out
-}
-
-// patchLivePoolFromMember aligns the live SandboxPool CR with the
-// frozen member.Metadata + member.Spec snapshot. Called after
-// PreUpdatePool admits a mutation so the plugin's intent (Reservation
-// resubmit, label change, ...) is applied without waiting for the next
-// Reconciler tick. Replicas is intentionally taken from Config (the
-// autoscaler-friendly source of truth) rather than from Spec.Replicas
-// — they're equal here because UpdateMember just synchronised them.
-//
-// Returns nil when the Pool does not exist (Reconciler will pick up
-// the new Member snapshot on first materialisation).
-func (s *k8sService) patchLivePoolFromMember(ctx context.Context, namespace string, member *agentsv1alpha1.EnvClusterMember) error {
-	live := &agentsv1alpha1.SandboxPool{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: member.Name}, live); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	base := live.DeepCopy()
-	for k, v := range member.Metadata.Labels {
-		if live.Labels == nil {
-			live.Labels = map[string]string{}
-		}
-		live.Labels[k] = v
-	}
-	for k, v := range member.Metadata.Annotations {
-		if live.Annotations == nil {
-			live.Annotations = map[string]string{}
-		}
-		live.Annotations[k] = v
-	}
-	live.Spec.Replicas = member.Config.Replicas
-	if equality.Semantic.DeepEqual(base, live) {
-		return nil
-	}
-	return s.client.Patch(ctx, live, client.MergeFrom(base))
 }
 
 // Compile-time reference to corev1 — kept so the new sanitizer/import

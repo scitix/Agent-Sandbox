@@ -94,12 +94,30 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		local.LastSnapshotTime = &now
 	})
 
-	// Group rollup by member.ScalingGroup. Drop any stale group entries that
-	// no longer have a contributing member so the rollup reflects current
-	// spec, not a snapshot.
+	// Group rollup by member.ScalingGroup. We rebuild the slice to drop
+	// stale group entries (members may have been removed from spec) but
+	// PRESERVE the autoscaler's per-group time bookkeeping
+	// (LastScaleUpTime / LastScaleDownTime / IdleZeroSince) when the group
+	// still exists — those fields are owned by syncAutoscaling, not by
+	// this rollup.
+	preservedTimes := map[string]agentsv1alpha1.EnvScalingGroupStatus{}
+	for _, g := range env.Status.ScalingGroups {
+		preservedTimes[g.Name] = g
+	}
 	env.Status.ScalingGroups = env.Status.ScalingGroups[:0]
 	for name, totals := range byGroup {
 		setScalingGroupStatus(env, name, totals.idle, totals.running, totals.desired)
+		if prev, ok := preservedTimes[name]; ok {
+			for i := range env.Status.ScalingGroups {
+				if env.Status.ScalingGroups[i].Name != name {
+					continue
+				}
+				env.Status.ScalingGroups[i].LastScaleUpTime = prev.LastScaleUpTime
+				env.Status.ScalingGroups[i].LastScaleDownTime = prev.LastScaleDownTime
+				env.Status.ScalingGroups[i].IdleZeroSince = prev.IdleZeroSince
+				break
+			}
+		}
 	}
 
 	env.Status.LocalMemberCount = int32(len(observed))
@@ -155,8 +173,8 @@ func effectiveResources(member agentsv1alpha1.EnvClusterMember, pool *agentsv1al
 	// For Phase 1 the closed-source plugin is expected to keep the Pool's
 	// resources in sync with the InstanceType, so reading the Pool is a
 	// good proxy.
-	if len(pool.Spec.Template.Spec.Containers) > 0 {
-		res := pool.Spec.EmbeddedSandboxTemplate.Template.Spec.Containers[0].Resources
+	if pool.Spec.Template != nil && len(pool.Spec.Template.Spec.Containers) > 0 {
+		res := pool.Spec.Template.Spec.Containers[0].Resources
 		return res.DeepCopy()
 	}
 	return nil
