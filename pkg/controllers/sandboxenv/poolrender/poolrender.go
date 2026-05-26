@@ -189,7 +189,6 @@ func MaterializeFromMember(env *agentsv1alpha1.SandboxEnv, member agentsv1alpha1
 			Namespace:       env.Namespace,
 			Labels:          copyMapNonNil(member.Metadata.Labels),
 			Annotations:     copyMapNonNil(member.Metadata.Annotations),
-			Finalizers:      append([]string(nil), member.Metadata.Finalizers...),
 			OwnerReferences: []metav1.OwnerReference{OwnerReferenceForEnv(env)},
 		},
 		Spec: *member.Spec.DeepCopy(),

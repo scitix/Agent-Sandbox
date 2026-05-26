@@ -373,11 +373,29 @@ spec:
                             type: object
                           metadata:
                             description: |-
-                              Metadata is the snapshot of the candidate Pool's ObjectMeta after
-                              PreCreatePool, with server-managed fields (UID, ResourceVersion,
-                              Generation, CreationTimestamp, ManagedFields, OwnerReferences)
-                              stripped. The Reconciler propagates Labels, Annotations, and
-                              Finalizers onto the live Pool's ObjectMeta when materialising it.
+                              Metadata is the snapshot of the candidate Pool's mutable ObjectMeta
+                              subset (Labels + Annotations) after PreCreatePool. The Reconciler
+                              propagates these onto the live Pool when materialising it.
+
+                              Finalizers are intentionally NOT stored here — `SandboxPoolReconciler`
+                              owns the Pool's finalizer lifecycle. Name/Namespace/UID/etc. are server
+                              or Env-owned and don't belong on a per-member snapshot. Using a
+                              dedicated struct (instead of metav1.ObjectMeta) avoids controller-gen
+                              emitting a degenerate `type: object` schema, which K8s API server would
+                              otherwise prune in admission.
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: Annotations are the candidate Pool's
+                                  metadata.annotations post-PreCreatePool.
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: Labels are the candidate Pool's metadata.labels
+                                  post-PreCreatePool.
+                                type: object
                             type: object
                           name:
                             description: |-

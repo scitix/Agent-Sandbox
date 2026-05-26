@@ -472,18 +472,30 @@ spec:
                                 type: string
                             type: object
                           metadata:
-                            description: 'Metadata is the snapshot of the candidate
-                              Pool''s ObjectMeta after
-
-                              PreCreatePool, with server-managed fields (UID, ResourceVersion,
-
-                              Generation, CreationTimestamp, ManagedFields, OwnerReferences)
-
-                              stripped. The Reconciler propagates Labels, Annotations,
-                              and
-
-                              Finalizers onto the live Pool''s ObjectMeta when materialising
-                              it.'
+                            description: "Metadata is the snapshot of the candidate\
+                              \ Pool's mutable ObjectMeta\nsubset (Labels + Annotations)\
+                              \ after PreCreatePool. The Reconciler\npropagates these\
+                              \ onto the live Pool when materialising it.\n\nFinalizers\
+                              \ are intentionally NOT stored here \u2014 `SandboxPoolReconciler`\n\
+                              owns the Pool's finalizer lifecycle. Name/Namespace/UID/etc.\
+                              \ are server\nor Env-owned and don't belong on a per-member\
+                              \ snapshot. Using a\ndedicated struct (instead of metav1.ObjectMeta)\
+                              \ avoids controller-gen\nemitting a degenerate `type:\
+                              \ object` schema, which K8s API server would\notherwise\
+                              \ prune in admission."
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: Annotations are the candidate Pool's
+                                  metadata.annotations post-PreCreatePool.
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: Labels are the candidate Pool's metadata.labels
+                                  post-PreCreatePool.
+                                type: object
                             type: object
                           name:
                             description: 'Name is the SandboxPool''s metadata.name

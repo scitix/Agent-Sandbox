@@ -235,6 +235,41 @@ func TestAdd_PropagatesPluginLabelMutation(t *testing.T) {
 	}
 }
 
+// TestAdd_PersistsEnvIdentityLabels guards the regression where the
+// SandboxPool ended up with empty metadata.labels (no team/user) because
+// EnvClusterMember.Metadata was typed as metav1.ObjectMeta and got pruned
+// by the K8s API server in admission. The fix moves Metadata to a
+// dedicated MemberMetadata struct with explicit labels/annotations
+// properties so the snapshot survives round-trips.
+func TestAdd_PersistsEnvIdentityLabels(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Labels = map[string]string{
+		agentsv1alpha1.LabelTeam: "ai-infra",
+		agentsv1alpha1.LabelUser: "admin",
+	}
+	cli := newClient(t, env, newTestTemplate())
+	svc := envmember.New(cli, nil, nil, nil)
+
+	if _, err := svc.AddMember(context.Background(), envTestNamespace, testEnvName, envLocalCluster, memberWithResources(1)); err != nil {
+		t.Fatalf("Add: %+v", err)
+	}
+
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: testEnvName}, got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Spec.Clusters[0].Members) != 1 {
+		t.Fatalf("expected one member, got %d", len(got.Spec.Clusters[0].Members))
+	}
+	persisted := got.Spec.Clusters[0].Members[0]
+	if persisted.Metadata.Labels[agentsv1alpha1.LabelTeam] != "ai-infra" {
+		t.Errorf("team identity not persisted on member.Metadata: %+v", persisted.Metadata.Labels)
+	}
+	if persisted.Metadata.Labels[agentsv1alpha1.LabelUser] != "admin" {
+		t.Errorf("user identity not persisted on member.Metadata: %+v", persisted.Metadata.Labels)
+	}
+}
+
 func TestAdd_AdmitterRejection_Bubbles(t *testing.T) {
 	pl := &capturingPlugin{
 		createFn: func(_ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {

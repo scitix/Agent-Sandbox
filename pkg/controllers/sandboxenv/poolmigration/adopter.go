@@ -483,12 +483,9 @@ func buildEnvFromPool(
 func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multiplier int32, groupName string) agentsv1alpha1.EnvClusterMember {
 	m := agentsv1alpha1.EnvClusterMember{
 		Name: pool.Name,
-		Metadata: metav1.ObjectMeta{
-			Name:        pool.Name,
-			Namespace:   pool.Namespace,
+		Metadata: agentsv1alpha1.MemberMetadata{
 			Labels:      cloneStringMap(pool.Labels),
 			Annotations: cloneStringMap(pool.Annotations),
-			Finalizers:  append([]string(nil), pool.Finalizers...),
 		},
 		Spec: *pool.Spec.DeepCopy(),
 		Config: agentsv1alpha1.EnvClusterMemberConfig{

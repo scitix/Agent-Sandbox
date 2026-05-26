@@ -80,12 +80,9 @@ func renderMemberForTest(t *testing.T, env *agentsv1alpha1.SandboxEnv, tmpl *age
 	if err != nil {
 		t.Fatalf("renderMemberForTest: %v", err)
 	}
-	m.Metadata = metav1.ObjectMeta{
-		Name:        pool.Name,
-		Namespace:   pool.Namespace,
+	m.Metadata = agentsv1alpha1.MemberMetadata{
 		Labels:      pool.Labels,
 		Annotations: pool.Annotations,
-		Finalizers:  append([]string(nil), pool.Finalizers...),
 	}
 	m.Spec = pool.Spec
 	return m

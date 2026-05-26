@@ -332,3 +332,51 @@ func TestValidate_RequiresIdleImage(t *testing.T) {
 		t.Errorf("expected error for missing idleImage")
 	}
 }
+
+// TestMaterializeFromMember_PropagatesIdentityLabels guards the regression
+// where Pool ObjectMeta lost team/user identity labels because
+// EnvClusterMember.Metadata was metav1.ObjectMeta, which controller-gen
+// emitted as a degenerate `type: object` schema and the K8s API server
+// pruned during admission. MemberMetadata now has explicit
+// labels/annotations properties so the snapshot survives the round-trip.
+func TestMaterializeFromMember_PropagatesIdentityLabels(t *testing.T) {
+	env := newTestEnv()
+	member := agentsv1alpha1.EnvClusterMember{
+		Name: "env-a-foo",
+		Metadata: agentsv1alpha1.MemberMetadata{
+			Labels: map[string]string{
+				agentsv1alpha1.LabelTeam: testTeam,
+				agentsv1alpha1.LabelUser: testUser,
+				"quota.scitix.ai/url":    "lab.math.x",
+			},
+			Annotations: map[string]string{
+				"agentbox.io/reservation": "preferred",
+			},
+		},
+		Spec: agentsv1alpha1.SandboxPoolSpec{
+			Replicas: 2,
+			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
+				IdleImage: "pause:3.10",
+			},
+		},
+	}
+	pool := poolrender.MaterializeFromMember(env, member, false)
+	if pool.Labels[agentsv1alpha1.LabelTeam] != testTeam {
+		t.Errorf("team label missing on materialised pool: %+v", pool.Labels)
+	}
+	if pool.Labels[agentsv1alpha1.LabelUser] != testUser {
+		t.Errorf("user label missing on materialised pool: %+v", pool.Labels)
+	}
+	if pool.Labels["quota.scitix.ai/url"] != "lab.math.x" {
+		t.Errorf("config label missing on materialised pool: %+v", pool.Labels)
+	}
+	if pool.Annotations["agentbox.io/reservation"] != "preferred" {
+		t.Errorf("annotation missing on materialised pool: %+v", pool.Annotations)
+	}
+	// Finalizers are owned by SandboxPoolReconciler — they must NOT come
+	// from the member snapshot, even if a future revision of MemberMetadata
+	// somehow carried them.
+	if len(pool.Finalizers) != 0 {
+		t.Errorf("materialised pool unexpectedly carries finalizers: %v", pool.Finalizers)
+	}
+}

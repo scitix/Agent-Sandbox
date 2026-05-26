@@ -186,13 +186,18 @@ type EnvClusterMember struct {
 	// +required
 	Name string `json:"name"`
 
-	// Metadata is the snapshot of the candidate Pool's ObjectMeta after
-	// PreCreatePool, with server-managed fields (UID, ResourceVersion,
-	// Generation, CreationTimestamp, ManagedFields, OwnerReferences)
-	// stripped. The Reconciler propagates Labels, Annotations, and
-	// Finalizers onto the live Pool's ObjectMeta when materialising it.
+	// Metadata is the snapshot of the candidate Pool's mutable ObjectMeta
+	// subset (Labels + Annotations) after PreCreatePool. The Reconciler
+	// propagates these onto the live Pool when materialising it.
+	//
+	// Finalizers are intentionally NOT stored here — `SandboxPoolReconciler`
+	// owns the Pool's finalizer lifecycle. Name/Namespace/UID/etc. are server
+	// or Env-owned and don't belong on a per-member snapshot. Using a
+	// dedicated struct (instead of metav1.ObjectMeta) avoids controller-gen
+	// emitting a degenerate `type: object` schema, which K8s API server would
+	// otherwise prune in admission.
 	// +optional
-	Metadata metav1.ObjectMeta `json:"metadata,omitempty"`
+	Metadata MemberMetadata `json:"metadata,omitempty"`
 
 	// Spec is the snapshot of the candidate SandboxPoolSpec after
 	// PreCreatePool. The Reconciler stamps the whole Spec verbatim when
@@ -212,6 +217,31 @@ type EnvClusterMember struct {
 	// so it remains a faithful description of the caller's request.
 	// +optional
 	Config EnvClusterMemberConfig `json:"config,omitempty"`
+}
+
+// MemberMetadata is the mutable subset of a candidate SandboxPool's ObjectMeta
+// that the Env Reconciler propagates onto the live Pool. It exists as a
+// dedicated type (not metav1.ObjectMeta) because controller-gen emits only a
+// degenerate `type: object` schema for an embedded ObjectMeta inside a
+// non-root CRD field, and the K8s API server then prunes every sub-field at
+// admission time — silently dropping Labels/Annotations the AddMember flow
+// just wrote.
+//
+// Fields are deliberately limited to what survives the round-trip from
+// RenderSandboxPool + PreCreatePool back onto the live Pool:
+//   - Labels/Annotations: identity (team/user) + plugin-added routing keys.
+//   - Finalizers are intentionally absent — SandboxPoolReconciler manages the
+//     Pool's finalizer lifecycle directly.
+//   - Name/Namespace/UID/ResourceVersion/etc. are server- or Env-owned and
+//     don't belong on a per-member snapshot.
+type MemberMetadata struct {
+	// Labels are the candidate Pool's metadata.labels post-PreCreatePool.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// Annotations are the candidate Pool's metadata.annotations post-PreCreatePool.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // EnvClusterMemberConfig captures the user-declared intent for one member.

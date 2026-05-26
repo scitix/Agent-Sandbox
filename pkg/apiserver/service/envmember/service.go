@@ -243,11 +243,14 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	// frozen Member.Metadata + Member.Spec snapshot (not a fresh render —
 	// Template upgrades do NOT auto-propagate).
 	candidate := &agentsv1alpha1.SandboxPool{
-		ObjectMeta: *member.Metadata.DeepCopy(),
-		Spec:       *member.Spec.DeepCopy(),
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        member.Name,
+			Namespace:   env.Namespace,
+			Labels:      cloneStringMap(member.Metadata.Labels),
+			Annotations: cloneStringMap(member.Metadata.Annotations),
+		},
+		Spec: *member.Spec.DeepCopy(),
 	}
-	candidate.Name = member.Name
-	candidate.Namespace = env.Namespace
 	before := candidate.DeepCopy()
 
 	// Pod list (driver-supplied for PreUpdatePool) is left empty here; the
@@ -452,21 +455,16 @@ func (s *k8sService) projectMemberPool(ctx context.Context, namespace, envName s
 	}
 }
 
-// sanitizeMemberMetadata strips server-managed ObjectMeta fields from
-// the post-PreCreatePool candidate so the snapshot stored on
-// EnvClusterMember.Metadata only carries data that round-trips cleanly
-// when the Reconciler materialises the live Pool. We keep
-// Name/Namespace/Labels/Annotations/Finalizers (the user- and
-// plugin-authored bits) and drop UID/ResourceVersion/Generation/CreationTimestamp/
-// DeletionTimestamp/ManagedFields/OwnerReferences (server- or
-// Reconciler-managed).
-func sanitizeMemberMetadata(in metav1.ObjectMeta) metav1.ObjectMeta {
-	return metav1.ObjectMeta{
-		Name:        in.Name,
-		Namespace:   in.Namespace,
+// sanitizeMemberMetadata projects the post-PreCreatePool candidate's
+// ObjectMeta into the narrow MemberMetadata snapshot that we persist on the
+// SandboxEnv CR. Only Labels + Annotations are kept: Name/Namespace are
+// re-derived from member.Name + env.Namespace when the Reconciler stamps the
+// Pool, and Finalizers are owned by SandboxPoolReconciler (see
+// sandboxpool_controller.go::Reconcile where FinalizerName is appended).
+func sanitizeMemberMetadata(in metav1.ObjectMeta) agentsv1alpha1.MemberMetadata {
+	return agentsv1alpha1.MemberMetadata{
 		Labels:      cloneStringMap(in.Labels),
 		Annotations: cloneStringMap(in.Annotations),
-		Finalizers:  append([]string(nil), in.Finalizers...),
 	}
 }
 
