@@ -26,9 +26,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.env_cluster_member_annotations import EnvClusterMemberAnnotations
-  from ..models.env_cluster_member_labels import EnvClusterMemberLabels
-  from ..models.resource_requirements import ResourceRequirements
+  from ..models.env_cluster_member_config import EnvClusterMemberConfig
 
 
 
@@ -40,42 +38,24 @@ T = TypeVar("T", bound="EnvClusterMember")
 
 @_attrs_define
 class EnvClusterMember:
-    """ 
+    """ One SandboxPool participating in an Env. Identity is `name`; everything
+    the caller can declare (sizing, scaling-group, routing priorities,
+    user-supplied labels/annotations) lives under `config`. The
+    materialised Pool's metadata + spec are server-internal state
+    (captured after plugin admission ran) and are NOT exposed here — query
+    the SandboxPool CR directly via `GET /v1/sandboxenvs/{name}/sandboxpools/{poolName}`
+    to inspect the rendered Pool.
+
         Attributes:
             name (str): SandboxPool's metadata.name within the Env's namespace. Acts as the member identity within the Env.
-            instance_type (str | Unset): Optional InstanceType catalog entry referenced by this member.
-            multiplier (int | Unset): Multiplier applied to the InstanceType base resources for this member.
-            scaling_group (str | Unset): ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi').
-                Members in the same group share autoscaling policy.
-            max_replicas (int | Unset): Upper bound on this member's spec.replicas. Enforced by the Env autoscaler when
-                distributing scale-up delta.
-            priority (int | Unset): Routing priority — lower preferred when EnvScheduler picks a member to dispatch a
-                request.
-            scale_up_priority (int | Unset): Scale-up order within the scaling group — lower scaled first. Same-value
-                tiebreak by name.
-            scale_down_priority (int | Unset): Scale-down order within the scaling group — lower shrunk first.
-            labels (EnvClusterMemberLabels | Unset): Labels stamped onto this member's SandboxPool. Use for plugin-driven
-                metadata (e.g. quota.scitix.ai/url) that the Env itself doesn't need to interpret.
-            annotations (EnvClusterMemberAnnotations | Unset): Annotations stamped onto this member's SandboxPool. Same
-                propagation semantics as labels.
-            replicas (int | Unset): Initial replica count for this member Pool. Autoscaling owns subsequent changes — the
-                Reconciler does not force this value back on later reconciles.
-            inline_resources (ResourceRequirements | Unset): Subset of Kubernetes corev1.ResourceRequirements used for per-
-                Pool resource sizing on EnvClusterMember.inlineResources.
+            config (EnvClusterMemberConfig | Unset): User-declared intent for one Env member. Plugins do not mutate this —
+                it stays equal to whatever the caller supplied at AddMember /
+                UpdateMember time, so it remains a faithful description of the
+                request shape across the member's lifetime.
      """
 
     name: str
-    instance_type: str | Unset = UNSET
-    multiplier: int | Unset = UNSET
-    scaling_group: str | Unset = UNSET
-    max_replicas: int | Unset = UNSET
-    priority: int | Unset = UNSET
-    scale_up_priority: int | Unset = UNSET
-    scale_down_priority: int | Unset = UNSET
-    labels: EnvClusterMemberLabels | Unset = UNSET
-    annotations: EnvClusterMemberAnnotations | Unset = UNSET
-    replicas: int | Unset = UNSET
-    inline_resources: ResourceRequirements | Unset = UNSET
+    config: EnvClusterMemberConfig | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -83,38 +63,12 @@ class EnvClusterMember:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_cluster_member_annotations import EnvClusterMemberAnnotations
-        from ..models.env_cluster_member_labels import EnvClusterMemberLabels
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.env_cluster_member_config import EnvClusterMemberConfig
         name = self.name
 
-        instance_type = self.instance_type
-
-        multiplier = self.multiplier
-
-        scaling_group = self.scaling_group
-
-        max_replicas = self.max_replicas
-
-        priority = self.priority
-
-        scale_up_priority = self.scale_up_priority
-
-        scale_down_priority = self.scale_down_priority
-
-        labels: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.labels, Unset):
-            labels = self.labels.to_dict()
-
-        annotations: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.annotations, Unset):
-            annotations = self.annotations.to_dict()
-
-        replicas = self.replicas
-
-        inline_resources: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.inline_resources, Unset):
-            inline_resources = self.inline_resources.to_dict()
+        config: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.config, Unset):
+            config = self.config.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -122,28 +76,8 @@ class EnvClusterMember:
         field_dict.update({
             "name": name,
         })
-        if instance_type is not UNSET:
-            field_dict["instanceType"] = instance_type
-        if multiplier is not UNSET:
-            field_dict["multiplier"] = multiplier
-        if scaling_group is not UNSET:
-            field_dict["scalingGroup"] = scaling_group
-        if max_replicas is not UNSET:
-            field_dict["maxReplicas"] = max_replicas
-        if priority is not UNSET:
-            field_dict["priority"] = priority
-        if scale_up_priority is not UNSET:
-            field_dict["scaleUpPriority"] = scale_up_priority
-        if scale_down_priority is not UNSET:
-            field_dict["scaleDownPriority"] = scale_down_priority
-        if labels is not UNSET:
-            field_dict["labels"] = labels
-        if annotations is not UNSET:
-            field_dict["annotations"] = annotations
-        if replicas is not UNSET:
-            field_dict["replicas"] = replicas
-        if inline_resources is not UNSET:
-            field_dict["inlineResources"] = inline_resources
+        if config is not UNSET:
+            field_dict["config"] = config
 
         return field_dict
 
@@ -151,71 +85,23 @@ class EnvClusterMember:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_cluster_member_annotations import EnvClusterMemberAnnotations
-        from ..models.env_cluster_member_labels import EnvClusterMemberLabels
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.env_cluster_member_config import EnvClusterMemberConfig
         d = dict(src_dict)
         name = d.pop("name")
 
-        instance_type = d.pop("instanceType", UNSET)
-
-        multiplier = d.pop("multiplier", UNSET)
-
-        scaling_group = d.pop("scalingGroup", UNSET)
-
-        max_replicas = d.pop("maxReplicas", UNSET)
-
-        priority = d.pop("priority", UNSET)
-
-        scale_up_priority = d.pop("scaleUpPriority", UNSET)
-
-        scale_down_priority = d.pop("scaleDownPriority", UNSET)
-
-        _labels = d.pop("labels", UNSET)
-        labels: EnvClusterMemberLabels | Unset
-        if isinstance(_labels,  Unset):
-            labels = UNSET
+        _config = d.pop("config", UNSET)
+        config: EnvClusterMemberConfig | Unset
+        if isinstance(_config,  Unset):
+            config = UNSET
         else:
-            labels = EnvClusterMemberLabels.from_dict(_labels)
-
-
-
-
-        _annotations = d.pop("annotations", UNSET)
-        annotations: EnvClusterMemberAnnotations | Unset
-        if isinstance(_annotations,  Unset):
-            annotations = UNSET
-        else:
-            annotations = EnvClusterMemberAnnotations.from_dict(_annotations)
-
-
-
-
-        replicas = d.pop("replicas", UNSET)
-
-        _inline_resources = d.pop("inlineResources", UNSET)
-        inline_resources: ResourceRequirements | Unset
-        if isinstance(_inline_resources,  Unset):
-            inline_resources = UNSET
-        else:
-            inline_resources = ResourceRequirements.from_dict(_inline_resources)
+            config = EnvClusterMemberConfig.from_dict(_config)
 
 
 
 
         env_cluster_member = cls(
             name=name,
-            instance_type=instance_type,
-            multiplier=multiplier,
-            scaling_group=scaling_group,
-            max_replicas=max_replicas,
-            priority=priority,
-            scale_up_priority=scale_up_priority,
-            scale_down_priority=scale_down_priority,
-            labels=labels,
-            annotations=annotations,
-            replicas=replicas,
-            inline_resources=inline_resources,
+            config=config,
         )
 
 

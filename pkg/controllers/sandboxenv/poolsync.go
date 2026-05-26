@@ -33,16 +33,27 @@ import (
 // reconcilePools brings the live member-Pool set in env's namespace into
 // alignment with the desired set derived from env.Spec.Clusters[local].Members.
 //
-//   - Pools in the desired set that don't exist are created (fully rendered
-//     via poolrender.RenderSandboxPool).
-//   - Pools that exist and drifted from the desired labels / annotations /
-//     pod spec are patched. Replicas is intentionally NOT forced — the
-//     autoscaler owns it.
+//   - Pools in the desired set that don't exist are created from
+//     Member.Metadata + Member.Spec (the frozen post-PreCreatePool
+//     snapshot) via poolrender.MaterializeFromMember. The Reconciler does
+//     NOT re-run plugin admission — plugin side-effects already live
+//     inside Member.Spec by construction.
+//   - Pools that exist and drifted from the Member snapshot in
+//     labels / annotations / pod spec are patched. Replicas is intentionally
+//     NOT forced — the autoscaler owns it.
 //   - Pools owned by this Env but not in the desired set are deleted (the
 //     user removed the member from spec.clusters[local].members).
 //
-// When the Env spec carries no members, a single namesake Pool is
-// materialised to preserve the legacy adopter shape.
+// An Env with no declared members is a bare shell — the Reconciler
+// creates zero Pools. Members are added via the env-scoped Pool CRUD
+// endpoints (POST /envs/{name}/sandboxpools), which gives plugin
+// admission (e.g. quota reservation) a chance to gate the create before
+// the Reconciler ever sees the request.
+//
+// Template upgrades do NOT auto-propagate through this path: a Template
+// change to env.Spec.TemplateRef will not rewrite any existing
+// Member.Spec. The (Phase 2) RefreshMember API is the explicit way to
+// re-align an existing member with a newer Template revision.
 func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1alpha1.SandboxEnv) error {
 	if env == nil || env.DeletionTimestamp != nil {
 		return nil
@@ -55,15 +66,10 @@ func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1
 		return err
 	}
 
-	// Fetch the source Template once per reconcile — every member shares it.
-	// A missing Template aborts the whole pass (no partial renders).
-	tmpl, err := r.fetchTemplate(ctx, env.Spec.TemplateRef.Name)
-	if err != nil {
-		return err
-	}
-
 	// Compute the IPS bit once — the Secret lookup is cheap and identical
-	// for every member of an Env.
+	// for every member of an Env. We re-stamp the resulting reference on
+	// every materialise so a Secret created/deleted after AddMember
+	// propagates onto the Pool without waiting for RefreshMember.
 	ipsExists, err := poolrender.ImagePullSecretExists(ctx, r.Client, env.Namespace, agentsv1alpha1.EnvImagePullSecretName(env.Name))
 	if err != nil {
 		// Stale state is preferable to refusing to reconcile — log and
@@ -74,16 +80,7 @@ func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1
 
 	desired := make(map[string]*agentsv1alpha1.SandboxPool, len(members))
 	for _, m := range members {
-		rendered, err := poolrender.RenderSandboxPool(poolrender.Inputs{
-			Env:                   env,
-			Template:              tmpl,
-			Member:                m,
-			ImagePullSecretExists: ipsExists,
-		})
-		if err != nil {
-			return fmt.Errorf("render member %q: %w", m.Name, err)
-		}
-		desired[m.Name] = rendered
+		desired[m.Name] = poolrender.MaterializeFromMember(env, m, ipsExists)
 	}
 
 	for name, want := range desired {
@@ -100,7 +97,7 @@ func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1
 			log.Info("Created member SandboxPool", "pool", name)
 			continue
 		}
-		if err := r.updateMemberPoolIfDrifted(ctx, existing, want, tmpl); err != nil {
+		if err := r.updateMemberPoolIfDrifted(ctx, existing, want); err != nil {
 			return fmt.Errorf("update pool %q: %w", name, err)
 		}
 	}
@@ -117,24 +114,31 @@ func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1
 	return nil
 }
 
-// desiredLocalMembers returns the slice of EnvClusterMembers from the local
-// cluster segment. When the segment is absent or empty, a single namesake
-// member (Name=env.Name) is synthesised so adopter-created Envs still
-// converge to a single Pool.
+// desiredLocalMembers returns the slice of EnvClusterMembers declared on
+// the env's local cluster segment. Returns nil (empty) when the segment
+// is absent or has no members — Envs created without explicit members
+// (e.g. via POST /v1/envs) start as bare shells; the user adds members
+// through the env-scoped Pool CRUD path (POST /envs/{name}/sandboxpools)
+// so plugin admission (quota reservation etc.) gates each create.
+//
+// Historical note: an earlier revision synthesised a single namesake
+// member when this slice was empty, to preserve the Phase 1 adopter
+// shape. That fallback was removed once the adopter started populating
+// members directly — it produced "ghost" Pools that bypassed quota
+// admission and could not be deleted through the member CRUD endpoints
+// (because no matching member entry existed in spec). See:
+//
+//	pkg/controllers/sandboxenv/poolmigration/adopter.go.
 func desiredLocalMembers(env *agentsv1alpha1.SandboxEnv, localClusterID string) []agentsv1alpha1.EnvClusterMember {
 	if env == nil {
 		return nil
 	}
 	for i := range env.Spec.Clusters {
 		if env.Spec.Clusters[i].ClusterID == localClusterID {
-			ms := env.Spec.Clusters[i].Members
-			if len(ms) > 0 {
-				return append([]agentsv1alpha1.EnvClusterMember(nil), ms...)
-			}
-			break
+			return append([]agentsv1alpha1.EnvClusterMember(nil), env.Spec.Clusters[i].Members...)
 		}
 	}
-	return []agentsv1alpha1.EnvClusterMember{{Name: env.Name}}
+	return nil
 }
 
 // listOwnedPools returns every SandboxPool in env.Namespace whose
@@ -163,39 +167,21 @@ func (r *SandboxEnvReconciler) listOwnedPools(ctx context.Context, env *agentsv1
 }
 
 // updateMemberPoolIfDrifted patches a live Pool when its labels, annotations,
-// PodCreationImagePolicy, default timeouts, or rendered pod spec drift from
-// the freshly rendered want. The pinned-template-version guard ensures
-// template-body drift is ignored until an explicit sync-template — Env-level
-// overrides edits (which mutate the rendered EmbeddedSandboxTemplate)
-// always propagate.
+// PodCreationImagePolicy, default timeouts, or pod spec drift from the
+// desired projection (Member.Metadata + Member.Spec, with current IPS state
+// re-stamped). Replicas is intentionally NOT enforced — the autoscaler
+// owns it.
 func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 	ctx context.Context,
 	pool *agentsv1alpha1.SandboxPool,
 	want *agentsv1alpha1.SandboxPool,
-	tmpl *agentsv1alpha1.SandboxTemplate,
 ) error {
-	// Skip embedded-template drift / provenance advancement when the live
-	// Pool is pinned to a different Template version — that case requires
-	// an explicit sync-template flow. A missing pin counts as matching:
-	// the Pool was just created (or migrated) and the next render
-	// establishes the baseline.
-	applyEmbedded := true
-	if pin, ok := pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey]; ok && pin != "" && pin != tmpl.Spec.Version {
-		applyEmbedded = false
-	}
-	// desiredAnnotations omits the template-version pin when the live Pool
-	// is on a different version — the pin only advances via sync-template.
-	desiredAnnotations := want.Annotations
-	if !applyEmbedded {
-		desiredAnnotations = filterMapKey(want.Annotations, agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey)
-	}
-
 	labelDrift := mapsDifferOnKeys(pool.Labels, want.Labels)
-	annotationDrift := mapsDifferOnKeys(pool.Annotations, desiredAnnotations)
+	annotationDrift := mapsDifferOnKeys(pool.Annotations, want.Annotations)
 	policyDrift := want.Spec.PodCreationImagePolicy != "" && pool.Spec.PodCreationImagePolicy != want.Spec.PodCreationImagePolicy
 	startupDrift := !durationsEqual(pool.Spec.DefaultStartupTimeout, want.Spec.DefaultStartupTimeout)
 	idleDrift := !durationsEqual(pool.Spec.DefaultIdleTimeout, want.Spec.DefaultIdleTimeout)
-	embeddedDrift := applyEmbedded && !equality.Semantic.DeepEqual(pool.Spec.EmbeddedSandboxTemplate, want.Spec.EmbeddedSandboxTemplate)
+	embeddedDrift := !equality.Semantic.DeepEqual(pool.Spec.EmbeddedSandboxTemplate, want.Spec.EmbeddedSandboxTemplate)
 
 	if !labelDrift && !annotationDrift && !policyDrift && !startupDrift && !idleDrift && !embeddedDrift {
 		return nil
@@ -209,49 +195,15 @@ func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 		}
 		base := current.DeepCopy()
 		poolrender.MergeOwnedMapKeys(&current.Labels, want.Labels)
-		poolrender.MergeOwnedMapKeys(&current.Annotations, desiredAnnotations)
+		poolrender.MergeOwnedMapKeys(&current.Annotations, want.Annotations)
 		if want.Spec.PodCreationImagePolicy != "" {
 			current.Spec.PodCreationImagePolicy = want.Spec.PodCreationImagePolicy
 		}
 		current.Spec.DefaultStartupTimeout = want.Spec.DefaultStartupTimeout
 		current.Spec.DefaultIdleTimeout = want.Spec.DefaultIdleTimeout
-		if applyEmbedded {
-			current.Spec.EmbeddedSandboxTemplate = *want.Spec.EmbeddedSandboxTemplate.DeepCopy()
-		}
+		current.Spec.EmbeddedSandboxTemplate = *want.Spec.EmbeddedSandboxTemplate.DeepCopy()
 		return r.Patch(ctx, current, client.MergeFrom(base))
 	})
-}
-
-// fetchTemplate gets a SandboxTemplate by name; friendly errors on missing.
-func (r *SandboxEnvReconciler) fetchTemplate(ctx context.Context, name string) (*agentsv1alpha1.SandboxTemplate, error) {
-	if name == "" {
-		return nil, fmt.Errorf("env.spec.templateRef.name is empty")
-	}
-	tmpl := &agentsv1alpha1.SandboxTemplate{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name}, tmpl); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("source template %q not found", name)
-		}
-		return nil, err
-	}
-	return tmpl, nil
-}
-
-// filterMapKey returns a copy of m with the supplied key removed. Useful
-// for excluding a single managed annotation from a merge pass without
-// rebuilding the rest of the map.
-func filterMapKey(m map[string]string, key string) map[string]string {
-	if len(m) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		if k == key {
-			continue
-		}
-		out[k] = v
-	}
-	return out
 }
 
 // mapsDifferOnKeys returns true when any key in desired is missing from

@@ -31,38 +31,38 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envautoscaler"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envmember"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolrender"
+	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
 
-// SandboxEnvService is the business-layer surface for SandboxEnv resources.
-//
-// Scope (Phase 1):
-//   - List / Get exposed for the dashboard
-//   - UpdateAutoscaling is the only mutation — Envs are otherwise managed by
-//     the Phase 1 PoolAdoptionReconciler (1:1 from existing SandboxPools).
-//
-// Future mutations (Create / Delete / Edit members) will land here when the
-// "Env-creates-Pool" flow ships.
-type SandboxEnvService interface {
+// EnvShellService is the env-only CRUD slice of SandboxEnvService. Lives as
+// its own interface so the composed SandboxEnvService can be assembled
+// from three orthogonal contracts (env shell + member CRUD + autoscaler
+// CRUD) without method-name collisions.
+type EnvShellService interface {
 	// List returns the SandboxEnvs in namespace visible to the caller.
 	// When team/user are non-empty the result is filtered by the standard
 	// scheduling.navix.sh/{team,user} labels (matching the Pool model).
 	List(ctx context.Context, namespace, team, user string) ([]gen.SandboxEnv, *domain.AppError)
 	// Get returns a single Env or NotFound.
 	Get(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
-	// Create posts a new SandboxEnv. The Env Reconciler picks up the new
-	// object and materialises member SandboxPools from spec.Quotas — this
-	// service call does NOT create Pools directly.
+	// Create posts a new SandboxEnv shell. The body carries TemplateRef +
+	// Overrides + optional ImagePullSecret only — Members are added via
+	// AddMember (from the embedded MemberPoolService) and autoscaling
+	// groups via AddAutoscalingGroup (from the embedded AutoscalerService).
 	Create(ctx context.Context, input CreateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError)
-	// Update merges any subset of editable spec fields into the existing
-	// Env, retrying on conflict. Returns the post-write Env.
+	// Update patches Overrides / ImagePullSecret on an existing Env.
+	// Members and autoscaling groups are intentionally not part of this
+	// surface — use the dedicated CRUD methods from the embedded
+	// sub-services to avoid accidental wholesale replacement.
 	Update(ctx context.Context, input UpdateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError)
 	// Delete issues a foreground delete on the Env. Member Pools are
 	// cascade-deleted via OwnerReferences (controller=true,
-	// blockOwnerDeletion=true) once the Env Reconciler stamps the upgraded
-	// owner reference shape.
+	// blockOwnerDeletion=true) stamped by the Env Reconciler.
 	Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxEnvResult, *domain.AppError)
 	// SyncTemplate re-renders every member SandboxPool against the current
 	// SandboxTemplate body + the Env's overrides, advancing each Pool's
@@ -72,19 +72,34 @@ type SandboxEnvService interface {
 	SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
 }
 
+// SandboxEnvService is the business-layer surface for SandboxEnv resources.
+// It composes the env shell CRUD with the two sub-resource interfaces
+// (MemberPool CRUD + Autoscaler CRUD) so the router only needs to inject
+// one service instance and handlers call e.g. s.env.AddMember(...) or
+// s.env.UpdateAutoscalingGroup(...).
+//
+// Method names on the sub-interfaces carry a noun suffix (AddMember,
+// UpdateAutoscalingGroup, …) so embedding doesn't produce conflicts and
+// the call site reads naturally.
+type SandboxEnvService interface {
+	EnvShellService
+	envmember.MemberPoolService
+	envautoscaler.AutoscalerService
+}
+
 // CreateSandboxEnvInput is the parsed CreateSandboxEnvRequest with auth
-// context resolved.
+// context resolved. Members and Autoscaling are intentionally absent — the
+// caller adds them via the embedded sub-services after the env shell is
+// created.
 type CreateSandboxEnvInput struct {
 	Name      string
 	Namespace string
 	Team      string // copied from auth, injected as label
 	User      string // copied from auth, injected as label
 
-	TemplateRef    agentsv1alpha1.SandboxEnvTemplateRef
-	Mode           agentsv1alpha1.SandboxEnvMode
-	Members        []agentsv1alpha1.EnvClusterMember
-	LocalClusterID string // cluster the supplied members belong to
-	Overrides      *agentsv1alpha1.EnvOverridesSpec
+	TemplateRef agentsv1alpha1.SandboxEnvTemplateRef
+	Mode        agentsv1alpha1.SandboxEnvMode
+	Overrides   *agentsv1alpha1.EnvOverridesSpec
 	// ImagePullSecret, when non-nil, instructs the service to materialise a
 	// dockerconfigjson Secret named ips-{envName} with an OwnerRef pointing
 	// at the Env (cascade-delete free). The Env Reconciler stamps a
@@ -95,49 +110,44 @@ type CreateSandboxEnvInput struct {
 	Annotations map[string]string
 }
 
-// UpdateSandboxEnvInput carries the editable patch for an Env. Pointer
-// fields disambiguate "not specified" from "explicit zero/empty"; passing
-// a non-nil pointer means "replace with this value".
+// UpdateSandboxEnvInput carries the editable patch for an Env shell.
+// Members and Autoscaling are intentionally not exposed here so callers
+// can't accidentally wholesale-replace either set; use the dedicated
+// sub-service methods instead.
 type UpdateSandboxEnvInput struct {
 	Name      string
 	Namespace string
 
-	Autoscaling    *gen.EnvAutoscalingSpec
-	Members        *[]agentsv1alpha1.EnvClusterMember
-	LocalClusterID string // required when Members is non-nil
-	Overrides      *agentsv1alpha1.EnvOverridesSpec
+	Overrides *agentsv1alpha1.EnvOverridesSpec
 	// ImagePullSecret, when non-nil, upserts the dockerconfigjson Secret
 	// backing this Env's image-pull credentials. Nil means leave existing
 	// Secret untouched.
 	ImagePullSecret *gen.ImagePullSecretInput
 }
 
+// k8sSandboxEnvService is the default SandboxEnvService implementation. The
+// env-shell methods live on this receiver directly; member-pool and
+// autoscaler methods come from the embedded sub-services.
 type k8sSandboxEnvService struct {
-	client   client.Client
-	admitter PoolAdmitter
-	// instProv and quotaProv drive server-side derivation of PoolName +
-	// ScalingGroup. Both must be non-nil — pass the open-source Noop when
-	// no backend is configured.
-	instProv  instancetypeplugin.Provider
-	quotaProv quotaplugin.Provider
+	client client.Client
+
+	// Embedded sub-services — their methods promote to satisfy the
+	// composed SandboxEnvService interface.
+	envmember.MemberPoolService
+	envautoscaler.AutoscalerService
 }
 
-// NewSandboxEnvService constructs the default service implementation backed
-// by the K8s client, the supplied PoolAdmitter, and the two providers used
-// to derive PoolName + ScalingGroup. A nil admitter is treated as
-// NoOpPoolAdmitter; nil providers fall through to their Noop equivalents so
-// unit tests can pass nils.
-func NewSandboxEnvService(c client.Client, admitter PoolAdmitter, instProv instancetypeplugin.Provider, quotaProv quotaplugin.Provider) SandboxEnvService {
-	if admitter == nil {
-		admitter = NoOpPoolAdmitter{}
+// NewSandboxEnvService constructs the default service implementation. The
+// PluginManager / provider arguments flow through to the embedded
+// MemberPoolService; the autoscaler sub-service currently needs only the
+// k8s client. A nil *plugins.PluginManager is treated as "no plugins";
+// nil providers are normalised to their Noop forms inside envmember.New.
+func NewSandboxEnvService(c client.Client, pm *plugins.PluginManager, instProv instancetypeplugin.Provider, quotaProv quotaplugin.Provider) SandboxEnvService {
+	return &k8sSandboxEnvService{
+		client:            c,
+		MemberPoolService: envmember.New(c, pm, instProv, quotaProv),
+		AutoscalerService: envautoscaler.New(c),
 	}
-	if instProv == nil {
-		instProv = instancetypeplugin.NewNoop()
-	}
-	if quotaProv == nil {
-		quotaProv = quotaplugin.NewNoop()
-	}
-	return &k8sSandboxEnvService{client: c, admitter: admitter, instProv: instProv, quotaProv: quotaProv}
 }
 
 // List enumerates Envs in the namespace, filtered by team/user labels when
@@ -175,7 +185,26 @@ func (s *k8sSandboxEnvService) Get(ctx context.Context, namespace, name string) 
 	}
 	result := envToGen(env)
 	s.enrichImagePullSecretStatus(ctx, env, &result)
+	s.enrichEnvDocs(ctx, env, &result)
 	return &result, nil
+}
+
+// enrichEnvDocs populates result.EnvDocs from the linked SandboxTemplate's
+// agentbox.navix.sh/docs annotation. Best-effort: lookup failures leave the
+// field nil so the handler can return the env without docs rather than
+// failing the whole request. The handler does the placeholder substitution
+// (env name / cluster id / api key) on top of the raw value.
+func (s *k8sSandboxEnvService) enrichEnvDocs(ctx context.Context, env *agentsv1alpha1.SandboxEnv, out *gen.SandboxEnv) {
+	if env.Spec.TemplateRef.Name == "" {
+		return
+	}
+	tmpl := &agentsv1alpha1.SandboxTemplate{}
+	if err := s.client.Get(ctx, client.ObjectKey{Name: env.Spec.TemplateRef.Name}, tmpl); err != nil {
+		return
+	}
+	if v := tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]; v != "" {
+		out.EnvDocs = ptr.To(v)
+	}
 }
 
 // enrichImagePullSecretStatus populates result.spec.overrides.imagePullSecretConfigured
@@ -243,15 +272,6 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 		Mode:        mode,
 		Overrides:   input.Overrides,
 	}
-	if len(input.Members) > 0 {
-		if input.LocalClusterID == "" {
-			return nil, domain.NewBadRequest("localClusterID is required when members is set")
-		}
-		env.Spec.Clusters = []agentsv1alpha1.EnvClusterSpec{{
-			ClusterID: input.LocalClusterID,
-			Members:   append([]agentsv1alpha1.EnvClusterMember(nil), input.Members...),
-		}}
-	}
 
 	if err := s.client.Create(ctx, env); err != nil {
 		if k8serrors.IsAlreadyExists(err) {
@@ -276,17 +296,11 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 	return &result, nil
 }
 
-// Update merges the editable subset of spec fields into the existing Env,
-// retrying on conflict. Pointer fields disambiguate "not specified" from
-// "explicit zero/empty"; pass a non-nil pointer to replace, nil to keep.
-//
-// Validation: when Autoscaling is set, each group's Name must be non-empty
-// and Mode (when supplied) must be a known scale-up mode. The CRD's OpenAPI
-// validation enforces the remainder once the Patch reaches the apiserver.
+// Update patches Overrides / ImagePullSecret on an existing Env. Members
+// and autoscaling groups are managed through the dedicated sub-service
+// methods (AddMember / UpdateAutoscalingGroup / …) so accidental wholesale
+// replacement isn't possible here.
 func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError) {
-	if appErr := validateEnvAutoscaling(input.Autoscaling); appErr != nil {
-		return nil, appErr
-	}
 	key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &agentsv1alpha1.SandboxEnv{}
@@ -294,7 +308,9 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 			return err
 		}
 		base := current.DeepCopy()
-		applyEnvUpdate(&current.Spec, input)
+		if input.Overrides != nil {
+			current.Spec.Overrides = input.Overrides
+		}
 		return s.client.Patch(ctx, current, client.MergeFrom(base))
 	}); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -478,83 +494,6 @@ func poolOwnedByEnv(pool *agentsv1alpha1.SandboxPool, env *agentsv1alpha1.Sandbo
 	return false
 }
 
-// applyEnvUpdate merges the non-nil fields of input onto spec in place.
-func applyEnvUpdate(spec *agentsv1alpha1.SandboxEnvSpec, input UpdateSandboxEnvInput) {
-	if input.Autoscaling != nil {
-		spec.Autoscaling = autoscalingFromGen(input.Autoscaling)
-	}
-	if input.Members != nil {
-		SetLocalClusterMembers(spec, input.LocalClusterID, *input.Members)
-	}
-	if input.Overrides != nil {
-		spec.Overrides = input.Overrides
-	}
-}
-
-// SetLocalClusterMembers replaces the Members slice on the cluster segment
-// matching localClusterID, creating the segment when absent. Passing an
-// empty members slice clears the local segment's members (the Reconciler
-// then falls back to a single namesake Pool).
-func SetLocalClusterMembers(spec *agentsv1alpha1.SandboxEnvSpec, localClusterID string, members []agentsv1alpha1.EnvClusterMember) {
-	if spec == nil || localClusterID == "" {
-		return
-	}
-	copyMembers := append([]agentsv1alpha1.EnvClusterMember(nil), members...)
-	for i := range spec.Clusters {
-		if spec.Clusters[i].ClusterID == localClusterID {
-			spec.Clusters[i].Members = copyMembers
-			return
-		}
-	}
-	spec.Clusters = append(spec.Clusters, agentsv1alpha1.EnvClusterSpec{
-		ClusterID: localClusterID,
-		Members:   copyMembers,
-	})
-}
-
-// LocalClusterMembers returns a copy of the member list for the cluster
-// segment matching localClusterID. An empty result includes both "segment
-// absent" and "segment present with empty members".
-func LocalClusterMembers(spec *agentsv1alpha1.SandboxEnvSpec, localClusterID string) []agentsv1alpha1.EnvClusterMember {
-	if spec == nil {
-		return nil
-	}
-	for _, c := range spec.Clusters {
-		if c.ClusterID == localClusterID {
-			return append([]agentsv1alpha1.EnvClusterMember(nil), c.Members...)
-		}
-	}
-	return nil
-}
-
-// validateEnvAutoscaling rejects obviously malformed input. Detailed validation
-// (e.g. cross-field constraints) belongs in the Env Controller — this layer
-// just guards against schema violations the OpenAPI server didn't catch.
-func validateEnvAutoscaling(spec *gen.EnvAutoscalingSpec) *domain.AppError {
-	if spec == nil {
-		return nil
-	}
-	if spec.Groups == nil {
-		return nil
-	}
-	for i, g := range *spec.Groups {
-		if g.Name == "" {
-			return domain.NewBadRequest(fmt.Sprintf("autoscaling.groups[%d].name is required", i))
-		}
-		if g.ScaleUpPolicy != nil && g.ScaleUpPolicy.Mode != nil {
-			mode := agentsv1alpha1.PoolScaleUpMode(*g.ScaleUpPolicy.Mode)
-			switch mode {
-			case agentsv1alpha1.PoolScaleUpModeConservative,
-				agentsv1alpha1.PoolScaleUpModeDefault,
-				agentsv1alpha1.PoolScaleUpModeAggressive:
-			default:
-				return domain.NewBadRequest(fmt.Sprintf("autoscaling.groups[%d].scaleUpPolicy.mode %q is invalid", i, *g.ScaleUpPolicy.Mode))
-			}
-		}
-	}
-	return nil
-}
-
 // envToGen projects a CRD SandboxEnv into the wire shape consumed by the
 // dashboard. Mirrors PoolToGen in sandboxpool_service.go.
 func envToGen(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnv {
@@ -610,7 +549,7 @@ func envSpecToGen(spec *agentsv1alpha1.SandboxEnvSpec) gen.SandboxEnvSpec {
 		out.Clusters = &clusters
 	}
 	if spec.Autoscaling != nil {
-		out.Autoscaling = autoscalingToGen(spec.Autoscaling)
+		out.Autoscaling = envautoscaler.SpecToGen(spec.Autoscaling)
 	}
 	if o := envOverridesToGen(spec.Overrides); o != nil {
 		out.Overrides = o
@@ -671,114 +610,69 @@ func quantityMapToGen(rl corev1.ResourceList) map[string]string {
 
 func envMemberToGen(m agentsv1alpha1.EnvClusterMember) gen.EnvClusterMember {
 	out := gen.EnvClusterMember{Name: m.Name}
-	if m.InstanceType != "" {
-		out.InstanceType = ptr.To(m.InstanceType)
+	cfg := envMemberConfigToGen(m.Config)
+	if cfg != nil {
+		out.Config = cfg
 	}
-	if m.Multiplier > 0 {
-		out.Multiplier = ptr.To(m.Multiplier)
+	return out
+}
+
+// envMemberConfigToGen projects an EnvClusterMemberConfig to the wire
+// shape. Returns nil when no field is populated so the JSON output
+// stays clean.
+func envMemberConfigToGen(c agentsv1alpha1.EnvClusterMemberConfig) *gen.EnvClusterMemberConfig {
+	out := &gen.EnvClusterMemberConfig{}
+	populated := false
+	if c.InstanceType != "" {
+		out.InstanceType = ptr.To(c.InstanceType)
+		populated = true
 	}
-	if m.ScalingGroup != "" {
-		out.ScalingGroup = ptr.To(m.ScalingGroup)
+	if c.Multiplier > 0 {
+		out.Multiplier = ptr.To(c.Multiplier)
+		populated = true
 	}
-	if m.MaxReplicas != nil {
-		out.MaxReplicas = ptr.To(*m.MaxReplicas)
+	if c.ScalingGroup != "" {
+		out.ScalingGroup = ptr.To(c.ScalingGroup)
+		populated = true
 	}
-	if m.Priority != 0 {
-		out.Priority = ptr.To(m.Priority)
+	if c.MaxReplicas != nil {
+		out.MaxReplicas = ptr.To(*c.MaxReplicas)
+		populated = true
 	}
-	if m.ScaleUpPriority != 0 {
-		out.ScaleUpPriority = ptr.To(m.ScaleUpPriority)
+	if c.Priority != 0 {
+		out.Priority = ptr.To(c.Priority)
+		populated = true
 	}
-	if m.ScaleDownPriority != 0 {
-		out.ScaleDownPriority = ptr.To(m.ScaleDownPriority)
+	if c.ScaleUpPriority != nil {
+		out.ScaleUpPriority = ptr.To(*c.ScaleUpPriority)
+		populated = true
 	}
-	if m.Replicas > 0 {
-		out.Replicas = ptr.To(m.Replicas)
+	if c.ScaleDownPriority != nil {
+		out.ScaleDownPriority = ptr.To(*c.ScaleDownPriority)
+		populated = true
 	}
-	if m.InlineResources != nil {
-		out.InlineResources = inlineResourcesToGen(m.InlineResources)
+	if c.Replicas > 0 {
+		out.Replicas = ptr.To(c.Replicas)
+		populated = true
 	}
-	if len(m.Labels) > 0 {
-		labels := make(map[string]string, len(m.Labels))
-		maps.Copy(labels, m.Labels)
+	if c.InlineResources != nil {
+		out.InlineResources = inlineResourcesToGen(c.InlineResources)
+		populated = true
+	}
+	if len(c.Labels) > 0 {
+		labels := make(map[string]string, len(c.Labels))
+		maps.Copy(labels, c.Labels)
 		out.Labels = &labels
+		populated = true
 	}
-	if len(m.Annotations) > 0 {
-		annotations := make(map[string]string, len(m.Annotations))
-		maps.Copy(annotations, m.Annotations)
+	if len(c.Annotations) > 0 {
+		annotations := make(map[string]string, len(c.Annotations))
+		maps.Copy(annotations, c.Annotations)
 		out.Annotations = &annotations
+		populated = true
 	}
-	return out
-}
-
-func autoscalingToGen(a *agentsv1alpha1.EnvAutoscalingSpec) *gen.EnvAutoscalingSpec {
-	if a == nil {
+	if !populated {
 		return nil
-	}
-	out := &gen.EnvAutoscalingSpec{}
-	enabled := a.Enabled
-	out.Enabled = &enabled
-	if len(a.Groups) > 0 {
-		groups := make([]gen.EnvAutoscalingGroup, 0, len(a.Groups))
-		for _, g := range a.Groups {
-			groups = append(groups, envGroupToGen(g))
-		}
-		out.Groups = &groups
-	}
-	return out
-}
-
-func envGroupToGen(g agentsv1alpha1.EnvAutoscalingGroup) gen.EnvAutoscalingGroup {
-	out := gen.EnvAutoscalingGroup{Name: g.Name}
-	if g.MinReplicas != nil {
-		out.MinReplicas = ptr.To(*g.MinReplicas)
-	}
-	if g.MaxReplicas != nil {
-		out.MaxReplicas = ptr.To(*g.MaxReplicas)
-	}
-	if g.ScaleUpPolicy != nil {
-		out.ScaleUpPolicy = scaleUpPolicyToGen(g.ScaleUpPolicy)
-	}
-	if g.ScaleDownPolicy != nil {
-		out.ScaleDownPolicy = scaleDownPolicyToGen(g.ScaleDownPolicy)
-	}
-	return out
-}
-
-func scaleUpPolicyToGen(p *agentsv1alpha1.PoolScaleUpPolicy) *gen.PoolScaleUpPolicy {
-	if p == nil {
-		return nil
-	}
-	out := &gen.PoolScaleUpPolicy{}
-	if p.Mode != "" {
-		mode := gen.PoolScaleUpPolicyMode(p.Mode)
-		out.Mode = &mode
-	}
-	if p.CooldownSeconds > 0 {
-		out.CooldownSeconds = ptr.To(p.CooldownSeconds)
-	}
-	if p.IdleThresholdSeconds > 0 {
-		out.IdleThresholdSeconds = ptr.To(p.IdleThresholdSeconds)
-	}
-	if p.SaturationCooldownSeconds > 0 {
-		out.SaturationCooldownSeconds = ptr.To(p.SaturationCooldownSeconds)
-	}
-	return out
-}
-
-func scaleDownPolicyToGen(p *agentsv1alpha1.PoolScaleDownPolicy) *gen.PoolScaleDownPolicy {
-	if p == nil {
-		return nil
-	}
-	out := &gen.PoolScaleDownPolicy{}
-	if p.IdleTimeoutSeconds > 0 {
-		out.IdleTimeoutSeconds = ptr.To(p.IdleTimeoutSeconds)
-	}
-	if p.StabilizationSeconds > 0 {
-		out.StabilizationSeconds = ptr.To(p.StabilizationSeconds)
-	}
-	if p.ProtectionWindowSeconds > 0 {
-		out.ProtectionWindowSeconds = ptr.To(p.ProtectionWindowSeconds)
 	}
 	return out
 }
@@ -909,78 +803,6 @@ func envObservedMemberToGen(m agentsv1alpha1.EnvObservedMember) gen.EnvObservedM
 	}
 	if m.ScaleUpErrorMessage != "" {
 		out.ScaleUpErrorMessage = ptr.To(m.ScaleUpErrorMessage)
-	}
-	return out
-}
-
-// autoscalingFromGen converts the wire shape back into the CRD type so we
-// can persist edits coming from the dashboard.
-func autoscalingFromGen(a *gen.EnvAutoscalingSpec) *agentsv1alpha1.EnvAutoscalingSpec {
-	if a == nil {
-		return nil
-	}
-	out := &agentsv1alpha1.EnvAutoscalingSpec{}
-	if a.Enabled != nil {
-		out.Enabled = *a.Enabled
-	}
-	if a.Groups != nil {
-		for _, g := range *a.Groups {
-			out.Groups = append(out.Groups, groupFromGen(g))
-		}
-	}
-	return out
-}
-
-func groupFromGen(g gen.EnvAutoscalingGroup) agentsv1alpha1.EnvAutoscalingGroup {
-	out := agentsv1alpha1.EnvAutoscalingGroup{Name: g.Name}
-	if g.MinReplicas != nil {
-		out.MinReplicas = ptr.To(*g.MinReplicas)
-	}
-	if g.MaxReplicas != nil {
-		out.MaxReplicas = ptr.To(*g.MaxReplicas)
-	}
-	if g.ScaleUpPolicy != nil {
-		out.ScaleUpPolicy = scaleUpPolicyFromGen(g.ScaleUpPolicy)
-	}
-	if g.ScaleDownPolicy != nil {
-		out.ScaleDownPolicy = scaleDownPolicyFromGen(g.ScaleDownPolicy)
-	}
-	return out
-}
-
-func scaleUpPolicyFromGen(p *gen.PoolScaleUpPolicy) *agentsv1alpha1.PoolScaleUpPolicy {
-	if p == nil {
-		return nil
-	}
-	out := &agentsv1alpha1.PoolScaleUpPolicy{}
-	if p.Mode != nil {
-		out.Mode = agentsv1alpha1.PoolScaleUpMode(*p.Mode)
-	}
-	if p.CooldownSeconds != nil {
-		out.CooldownSeconds = *p.CooldownSeconds
-	}
-	if p.IdleThresholdSeconds != nil {
-		out.IdleThresholdSeconds = *p.IdleThresholdSeconds
-	}
-	if p.SaturationCooldownSeconds != nil {
-		out.SaturationCooldownSeconds = *p.SaturationCooldownSeconds
-	}
-	return out
-}
-
-func scaleDownPolicyFromGen(p *gen.PoolScaleDownPolicy) *agentsv1alpha1.PoolScaleDownPolicy {
-	if p == nil {
-		return nil
-	}
-	out := &agentsv1alpha1.PoolScaleDownPolicy{}
-	if p.IdleTimeoutSeconds != nil {
-		out.IdleTimeoutSeconds = *p.IdleTimeoutSeconds
-	}
-	if p.StabilizationSeconds != nil {
-		out.StabilizationSeconds = *p.StabilizationSeconds
-	}
-	if p.ProtectionWindowSeconds != nil {
-		out.ProtectionWindowSeconds = *p.ProtectionWindowSeconds
 	}
 	return out
 }

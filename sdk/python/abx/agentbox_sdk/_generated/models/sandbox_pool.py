@@ -63,11 +63,6 @@ class SandboxPool:
             spec_yaml (str | Unset): Full EmbeddedSandboxTemplate (idleImage, runtimes, reservation, template) serialized as
                 YAML for diff comparison.
             created_at (datetime.datetime | Unset): Creation time of the pool (from metadata.creationTimestamp)
-            pool_docs (str | Unset): Markdown usage docs for this pool, sourced from the linked SandboxTemplate's
-                agentbox.navix.sh/docs annotation. The variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are
-                substituted by the server before returning; ${AGBX_API_KEY} is resolved to the first non-legacy API key of the
-                acting user. If the template references ${AGBX_API_KEY} but the user has no key with a recoverable plaintext
-                token, GetSandboxPool returns 422 with errorCode API_KEY_REQUIRED.
             owning_env (str | Unset): Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). Empty when
                 the pool has not been adopted by an Env yet — typical during a brief window after pool creation before the
                 PoolAdoptionReconciler runs.
@@ -85,7 +80,6 @@ class SandboxPool:
     overrides: PoolTemplateOverrides | Unset = UNSET
     spec_yaml: str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
-    pool_docs: str | Unset = UNSET
     owning_env: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -125,8 +119,6 @@ class SandboxPool:
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
 
-        pool_docs = self.pool_docs
-
         owning_env = self.owning_env
 
 
@@ -154,8 +146,6 @@ class SandboxPool:
             field_dict["specYaml"] = spec_yaml
         if created_at is not UNSET:
             field_dict["createdAt"] = created_at
-        if pool_docs is not UNSET:
-            field_dict["poolDocs"] = pool_docs
         if owning_env is not UNSET:
             field_dict["owningEnv"] = owning_env
 
@@ -215,8 +205,6 @@ class SandboxPool:
 
 
 
-        pool_docs = d.pop("poolDocs", UNSET)
-
         owning_env = d.pop("owningEnv", UNSET)
 
         sandbox_pool = cls(
@@ -232,7 +220,6 @@ class SandboxPool:
             overrides=overrides,
             spec_yaml=spec_yaml,
             created_at=created_at,
-            pool_docs=pool_docs,
             owning_env=owning_env,
         )
 

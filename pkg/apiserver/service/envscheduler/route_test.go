@@ -45,7 +45,7 @@ func loadSchedulerN(t *testing.T, s *schedule.PoolScheduler, n int) {
 }
 
 func mkMember(name string, priority int32) agentsv1alpha1.EnvClusterMember {
-	return agentsv1alpha1.EnvClusterMember{Name: name, Priority: priority}
+	return agentsv1alpha1.EnvClusterMember{Name: name, Config: agentsv1alpha1.EnvClusterMemberConfig{Priority: priority}}
 }
 
 // TestRouteMulti_PrefersLowerPriority confirms that priority dominates the

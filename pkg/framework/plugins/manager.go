@@ -62,18 +62,24 @@ func (m *PluginManager) Start(ctx context.Context, h framework.Handle) error {
 }
 
 // PreCreatePool calls PreCreate on every registered plugin in order.
-// Returns the first error encountered (short-circuits).
-func (m *PluginManager) PreCreatePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) *domain.AppError {
+// Returns updated=true if any plugin mutated pool, and the first error
+// encountered (short-circuits).
+func (m *PluginManager) PreCreatePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
 	if m == nil {
-		return nil
+		return false, nil
 	}
+	updated := false
 	for _, p := range m.plugins {
-		if err := p.PreCreatePool(ctx, pool); err != nil {
+		u, err := p.PreCreatePool(ctx, pool)
+		if u {
+			updated = true
+		}
+		if err != nil {
 			log.FromContext(ctx).Error(err, "plugin PreCreate failed", "plugin", p.Name())
-			return err
+			return updated, err
 		}
 	}
-	return nil
+	return updated, nil
 }
 
 // PreUpdatePool calls PreUpdate on every registered plugin in order.
@@ -97,31 +103,43 @@ func (m *PluginManager) PreUpdatePool(ctx context.Context, newPool *agentsv1alph
 }
 
 // PreDeletePool calls PreDelete on every registered plugin in order.
-// Returns the first error encountered (short-circuits).
-func (m *PluginManager) PreDeletePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) *domain.AppError {
+// Returns updated=true if any plugin mutated pool, and the first error
+// encountered (short-circuits).
+func (m *PluginManager) PreDeletePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
 	if m == nil {
-		return nil
+		return false, nil
 	}
+	updated := false
 	for _, p := range m.plugins {
-		if err := p.PreDeletePool(ctx, pool); err != nil {
+		u, err := p.PreDeletePool(ctx, pool)
+		if u {
+			updated = true
+		}
+		if err != nil {
 			log.FromContext(ctx).Error(err, "plugin PreDelete failed", "plugin", p.Name())
-			return err
+			return updated, err
 		}
 	}
-	return nil
+	return updated, nil
 }
 
 // PreCreatePodHooks calls PreCreatePod on every registered plugin in order.
-// Returns the first error encountered (short-circuits).
-func (m *PluginManager) PreCreatePodHooks(ctx context.Context, pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) *domain.AppError {
+// Returns updated=true if any plugin mutated pod, and the first error
+// encountered (short-circuits).
+func (m *PluginManager) PreCreatePodHooks(ctx context.Context, pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
 	if m == nil {
-		return nil
+		return false, nil
 	}
+	updated := false
 	for _, p := range m.plugins {
-		if err := p.PreCreatePod(ctx, pod, pool); err != nil {
+		u, err := p.PreCreatePod(ctx, pod, pool)
+		if u {
+			updated = true
+		}
+		if err != nil {
 			log.FromContext(ctx).Error(err, "plugin PreCreatePod failed", "plugin", p.Name())
-			return err
+			return updated, err
 		}
 	}
-	return nil
+	return updated, nil
 }

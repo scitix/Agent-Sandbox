@@ -77,7 +77,6 @@ export function EnvPoolsSection({
   onEditAutoscaling,
   onDeletePool,
   onViewMetrics,
-  onViewDocs,
 }: {
   env: AgentSandboxEnv
   onCreatePool: () => void
@@ -85,7 +84,6 @@ export function EnvPoolsSection({
   onEditAutoscaling: (pool: AgentSandboxPool) => void
   onDeletePool: (pool: AgentSandboxPool) => void
   onViewMetrics: (pool: AgentSandboxPool) => void
-  onViewDocs: (pool: AgentSandboxPool) => void
 }) {
   const { t } = useTranslation()
 
@@ -103,7 +101,7 @@ export function EnvPoolsSection({
     let count = 0
     for (const cluster of env.spec.clusters ?? []) {
       for (const m of cluster.members ?? []) {
-        if (m.scalingGroup) groups.set(m.name, m.scalingGroup)
+        if (m.config?.scalingGroup) groups.set(m.name, m.config.scalingGroup)
         count++
       }
     }
@@ -112,7 +110,7 @@ export function EnvPoolsSection({
 
   const columns = useMemo(
     () =>
-      createPoolColumns(t, onViewMetrics, onViewDocs, {
+      createPoolColumns(t, onViewMetrics, {
         hideOwningEnv: true,
         envObservedByPool: observedByPool,
         scalingGroupByPool: scalingGroupByPool,
@@ -123,7 +121,6 @@ export function EnvPoolsSection({
     [
       t,
       onViewMetrics,
-      onViewDocs,
       observedByPool,
       scalingGroupByPool,
       onEditPool,
@@ -172,7 +169,6 @@ export function AutoscalingSummary({
   const { t } = useTranslation()
   const auto = env.spec.autoscaling
   const groups = auto?.groups ?? []
-  const enabled = auto?.enabled === true
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
@@ -187,17 +183,17 @@ export function AutoscalingSummary({
         <p className="text-muted-foreground text-xs">{t("envs.detail.autoscaling.empty")}</p>
       ) : (
         <div className="border-border bg-muted/20 divide-border space-y-3 rounded border p-3">
-          <div className="flex items-center gap-2">
-            <Badge variant={enabled ? "default" : "outline"} className="font-mono text-xs">
-              {enabled
-                ? t("envs.detail.autoscaling.enabled")
-                : t("envs.detail.autoscaling.disabled")}
-            </Badge>
-          </div>
           {groups.map((g, i) => (
             <div key={i} className="space-y-1">
-              <div className="text-muted-foreground font-mono text-[10px] uppercase">
-                {t("envs.detail.autoscaling.group")}: {g.name}
+              <div className="flex items-center gap-2">
+                <div className="text-muted-foreground font-mono text-[10px] uppercase">
+                  {t("envs.detail.autoscaling.group")}: {g.name}
+                </div>
+                <Badge variant={g.enabled ? "default" : "outline"} className="font-mono text-xs">
+                  {g.enabled
+                    ? t("envs.detail.autoscaling.enabled")
+                    : t("envs.detail.autoscaling.disabled")}
+                </Badge>
               </div>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
                 <InfoCell label={t("envs.detail.autoscaling.minReplicas")} value={g.minReplicas} />

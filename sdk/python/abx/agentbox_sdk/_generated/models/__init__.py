@@ -31,15 +31,19 @@ from .create_sandbox_request_container_images import CreateSandboxRequestContain
 from .create_sandbox_request_labels import CreateSandboxRequestLabels
 from .create_sandbox_request_metadata import CreateSandboxRequestMetadata
 from .delete_api_key_result import DeleteAPIKeyResult
+from .delete_env_autoscaling_group_result import DeleteEnvAutoscalingGroupResult
 from .delete_sandbox_env_result import DeleteSandboxEnvResult
 from .delete_sandbox_pool_result import DeleteSandboxPoolResult
 from .delete_sandbox_result import DeleteSandboxResult
 from .delete_sandbox_template_result import DeleteSandboxTemplateResult
 from .env_autoscaling_group import EnvAutoscalingGroup
+from .env_autoscaling_group_envelope import EnvAutoscalingGroupEnvelope
 from .env_autoscaling_spec import EnvAutoscalingSpec
+from .env_autoscaling_spec_envelope import EnvAutoscalingSpecEnvelope
 from .env_cluster_member import EnvClusterMember
-from .env_cluster_member_annotations import EnvClusterMemberAnnotations
-from .env_cluster_member_labels import EnvClusterMemberLabels
+from .env_cluster_member_config import EnvClusterMemberConfig
+from .env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations
+from .env_cluster_member_config_labels import EnvClusterMemberConfigLabels
 from .env_cluster_spec import EnvClusterSpec
 from .env_cluster_status import EnvClusterStatus
 from .env_condition import EnvCondition
@@ -57,6 +61,7 @@ from .image_pull_secret_input import ImagePullSecretInput
 from .instance_type_item import InstanceTypeItem
 from .instance_type_item_extensions import InstanceTypeItemExtensions
 from .list_clusters_result import ListClustersResult
+from .list_env_autoscaling_groups_result import ListEnvAutoscalingGroupsResult
 from .list_instance_types_result import ListInstanceTypesResult
 from .list_quotas_result import ListQuotasResult
 from .list_sandbox_envs_result import ListSandboxEnvsResult
@@ -122,6 +127,7 @@ from .sandbox_template_summary import SandboxTemplateSummary
 from .self_create_api_key_request import SelfCreateAPIKeyRequest
 from .set_sandbox_timeout_request import SetSandboxTimeoutRequest
 from .teams_result import TeamsResult
+from .update_env_autoscaling_group_request import UpdateEnvAutoscalingGroupRequest
 from .update_env_sandbox_pool_request import UpdateEnvSandboxPoolRequest
 from .update_sandbox_env_request import UpdateSandboxEnvRequest
 from .upsert_sandbox_template_request import UpsertSandboxTemplateRequest
@@ -151,15 +157,19 @@ __all__ = (
     "CreateSandboxRequestLabels",
     "CreateSandboxRequestMetadata",
     "DeleteAPIKeyResult",
+    "DeleteEnvAutoscalingGroupResult",
     "DeleteSandboxEnvResult",
     "DeleteSandboxPoolResult",
     "DeleteSandboxResult",
     "DeleteSandboxTemplateResult",
     "EnvAutoscalingGroup",
+    "EnvAutoscalingGroupEnvelope",
     "EnvAutoscalingSpec",
+    "EnvAutoscalingSpecEnvelope",
     "EnvClusterMember",
-    "EnvClusterMemberAnnotations",
-    "EnvClusterMemberLabels",
+    "EnvClusterMemberConfig",
+    "EnvClusterMemberConfigAnnotations",
+    "EnvClusterMemberConfigLabels",
     "EnvClusterSpec",
     "EnvClusterStatus",
     "EnvCondition",
@@ -177,6 +187,7 @@ __all__ = (
     "InstanceTypeItem",
     "InstanceTypeItemExtensions",
     "ListClustersResult",
+    "ListEnvAutoscalingGroupsResult",
     "ListInstanceTypesResult",
     "ListQuotasResult",
     "ListSandboxEnvsResult",
@@ -242,6 +253,7 @@ __all__ = (
     "SelfCreateAPIKeyRequest",
     "SetSandboxTimeoutRequest",
     "TeamsResult",
+    "UpdateEnvAutoscalingGroupRequest",
     "UpdateEnvSandboxPoolRequest",
     "UpdateSandboxEnvRequest",
     "UpsertSandboxTemplateRequest",

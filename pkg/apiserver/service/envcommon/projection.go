@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package service
+package envcommon
 
 import (
 	"context"
@@ -28,16 +28,16 @@ import (
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
-// PoolToGen converts a CRD SandboxPool (plus optional source template) to the
-// gen wire shape. The CRD spec is intentionally not exposed; instead we
-// project the fields the API documents (replicas, default timeouts, template
-// reference, computed CPU/Memory, SpecYaml for diff) into gen.SandboxPool.
+// PoolToGen converts a CRD SandboxPool to the gen wire shape. The CRD spec
+// is intentionally not exposed; instead we project the fields the API
+// documents (replicas, default timeouts, template reference, computed
+// CPU/Memory, SpecYaml for diff) into gen.SandboxPool.
 //
 // Pool is no longer a user-facing object — the only callers are the
 // env-scoped Pool CRUD endpoints in pkg/apiserver/service/envmember, which
 // project pools they read off the K8s API server before returning them to
 // the dashboard. There is no longer a top-level /sandboxpools service.
-func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agentsv1alpha1.SandboxTemplate) gen.SandboxPool {
+func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.SandboxPool {
 	spec := gen.SandboxPoolSpec{
 		Replicas: pool.Spec.Replicas,
 	}
@@ -81,11 +81,6 @@ func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool, tmpl *agen
 		TemplateVersion: ptr.To(pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey]),
 		SpecYaml:        ptr.To(specYaml),
 		CreatedAt:       &createdAt,
-	}
-	if tmpl != nil {
-		if v := tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]; v != "" {
-			result.PoolDocs = ptr.To(v)
-		}
 	}
 	if pool.Spec.Template != nil {
 		cpu, memory, err := utilresource.SumContainerResources(pool.Spec.Template)

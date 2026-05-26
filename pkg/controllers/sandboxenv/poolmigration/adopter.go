@@ -35,6 +35,7 @@ package poolmigration
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -310,17 +311,17 @@ func (r *PoolAdoptionReconciler) backfillMemberDrift(ctx context.Context, pool *
 			if m.Name != pool.Name {
 				continue
 			}
-			if m.ScalingGroup != derivedGroup && derivedGroup != "" {
-				m.ScalingGroup = derivedGroup
+			if m.Config.ScalingGroup != derivedGroup && derivedGroup != "" {
+				m.Config.ScalingGroup = derivedGroup
 				changed = true
 			}
 			// Convert InlineResources to (InstanceType, Multiplier) when
 			// the catalog matches. Leave InlineResources alone when the
 			// provider has nothing for these resources.
-			if m.InstanceType == "" && itName != "" {
-				m.InstanceType = itName
-				m.Multiplier = mul
-				m.InlineResources = nil
+			if m.Config.InstanceType == "" && itName != "" {
+				m.Config.InstanceType = itName
+				m.Config.Multiplier = mul
+				m.Config.InlineResources = nil
 				changed = true
 			}
 		}
@@ -453,8 +454,10 @@ func buildEnvFromPool(
 				},
 			},
 			Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
-				Enabled: false,
-				Groups:  []agentsv1alpha1.EnvAutoscalingGroup{{Name: groupName}},
+				// Per-group Enabled flag stays false at adoption time — the
+				// operator (or dashboard) opts into autoscaling by patching
+				// the group's Enabled bit through the dedicated endpoint.
+				Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: groupName, Enabled: false}},
 			},
 		},
 	}
@@ -468,26 +471,49 @@ func buildEnvFromPool(
 }
 
 // buildMemberFromPool produces the EnvClusterMember entry that represents the
-// given Pool. When the Provider supplied (InstanceType, Multiplier), those
-// fields are filled and InlineResources is left empty. Otherwise the Pool's
-// first-container resources are copied verbatim.
+// given Pool. The Member's Metadata + Spec are snapshots of the live Pool's
+// ObjectMeta (sans server-managed fields) + Spec — this preserves any plugin
+// admission side-effects that ran when the Pool was originally created. The
+// Config carries the round-tripped (InstanceType, Multiplier) when the
+// catalog supplied them; otherwise the Pool's first-container resources are
+// copied verbatim into Config.InlineResources.
 //
 // groupName is the resolved ScalingGroup name (typically derived from the
 // effective resources via the InstanceType provider).
 func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multiplier int32, groupName string) agentsv1alpha1.EnvClusterMember {
 	m := agentsv1alpha1.EnvClusterMember{
-		Name:         pool.Name,
-		ScalingGroup: groupName,
+		Name: pool.Name,
+		Metadata: metav1.ObjectMeta{
+			Name:        pool.Name,
+			Namespace:   pool.Namespace,
+			Labels:      cloneStringMap(pool.Labels),
+			Annotations: cloneStringMap(pool.Annotations),
+			Finalizers:  append([]string(nil), pool.Finalizers...),
+		},
+		Spec: *pool.Spec.DeepCopy(),
+		Config: agentsv1alpha1.EnvClusterMemberConfig{
+			ScalingGroup: groupName,
+			Replicas:     pool.Spec.Replicas,
+		},
 	}
 	if itName != "" {
-		m.InstanceType = itName
-		m.Multiplier = multiplier
+		m.Config.InstanceType = itName
+		m.Config.Multiplier = multiplier
 		return m
 	}
 	if res := firstContainerResources(pool); res != nil {
-		m.InlineResources = res.DeepCopy()
+		m.Config.InlineResources = res.DeepCopy()
 	}
 	return m
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	maps.Copy(out, in)
+	return out
 }
 
 // deriveScalingGroupName resolves the ScalingGroup name for a Pool. Prefers

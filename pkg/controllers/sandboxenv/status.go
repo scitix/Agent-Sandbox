@@ -50,8 +50,8 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		case apierrors.IsNotFound(err):
 			observed = append(observed, agentsv1alpha1.EnvObservedMember{
 				Name:         member.Name,
-				InstanceType: member.InstanceType,
-				Multiplier:   member.Multiplier,
+				InstanceType: member.Config.InstanceType,
+				Multiplier:   member.Config.Multiplier,
 				State:        agentsv1alpha1.ObservedMemberStateMissing,
 			})
 			continue
@@ -66,8 +66,8 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 
 		observed = append(observed, agentsv1alpha1.EnvObservedMember{
 			Name:               member.Name,
-			InstanceType:       member.InstanceType,
-			Multiplier:         member.Multiplier,
+			InstanceType:       member.Config.InstanceType,
+			Multiplier:         member.Config.Multiplier,
 			EffectiveResources: effectiveResources(member, pool),
 			State:              state,
 			IdleCount:          pool.Status.IdleReplicas,
@@ -75,11 +75,11 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 			DesiredReplicas:    pool.Spec.Replicas,
 			CurrentReplicas:    pool.Spec.Replicas,
 		})
-		if member.ScalingGroup != "" {
-			g, ok := byGroup[member.ScalingGroup]
+		if member.Config.ScalingGroup != "" {
+			g, ok := byGroup[member.Config.ScalingGroup]
 			if !ok {
 				g = &groupTotals{}
-				byGroup[member.ScalingGroup] = g
+				byGroup[member.Config.ScalingGroup] = g
 			}
 			g.idle += pool.Status.IdleReplicas
 			g.running += pool.Status.RunningReplicas
@@ -148,8 +148,8 @@ func setScalingGroupStatus(env *agentsv1alpha1.SandboxEnv, name string, totalIdl
 // reading the member Pool's first container (which is what the Pool
 // Reconciler stamped at creation time).
 func effectiveResources(member agentsv1alpha1.EnvClusterMember, pool *agentsv1alpha1.SandboxPool) *corev1.ResourceRequirements {
-	if member.InlineResources != nil {
-		return member.InlineResources.DeepCopy()
+	if member.Config.InlineResources != nil {
+		return member.Config.InlineResources.DeepCopy()
 	}
 	// Phase 2 will resolve InstanceType × Multiplier here via the catalog.
 	// For Phase 1 the closed-source plugin is expected to keep the Pool's

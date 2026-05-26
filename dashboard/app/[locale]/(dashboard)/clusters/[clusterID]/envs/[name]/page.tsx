@@ -20,7 +20,7 @@ import { use, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { parseAsString, useQueryState } from "nuqs"
 import Link from "next/link"
-import { ArrowLeft, Boxes, Pencil, RefreshCw, Trash2 } from "lucide-react"
+import { ArrowLeft, Boxes, FileText, Pencil, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -37,7 +37,7 @@ import { UpsertPoolSheet } from "@/components/envs/upsert-pool-sheet"
 import { DeletePoolDialog } from "@/components/envs/delete-pool-dialog"
 import { EditPoolAutoscalingSheet } from "@/components/envs/edit-pool-autoscaling-sheet"
 import { PoolMetricsSheet } from "@/components/prometheus/pool-metrics-sheet"
-import { PoolDocsSheet, POOL_DOCS_PARAM, formatPoolDocsParam } from "@/components/pools/pool-docs-sheet"
+import { EnvDocsSheet, ENV_DOCS_PARAM } from "@/components/envs/env-docs-sheet"
 import { envQueryOptions, useSyncEnvTemplate } from "@/lib/queries"
 import type { AgentSandboxEnv, AgentSandboxPool } from "@/lib/api/client"
 import { clusterPath } from "@/lib/cluster-path"
@@ -69,8 +69,8 @@ export default function EnvDetailPage({ params }: PageProps) {
   const [editPoolTarget, setEditPoolTarget] = useState<AgentSandboxPool | null>(null)
   const [deletePoolTarget, setDeletePoolTarget] = useState<AgentSandboxPool | null>(null)
   const [poolAutoscalingGroup, setPoolAutoscalingGroup] = useState<string | null>(null)
-  const [, setPoolDocsName] = useQueryState(
-    POOL_DOCS_PARAM,
+  const [, setEnvDocsName] = useQueryState(
+    ENV_DOCS_PARAM,
     parseAsString.withOptions({ scroll: false, shallow: true }),
   )
   const syncTemplate = useSyncEnvTemplate()
@@ -113,6 +113,16 @@ export default function EnvDetailPage({ params }: PageProps) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!env}
+              onClick={() => void setEnvDocsName(name)}
+              className="h-8 gap-1 text-xs"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              {t("envs.docs")}
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -167,7 +177,6 @@ export default function EnvDetailPage({ params }: PageProps) {
               }}
               onDeletePool={(pool) => setDeletePoolTarget(pool)}
               onViewMetrics={(pool) => setMetricsTarget(pool)}
-              onViewDocs={(pool) => void setPoolDocsName(formatPoolDocsParam(name, pool.name))}
             />
             <Separator />
             <AutoscalingSummary env={env} onEdit={() => setEditOpen(true)} />
@@ -189,7 +198,7 @@ export default function EnvDetailPage({ params }: PageProps) {
           if (!open) setMetricsTarget(null)
         }}
       />
-      <PoolDocsSheet />
+      <EnvDocsSheet />
 
       {/* Pool sheets — only rendered while env is loaded so the children can
           rely on a non-null env reference. */}
@@ -235,7 +244,7 @@ export default function EnvDetailPage({ params }: PageProps) {
 function findScalingGroupForPool(env: AgentSandboxEnv, poolName: string): string {
   for (const c of env.spec.clusters ?? []) {
     for (const m of c.members ?? []) {
-      if (m.name === poolName) return m.scalingGroup ?? ""
+      if (m.name === poolName) return m.config?.scalingGroup ?? ""
     }
   }
   return ""

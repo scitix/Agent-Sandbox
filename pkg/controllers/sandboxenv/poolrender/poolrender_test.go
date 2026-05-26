@@ -77,7 +77,7 @@ func TestRenderSandboxPool_BasicShape(t *testing.T) {
 	pool, err := poolrender.RenderSandboxPool(poolrender.Inputs{
 		Env:      env,
 		Template: tmpl,
-		Member:   agentsv1alpha1.EnvClusterMember{Name: "env-a-foo", Replicas: 3},
+		Member:   agentsv1alpha1.EnvClusterMember{Name: "env-a-foo", Config: agentsv1alpha1.EnvClusterMemberConfig{Replicas: 3}},
 	})
 	if err != nil {
 		t.Fatalf("RenderSandboxPool: %v", err)
@@ -104,7 +104,7 @@ func TestRenderSandboxPool_IdentityAndTemplateLabelsMerged(t *testing.T) {
 		Template: tmpl,
 		Member: agentsv1alpha1.EnvClusterMember{
 			Name:   "env-a-foo",
-			Labels: map[string]string{"quota.scitix.ai/url": "lab.math.x"},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{Labels: map[string]string{"quota.scitix.ai/url": "lab.math.x"}},
 		},
 	})
 	if err != nil {
@@ -128,7 +128,7 @@ func TestRenderSandboxPool_MemberLabelOverridesIdentity(t *testing.T) {
 		Template: newTestTemplate(),
 		Member: agentsv1alpha1.EnvClusterMember{
 			Name:   "env-a-foo",
-			Labels: map[string]string{agentsv1alpha1.LabelTeam: "team-override"},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{Labels: map[string]string{agentsv1alpha1.LabelTeam: "team-override"}},
 		},
 	})
 	if err != nil {
@@ -145,8 +145,8 @@ func TestRenderSandboxPool_TemplateProvenanceAnnotations(t *testing.T) {
 		Env:      env,
 		Template: newTestTemplate(),
 		Member: agentsv1alpha1.EnvClusterMember{
-			Name:        "env-a-foo",
-			Annotations: map[string]string{"agentbox.io/reservation": "preferred"},
+			Name:   "env-a-foo",
+			Config: agentsv1alpha1.EnvClusterMemberConfig{Annotations: map[string]string{"agentbox.io/reservation": "preferred"}},
 		},
 	})
 	if err != nil {
@@ -194,8 +194,8 @@ func TestRenderSandboxPool_InlineResourcesApplied(t *testing.T) {
 		Env:      env,
 		Template: newTestTemplate(),
 		Member: agentsv1alpha1.EnvClusterMember{
-			Name:            "env-a-foo",
-			InlineResources: inline,
+			Name:   "env-a-foo",
+			Config: agentsv1alpha1.EnvClusterMemberConfig{InlineResources: inline},
 		},
 	})
 	if err != nil {

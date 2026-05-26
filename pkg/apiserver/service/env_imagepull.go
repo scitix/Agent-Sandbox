@@ -30,17 +30,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/dockerconfig"
 )
 
-// EnvNameFromOwnerRefs returns the Env name from a Pool's owner references,
-// or "" when the Pool is unowned (e.g. mid-adoption).
-func EnvNameFromOwnerRefs(refs []metav1.OwnerReference) string {
-	for _, ref := range refs {
-		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind {
-			return ref.Name
-		}
-	}
-	return ""
-}
-
 // upsertEnvImagePullSecret materialises the dockerconfigjson Secret backing
 // an Env's overrides.imagePullSecret. The Secret name is
 // agentsv1alpha1.EnvImagePullSecretName(env.Name); it carries an

@@ -222,5 +222,11 @@ Idle → Starting → Running → Stopping → Idle
 **CRDs**:
 - `SandboxPool` (namespace-scoped, short: `sbp`) — pre-warmed Pod pool with `Replicas`, optional autoscaling, inline or referenced template
 - `SandboxTemplate` (cluster-scoped, short: `sbt`) — reusable Pod template with `idleImage`, `runtimes`
+- `SandboxEnv` (namespace-scoped, short: `sbe`) — fans a Template out to one or more member `SandboxPool`s. Each member is an `EnvClusterMember` with three buckets:
+  - `metadata` + `spec` — frozen post-`PreCreatePool` snapshot of the materialised Pool (ObjectMeta sans server fields + full `SandboxPoolSpec`). Server-internal; not exposed via REST. Reconciler stamps verbatim onto the live Pool without re-running plugin admission, so plugin side-effects (Reservation submit, scheduling labels, NodeAffinity, …) survive Pool recreate / Env re-apply.
+  - `config` — user-declared intent (sizing, scaling-group, routing priorities, user-supplied labels/annotations). Only bucket exposed via REST. Plugins do NOT mutate this — it stays equal to the caller's input.
+  - Template upgrades do NOT auto-propagate into `Member.Spec`. The (Phase 2) `RefreshMember` API is the explicit way to re-align with a newer Template revision; without it, Reconciler holds the frozen snapshot.
+
+**Plugin contract** (`pkg/framework/plugins/`): every hook returns `(updated bool, err *domain.AppError)`. Callers MUST snapshot the input before invoking, then apply the mutation only when `updated && !equality.Semantic.DeepEqual(before, after)`. See `pkg/controllers/sandboxpool/sandboxpool_controller.go:267-281` for the canonical pattern. `PreCreatePool` is the single side-effect ingress for new Pool admission — invoked once at API time inside `AddMember`, never re-run by the Reconciler.
 
 **API Key**: `agbx_` prefix + 32 random bytes; SHA-256 hash stored in K8s Secret; in-memory cache TTL 1min (`pkg/utils/apikey/`)

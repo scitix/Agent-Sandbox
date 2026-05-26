@@ -61,6 +61,36 @@ func envWithMembers(members ...agentsv1alpha1.EnvClusterMember) *agentsv1alpha1.
 	return env
 }
 
+// renderMemberForTest simulates what AddMember does at API time: render a
+// candidate Pool from (Env, Template, Config), then freeze the result's
+// ObjectMeta + Spec onto the Member. The Reconciler then stamps these
+// onto the live Pool without re-rendering. Tests use this helper to
+// build realistic Member fixtures that mirror the production flow.
+func renderMemberForTest(t *testing.T, env *agentsv1alpha1.SandboxEnv, tmpl *agentsv1alpha1.SandboxTemplate, name string, mutate func(*agentsv1alpha1.EnvClusterMemberConfig)) agentsv1alpha1.EnvClusterMember {
+	t.Helper()
+	m := agentsv1alpha1.EnvClusterMember{Name: name}
+	if mutate != nil {
+		mutate(&m.Config)
+	}
+	pool, err := poolrender.RenderSandboxPool(poolrender.Inputs{
+		Env:      env,
+		Template: tmpl,
+		Member:   m,
+	})
+	if err != nil {
+		t.Fatalf("renderMemberForTest: %v", err)
+	}
+	m.Metadata = metav1.ObjectMeta{
+		Name:        pool.Name,
+		Namespace:   pool.Namespace,
+		Labels:      pool.Labels,
+		Annotations: pool.Annotations,
+		Finalizers:  append([]string(nil), pool.Finalizers...),
+	}
+	m.Spec = pool.Spec
+	return m
+}
+
 func TestMapsDifferOnKeys_IgnoresForeignKeys(t *testing.T) {
 	live := map[string]string{"foreign": "kept"}
 	if mapsDifferOnKeys(live, nil) {
@@ -116,7 +146,17 @@ func testTemplate() *agentsv1alpha1.SandboxTemplate {
 }
 
 func TestReconcilePools_StampsImagePullSecretWhenPresent(t *testing.T) {
-	env := envWithMembers(agentsv1alpha1.EnvClusterMember{Name: "env-a-foo"})
+	envSkeleton := envWithMembers()
+	envSkeleton.UID = testEnvUID
+	// Template carries a non-nil PodTemplateSpec so the renderer (and
+	// Reconciler's IPS stamper) have a place to inject the
+	// LocalObjectReference.
+	tmpl := testTemplate()
+	tmpl.Spec.Template = &corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}}},
+	}
+	member := renderMemberForTest(t, envSkeleton, tmpl, "env-a-foo", nil)
+	env := envWithMembers(member)
 	env.UID = testEnvUID
 	// Materialised image-pull Secret living in the same namespace.
 	secret := &corev1.Secret{
@@ -125,12 +165,6 @@ func TestReconcilePools_StampsImagePullSecretWhenPresent(t *testing.T) {
 			Namespace: env.Namespace,
 		},
 		Type: corev1.SecretTypeDockerConfigJson,
-	}
-	// Need a Template with a non-nil Template field so stamping has a
-	// place to inject the LocalObjectReference.
-	tmpl := testTemplate()
-	tmpl.Spec.Template = &corev1.PodTemplateSpec{
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}}},
 	}
 	r := newReconcileTestReconciler(t, env, secret, tmpl)
 
@@ -170,18 +204,18 @@ func TestReconcilePools_NoSecretMeansNoStamp(t *testing.T) {
 }
 
 func TestReconcilePools_CreatesMembers(t *testing.T) {
-	env := envWithMembers(
-		agentsv1alpha1.EnvClusterMember{
-			Name:   "env-a-exclusive",
-			Labels: map[string]string{"quota.scitix.ai/url": "lab.math.exclusive"},
-		},
-		agentsv1alpha1.EnvClusterMember{
-			Name:        "env-a-ondemand",
-			Annotations: map[string]string{"agentbox.io/reservation": "preferred"},
-		},
-	)
+	envSkeleton := envWithMembers()
+	envSkeleton.UID = testEnvUID
+	tmpl := testTemplate()
+	exclusive := renderMemberForTest(t, envSkeleton, tmpl, "env-a-exclusive", func(c *agentsv1alpha1.EnvClusterMemberConfig) {
+		c.Labels = map[string]string{"quota.scitix.ai/url": "lab.math.exclusive"}
+	})
+	ondemand := renderMemberForTest(t, envSkeleton, tmpl, "env-a-ondemand", func(c *agentsv1alpha1.EnvClusterMemberConfig) {
+		c.Annotations = map[string]string{"agentbox.io/reservation": "preferred"}
+	})
+	env := envWithMembers(exclusive, ondemand)
 	env.UID = testEnvUID
-	r := newReconcileTestReconciler(t, env, testTemplate())
+	r := newReconcileTestReconciler(t, env, tmpl)
 
 	if err := r.reconcilePools(context.Background(), env); err != nil {
 		t.Fatalf("reconcilePools: %v", err)
@@ -248,6 +282,62 @@ func TestReconcilePools_DeletesPoolsRemovedFromSpec(t *testing.T) {
 	}
 }
 
+// TestReconcilePools_BareShellEnvCreatesNoPool is the regression test for the
+// "API creates Env → Reconciler spawns a namesake Pool" bug. An Env created
+// via POST /v1/envs starts with no members; the Reconciler must materialise
+// zero Pools so plugin admission (quota reservation) on the eventual
+// POST /envs/{name}/sandboxpools call sees a clean slate.
+func TestReconcilePools_BareShellEnvCreatesNoPool(t *testing.T) {
+	env := envWithMembers() // no members on local cluster
+	env.UID = testEnvUID
+	r := newReconcileTestReconciler(t, env, testTemplate())
+
+	if err := r.reconcilePools(context.Background(), env); err != nil {
+		t.Fatalf("reconcilePools: %v", err)
+	}
+
+	pools := &agentsv1alpha1.SandboxPoolList{}
+	if err := r.List(context.Background(), pools); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(pools.Items) != 0 {
+		t.Fatalf("expected 0 pools for bare-shell Env, got %d: %+v", len(pools.Items), pools.Items)
+	}
+}
+
+// TestReconcilePools_GhostPoolGetsCleanedUp covers the cleanup path for
+// users whose Env was created on the old namesake-fallback Reconciler and
+// then upgraded: the orphan namesake Pool (OwnerRef → Env, no matching
+// member in spec) must be deleted on the next reconcile so DELETE
+// /envs/{name}/sandboxpools/{name} stops returning 404.
+func TestReconcilePools_GhostPoolGetsCleanedUp(t *testing.T) {
+	env := envWithMembers() // bare-shell, no members
+	env.UID = testEnvUID
+	ghost := &agentsv1alpha1.SandboxPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      env.Name, // namesake of the env
+			Namespace: env.Namespace,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: agentsv1alpha1.GroupVersion.String(),
+				Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
+				Name:       env.Name,
+				UID:        env.UID,
+			}},
+		},
+	}
+	r := newReconcileTestReconciler(t, env, ghost, testTemplate())
+
+	if err := r.reconcilePools(context.Background(), env); err != nil {
+		t.Fatalf("reconcilePools: %v", err)
+	}
+
+	check := &agentsv1alpha1.SandboxPool{}
+	err := r.Get(context.Background(), types.NamespacedName{Namespace: env.Namespace, Name: env.Name}, check)
+	if err == nil {
+		t.Errorf("expected ghost pool to be deleted, but Get succeeded")
+	}
+}
+
 func TestReconcilePools_LeavesForeignPoolsUntouched(t *testing.T) {
 	env := envWithMembers(agentsv1alpha1.EnvClusterMember{Name: "env-a-foo"})
 	env.UID = testEnvUID
@@ -268,10 +358,13 @@ func TestReconcilePools_LeavesForeignPoolsUntouched(t *testing.T) {
 }
 
 func TestReconcilePools_UpdatesLabelDrift(t *testing.T) {
-	env := envWithMembers(agentsv1alpha1.EnvClusterMember{
-		Name:   "env-a-foo",
-		Labels: map[string]string{"quota.scitix.ai/url": "new-quota"},
+	envSkeleton := envWithMembers()
+	envSkeleton.UID = testEnvUID
+	tmpl := testTemplate()
+	member := renderMemberForTest(t, envSkeleton, tmpl, "env-a-foo", func(c *agentsv1alpha1.EnvClusterMemberConfig) {
+		c.Labels = map[string]string{"quota.scitix.ai/url": "new-quota"}
 	})
+	env := envWithMembers(member)
 	env.UID = testEnvUID
 	// Pool exists with an old quota label; reconcile must update it.
 	pool := &agentsv1alpha1.SandboxPool{
@@ -306,110 +399,71 @@ func TestReconcilePools_UpdatesLabelDrift(t *testing.T) {
 	}
 }
 
-func TestReconcilePools_RerendersOnOverridesChange(t *testing.T) {
-	// Pool was last rendered against the live Template; env.Spec.Overrides
-	// now declares an image override → Reconciler must re-apply on top of
-	// the same Template body and patch pool.spec.embedded.
-	env := envWithMembers(agentsv1alpha1.EnvClusterMember{Name: "env-a-foo"})
-	env.UID = testEnvUID
-	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{
-		Image: "ghcr.io/foo:override",
-	}
-	// Existing pool has the un-overridden template body.
-	pool := &agentsv1alpha1.SandboxPool{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "env-a-foo",
-			Namespace: "default",
-			Annotations: map[string]string{
-				agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey:    "tmpl",
-				agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey: "1.0.0",
-			},
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: agentsv1alpha1.GroupVersion.String(),
-				Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
-				Name:       "env-a",
-				UID:        env.UID,
-			}},
-		},
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			TemplateName: "tmpl",
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}},
-					},
-				},
-			},
-		},
-	}
+// TestReconcilePools_OverridesChangeDoesNotPropagate replaces the old
+// "Reconciler re-renders on Overrides change" test. Phase 1+ semantics:
+// Env.Spec.Overrides edits do NOT flow into existing Members — Member.Spec
+// is the frozen post-PreCreatePool snapshot and only RefreshMember
+// (Phase 2 TODO) rebuilds it.
+func TestReconcilePools_OverridesChangeDoesNotPropagate(t *testing.T) {
+	envSkeleton := envWithMembers()
+	envSkeleton.UID = testEnvUID
 	tmpl := testTemplate()
 	tmpl.Spec.Template = &corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}},
 		},
 	}
+	member := renderMemberForTest(t, envSkeleton, tmpl, "env-a-foo", nil)
+	env := envWithMembers(member)
+	env.UID = testEnvUID
+	// Overrides edited AFTER the member's Spec was frozen — this should
+	// NOT change the rendered Pool.
+	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{Image: "ghcr.io/foo:override"}
 
-	r := newReconcileTestReconciler(t, env, pool, tmpl)
+	r := newReconcileTestReconciler(t, env, tmpl)
 	if err := r.reconcilePools(context.Background(), env); err != nil {
 		t.Fatalf("reconcilePools: %v", err)
 	}
-
 	got := &agentsv1alpha1.SandboxPool{}
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "env-a-foo"}, got); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.Spec.Template == nil || len(got.Spec.Template.Spec.Containers) == 0 {
-		t.Fatalf("expected rendered Template.Spec.Containers")
+		t.Fatalf("expected rendered Template.Spec.Containers from Member.Spec")
 	}
-	if image := got.Spec.Template.Spec.Containers[0].Image; image != "ghcr.io/foo:override" {
-		t.Errorf("expected overrides image applied to Pool spec, got %q", image)
+	if image := got.Spec.Template.Spec.Containers[0].Image; image != "base:v1" {
+		t.Errorf("overrides image MUST NOT propagate without RefreshMember, got %q", image)
 	}
 }
 
-func TestReconcilePools_SkipsRenderWhenTemplateVersionDrifts(t *testing.T) {
-	// Pool was last rendered at template version 1.0.0; the live Template
-	// has advanced to 2.0.0. Reconciler must NOT re-render — that requires
-	// an explicit Env sync-template.
-	env := envWithMembers(agentsv1alpha1.EnvClusterMember{Name: "env-a-foo"})
+// TestReconcilePools_TemplateVersionUpgradeDoesNotPropagate replaces the
+// old template-version-pin test. The Reconciler does not consult the
+// Template at all post-rewrite — Member.Spec is the authoritative source
+// and Template upgrades only land via the (Phase 2) RefreshMember API.
+func TestReconcilePools_TemplateVersionUpgradeDoesNotPropagate(t *testing.T) {
+	envSkeleton := envWithMembers()
+	envSkeleton.UID = testEnvUID
+	tmpl := testTemplate()
+	tmpl.Spec.IdleImage = "frozen:v1"
+	member := renderMemberForTest(t, envSkeleton, tmpl, "env-a-foo", nil)
+	env := envWithMembers(member)
 	env.UID = testEnvUID
-	pool := &agentsv1alpha1.SandboxPool{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "env-a-foo",
-			Namespace: "default",
-			Annotations: map[string]string{
-				agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey:    "tmpl",
-				agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey: "1.0.0",
-			},
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: agentsv1alpha1.GroupVersion.String(),
-				Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
-				Name:       "env-a",
-				UID:        env.UID,
-			}},
-		},
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			TemplateName: "tmpl",
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				IdleImage: "frozen:v1",
-			},
-		},
-	}
+
+	// Live Template advances to 2.0.0 with a different IdleImage.
 	newerTmpl := testTemplate()
 	newerTmpl.Spec.Version = "2.0.0"
 	newerTmpl.Spec.IdleImage = "fresh:v2"
 
-	r := newReconcileTestReconciler(t, env, pool, newerTmpl)
+	r := newReconcileTestReconciler(t, env, newerTmpl)
 	if err := r.reconcilePools(context.Background(), env); err != nil {
 		t.Fatalf("reconcilePools: %v", err)
 	}
-
 	got := &agentsv1alpha1.SandboxPool{}
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "env-a-foo"}, got); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.Spec.IdleImage != "frozen:v1" {
-		t.Errorf("template body must NOT be picked up without sync-template; got IdleImage = %q", got.Spec.IdleImage)
+		t.Errorf("template body must NOT advance without RefreshMember; got IdleImage = %q", got.Spec.IdleImage)
 	}
 	if got.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] != "1.0.0" {
 		t.Errorf("pinned version must not advance during normal reconcile, got %q", got.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey])

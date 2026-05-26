@@ -113,8 +113,8 @@ def sync_detailed(
     body: CreateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
-    `members` (or a single quota-less pool named after the Env when `members` is empty).
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
+    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
 
     Args:
         body (CreateSandboxEnvRequest):
@@ -145,8 +145,8 @@ def sync(
     body: CreateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
-    `members` (or a single quota-less pool named after the Env when `members` is empty).
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
+    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
 
     Args:
         body (CreateSandboxEnvRequest):
@@ -172,8 +172,8 @@ async def asyncio_detailed(
     body: CreateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
-    `members` (or a single quota-less pool named after the Env when `members` is empty).
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
+    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
 
     Args:
         body (CreateSandboxEnvRequest):
@@ -204,8 +204,8 @@ async def asyncio(
     body: CreateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in
-    `members` (or a single quota-less pool named after the Env when `members` is empty).
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
+    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
 
     Args:
         body (CreateSandboxEnvRequest):

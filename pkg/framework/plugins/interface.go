@@ -38,28 +38,36 @@ type Plugin interface {
 	Start(ctx context.Context, h framework.Handle) error
 
 	// PreCreatePool is called after input validation and template resolution,
-	// before the SandboxPool is persisted to Kubernetes.
-	// The plugin may:
-	//   - Mutate pool.Labels / pool.Annotations / pool.Spec
+	// before the SandboxPool is persisted to Kubernetes. The plugin may:
+	//   - Mutate pool.ObjectMeta / pool.Spec
 	//   - Read from input for context (auth info, caller-supplied metadata)
 	//   - Reject by returning an error (ideally *AdmissionError with status hint)
-	PreCreatePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) *domain.AppError
+	//
+	// Return updated=true when the plugin mutated pool. Callers are expected
+	// to verify the mutation with equality.Semantic.DeepEqual against a
+	// pre-call snapshot before persisting, so spurious updated=true is safe
+	// (just wasteful) but missed updated=true silently loses the mutation.
+	PreCreatePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (updated bool, err *domain.AppError)
 
 	// PreUpdatePool is called before the SandboxPool update is persisted.
-	// oldPool is the current state; newPool is the state that will be written.
-	// The plugin may mutate newPool or reject the operation.
-	// Return updated=true if newPool was mutated and must be persisted to Kubernetes.
+	// newPool is the state that will be written; pods is the current Pod list
+	// for context. The plugin may mutate newPool or reject the operation.
+	// Return updated=true if newPool was mutated and must be persisted.
 	PreUpdatePool(ctx context.Context, newPool *agentsv1alpha1.SandboxPool, pods []corev1.Pod) (updated bool, err *domain.AppError)
 
 	// PreDeletePool is called before the SandboxPool is deleted from Kubernetes.
-	// The plugin may reject the operation.
-	PreDeletePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) *domain.AppError
+	// The plugin may reject the operation. Mutation is rarely meaningful here
+	// (the object is about to be deleted); updated=true is reserved for the
+	// niche case where a plugin needs to set a finalizer or annotation
+	// before the delete proceeds.
+	PreDeletePool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (updated bool, err *domain.AppError)
 
 	// PreCreatePod is called after the Pod object is fully assembled but BEFORE
 	// it is submitted to Kubernetes. Plugins may mutate pod.Spec (e.g. inject
 	// NodeAffinity). A non-nil error aborts pod creation for this attempt;
-	// the reconciler will retry on the next tick.
-	PreCreatePod(ctx context.Context, pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) *domain.AppError
+	// the reconciler will retry on the next tick. Return updated=true when
+	// the plugin mutated pod.
+	PreCreatePod(ctx context.Context, pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) (updated bool, err *domain.AppError)
 }
 
 // ---------------------------------------------------------------------------
@@ -76,15 +84,15 @@ var _ Plugin = (*BasePlugin)(nil)
 
 func (BasePlugin) Start(_ context.Context, _ framework.Handle) error { return nil }
 
-func (BasePlugin) PreCreatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool) *domain.AppError {
-	return nil
+func (BasePlugin) PreCreatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
+	return false, nil
 }
 func (BasePlugin) PreUpdatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
 	return false, nil
 }
-func (BasePlugin) PreDeletePool(_ context.Context, _ *agentsv1alpha1.SandboxPool) *domain.AppError {
-	return nil
+func (BasePlugin) PreDeletePool(_ context.Context, _ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
+	return false, nil
 }
-func (BasePlugin) PreCreatePod(_ context.Context, _ *corev1.Pod, _ *agentsv1alpha1.SandboxPool) *domain.AppError {
-	return nil
+func (BasePlugin) PreCreatePod(_ context.Context, _ *corev1.Pod, _ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
+	return false, nil
 }

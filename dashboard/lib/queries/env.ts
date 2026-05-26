@@ -42,24 +42,22 @@ export const envQueryOptions = (name: string) =>
 // ─── Mutations ─────────────────────────────────────────────────────────────────
 
 /**
- * Create a new SandboxEnv. The Env Reconciler picks up the resulting CRD
- * and materialises one SandboxPool per entry in `members` (or a single
- * namesake pool when `members` is empty).
+ * Create a new SandboxEnv shell — TemplateRef + Overrides + optional
+ * ImagePullSecret only. Members are added via `useCreateEnvPool` and
+ * autoscaling groups via `useAddEnvAutoscalingGroup` after the env exists.
  */
 export function useCreateEnv() {
   const qc = useQueryClient()
   return currentApiClient().useMutation("post", "/envs", {
     onSuccess: () => {
       delayedInvalidate(qc, ["get", "/envs"])
-      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools"])
     },
   })
 }
 
 /**
- * Patch one or more editable SandboxEnv spec fields: autoscaling, members,
- * overrides. Pool spec drift (e.g. overrides.image changed) is re-rendered
- * by the Env Reconciler on the next reconcile cycle.
+ * Patch the env shell (overrides + image-pull-secret). Members and
+ * autoscaling groups are managed through their own dedicated mutations.
  */
 export function useUpdateEnv() {
   const qc = useQueryClient()
@@ -71,12 +69,6 @@ export function useUpdateEnv() {
     },
   })
 }
-
-/**
- * Back-compat alias used by the autoscaling-only edit sheet. New code should
- * call `useUpdateEnv` directly with the full patch body.
- */
-export const useUpdateEnvAutoscaling = useUpdateEnv
 
 /**
  * Delete a SandboxEnv. Member SandboxPools are cascade-deleted by Kubernetes

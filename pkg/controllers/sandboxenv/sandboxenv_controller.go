@@ -133,8 +133,9 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Materialise / reconcile member Pools from spec.Clusters[local].Members.
-	// Falls back to a single namesake Pool when no members are declared, so
-	// adopter-created Envs continue to converge.
+	// An Env with no declared local members reconciles to zero Pools — the
+	// shell exists, but members must be added explicitly through the
+	// /envs/{name}/sandboxpools CRUD path so plugin admission can run.
 	if err := r.reconcilePools(ctx, env); err != nil {
 		return ctrl.Result{}, err
 	}

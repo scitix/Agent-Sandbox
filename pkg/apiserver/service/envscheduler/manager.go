@@ -139,9 +139,9 @@ func (m *Manager) buildEntry(env *agentsv1alpha1.SandboxEnv) *envEntry {
 				clusterID:       c.ClusterID,
 				poolName:        sm.Name,
 				isLocal:         isLocal,
-				priority:        sm.Priority,
-				scaleUpPriority: sm.ScaleUpPriority,
-				scalingGroup:    sm.ScalingGroup,
+				priority:        sm.Config.Priority,
+				scaleUpPriority: sm.Config.EffectiveScaleUpPriority(),
+				scalingGroup:    sm.Config.ScalingGroup,
 			})
 		}
 	}

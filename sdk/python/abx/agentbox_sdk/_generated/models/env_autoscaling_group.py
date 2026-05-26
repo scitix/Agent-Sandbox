@@ -41,8 +41,10 @@ T = TypeVar("T", bound="EnvAutoscalingGroup")
 class EnvAutoscalingGroup:
     """ 
         Attributes:
-            name (str): ScalingGroup identifier this policy applies to. Must match an EnvClusterMember.scalingGroup value to
-                take effect.
+            name (str): ScalingGroup identifier this policy applies to. Must match the EnvClusterMember.scalingGroup of at
+                least one member declared on the env — empty-group policies are rejected at AddAutoscalingGroup time.
+            enabled (bool | Unset): Per-group master switch. When false, this group's members keep manual Pool replicas; the
+                autoscaler skips it. Each group is independent — other groups continue to run if Enabled=true.
             min_replicas (int | Unset): Lower bound on the group's aggregate desired replicas.
             max_replicas (int | Unset): Upper bound on the group's aggregate desired replicas.
             scale_up_policy (PoolScaleUpPolicy | Unset): Scale-up behaviour for a scaling group (mode + cooldown + idle
@@ -51,6 +53,7 @@ class EnvAutoscalingGroup:
      """
 
     name: str
+    enabled: bool | Unset = UNSET
     min_replicas: int | Unset = UNSET
     max_replicas: int | Unset = UNSET
     scale_up_policy: PoolScaleUpPolicy | Unset = UNSET
@@ -65,6 +68,8 @@ class EnvAutoscalingGroup:
         from ..models.pool_scale_down_policy import PoolScaleDownPolicy
         from ..models.pool_scale_up_policy import PoolScaleUpPolicy
         name = self.name
+
+        enabled = self.enabled
 
         min_replicas = self.min_replicas
 
@@ -84,6 +89,8 @@ class EnvAutoscalingGroup:
         field_dict.update({
             "name": name,
         })
+        if enabled is not UNSET:
+            field_dict["enabled"] = enabled
         if min_replicas is not UNSET:
             field_dict["minReplicas"] = min_replicas
         if max_replicas is not UNSET:
@@ -103,6 +110,8 @@ class EnvAutoscalingGroup:
         from ..models.pool_scale_up_policy import PoolScaleUpPolicy
         d = dict(src_dict)
         name = d.pop("name")
+
+        enabled = d.pop("enabled", UNSET)
 
         min_replicas = d.pop("minReplicas", UNSET)
 
@@ -130,6 +139,7 @@ class EnvAutoscalingGroup:
 
         env_autoscaling_group = cls(
             name=name,
+            enabled=enabled,
             min_replicas=min_replicas,
             max_replicas=max_replicas,
             scale_up_policy=scale_up_policy,

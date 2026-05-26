@@ -368,12 +368,9 @@ type CreateEnvSandboxPoolRequest struct {
 
 // CreateSandboxEnvRequest defines model for CreateSandboxEnvRequest.
 type CreateSandboxEnvRequest struct {
-	Annotations *map[string]string `json:"annotations,omitempty"`
-	Labels      *map[string]string `json:"labels,omitempty"`
-
-	// Members Member SandboxPools materialised by the Env Reconciler in the local cluster segment. Each member becomes one Pool with member.labels/annotations stamped verbatim and per-Pool fields (replicas, overrides.resourceMultiplier) applied to that Pool only.
-	Members *[]EnvClusterMember          `json:"members,omitempty"`
-	Mode    *CreateSandboxEnvRequestMode `json:"mode,omitempty"`
+	Annotations *map[string]string           `json:"annotations,omitempty"`
+	Labels      *map[string]string           `json:"labels,omitempty"`
+	Mode        *CreateSandboxEnvRequestMode `json:"mode,omitempty"`
 
 	// Name RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit.
 	Name string `json:"name"`
@@ -422,6 +419,14 @@ type DeleteAPIKeyResult struct {
 	Status string `json:"status"`
 }
 
+// DeleteEnvAutoscalingGroupResult defines model for DeleteEnvAutoscalingGroupResult.
+type DeleteEnvAutoscalingGroupResult struct {
+	Name string `json:"name"`
+
+	// Status 'Deleted' on success.
+	Status string `json:"status"`
+}
+
 // DeleteSandboxEnvResult defines model for DeleteSandboxEnvResult.
 type DeleteSandboxEnvResult struct {
 	Name      string `json:"name"`
@@ -465,13 +470,16 @@ type DeleteSandboxTemplateResult struct {
 
 // EnvAutoscalingGroup defines model for EnvAutoscalingGroup.
 type EnvAutoscalingGroup struct {
+	// Enabled Per-group master switch. When false, this group's members keep manual Pool replicas; the autoscaler skips it. Each group is independent — other groups continue to run if Enabled=true.
+	Enabled *bool `json:"enabled,omitempty"`
+
 	// MaxReplicas Upper bound on the group's aggregate desired replicas.
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
 	// MinReplicas Lower bound on the group's aggregate desired replicas.
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 
-	// Name ScalingGroup identifier this policy applies to. Must match an EnvClusterMember.scalingGroup value to take effect.
+	// Name ScalingGroup identifier this policy applies to. Must match the EnvClusterMember.scalingGroup of at least one member declared on the env — empty-group policies are rejected at AddAutoscalingGroup time.
 	Name string `json:"name"`
 
 	// ScaleDownPolicy Scale-down behaviour for a scaling group.
@@ -481,18 +489,47 @@ type EnvAutoscalingGroup struct {
 	ScaleUpPolicy *PoolScaleUpPolicy `json:"scaleUpPolicy,omitempty"`
 }
 
-// EnvAutoscalingSpec defines model for EnvAutoscalingSpec.
-type EnvAutoscalingSpec struct {
-	// Enabled Master switch. When false, the autoscaler is dormant — Pool replicas are managed manually.
-	Enabled *bool `json:"enabled,omitempty"`
+// EnvAutoscalingGroupEnvelope defines model for EnvAutoscalingGroupEnvelope.
+type EnvAutoscalingGroupEnvelope struct {
+	Group EnvAutoscalingGroup `json:"group"`
+}
 
-	// Groups Per-scaling-group policies. MVP only consults groups[0]; multi-group support arrives with multi-resource Envs.
+// EnvAutoscalingSpec Env-level autoscaler config. The master switch lives per-group on EnvAutoscalingGroup.enabled so groups can be toggled independently.
+type EnvAutoscalingSpec struct {
+	// Groups Per-scaling-group policies. The autoscaler iterates Groups in order and operates on the first Enabled=true entry; future multi-group routing will use member.ScalingGroup to dispatch.
 	Groups *[]EnvAutoscalingGroup `json:"groups,omitempty"`
 }
 
-// EnvClusterMember defines model for EnvClusterMember.
+// EnvAutoscalingSpecEnvelope defines model for EnvAutoscalingSpecEnvelope.
+type EnvAutoscalingSpecEnvelope struct {
+	// Spec Env-level autoscaler config. The master switch lives per-group on EnvAutoscalingGroup.enabled so groups can be toggled independently.
+	Spec EnvAutoscalingSpec `json:"spec"`
+}
+
+// EnvClusterMember One SandboxPool participating in an Env. Identity is `name`; everything
+// the caller can declare (sizing, scaling-group, routing priorities,
+// user-supplied labels/annotations) lives under `config`. The
+// materialised Pool's metadata + spec are server-internal state
+// (captured after plugin admission ran) and are NOT exposed here — query
+// the SandboxPool CR directly via `GET /v1/sandboxenvs/{name}/sandboxpools/{poolName}`
+// to inspect the rendered Pool.
 type EnvClusterMember struct {
-	// Annotations Annotations stamped onto this member's SandboxPool. Same propagation semantics as labels.
+	// Config User-declared intent for one Env member. Plugins do not mutate this —
+	// it stays equal to whatever the caller supplied at AddMember /
+	// UpdateMember time, so it remains a faithful description of the
+	// request shape across the member's lifetime.
+	Config *EnvClusterMemberConfig `json:"config,omitempty"`
+
+	// Name SandboxPool's metadata.name within the Env's namespace. Acts as the member identity within the Env.
+	Name string `json:"name"`
+}
+
+// EnvClusterMemberConfig User-declared intent for one Env member. Plugins do not mutate this —
+// it stays equal to whatever the caller supplied at AddMember /
+// UpdateMember time, so it remains a faithful description of the
+// request shape across the member's lifetime.
+type EnvClusterMemberConfig struct {
+	// Annotations User-supplied SandboxPool metadata.annotations. Same propagation as labels.
 	Annotations *map[string]string `json:"annotations,omitempty"`
 
 	// InlineResources Subset of Kubernetes corev1.ResourceRequirements used for per-Pool resource sizing on EnvClusterMember.inlineResources.
@@ -501,7 +538,7 @@ type EnvClusterMember struct {
 	// InstanceType Optional InstanceType catalog entry referenced by this member.
 	InstanceType *string `json:"instanceType,omitempty"`
 
-	// Labels Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata (e.g. quota.scitix.ai/url) that the Env itself doesn't need to interpret.
+	// Labels User-supplied SandboxPool metadata.labels (e.g. quota.scitix.ai/url). Plugins may consume these for routing decisions; their output lands on the server-internal member.metadata, not here.
 	Labels *map[string]string `json:"labels,omitempty"`
 
 	// MaxReplicas Upper bound on this member's spec.replicas. Enforced by the Env autoscaler when distributing scale-up delta.
@@ -510,19 +547,16 @@ type EnvClusterMember struct {
 	// Multiplier Multiplier applied to the InstanceType base resources for this member.
 	Multiplier *int32 `json:"multiplier,omitempty"`
 
-	// Name SandboxPool's metadata.name within the Env's namespace. Acts as the member identity within the Env.
-	Name string `json:"name"`
-
-	// Priority Routing priority — lower preferred when EnvScheduler picks a member to dispatch a request.
+	// Priority Canonical preference: lower wins. Used for routing tiebreaks and as the default for scaleUpPriority / scaleDownPriority when those are unset.
 	Priority *int32 `json:"priority,omitempty"`
 
 	// Replicas Initial replica count for this member Pool. Autoscaling owns subsequent changes — the Reconciler does not force this value back on later reconciles.
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// ScaleDownPriority Scale-down order within the scaling group — lower shrunk first.
+	// ScaleDownPriority Scale-down order within the scaling group — lower shrunk first. When omitted, falls back to priority.
 	ScaleDownPriority *int32 `json:"scaleDownPriority,omitempty"`
 
-	// ScaleUpPriority Scale-up order within the scaling group — lower scaled first. Same-value tiebreak by name.
+	// ScaleUpPriority Scale-up order within the scaling group — lower scaled first. When omitted, falls back to priority. Same-value tiebreak by name.
 	ScaleUpPriority *int32 `json:"scaleUpPriority,omitempty"`
 
 	// ScalingGroup ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi'). Members in the same group share autoscaling policy.
@@ -716,6 +750,12 @@ type ListAPIKeysResult = []APIKeyItem
 // ListClustersResult Response envelope for `GET /clusters`.
 type ListClustersResult struct {
 	Clusters []ClusterSummary `json:"clusters"`
+}
+
+// ListEnvAutoscalingGroupsResult defines model for ListEnvAutoscalingGroupsResult.
+type ListEnvAutoscalingGroupsResult struct {
+	Items []EnvAutoscalingGroup `json:"items"`
+	Total int                   `json:"total"`
 }
 
 // ListInstanceTypesResult defines model for ListInstanceTypesResult.
@@ -1011,6 +1051,7 @@ type SandboxEnvEnvelope struct {
 
 // SandboxEnvSpec defines model for SandboxEnvSpec.
 type SandboxEnvSpec struct {
+	// Autoscaling Env-level autoscaler config. The master switch lives per-group on EnvAutoscalingGroup.enabled so groups can be toggled independently.
 	Autoscaling *EnvAutoscalingSpec `json:"autoscaling,omitempty"`
 	Clusters    *[]EnvClusterSpec   `json:"clusters,omitempty"`
 	Defaults    *SandboxEnvDefaults `json:"defaults,omitempty"`
@@ -1114,11 +1155,8 @@ type SandboxPool struct {
 	Overrides *PoolTemplateOverrides `json:"overrides,omitempty"`
 
 	// OwningEnv Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). Empty when the pool has not been adopted by an Env yet — typical during a brief window after pool creation before the PoolAdoptionReconciler runs.
-	OwningEnv *string `json:"owningEnv,omitempty"`
-
-	// PoolDocs Markdown usage docs for this pool, sourced from the linked SandboxTemplate's agentbox.navix.sh/docs annotation. The variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are substituted by the server before returning; ${AGBX_API_KEY} is resolved to the first non-legacy API key of the acting user. If the template references ${AGBX_API_KEY} but the user has no key with a recoverable plaintext token, GetSandboxPool returns 422 with errorCode API_KEY_REQUIRED.
-	PoolDocs *string         `json:"poolDocs,omitempty"`
-	Spec     SandboxPoolSpec `json:"spec"`
+	OwningEnv *string         `json:"owningEnv,omitempty"`
+	Spec      SandboxPoolSpec `json:"spec"`
 
 	// SpecYaml Full EmbeddedSandboxTemplate (idleImage, runtimes, reservation, template) serialized as YAML for diff comparison.
 	SpecYaml *string           `json:"specYaml,omitempty"`
@@ -1327,6 +1365,20 @@ type TeamsResult struct {
 	Total int `json:"total"`
 }
 
+// UpdateEnvAutoscalingGroupRequest Patch one or more editable fields on an autoscaling group. Omitted fields are left unchanged. Policy objects are REPLACED wholesale when supplied — callers must echo back any fields they want to preserve.
+type UpdateEnvAutoscalingGroupRequest struct {
+	// Enabled Toggle this group's autoscaler. nil = leave unchanged.
+	Enabled     *bool  `json:"enabled,omitempty"`
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
+	// ScaleDownPolicy Scale-down behaviour for a scaling group.
+	ScaleDownPolicy *PoolScaleDownPolicy `json:"scaleDownPolicy,omitempty"`
+
+	// ScaleUpPolicy Scale-up behaviour for a scaling group (mode + cooldown + idle threshold + saturation cooldown).
+	ScaleUpPolicy *PoolScaleUpPolicy `json:"scaleUpPolicy,omitempty"`
+}
+
 // UpdateEnvSandboxPoolRequest Update a member SandboxPool. Resource shape, instanceType, labels and
 // annotations are immutable post-create; this PUT only accepts replica
 // adjustments. When the scalingGroup has autoscaling enabled (via
@@ -1340,13 +1392,8 @@ type UpdateEnvSandboxPoolRequest struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 
-// UpdateSandboxEnvRequest Patch one or more editable Env spec fields. Omitted fields are left unchanged.
+// UpdateSandboxEnvRequest Patch one or more editable Env shell fields. Omitted fields are left unchanged. Members are managed through `/envs/{name}/sandboxpools/*` and autoscaling through `/envs/{name}/autoscaling/*`.
 type UpdateSandboxEnvRequest struct {
-	Autoscaling *EnvAutoscalingSpec `json:"autoscaling,omitempty"`
-
-	// Members Replaces the local cluster's member list. Each member carries its own replicas and per-Pool overrides. Plugin-relevant metadata (e.g. quota URLs) belongs in each member's labels/annotations.
-	Members *[]EnvClusterMember `json:"members,omitempty"`
-
 	// Overrides SandboxTemplate fields this Env replaces uniformly for every member Pool. The Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.
 	Overrides *EnvOverrides `json:"overrides,omitempty"`
 }
@@ -1484,6 +1531,12 @@ type CreateSandboxEnvJSONRequestBody = CreateSandboxEnvRequest
 
 // UpdateSandboxEnvJSONRequestBody defines body for UpdateSandboxEnv for application/json ContentType.
 type UpdateSandboxEnvJSONRequestBody = UpdateSandboxEnvRequest
+
+// AddEnvAutoscalingGroupJSONRequestBody defines body for AddEnvAutoscalingGroup for application/json ContentType.
+type AddEnvAutoscalingGroupJSONRequestBody = EnvAutoscalingGroup
+
+// UpdateEnvAutoscalingGroupJSONRequestBody defines body for UpdateEnvAutoscalingGroup for application/json ContentType.
+type UpdateEnvAutoscalingGroupJSONRequestBody = UpdateEnvAutoscalingGroupRequest
 
 // CreateEnvSandboxPoolJSONRequestBody defines body for CreateEnvSandboxPool for application/json ContentType.
 type CreateEnvSandboxPoolJSONRequestBody = CreateEnvSandboxPoolRequest
@@ -1650,6 +1703,28 @@ type ClientInterface interface {
 	UpdateSandboxEnvWithBody(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdateSandboxEnv(ctx context.Context, name string, body UpdateSandboxEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEnvAutoscaling request
+	GetEnvAutoscaling(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListEnvAutoscalingGroups request
+	ListEnvAutoscalingGroups(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddEnvAutoscalingGroupWithBody request with any body
+	AddEnvAutoscalingGroupWithBody(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AddEnvAutoscalingGroup(ctx context.Context, name string, body AddEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteEnvAutoscalingGroup request
+	DeleteEnvAutoscalingGroup(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEnvAutoscalingGroup request
+	GetEnvAutoscalingGroup(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateEnvAutoscalingGroupWithBody request with any body
+	UpdateEnvAutoscalingGroupWithBody(ctx context.Context, name string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateEnvAutoscalingGroup(ctx context.Context, name string, groupName string, body UpdateEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListEnvSandboxPools request
 	ListEnvSandboxPools(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2051,6 +2126,102 @@ func (c *Client) UpdateSandboxEnvWithBody(ctx context.Context, name string, cont
 
 func (c *Client) UpdateSandboxEnv(ctx context.Context, name string, body UpdateSandboxEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSandboxEnvRequest(c.Server, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetEnvAutoscaling(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvAutoscalingRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListEnvAutoscalingGroups(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListEnvAutoscalingGroupsRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddEnvAutoscalingGroupWithBody(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddEnvAutoscalingGroupRequestWithBody(c.Server, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddEnvAutoscalingGroup(ctx context.Context, name string, body AddEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddEnvAutoscalingGroupRequest(c.Server, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteEnvAutoscalingGroup(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteEnvAutoscalingGroupRequest(c.Server, name, groupName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetEnvAutoscalingGroup(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvAutoscalingGroupRequest(c.Server, name, groupName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateEnvAutoscalingGroupWithBody(ctx context.Context, name string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateEnvAutoscalingGroupRequestWithBody(c.Server, name, groupName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateEnvAutoscalingGroup(ctx context.Context, name string, groupName string, body UpdateEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateEnvAutoscalingGroupRequest(c.Server, name, groupName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3168,6 +3339,257 @@ func NewUpdateSandboxEnvRequestWithBody(server string, name string, contentType 
 	return req, nil
 }
 
+// NewGetEnvAutoscalingRequest generates requests for GetEnvAutoscaling
+func NewGetEnvAutoscalingRequest(server string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/envs/%s/autoscaling", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListEnvAutoscalingGroupsRequest generates requests for ListEnvAutoscalingGroups
+func NewListEnvAutoscalingGroupsRequest(server string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/envs/%s/autoscaling/groups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAddEnvAutoscalingGroupRequest calls the generic AddEnvAutoscalingGroup builder with application/json body
+func NewAddEnvAutoscalingGroupRequest(server string, name string, body AddEnvAutoscalingGroupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddEnvAutoscalingGroupRequestWithBody(server, name, "application/json", bodyReader)
+}
+
+// NewAddEnvAutoscalingGroupRequestWithBody generates requests for AddEnvAutoscalingGroup with any type of body
+func NewAddEnvAutoscalingGroupRequestWithBody(server string, name string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/envs/%s/autoscaling/groups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteEnvAutoscalingGroupRequest generates requests for DeleteEnvAutoscalingGroup
+func NewDeleteEnvAutoscalingGroupRequest(server string, name string, groupName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "groupName", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/envs/%s/autoscaling/groups/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetEnvAutoscalingGroupRequest generates requests for GetEnvAutoscalingGroup
+func NewGetEnvAutoscalingGroupRequest(server string, name string, groupName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "groupName", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/envs/%s/autoscaling/groups/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateEnvAutoscalingGroupRequest calls the generic UpdateEnvAutoscalingGroup builder with application/json body
+func NewUpdateEnvAutoscalingGroupRequest(server string, name string, groupName string, body UpdateEnvAutoscalingGroupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateEnvAutoscalingGroupRequestWithBody(server, name, groupName, "application/json", bodyReader)
+}
+
+// NewUpdateEnvAutoscalingGroupRequestWithBody generates requests for UpdateEnvAutoscalingGroup with any type of body
+func NewUpdateEnvAutoscalingGroupRequestWithBody(server string, name string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "groupName", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/envs/%s/autoscaling/groups/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListEnvSandboxPoolsRequest generates requests for ListEnvSandboxPools
 func NewListEnvSandboxPoolsRequest(server string, name string) (*http.Request, error) {
 	var err error
@@ -4164,6 +4586,28 @@ type ClientWithResponsesInterface interface {
 
 	UpdateSandboxEnvWithResponse(ctx context.Context, name string, body UpdateSandboxEnvJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSandboxEnvResponse, error)
 
+	// GetEnvAutoscalingWithResponse request
+	GetEnvAutoscalingWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*GetEnvAutoscalingResponse, error)
+
+	// ListEnvAutoscalingGroupsWithResponse request
+	ListEnvAutoscalingGroupsWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*ListEnvAutoscalingGroupsResponse, error)
+
+	// AddEnvAutoscalingGroupWithBodyWithResponse request with any body
+	AddEnvAutoscalingGroupWithBodyWithResponse(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddEnvAutoscalingGroupResponse, error)
+
+	AddEnvAutoscalingGroupWithResponse(ctx context.Context, name string, body AddEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*AddEnvAutoscalingGroupResponse, error)
+
+	// DeleteEnvAutoscalingGroupWithResponse request
+	DeleteEnvAutoscalingGroupWithResponse(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*DeleteEnvAutoscalingGroupResponse, error)
+
+	// GetEnvAutoscalingGroupWithResponse request
+	GetEnvAutoscalingGroupWithResponse(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*GetEnvAutoscalingGroupResponse, error)
+
+	// UpdateEnvAutoscalingGroupWithBodyWithResponse request with any body
+	UpdateEnvAutoscalingGroupWithBodyWithResponse(ctx context.Context, name string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateEnvAutoscalingGroupResponse, error)
+
+	UpdateEnvAutoscalingGroupWithResponse(ctx context.Context, name string, groupName string, body UpdateEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateEnvAutoscalingGroupResponse, error)
+
 	// ListEnvSandboxPoolsWithResponse request
 	ListEnvSandboxPoolsWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*ListEnvSandboxPoolsResponse, error)
 
@@ -4789,6 +5233,159 @@ func (r UpdateSandboxEnvResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdateSandboxEnvResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetEnvAutoscalingResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *EnvAutoscalingSpecEnvelope
+	JSON401      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvAutoscalingResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvAutoscalingResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListEnvAutoscalingGroupsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ListEnvAutoscalingGroupsResult
+	JSON401      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ListEnvAutoscalingGroupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListEnvAutoscalingGroupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AddEnvAutoscalingGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *EnvAutoscalingGroupEnvelope
+	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON409      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r AddEnvAutoscalingGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddEnvAutoscalingGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteEnvAutoscalingGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *DeleteEnvAutoscalingGroupResult
+	JSON401      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteEnvAutoscalingGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteEnvAutoscalingGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetEnvAutoscalingGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *EnvAutoscalingGroupEnvelope
+	JSON401      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvAutoscalingGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvAutoscalingGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateEnvAutoscalingGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *EnvAutoscalingGroupEnvelope
+	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateEnvAutoscalingGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateEnvAutoscalingGroupResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5571,6 +6168,76 @@ func (c *ClientWithResponses) UpdateSandboxEnvWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseUpdateSandboxEnvResponse(rsp)
+}
+
+// GetEnvAutoscalingWithResponse request returning *GetEnvAutoscalingResponse
+func (c *ClientWithResponses) GetEnvAutoscalingWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*GetEnvAutoscalingResponse, error) {
+	rsp, err := c.GetEnvAutoscaling(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvAutoscalingResponse(rsp)
+}
+
+// ListEnvAutoscalingGroupsWithResponse request returning *ListEnvAutoscalingGroupsResponse
+func (c *ClientWithResponses) ListEnvAutoscalingGroupsWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*ListEnvAutoscalingGroupsResponse, error) {
+	rsp, err := c.ListEnvAutoscalingGroups(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListEnvAutoscalingGroupsResponse(rsp)
+}
+
+// AddEnvAutoscalingGroupWithBodyWithResponse request with arbitrary body returning *AddEnvAutoscalingGroupResponse
+func (c *ClientWithResponses) AddEnvAutoscalingGroupWithBodyWithResponse(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddEnvAutoscalingGroupResponse, error) {
+	rsp, err := c.AddEnvAutoscalingGroupWithBody(ctx, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddEnvAutoscalingGroupResponse(rsp)
+}
+
+func (c *ClientWithResponses) AddEnvAutoscalingGroupWithResponse(ctx context.Context, name string, body AddEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*AddEnvAutoscalingGroupResponse, error) {
+	rsp, err := c.AddEnvAutoscalingGroup(ctx, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddEnvAutoscalingGroupResponse(rsp)
+}
+
+// DeleteEnvAutoscalingGroupWithResponse request returning *DeleteEnvAutoscalingGroupResponse
+func (c *ClientWithResponses) DeleteEnvAutoscalingGroupWithResponse(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*DeleteEnvAutoscalingGroupResponse, error) {
+	rsp, err := c.DeleteEnvAutoscalingGroup(ctx, name, groupName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteEnvAutoscalingGroupResponse(rsp)
+}
+
+// GetEnvAutoscalingGroupWithResponse request returning *GetEnvAutoscalingGroupResponse
+func (c *ClientWithResponses) GetEnvAutoscalingGroupWithResponse(ctx context.Context, name string, groupName string, reqEditors ...RequestEditorFn) (*GetEnvAutoscalingGroupResponse, error) {
+	rsp, err := c.GetEnvAutoscalingGroup(ctx, name, groupName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvAutoscalingGroupResponse(rsp)
+}
+
+// UpdateEnvAutoscalingGroupWithBodyWithResponse request with arbitrary body returning *UpdateEnvAutoscalingGroupResponse
+func (c *ClientWithResponses) UpdateEnvAutoscalingGroupWithBodyWithResponse(ctx context.Context, name string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateEnvAutoscalingGroupResponse, error) {
+	rsp, err := c.UpdateEnvAutoscalingGroupWithBody(ctx, name, groupName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateEnvAutoscalingGroupResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateEnvAutoscalingGroupWithResponse(ctx context.Context, name string, groupName string, body UpdateEnvAutoscalingGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateEnvAutoscalingGroupResponse, error) {
+	rsp, err := c.UpdateEnvAutoscalingGroup(ctx, name, groupName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateEnvAutoscalingGroupResponse(rsp)
 }
 
 // ListEnvSandboxPoolsWithResponse request returning *ListEnvSandboxPoolsResponse
@@ -6885,6 +7552,309 @@ func ParseUpdateSandboxEnvResponse(rsp *http.Response) (*UpdateSandboxEnvRespons
 	return response, nil
 }
 
+// ParseGetEnvAutoscalingResponse parses an HTTP response from a GetEnvAutoscalingWithResponse call
+func ParseGetEnvAutoscalingResponse(rsp *http.Response) (*GetEnvAutoscalingResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvAutoscalingResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvAutoscalingSpecEnvelope
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListEnvAutoscalingGroupsResponse parses an HTTP response from a ListEnvAutoscalingGroupsWithResponse call
+func ParseListEnvAutoscalingGroupsResponse(rsp *http.Response) (*ListEnvAutoscalingGroupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListEnvAutoscalingGroupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListEnvAutoscalingGroupsResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddEnvAutoscalingGroupResponse parses an HTTP response from a AddEnvAutoscalingGroupWithResponse call
+func ParseAddEnvAutoscalingGroupResponse(rsp *http.Response) (*AddEnvAutoscalingGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddEnvAutoscalingGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest EnvAutoscalingGroupEnvelope
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteEnvAutoscalingGroupResponse parses an HTTP response from a DeleteEnvAutoscalingGroupWithResponse call
+func ParseDeleteEnvAutoscalingGroupResponse(rsp *http.Response) (*DeleteEnvAutoscalingGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteEnvAutoscalingGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeleteEnvAutoscalingGroupResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEnvAutoscalingGroupResponse parses an HTTP response from a GetEnvAutoscalingGroupWithResponse call
+func ParseGetEnvAutoscalingGroupResponse(rsp *http.Response) (*GetEnvAutoscalingGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvAutoscalingGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvAutoscalingGroupEnvelope
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateEnvAutoscalingGroupResponse parses an HTTP response from a UpdateEnvAutoscalingGroupWithResponse call
+func ParseUpdateEnvAutoscalingGroupResponse(rsp *http.Response) (*UpdateEnvAutoscalingGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateEnvAutoscalingGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvAutoscalingGroupEnvelope
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListEnvSandboxPoolsResponse parses an HTTP response from a ListEnvSandboxPoolsWithResponse call
 func ParseListEnvSandboxPoolsResponse(rsp *http.Response) (*ListEnvSandboxPoolsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7977,7 +8947,7 @@ type ServerInterface interface {
 	// List SandboxEnvs visible to the caller
 	// (GET /envs)
 	ListSandboxEnvs(c *gin.Context)
-	// Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in `members` (or a single quota-less pool named after the Env when `members` is empty).
+	// Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
 	// (POST /envs)
 	CreateSandboxEnv(c *gin.Context)
 	// Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
@@ -7986,9 +8956,27 @@ type ServerInterface interface {
 	// Get a SandboxEnv by name. Response includes the rendered envDocs Markdown.
 	// (GET /envs/{name})
 	GetSandboxEnv(c *gin.Context, name string)
-	// Update editable SandboxEnv fields (autoscaling, members, overrides, replicas, podCreationImagePolicy, default timeouts)
+	// Update the editable Env shell fields (overrides only). Members and autoscaling groups have dedicated endpoints.
 	// (PATCH /envs/{name})
 	UpdateSandboxEnv(c *gin.Context, name string)
+	// Return the env's full autoscaling spec (enabled flag + groups).
+	// (GET /envs/{name}/autoscaling)
+	GetEnvAutoscaling(c *gin.Context, name string)
+	// List autoscaling groups on the env.
+	// (GET /envs/{name}/autoscaling/groups)
+	ListEnvAutoscalingGroups(c *gin.Context, name string)
+	// Add a new autoscaling group to the env.
+	// (POST /envs/{name}/autoscaling/groups)
+	AddEnvAutoscalingGroup(c *gin.Context, name string)
+	// Remove an autoscaling group from the env.
+	// (DELETE /envs/{name}/autoscaling/groups/{groupName})
+	DeleteEnvAutoscalingGroup(c *gin.Context, name string, groupName string)
+	// Get one autoscaling group by name.
+	// (GET /envs/{name}/autoscaling/groups/{groupName})
+	GetEnvAutoscalingGroup(c *gin.Context, name string, groupName string)
+	// Patch one or more editable fields on an autoscaling group.
+	// (PUT /envs/{name}/autoscaling/groups/{groupName})
+	UpdateEnvAutoscalingGroup(c *gin.Context, name string, groupName string)
 	// List member SandboxPools of an Env
 	// (GET /envs/{name}/sandboxpools)
 	ListEnvSandboxPools(c *gin.Context, name string)
@@ -8524,6 +9512,189 @@ func (siw *ServerInterfaceWrapper) UpdateSandboxEnv(c *gin.Context) {
 	}
 
 	siw.Handler.UpdateSandboxEnv(c, name)
+}
+
+// GetEnvAutoscaling operation middleware
+func (siw *ServerInterfaceWrapper) GetEnvAutoscaling(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", c.Param("name"), &name, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter name: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEnvAutoscaling(c, name)
+}
+
+// ListEnvAutoscalingGroups operation middleware
+func (siw *ServerInterfaceWrapper) ListEnvAutoscalingGroups(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", c.Param("name"), &name, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter name: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListEnvAutoscalingGroups(c, name)
+}
+
+// AddEnvAutoscalingGroup operation middleware
+func (siw *ServerInterfaceWrapper) AddEnvAutoscalingGroup(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", c.Param("name"), &name, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter name: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AddEnvAutoscalingGroup(c, name)
+}
+
+// DeleteEnvAutoscalingGroup operation middleware
+func (siw *ServerInterfaceWrapper) DeleteEnvAutoscalingGroup(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", c.Param("name"), &name, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter name: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "groupName" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupName", c.Param("groupName"), &groupName, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter groupName: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteEnvAutoscalingGroup(c, name, groupName)
+}
+
+// GetEnvAutoscalingGroup operation middleware
+func (siw *ServerInterfaceWrapper) GetEnvAutoscalingGroup(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", c.Param("name"), &name, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter name: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "groupName" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupName", c.Param("groupName"), &groupName, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter groupName: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEnvAutoscalingGroup(c, name, groupName)
+}
+
+// UpdateEnvAutoscalingGroup operation middleware
+func (siw *ServerInterfaceWrapper) UpdateEnvAutoscalingGroup(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", c.Param("name"), &name, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter name: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "groupName" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupName", c.Param("groupName"), &groupName, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter groupName: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.UpdateEnvAutoscalingGroup(c, name, groupName)
 }
 
 // ListEnvSandboxPools operation middleware
@@ -9135,6 +10306,12 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.DELETE(options.BaseURL+"/envs/:name", wrapper.DeleteSandboxEnv)
 	router.GET(options.BaseURL+"/envs/:name", wrapper.GetSandboxEnv)
 	router.PATCH(options.BaseURL+"/envs/:name", wrapper.UpdateSandboxEnv)
+	router.GET(options.BaseURL+"/envs/:name/autoscaling", wrapper.GetEnvAutoscaling)
+	router.GET(options.BaseURL+"/envs/:name/autoscaling/groups", wrapper.ListEnvAutoscalingGroups)
+	router.POST(options.BaseURL+"/envs/:name/autoscaling/groups", wrapper.AddEnvAutoscalingGroup)
+	router.DELETE(options.BaseURL+"/envs/:name/autoscaling/groups/:groupName", wrapper.DeleteEnvAutoscalingGroup)
+	router.GET(options.BaseURL+"/envs/:name/autoscaling/groups/:groupName", wrapper.GetEnvAutoscalingGroup)
+	router.PUT(options.BaseURL+"/envs/:name/autoscaling/groups/:groupName", wrapper.UpdateEnvAutoscalingGroup)
 	router.GET(options.BaseURL+"/envs/:name/sandboxpools", wrapper.ListEnvSandboxPools)
 	router.POST(options.BaseURL+"/envs/:name/sandboxpools", wrapper.CreateEnvSandboxPool)
 	router.DELETE(options.BaseURL+"/envs/:name/sandboxpools/:poolName", wrapper.DeleteEnvSandboxPool)
@@ -10178,6 +11355,302 @@ func (response UpdateSandboxEnv404JSONResponse) VisitUpdateSandboxEnvResponse(w 
 type UpdateSandboxEnv500JSONResponse ErrorResponse
 
 func (response UpdateSandboxEnv500JSONResponse) VisitUpdateSandboxEnvResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscalingRequestObject struct {
+	Name string `json:"name"`
+}
+
+type GetEnvAutoscalingResponseObject interface {
+	VisitGetEnvAutoscalingResponse(w http.ResponseWriter) error
+}
+
+type GetEnvAutoscaling200JSONResponse EnvAutoscalingSpecEnvelope
+
+func (response GetEnvAutoscaling200JSONResponse) VisitGetEnvAutoscalingResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscaling401JSONResponse ErrorResponse
+
+func (response GetEnvAutoscaling401JSONResponse) VisitGetEnvAutoscalingResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscaling404JSONResponse ErrorResponse
+
+func (response GetEnvAutoscaling404JSONResponse) VisitGetEnvAutoscalingResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscaling500JSONResponse ErrorResponse
+
+func (response GetEnvAutoscaling500JSONResponse) VisitGetEnvAutoscalingResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListEnvAutoscalingGroupsRequestObject struct {
+	Name string `json:"name"`
+}
+
+type ListEnvAutoscalingGroupsResponseObject interface {
+	VisitListEnvAutoscalingGroupsResponse(w http.ResponseWriter) error
+}
+
+type ListEnvAutoscalingGroups200JSONResponse ListEnvAutoscalingGroupsResult
+
+func (response ListEnvAutoscalingGroups200JSONResponse) VisitListEnvAutoscalingGroupsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListEnvAutoscalingGroups401JSONResponse ErrorResponse
+
+func (response ListEnvAutoscalingGroups401JSONResponse) VisitListEnvAutoscalingGroupsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListEnvAutoscalingGroups404JSONResponse ErrorResponse
+
+func (response ListEnvAutoscalingGroups404JSONResponse) VisitListEnvAutoscalingGroupsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListEnvAutoscalingGroups500JSONResponse ErrorResponse
+
+func (response ListEnvAutoscalingGroups500JSONResponse) VisitListEnvAutoscalingGroupsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddEnvAutoscalingGroupRequestObject struct {
+	Name string `json:"name"`
+	Body *AddEnvAutoscalingGroupJSONRequestBody
+}
+
+type AddEnvAutoscalingGroupResponseObject interface {
+	VisitAddEnvAutoscalingGroupResponse(w http.ResponseWriter) error
+}
+
+type AddEnvAutoscalingGroup201JSONResponse EnvAutoscalingGroupEnvelope
+
+func (response AddEnvAutoscalingGroup201JSONResponse) VisitAddEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddEnvAutoscalingGroup400JSONResponse ErrorResponse
+
+func (response AddEnvAutoscalingGroup400JSONResponse) VisitAddEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddEnvAutoscalingGroup401JSONResponse ErrorResponse
+
+func (response AddEnvAutoscalingGroup401JSONResponse) VisitAddEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddEnvAutoscalingGroup404JSONResponse ErrorResponse
+
+func (response AddEnvAutoscalingGroup404JSONResponse) VisitAddEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddEnvAutoscalingGroup409JSONResponse ErrorResponse
+
+func (response AddEnvAutoscalingGroup409JSONResponse) VisitAddEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddEnvAutoscalingGroup500JSONResponse ErrorResponse
+
+func (response AddEnvAutoscalingGroup500JSONResponse) VisitAddEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteEnvAutoscalingGroupRequestObject struct {
+	Name      string `json:"name"`
+	GroupName string `json:"groupName"`
+}
+
+type DeleteEnvAutoscalingGroupResponseObject interface {
+	VisitDeleteEnvAutoscalingGroupResponse(w http.ResponseWriter) error
+}
+
+type DeleteEnvAutoscalingGroup200JSONResponse DeleteEnvAutoscalingGroupResult
+
+func (response DeleteEnvAutoscalingGroup200JSONResponse) VisitDeleteEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteEnvAutoscalingGroup401JSONResponse ErrorResponse
+
+func (response DeleteEnvAutoscalingGroup401JSONResponse) VisitDeleteEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteEnvAutoscalingGroup404JSONResponse ErrorResponse
+
+func (response DeleteEnvAutoscalingGroup404JSONResponse) VisitDeleteEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteEnvAutoscalingGroup500JSONResponse ErrorResponse
+
+func (response DeleteEnvAutoscalingGroup500JSONResponse) VisitDeleteEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscalingGroupRequestObject struct {
+	Name      string `json:"name"`
+	GroupName string `json:"groupName"`
+}
+
+type GetEnvAutoscalingGroupResponseObject interface {
+	VisitGetEnvAutoscalingGroupResponse(w http.ResponseWriter) error
+}
+
+type GetEnvAutoscalingGroup200JSONResponse EnvAutoscalingGroupEnvelope
+
+func (response GetEnvAutoscalingGroup200JSONResponse) VisitGetEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscalingGroup401JSONResponse ErrorResponse
+
+func (response GetEnvAutoscalingGroup401JSONResponse) VisitGetEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscalingGroup404JSONResponse ErrorResponse
+
+func (response GetEnvAutoscalingGroup404JSONResponse) VisitGetEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEnvAutoscalingGroup500JSONResponse ErrorResponse
+
+func (response GetEnvAutoscalingGroup500JSONResponse) VisitGetEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateEnvAutoscalingGroupRequestObject struct {
+	Name      string `json:"name"`
+	GroupName string `json:"groupName"`
+	Body      *UpdateEnvAutoscalingGroupJSONRequestBody
+}
+
+type UpdateEnvAutoscalingGroupResponseObject interface {
+	VisitUpdateEnvAutoscalingGroupResponse(w http.ResponseWriter) error
+}
+
+type UpdateEnvAutoscalingGroup200JSONResponse EnvAutoscalingGroupEnvelope
+
+func (response UpdateEnvAutoscalingGroup200JSONResponse) VisitUpdateEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateEnvAutoscalingGroup400JSONResponse ErrorResponse
+
+func (response UpdateEnvAutoscalingGroup400JSONResponse) VisitUpdateEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateEnvAutoscalingGroup401JSONResponse ErrorResponse
+
+func (response UpdateEnvAutoscalingGroup401JSONResponse) VisitUpdateEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateEnvAutoscalingGroup404JSONResponse ErrorResponse
+
+func (response UpdateEnvAutoscalingGroup404JSONResponse) VisitUpdateEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateEnvAutoscalingGroup500JSONResponse ErrorResponse
+
+func (response UpdateEnvAutoscalingGroup500JSONResponse) VisitUpdateEnvAutoscalingGroupResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -11238,7 +12711,7 @@ type StrictServerInterface interface {
 	// List SandboxEnvs visible to the caller
 	// (GET /envs)
 	ListSandboxEnvs(ctx context.Context, request ListSandboxEnvsRequestObject) (ListSandboxEnvsResponseObject, error)
-	// Create a new SandboxEnv. The Env Reconciler materialises one member SandboxPool per entry in `members` (or a single quota-less pool named after the Env when `members` is empty).
+	// Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
 	// (POST /envs)
 	CreateSandboxEnv(ctx context.Context, request CreateSandboxEnvRequestObject) (CreateSandboxEnvResponseObject, error)
 	// Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences.
@@ -11247,9 +12720,27 @@ type StrictServerInterface interface {
 	// Get a SandboxEnv by name. Response includes the rendered envDocs Markdown.
 	// (GET /envs/{name})
 	GetSandboxEnv(ctx context.Context, request GetSandboxEnvRequestObject) (GetSandboxEnvResponseObject, error)
-	// Update editable SandboxEnv fields (autoscaling, members, overrides, replicas, podCreationImagePolicy, default timeouts)
+	// Update the editable Env shell fields (overrides only). Members and autoscaling groups have dedicated endpoints.
 	// (PATCH /envs/{name})
 	UpdateSandboxEnv(ctx context.Context, request UpdateSandboxEnvRequestObject) (UpdateSandboxEnvResponseObject, error)
+	// Return the env's full autoscaling spec (enabled flag + groups).
+	// (GET /envs/{name}/autoscaling)
+	GetEnvAutoscaling(ctx context.Context, request GetEnvAutoscalingRequestObject) (GetEnvAutoscalingResponseObject, error)
+	// List autoscaling groups on the env.
+	// (GET /envs/{name}/autoscaling/groups)
+	ListEnvAutoscalingGroups(ctx context.Context, request ListEnvAutoscalingGroupsRequestObject) (ListEnvAutoscalingGroupsResponseObject, error)
+	// Add a new autoscaling group to the env.
+	// (POST /envs/{name}/autoscaling/groups)
+	AddEnvAutoscalingGroup(ctx context.Context, request AddEnvAutoscalingGroupRequestObject) (AddEnvAutoscalingGroupResponseObject, error)
+	// Remove an autoscaling group from the env.
+	// (DELETE /envs/{name}/autoscaling/groups/{groupName})
+	DeleteEnvAutoscalingGroup(ctx context.Context, request DeleteEnvAutoscalingGroupRequestObject) (DeleteEnvAutoscalingGroupResponseObject, error)
+	// Get one autoscaling group by name.
+	// (GET /envs/{name}/autoscaling/groups/{groupName})
+	GetEnvAutoscalingGroup(ctx context.Context, request GetEnvAutoscalingGroupRequestObject) (GetEnvAutoscalingGroupResponseObject, error)
+	// Patch one or more editable fields on an autoscaling group.
+	// (PUT /envs/{name}/autoscaling/groups/{groupName})
+	UpdateEnvAutoscalingGroup(ctx context.Context, request UpdateEnvAutoscalingGroupRequestObject) (UpdateEnvAutoscalingGroupResponseObject, error)
 	// List member SandboxPools of an Env
 	// (GET /envs/{name}/sandboxpools)
 	ListEnvSandboxPools(ctx context.Context, request ListEnvSandboxPoolsRequestObject) (ListEnvSandboxPoolsResponseObject, error)
@@ -11947,6 +13438,187 @@ func (sh *strictHandler) UpdateSandboxEnv(ctx *gin.Context, name string) {
 	}
 }
 
+// GetEnvAutoscaling operation middleware
+func (sh *strictHandler) GetEnvAutoscaling(ctx *gin.Context, name string) {
+	var request GetEnvAutoscalingRequestObject
+
+	request.Name = name
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEnvAutoscaling(ctx, request.(GetEnvAutoscalingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEnvAutoscaling")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEnvAutoscalingResponseObject); ok {
+		if err := validResponse.VisitGetEnvAutoscalingResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListEnvAutoscalingGroups operation middleware
+func (sh *strictHandler) ListEnvAutoscalingGroups(ctx *gin.Context, name string) {
+	var request ListEnvAutoscalingGroupsRequestObject
+
+	request.Name = name
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.ListEnvAutoscalingGroups(ctx, request.(ListEnvAutoscalingGroupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListEnvAutoscalingGroups")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(ListEnvAutoscalingGroupsResponseObject); ok {
+		if err := validResponse.VisitListEnvAutoscalingGroupsResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AddEnvAutoscalingGroup operation middleware
+func (sh *strictHandler) AddEnvAutoscalingGroup(ctx *gin.Context, name string) {
+	var request AddEnvAutoscalingGroupRequestObject
+
+	request.Name = name
+
+	var body AddEnvAutoscalingGroupJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AddEnvAutoscalingGroup(ctx, request.(AddEnvAutoscalingGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AddEnvAutoscalingGroup")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AddEnvAutoscalingGroupResponseObject); ok {
+		if err := validResponse.VisitAddEnvAutoscalingGroupResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteEnvAutoscalingGroup operation middleware
+func (sh *strictHandler) DeleteEnvAutoscalingGroup(ctx *gin.Context, name string, groupName string) {
+	var request DeleteEnvAutoscalingGroupRequestObject
+
+	request.Name = name
+	request.GroupName = groupName
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteEnvAutoscalingGroup(ctx, request.(DeleteEnvAutoscalingGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteEnvAutoscalingGroup")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(DeleteEnvAutoscalingGroupResponseObject); ok {
+		if err := validResponse.VisitDeleteEnvAutoscalingGroupResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEnvAutoscalingGroup operation middleware
+func (sh *strictHandler) GetEnvAutoscalingGroup(ctx *gin.Context, name string, groupName string) {
+	var request GetEnvAutoscalingGroupRequestObject
+
+	request.Name = name
+	request.GroupName = groupName
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEnvAutoscalingGroup(ctx, request.(GetEnvAutoscalingGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEnvAutoscalingGroup")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEnvAutoscalingGroupResponseObject); ok {
+		if err := validResponse.VisitGetEnvAutoscalingGroupResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateEnvAutoscalingGroup operation middleware
+func (sh *strictHandler) UpdateEnvAutoscalingGroup(ctx *gin.Context, name string, groupName string) {
+	var request UpdateEnvAutoscalingGroupRequestObject
+
+	request.Name = name
+	request.GroupName = groupName
+
+	var body UpdateEnvAutoscalingGroupJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateEnvAutoscalingGroup(ctx, request.(UpdateEnvAutoscalingGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateEnvAutoscalingGroup")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(UpdateEnvAutoscalingGroupResponseObject); ok {
+		if err := validResponse.VisitUpdateEnvAutoscalingGroupResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListEnvSandboxPools operation middleware
 func (sh *strictHandler) ListEnvSandboxPools(ctx *gin.Context, name string) {
 	var request ListEnvSandboxPoolsRequestObject
@@ -12549,325 +14221,340 @@ func (sh *strictHandler) GetUserSandboxStatistics(ctx *gin.Context) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

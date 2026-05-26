@@ -85,10 +85,31 @@ func TestPickAutoscalingGroup(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "single group",
+			name: "single group disabled",
 			env: &agentsv1alpha1.SandboxEnv{Spec: agentsv1alpha1.SandboxEnvSpec{
 				Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
-					Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "1c4Gi"}},
+					Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "1c4Gi", Enabled: false}},
+				},
+			}},
+			want: false,
+		},
+		{
+			name: "single group enabled",
+			env: &agentsv1alpha1.SandboxEnv{Spec: agentsv1alpha1.SandboxEnvSpec{
+				Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
+					Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "1c4Gi", Enabled: true}},
+				},
+			}},
+			want: true,
+		},
+		{
+			name: "first disabled second enabled",
+			env: &agentsv1alpha1.SandboxEnv{Spec: agentsv1alpha1.SandboxEnvSpec{
+				Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
+					Groups: []agentsv1alpha1.EnvAutoscalingGroup{
+						{Name: "off", Enabled: false},
+						{Name: "on", Enabled: true},
+					},
 				},
 			}},
 			want: true,

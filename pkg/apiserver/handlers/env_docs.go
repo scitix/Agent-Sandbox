@@ -21,16 +21,19 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 )
 
-// renderPoolDocs substitutes the ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY}
-// placeholders in the raw pool docs markdown with real values. The API key is resolved from
-// the acting user's API keys: the first entry whose RawToken is non-empty wins
-// (legacy keys with only a hash stored are skipped because users cannot run the
-// rendered snippets without the plaintext token).
+// renderEnvDocs substitutes the ${AGBX_ENV_NAME}, ${AGBX_POOL_NAME},
+// ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} placeholders in the raw env docs
+// markdown with real values. ${AGBX_POOL_NAME} is retained as a legacy alias
+// that renders the env name so docs authored against the old per-pool docs
+// surface continue to render correctly. The API key is resolved from the
+// acting user's API keys: the first entry whose RawToken is non-empty wins
+// (legacy keys with only a hash stored are skipped because users cannot run
+// the rendered snippets without the plaintext token).
 //
 // When raw is empty, returns ("", nil) — nothing to render.
 // When raw contains ${AGBX_API_KEY} but no usable key is found, returns
 // ("", APIKeyRequired AppError) so the caller can surface it to the user.
-func (s *Server) renderPoolDocs(ctx context.Context, raw, poolName, clusterID string, auth domain.AuthInfo) (string, *domain.AppError) {
+func (s *Server) renderEnvDocs(ctx context.Context, raw, envName, clusterID string, auth domain.AuthInfo) (string, *domain.AppError) {
 	if raw == "" {
 		return "", nil
 	}
@@ -51,29 +54,31 @@ func (s *Server) renderPoolDocs(ctx context.Context, raw, poolName, clusterID st
 		}
 		if apiKeyValue == "" {
 			return "", domain.NewAPIKeyRequired(
-				"no API key with a recoverable token found for this user; please create a new API key on the API Keys page to view the pool docs",
+				"no API key with a recoverable token found for this user; please create a new API key on the API Keys page to view the env docs",
 			)
 		}
 	}
 
 	rendered := raw
-	rendered = strings.ReplaceAll(rendered, "${AGBX_POOL_NAME}", poolName)
+	rendered = strings.ReplaceAll(rendered, "${AGBX_ENV_NAME}", envName)
+	rendered = strings.ReplaceAll(rendered, "${AGBX_POOL_NAME}", envName)
 	rendered = strings.ReplaceAll(rendered, "${AGBX_CLUSTER_ID}", clusterID)
 	rendered = strings.ReplaceAll(rendered, "${AGBX_API_KEY}", apiKeyValue)
 	return rendered, nil
 }
 
-// renderTemplateDocs substitutes the ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY}
-// placeholders with human-readable display hints so that the template docs page gives
-// users a concrete preview of what the rendered snippets will look like.
-// ${AGBX_CLUSTER_ID} is substituted with the real cluster ID; the other two become
-// placeholder strings (YOUR_POOL_NAME, YOUR_API_KEY).
+// renderTemplateDocs substitutes the ${AGBX_ENV_NAME}, ${AGBX_POOL_NAME},
+// ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} placeholders with human-readable
+// display hints so the template docs page gives users a concrete preview of
+// what the rendered snippets will look like. ${AGBX_CLUSTER_ID} resolves to
+// the real cluster ID; the others become placeholder strings.
 func renderTemplateDocs(raw, clusterID string) string {
 	if raw == "" {
 		return ""
 	}
 	rendered := raw
-	rendered = strings.ReplaceAll(rendered, "${AGBX_POOL_NAME}", "YOUR_POOL_NAME")
+	rendered = strings.ReplaceAll(rendered, "${AGBX_ENV_NAME}", "YOUR_ENV_NAME")
+	rendered = strings.ReplaceAll(rendered, "${AGBX_POOL_NAME}", "YOUR_ENV_NAME")
 	rendered = strings.ReplaceAll(rendered, "${AGBX_CLUSTER_ID}", clusterID)
 	rendered = strings.ReplaceAll(rendered, "${AGBX_API_KEY}", "YOUR_API_KEY")
 	return rendered

@@ -185,11 +185,12 @@ function UpsertPoolInner({
   const preview = computeInstanceTypePreview(selectedInstanceType, watchedMultiplier)
 
   // Member's scaling group only matters for the autoscaling-vs-replicas
-  // gate on Update. We look it up from the env spec.
+  // gate on Update. Replicas is owned by the autoscaler only when the
+  // matching group itself has Enabled=true.
   const scalingGroupName = pool ? findScalingGroupForPool(env, pool.name) : ""
-  const autoscalingEnabled = env.spec.autoscaling?.enabled === true
-  const groupHasAutoscaling =
-    autoscalingEnabled && env.spec.autoscaling?.groups?.some((g) => g.name === scalingGroupName)
+  const groupHasAutoscaling = (env.spec.autoscaling?.groups ?? []).some(
+    (g) => g.name === scalingGroupName && g.enabled,
+  )
   const replicasDisabled = isEdit && groupHasAutoscaling
 
   const createMutation = useCreateEnvPool(env.name)
@@ -606,21 +607,22 @@ function buildDefaultValues(
   }
   // Edit mode — extract from the matching env member.
   const member = findMember(env, pool.name)
-  const hasInstanceType = !!member?.instanceType
-  const inlineCpu = member?.inlineResources?.requests?.["cpu"] as string | undefined
-  const inlineMem = member?.inlineResources?.requests?.["memory"] as string | undefined
+  const cfg = member?.config
+  const hasInstanceType = !!cfg?.instanceType
+  const inlineCpu = cfg?.inlineResources?.requests?.["cpu"] as string | undefined
+  const inlineMem = cfg?.inlineResources?.requests?.["memory"] as string | undefined
   const mode: FormValues["resourceMode"] = hasInstanceType ? "instanceType" : "manual"
   const cpu = parseCpuToCore(inlineCpu)
   const mem = parseMemoryToMiB(inlineMem)
   return {
     resourceMode: mode,
-    instanceType: member?.instanceType,
-    multiplier: member?.multiplier ?? 1,
+    instanceType: cfg?.instanceType,
+    multiplier: cfg?.multiplier ?? 1,
     cpuCores: cpu != null ? Math.max(1, Math.round(cpu)) : undefined,
     memoryGiB: mem != null ? Math.max(1, Math.round(mem / 1024)) : undefined,
-    quotaUrl: member?.labels?.[QUOTA_URL_LABEL],
+    quotaUrl: cfg?.labels?.[QUOTA_URL_LABEL],
     replicas: pool.spec.replicas,
-    maxReplicas: member?.maxReplicas,
+    maxReplicas: cfg?.maxReplicas,
   }
 }
 
@@ -634,7 +636,7 @@ function findMember(env: AgentSandboxEnv, name: string) {
 }
 
 function findScalingGroupForPool(env: AgentSandboxEnv, name: string): string {
-  return findMember(env, name)?.scalingGroup ?? ""
+  return findMember(env, name)?.config?.scalingGroup ?? ""
 }
 
 function formValuesToCreateBody(v: FormValues) {

@@ -22,8 +22,8 @@
 // (PreCreatePool / PreUpdatePool / PreDeletePool plugins), its own naming
 // derivation (instanceType + quota), and its own projection helpers — none
 // of which the Env spec CRUD cares about. The two services share the
-// SandboxEnv K8s client but talk to plugins via the PoolAdmitter
-// abstraction owned by the parent service package.
+// SandboxEnv K8s client; plugin admission is invoked via a
+// *plugins.PluginManager (nil-safe — open-source builds pass nil).
 //
 // Render contract: AddMemberPool and UpdateMemberPool build the prospective
 // SandboxPool via poolrender.RenderSandboxPool — the exact same function
@@ -39,7 +39,10 @@ import (
 	"maps"
 	"sort"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
@@ -48,71 +51,69 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envcommon"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolrender"
+	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
 
 // Service is the Env-scoped Pool CRUD surface. Routes onto
 // `/v1/sandboxenvs/{name}/sandboxpools/*` via handlers/server.go.
-type Service interface {
+type MemberPoolService interface {
 	// Add appends a new member to env's local cluster segment. The server
 	// derives member.Name and member.ScalingGroup from the supplied
 	// resources + quota label; any caller-supplied values for these fields
 	// are overwritten. Plugin admission (PreCreatePool) runs against the
 	// fully rendered prospective SandboxPool before the Env patch lands.
-	Add(ctx context.Context, namespace, envName, localClusterID string, member agentsv1alpha1.EnvClusterMember) (*gen.SandboxPool, *domain.AppError)
+	AddMember(ctx context.Context, namespace, envName, localClusterID string, member agentsv1alpha1.EnvClusterMember) (*gen.SandboxPool, *domain.AppError)
 	// Update adjusts the named member's replica counts. Resource shape,
 	// instanceType, labels, and annotations are immutable post-create —
 	// callers must Delete + Add to change them. When the member's
 	// ScalingGroup has autoscaling enabled, Replicas is rejected.
-	Update(ctx context.Context, namespace, envName, poolName, localClusterID string, patch Patch) (*gen.SandboxPool, *domain.AppError)
+	UpdateMember(ctx context.Context, namespace, envName, poolName, localClusterID string, patch MemberPoolPatch) (*gen.SandboxPool, *domain.AppError)
 	// Delete removes the named member from env's local cluster segment.
 	// The Reconciler cascade-deletes the SandboxPool CR.
-	Delete(ctx context.Context, namespace, envName, poolName, localClusterID string) (*gen.DeleteSandboxPoolResult, *domain.AppError)
+	DeleteMember(ctx context.Context, namespace, envName, poolName, localClusterID string) (*gen.DeleteSandboxPoolResult, *domain.AppError)
 	// List enumerates SandboxPool CRs owned by envName (matched on
 	// OwnerReferences).
-	List(ctx context.Context, namespace, envName string) ([]gen.SandboxPool, *domain.AppError)
+	ListMembers(ctx context.Context, namespace, envName string) ([]gen.SandboxPool, *domain.AppError)
 	// Get fetches one SandboxPool CR and verifies it is owned by envName
 	// before projecting it.
-	Get(ctx context.Context, namespace, envName, poolName string) (*gen.SandboxPool, *domain.AppError)
+	GetMember(ctx context.Context, namespace, envName, poolName string) (*gen.SandboxPool, *domain.AppError)
 }
 
-// Patch is the editable subset of EnvClusterMember exposed to
+// MemberPoolPatch is the editable subset of EnvClusterMember exposed to
 // PUT /v1/sandboxenvs/{name}/sandboxpools/{poolName}. Pointer fields
 // disambiguate "leave unchanged" from "explicit zero".
-type Patch struct {
+type MemberPoolPatch struct {
 	Replicas    *int32
 	MaxReplicas *int32
 }
 
 // New constructs the default Service implementation backed by the K8s
-// client, the supplied PoolAdmitter, and the InstanceType + Quota
-// providers used to derive PoolName + ScalingGroup. A nil admitter is
-// treated as service.NoOpPoolAdmitter; nil providers fall through to
-// their Noop equivalents so unit tests can pass nils.
+// client, the supplied PluginManager (nil = no plugins registered), and
+// the InstanceType + Quota providers used to derive PoolName +
+// ScalingGroup. Nil providers fall through to their Noop equivalents so
+// unit tests can pass nils.
 func New(
 	c client.Client,
-	admitter service.PoolAdmitter,
+	pm *plugins.PluginManager,
 	instProv instancetypeplugin.Provider,
 	quotaProv quotaplugin.Provider,
-) Service {
-	if admitter == nil {
-		admitter = service.NoOpPoolAdmitter{}
-	}
+) MemberPoolService {
 	if instProv == nil {
 		instProv = instancetypeplugin.NewNoop()
 	}
 	if quotaProv == nil {
 		quotaProv = quotaplugin.NewNoop()
 	}
-	return &k8sService{client: c, admitter: admitter, instProv: instProv, quotaProv: quotaProv}
+	return &k8sService{client: c, pm: pm, instProv: instProv, quotaProv: quotaProv}
 }
 
 type k8sService struct {
 	client    client.Client
-	admitter  service.PoolAdmitter
+	pm        *plugins.PluginManager
 	instProv  instancetypeplugin.Provider
 	quotaProv quotaplugin.Provider
 }
@@ -122,7 +123,7 @@ type k8sService struct {
 // constructing the PoolName suffix.
 const QuotaURLLabel = "quota.scitix.ai/url"
 
-func (s *k8sService) Add(ctx context.Context, namespace, envName, localClusterID string, member agentsv1alpha1.EnvClusterMember) (*gen.SandboxPool, *domain.AppError) {
+func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClusterID string, member agentsv1alpha1.EnvClusterMember) (*gen.SandboxPool, *domain.AppError) {
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
@@ -140,7 +141,7 @@ func (s *k8sService) Add(ctx context.Context, namespace, envName, localClusterID
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	for _, m := range service.LocalClusterMembers(&env.Spec, localClusterID) {
+	for _, m := range envcommon.LocalClusterMembers(&env.Spec, localClusterID) {
 		if m.Name == member.Name {
 			return nil, domain.NewConflict(fmt.Sprintf("member pool %q already exists in env %q (derived from resources + quota)", member.Name, envName))
 		}
@@ -153,11 +154,19 @@ func (s *k8sService) Add(ctx context.Context, namespace, envName, localClusterID
 	if err := poolrender.Validate(&candidate.Spec); err != nil {
 		return nil, domain.NewBadRequest(err.Error())
 	}
-	preLabels, preAnnotations, preReplicas := snapshotPoolMutables(candidate)
-	if appErr := s.admitter.AdmitCreate(ctx, candidate); appErr != nil {
+	// PreCreatePool is the only call site for this plugin hook — its
+	// side-effects (Reservation Submit, scheduling labels, NodeAffinity,
+	// …) and any mutations on candidate are captured into Member.Metadata
+	// + Member.Spec so the Reconciler can materialise the Pool without
+	// re-running plugin admission. The updated flag is informational here:
+	// we snapshot Meta + Spec wholesale regardless, since this is the
+	// first time the member is being created and there is no prior
+	// snapshot to compare against.
+	if _, appErr := s.pm.PreCreatePool(ctx, candidate); appErr != nil {
 		return nil, appErr
 	}
-	mergePluginMutations(&member, candidate, preLabels, preAnnotations, preReplicas)
+	member.Metadata = sanitizeMemberMetadata(candidate.ObjectMeta)
+	member.Spec = *candidate.Spec.DeepCopy()
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &agentsv1alpha1.SandboxEnv{}
@@ -165,14 +174,14 @@ func (s *k8sService) Add(ctx context.Context, namespace, envName, localClusterID
 			return err
 		}
 		base := current.DeepCopy()
-		members := service.LocalClusterMembers(&current.Spec, localClusterID)
+		members := envcommon.LocalClusterMembers(&current.Spec, localClusterID)
 		for _, m := range members {
 			if m.Name == member.Name {
 				return &domain.AppError{Code: domain.ErrCodeConflict,
 					Message: fmt.Sprintf("member pool %q already exists in env %q", member.Name, envName)}
 			}
 		}
-		service.SetLocalClusterMembers(&current.Spec, localClusterID, append(members, member))
+		envcommon.SetLocalClusterMembers(&current.Spec, localClusterID, append(members, member))
 		return s.client.Patch(ctx, current, client.MergeFrom(base))
 	}); err != nil {
 		if appErr, ok := err.(*domain.AppError); ok {
@@ -186,7 +195,7 @@ func (s *k8sService) Add(ctx context.Context, namespace, envName, localClusterID
 	return s.projectMemberPool(ctx, namespace, envName, member), nil
 }
 
-func (s *k8sService) Update(ctx context.Context, namespace, envName, poolName, localClusterID string, patch Patch) (*gen.SandboxPool, *domain.AppError) {
+func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolName, localClusterID string, patch MemberPoolPatch) (*gen.SandboxPool, *domain.AppError) {
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
@@ -202,7 +211,7 @@ func (s *k8sService) Update(ctx context.Context, namespace, envName, poolName, l
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	members := service.LocalClusterMembers(&env.Spec, localClusterID)
+	members := envcommon.LocalClusterMembers(&env.Spec, localClusterID)
 	var existing *agentsv1alpha1.EnvClusterMember
 	for i := range members {
 		if members[i].Name == poolName {
@@ -213,36 +222,55 @@ func (s *k8sService) Update(ctx context.Context, namespace, envName, poolName, l
 	if existing == nil {
 		return nil, domain.NewNotFound(fmt.Sprintf("member pool %q not found in env %q", poolName, envName))
 	}
-	if patch.Replicas != nil && scalingGroupHasAutoscaling(env, existing.ScalingGroup) {
-		return nil, domain.NewBadRequest(fmt.Sprintf("replicas is owned by the autoscaler for scalingGroup %q; only maxReplicas can be edited", existing.ScalingGroup))
+	if patch.Replicas != nil && scalingGroupHasAutoscaling(env, existing.Config.ScalingGroup) {
+		return nil, domain.NewBadRequest(fmt.Sprintf("replicas is owned by the autoscaler for scalingGroup %q; only maxReplicas can be edited", existing.Config.ScalingGroup))
 	}
 
 	// Build the updated member by overlaying patch onto existing — preserves
-	// resources, labels, annotations, name, scalingGroup.
-	member := *existing
+	// Spec, Metadata, Config (other than Replicas / MaxReplicas), name.
+	member := *existing.DeepCopy()
 	if patch.Replicas != nil {
-		member.Replicas = *patch.Replicas
+		member.Config.Replicas = *patch.Replicas
 	}
 	if patch.MaxReplicas != nil {
 		v := *patch.MaxReplicas
-		member.MaxReplicas = &v
+		member.Config.MaxReplicas = &v
 	}
 
-	candidate, appErr := s.candidateForUpdate(ctx, env, member)
-	if appErr != nil {
-		return nil, appErr
+	// Candidate Pool used by PreUpdatePool admission: start from the
+	// frozen Member.Metadata + Member.Spec snapshot (not a fresh render —
+	// Template upgrades do NOT auto-propagate). Overlay the patched
+	// replica count so the plugin sees the new desired state.
+	candidate := &agentsv1alpha1.SandboxPool{
+		ObjectMeta: *member.Metadata.DeepCopy(),
+		Spec:       *member.Spec.DeepCopy(),
 	}
-	if err := poolrender.Validate(&candidate.Spec); err != nil {
-		return nil, domain.NewBadRequest(err.Error())
-	}
-	preLabels, preAnnotations, preReplicas := snapshotPoolMutables(candidate)
+	candidate.Name = member.Name
+	candidate.Namespace = env.Namespace
+	candidate.Spec.Replicas = member.Config.Replicas
+	before := candidate.DeepCopy()
+
 	// Pod list (driver-supplied for PreUpdatePool) is left empty here; the
 	// Reconciler still owns the in-cluster update path that supplies live
 	// pods. This is a coarse pre-check at the API edge.
-	if _, appErr := s.admitter.AdmitUpdate(ctx, candidate, nil); appErr != nil {
+	pluginUpdated, appErr := s.pm.PreUpdatePool(ctx, candidate, nil)
+	if appErr != nil {
 		return nil, appErr
 	}
-	mergePluginMutations(&member, candidate, preLabels, preAnnotations, preReplicas)
+	if pluginUpdated && !equality.Semantic.DeepEqual(before, candidate) {
+		// Plugin really mutated something: persist the new snapshot back
+		// onto the Member, then keep the live Pool aligned (if it exists)
+		// so we don't lose the plugin's intent.
+		member.Metadata = sanitizeMemberMetadata(candidate.ObjectMeta)
+		member.Spec = *candidate.Spec.DeepCopy()
+		if err := s.patchLivePoolFromMember(ctx, env.Namespace, &member); err != nil {
+			return nil, domain.NewInternal(err.Error(), err)
+		}
+	} else {
+		// No plugin mutation — propagate just the replica count into
+		// Member.Spec so the Reconciler's drift detection observes it.
+		member.Spec.Replicas = member.Config.Replicas
+	}
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &agentsv1alpha1.SandboxEnv{}
@@ -250,7 +278,7 @@ func (s *k8sService) Update(ctx context.Context, namespace, envName, poolName, l
 			return err
 		}
 		base := current.DeepCopy()
-		ms := service.LocalClusterMembers(&current.Spec, localClusterID)
+		ms := envcommon.LocalClusterMembers(&current.Spec, localClusterID)
 		idx := -1
 		for i, m := range ms {
 			if m.Name == poolName {
@@ -263,7 +291,7 @@ func (s *k8sService) Update(ctx context.Context, namespace, envName, poolName, l
 				Message: fmt.Sprintf("member pool %q not found in env %q", poolName, envName)}
 		}
 		ms[idx] = member
-		service.SetLocalClusterMembers(&current.Spec, localClusterID, ms)
+		envcommon.SetLocalClusterMembers(&current.Spec, localClusterID, ms)
 		return s.client.Patch(ctx, current, client.MergeFrom(base))
 	}); err != nil {
 		if appErr, ok := err.(*domain.AppError); ok {
@@ -277,7 +305,7 @@ func (s *k8sService) Update(ctx context.Context, namespace, envName, poolName, l
 	return s.projectMemberPool(ctx, namespace, envName, member), nil
 }
 
-func (s *k8sService) Delete(ctx context.Context, namespace, envName, poolName, localClusterID string) (*gen.DeleteSandboxPoolResult, *domain.AppError) {
+func (s *k8sService) DeleteMember(ctx context.Context, namespace, envName, poolName, localClusterID string) (*gen.DeleteSandboxPoolResult, *domain.AppError) {
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
@@ -288,10 +316,10 @@ func (s *k8sService) Delete(ctx context.Context, namespace, envName, poolName, l
 	// release, so skip admission and proceed to the Env patch.
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: poolName}, pool); err == nil {
-		if service.EnvNameFromOwnerRefs(pool.OwnerReferences) != envName {
+		if envcommon.EnvNameFromOwnerRefs(pool.OwnerReferences) != envName {
 			return nil, domain.NewNotFound(fmt.Sprintf("member pool %q not found in env %q", poolName, envName))
 		}
-		if appErr := s.admitter.AdmitDelete(ctx, pool); appErr != nil {
+		if _, appErr := s.pm.PreDeletePool(ctx, pool); appErr != nil {
 			return nil, appErr
 		}
 	} else if !k8serrors.IsNotFound(err) {
@@ -304,7 +332,7 @@ func (s *k8sService) Delete(ctx context.Context, namespace, envName, poolName, l
 			return err
 		}
 		base := current.DeepCopy()
-		members := service.LocalClusterMembers(&current.Spec, localClusterID)
+		members := envcommon.LocalClusterMembers(&current.Spec, localClusterID)
 		out := members[:0]
 		found := false
 		for _, m := range members {
@@ -318,7 +346,7 @@ func (s *k8sService) Delete(ctx context.Context, namespace, envName, poolName, l
 			return &domain.AppError{Code: domain.ErrCodeNotFound,
 				Message: fmt.Sprintf("member pool %q not found in env %q", poolName, envName)}
 		}
-		service.SetLocalClusterMembers(&current.Spec, localClusterID, append([]agentsv1alpha1.EnvClusterMember(nil), out...))
+		envcommon.SetLocalClusterMembers(&current.Spec, localClusterID, append([]agentsv1alpha1.EnvClusterMember(nil), out...))
 		return s.client.Patch(ctx, current, client.MergeFrom(base))
 	}); err != nil {
 		if appErr, ok := err.(*domain.AppError); ok {
@@ -336,7 +364,7 @@ func (s *k8sService) Delete(ctx context.Context, namespace, envName, poolName, l
 	}, nil
 }
 
-func (s *k8sService) List(ctx context.Context, namespace, envName string) ([]gen.SandboxPool, *domain.AppError) {
+func (s *k8sService) ListMembers(ctx context.Context, namespace, envName string) ([]gen.SandboxPool, *domain.AppError) {
 	env := &agentsv1alpha1.SandboxEnv{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: envName}, env); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -351,16 +379,16 @@ func (s *k8sService) List(ctx context.Context, namespace, envName string) ([]gen
 	items := make([]gen.SandboxPool, 0)
 	for i := range pools.Items {
 		p := &pools.Items[i]
-		if service.EnvNameFromOwnerRefs(p.OwnerReferences) != envName {
+		if envcommon.EnvNameFromOwnerRefs(p.OwnerReferences) != envName {
 			continue
 		}
-		items = append(items, service.PoolToGen(ctx, p, nil))
+		items = append(items, envcommon.PoolToGen(ctx, p))
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 	return items, nil
 }
 
-func (s *k8sService) Get(ctx context.Context, namespace, envName, poolName string) (*gen.SandboxPool, *domain.AppError) {
+func (s *k8sService) GetMember(ctx context.Context, namespace, envName, poolName string) (*gen.SandboxPool, *domain.AppError) {
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: poolName}, pool); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -368,10 +396,10 @@ func (s *k8sService) Get(ctx context.Context, namespace, envName, poolName strin
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	if service.EnvNameFromOwnerRefs(pool.OwnerReferences) != envName {
+	if envcommon.EnvNameFromOwnerRefs(pool.OwnerReferences) != envName {
 		return nil, domain.NewNotFound(fmt.Sprintf("sandbox pool %q not found in env %q", poolName, envName))
 	}
-	result := service.PoolToGen(ctx, pool, nil)
+	result := envcommon.PoolToGen(ctx, pool)
 	return &result, nil
 }
 
@@ -405,98 +433,91 @@ func (s *k8sService) renderCandidate(ctx context.Context, env *agentsv1alpha1.Sa
 	return pool, nil
 }
 
-// candidateForUpdate produces the prospective SandboxPool for an Update.
-// When the live Pool exists, the result is the live object with the
-// updated member overlaid; otherwise it falls back to renderCandidate.
-//
-// The live-Pool overlay path lets PreUpdatePool plugins (e.g. quota delta
-// reservation) compare new vs. old replica counts directly. The
-// fresh-render fallback handles the window between a successful Add and
-// the Reconciler materialising the CR — admission still gets a full
-// picture of resources × replicas.
-func (s *k8sService) candidateForUpdate(ctx context.Context, env *agentsv1alpha1.SandboxEnv, member agentsv1alpha1.EnvClusterMember) (*agentsv1alpha1.SandboxPool, *domain.AppError) {
-	live := &agentsv1alpha1.SandboxPool{}
-	err := s.client.Get(ctx, client.ObjectKey{Namespace: env.Namespace, Name: member.Name}, live)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return s.renderCandidate(ctx, env, member)
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-	overlay := live.DeepCopy()
-	overlay.Spec.Replicas = member.Replicas
-	// Per-member labels / annotations are immutable post-create, but if a
-	// plugin set them at admission time previously the overlay still
-	// surfaces the latest member state for admission.
-	if len(member.Labels) > 0 {
-		if overlay.Labels == nil {
-			overlay.Labels = map[string]string{}
-		}
-		maps.Copy(overlay.Labels, member.Labels)
-	}
-	if len(member.Annotations) > 0 {
-		if overlay.Annotations == nil {
-			overlay.Annotations = map[string]string{}
-		}
-		maps.Copy(overlay.Annotations, member.Annotations)
-	}
-	return overlay, nil
-}
-
 // projectMemberPool returns the freshly materialised SandboxPool CR if it
 // exists, else a minimal projection from the member fields. Used by
-// Add/Update which return immediately after the Env Patch lands but before
+// Add/Update which return immediately after the Env MemberPoolPatch lands but before
 // the Reconciler has had a chance to run.
 func (s *k8sService) projectMemberPool(ctx context.Context, namespace, envName string, member agentsv1alpha1.EnvClusterMember) *gen.SandboxPool {
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: member.Name}, pool); err == nil &&
-		service.EnvNameFromOwnerRefs(pool.OwnerReferences) == envName {
-		result := service.PoolToGen(ctx, pool, nil)
+		envcommon.EnvNameFromOwnerRefs(pool.OwnerReferences) == envName {
+		result := envcommon.PoolToGen(ctx, pool)
 		return &result
 	}
 	return &gen.SandboxPool{
 		Name:      member.Name,
 		Namespace: namespace,
-		Spec:      gen.SandboxPoolSpec{Replicas: member.Replicas},
+		Spec:      gen.SandboxPoolSpec{Replicas: member.Config.Replicas},
 		OwningEnv: ptr.To(envName),
 	}
 }
 
-// snapshotPoolMutables captures the pre-admission state of the fields a
-// plugin may mutate so mergePluginMutations can detect changes.
-func snapshotPoolMutables(p *agentsv1alpha1.SandboxPool) (labels, annotations map[string]string, replicas int32) {
-	labels = make(map[string]string, len(p.Labels))
-	maps.Copy(labels, p.Labels)
-	annotations = make(map[string]string, len(p.Annotations))
-	maps.Copy(annotations, p.Annotations)
-	replicas = p.Spec.Replicas
-	return
+// sanitizeMemberMetadata strips server-managed ObjectMeta fields from
+// the post-PreCreatePool candidate so the snapshot stored on
+// EnvClusterMember.Metadata only carries data that round-trips cleanly
+// when the Reconciler materialises the live Pool. We keep
+// Name/Namespace/Labels/Annotations/Finalizers (the user- and
+// plugin-authored bits) and drop UID/ResourceVersion/Generation/CreationTimestamp/
+// DeletionTimestamp/ManagedFields/OwnerReferences (server- or
+// Reconciler-managed).
+func sanitizeMemberMetadata(in metav1.ObjectMeta) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:        in.Name,
+		Namespace:   in.Namespace,
+		Labels:      cloneStringMap(in.Labels),
+		Annotations: cloneStringMap(in.Annotations),
+		Finalizers:  append([]string(nil), in.Finalizers...),
+	}
 }
 
-// mergePluginMutations propagates plugin-added labels/annotations and any
-// replica adjustments from the candidate Pool back to the EnvClusterMember.
-// Only newly added keys (absent or different from pre-admission snapshot)
-// are copied so we don't leak env-identity labels into the member shape.
-func mergePluginMutations(member *agentsv1alpha1.EnvClusterMember, candidate *agentsv1alpha1.SandboxPool, preLabels, preAnnotations map[string]string, preReplicas int32) {
-	for k, v := range candidate.Labels {
-		if preLabels[k] == v {
-			continue
-		}
-		if member.Labels == nil {
-			member.Labels = map[string]string{}
-		}
-		member.Labels[k] = v
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
 	}
-	for k, v := range candidate.Annotations {
-		if preAnnotations[k] == v {
-			continue
-		}
-		if member.Annotations == nil {
-			member.Annotations = map[string]string{}
-		}
-		member.Annotations[k] = v
-	}
-	if candidate.Spec.Replicas != preReplicas {
-		member.Replicas = candidate.Spec.Replicas
-	}
+	out := make(map[string]string, len(in))
+	maps.Copy(out, in)
+	return out
 }
+
+// patchLivePoolFromMember aligns the live SandboxPool CR with the
+// frozen member.Metadata + member.Spec snapshot. Called after
+// PreUpdatePool admits a mutation so the plugin's intent (Reservation
+// resubmit, label change, ...) is applied without waiting for the next
+// Reconciler tick. Replicas is intentionally taken from Config (the
+// autoscaler-friendly source of truth) rather than from Spec.Replicas
+// — they're equal here because UpdateMember just synchronised them.
+//
+// Returns nil when the Pool does not exist (Reconciler will pick up
+// the new Member snapshot on first materialisation).
+func (s *k8sService) patchLivePoolFromMember(ctx context.Context, namespace string, member *agentsv1alpha1.EnvClusterMember) error {
+	live := &agentsv1alpha1.SandboxPool{}
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: member.Name}, live); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	base := live.DeepCopy()
+	for k, v := range member.Metadata.Labels {
+		if live.Labels == nil {
+			live.Labels = map[string]string{}
+		}
+		live.Labels[k] = v
+	}
+	for k, v := range member.Metadata.Annotations {
+		if live.Annotations == nil {
+			live.Annotations = map[string]string{}
+		}
+		live.Annotations[k] = v
+	}
+	live.Spec.Replicas = member.Config.Replicas
+	if equality.Semantic.DeepEqual(base, live) {
+		return nil
+	}
+	return s.client.Patch(ctx, live, client.MergeFrom(base))
+}
+
+// Compile-time reference to corev1 — kept so the new sanitizer/import
+// list stays stable when callers in this package start consuming pod
+// shapes directly (UpdateMember's plugin admission is one such path).
+var _ = corev1.Pod{}

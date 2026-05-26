@@ -102,11 +102,11 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 	}
 	// InlineResources is the renderer's source of truth for per-Pool
 	// resource sizing in Phase 1. The API service stamps the InstanceType
-	// catalog's resolved resources into Member.InlineResources before
+	// catalog's resolved resources into Config.InlineResources before
 	// calling Render so this path covers both the catalog and the legacy
 	// inline-resources cases.
-	if in.Member.InlineResources != nil {
-		opts.InlineResources = in.Member.InlineResources
+	if in.Member.Config.InlineResources != nil {
+		opts.InlineResources = in.Member.Config.InlineResources
 	}
 	if err := sandboxrender.Apply(&emb, opts); err != nil {
 		return nil, fmt.Errorf("apply overrides: %w", err)
@@ -116,11 +116,11 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 
 	labels := envIdentityLabels(in.Env)
 	sandboxpool.SyncLabelsFromTemplate(labels, in.Template.Labels)
-	maps.Copy(labels, in.Member.Labels)
+	maps.Copy(labels, in.Member.Config.Labels)
 
 	annotations := map[string]string{}
 	sandboxpool.SyncAnnotationsFromTemplate(annotations, in.Template.Annotations)
-	maps.Copy(annotations, in.Member.Annotations)
+	maps.Copy(annotations, in.Member.Config.Annotations)
 	// System-managed provenance keys are written last so a Template that
 	// carries them in its own annotations cannot stomp them.
 	annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = in.Template.Name
@@ -137,7 +137,7 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 			OwnerReferences: []metav1.OwnerReference{OwnerReferenceForEnv(in.Env)},
 		},
 		Spec: agentsv1alpha1.SandboxPoolSpec{
-			Replicas:                in.Member.Replicas,
+			Replicas:                in.Member.Config.Replicas,
 			TemplateName:            in.Template.Name,
 			EmbeddedSandboxTemplate: emb,
 		},
@@ -169,6 +169,40 @@ func Validate(spec *agentsv1alpha1.SandboxPoolSpec) error {
 		}
 	}
 	return nil
+}
+
+// MaterializeFromMember projects a frozen EnvClusterMember snapshot onto a
+// fresh SandboxPool object. The Member's Metadata (sanitised at API time)
+// and Spec are copied verbatim; the Pool's OwnerReference is stamped from
+// the supplied Env; the dynamic ImagePullSecret reference is recomputed
+// from the supplied existence flag so a Secret created or deleted after
+// AddMember still propagates onto the Pool.
+//
+// Unlike RenderSandboxPool this function does NOT consult the Template or
+// run plugin admission — plugin side-effects already live inside
+// Member.Metadata + Member.Spec by construction (AddMember captures them
+// post-PreCreatePool). The Env Reconciler is the only intended caller.
+func MaterializeFromMember(env *agentsv1alpha1.SandboxEnv, member agentsv1alpha1.EnvClusterMember, ipsExists bool) *agentsv1alpha1.SandboxPool {
+	pool := &agentsv1alpha1.SandboxPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            member.Name,
+			Namespace:       env.Namespace,
+			Labels:          copyMapNonNil(member.Metadata.Labels),
+			Annotations:     copyMapNonNil(member.Metadata.Annotations),
+			Finalizers:      append([]string(nil), member.Metadata.Finalizers...),
+			OwnerReferences: []metav1.OwnerReference{OwnerReferenceForEnv(env)},
+		},
+		Spec: *member.Spec.DeepCopy(),
+	}
+	pool.Spec.Replicas = member.Config.Replicas
+	stampImagePullSecretRef(&pool.Spec.EmbeddedSandboxTemplate, agentsv1alpha1.EnvImagePullSecretName(env.Name), ipsExists)
+	return pool
+}
+
+func copyMapNonNil(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	maps.Copy(out, in)
+	return out
 }
 
 // OwnerReferenceForEnv is the canonical controlling OwnerReference stamped

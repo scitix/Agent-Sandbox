@@ -38,15 +38,15 @@ T = TypeVar("T", bound="EnvAutoscalingSpec")
 
 @_attrs_define
 class EnvAutoscalingSpec:
-    """ 
+    """ Env-level autoscaler config. The master switch lives per-group on EnvAutoscalingGroup.enabled so groups can be
+    toggled independently.
+
         Attributes:
-            enabled (bool | Unset): Master switch. When false, the autoscaler is dormant — Pool replicas are managed
-                manually.
-            groups (list[EnvAutoscalingGroup] | Unset): Per-scaling-group policies. MVP only consults groups[0]; multi-group
-                support arrives with multi-resource Envs.
+            groups (list[EnvAutoscalingGroup] | Unset): Per-scaling-group policies. The autoscaler iterates Groups in order
+                and operates on the first Enabled=true entry; future multi-group routing will use member.ScalingGroup to
+                dispatch.
      """
 
-    enabled: bool | Unset = UNSET
     groups: list[EnvAutoscalingGroup] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -56,8 +56,6 @@ class EnvAutoscalingSpec:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.env_autoscaling_group import EnvAutoscalingGroup
-        enabled = self.enabled
-
         groups: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.groups, Unset):
             groups = []
@@ -72,8 +70,6 @@ class EnvAutoscalingSpec:
         field_dict.update(self.additional_properties)
         field_dict.update({
         })
-        if enabled is not UNSET:
-            field_dict["enabled"] = enabled
         if groups is not UNSET:
             field_dict["groups"] = groups
 
@@ -85,8 +81,6 @@ class EnvAutoscalingSpec:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.env_autoscaling_group import EnvAutoscalingGroup
         d = dict(src_dict)
-        enabled = d.pop("enabled", UNSET)
-
         _groups = d.pop("groups", UNSET)
         groups: list[EnvAutoscalingGroup] | Unset = UNSET
         if _groups is not UNSET:
@@ -100,7 +94,6 @@ class EnvAutoscalingSpec:
 
 
         env_autoscaling_spec = cls(
-            enabled=enabled,
             groups=groups,
         )
 

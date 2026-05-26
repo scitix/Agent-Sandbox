@@ -20,7 +20,6 @@ import { type ColumnDef } from "@tanstack/react-table"
 import { type AgentEnvObservedMember, type AgentSandboxPool } from "@/lib/api/client"
 import {
   MoreVertical,
-  FileText,
   ArrowUpRight,
   Activity,
   AlertTriangle,
@@ -181,7 +180,6 @@ export interface PoolColumnsOptions {
 export function createPoolColumns(
   t: (key: TranslationKey, params?: Record<string, string | number>) => string,
   onViewMetrics?: (pool: AgentSandboxPool) => void,
-  onViewDocs?: (pool: AgentSandboxPool) => void,
   options?: PoolColumnsOptions,
 ): ColumnDef<AgentSandboxPool>[] {
   const createStatusColumn = (
@@ -291,12 +289,7 @@ export function createPoolColumns(
         />
       ),
       cell: ({ row }) => (
-        <button
-          onClick={() => onViewDocs?.(row.original)}
-          className="text-foreground hover:text-primary cursor-pointer font-mono text-xs hover:underline"
-        >
-          {row.original.name}
-        </button>
+        <span className="text-foreground font-mono text-xs">{row.original.name}</span>
       ),
     },
     ...(options?.showOwner ? [ownerColumn] : []),
@@ -518,7 +511,7 @@ export function createPoolColumns(
         const onEditAutoscaling = options?.onEditAutoscaling
         const onDeletePool = options?.onDeletePool
         const hasAny =
-          onViewMetrics || onViewDocs || onEditPool || onEditAutoscaling || onDeletePool
+          onViewMetrics || onEditPool || onEditAutoscaling || onDeletePool
         if (!hasAny) return null
         return (
           <DropdownMenu>
@@ -538,15 +531,6 @@ export function createPoolColumns(
                 >
                   <Activity className="mr-2 h-3.5 w-3.5" />
                   {t("prometheus.metrics")}
-                </DropdownMenuItem>
-              )}
-              {onViewDocs && (
-                <DropdownMenuItem
-                  onClick={() => onViewDocs(row.original)}
-                  className="cursor-pointer font-mono text-xs"
-                >
-                  <FileText className="mr-2 h-3.5 w-3.5" />
-                  {t("pools.docs")}
                 </DropdownMenuItem>
               )}
               {onEditPool && (

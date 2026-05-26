@@ -22,32 +22,44 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from typing import cast
+
+if TYPE_CHECKING:
+  from ..models.env_autoscaling_spec import EnvAutoscalingSpec
 
 
 
 
 
-
-T = TypeVar("T", bound="EnvClusterMemberAnnotations")
+T = TypeVar("T", bound="EnvAutoscalingSpecEnvelope")
 
 
 
 @_attrs_define
-class EnvClusterMemberAnnotations:
-    """ Annotations stamped onto this member's SandboxPool. Same propagation semantics as labels.
-
+class EnvAutoscalingSpecEnvelope:
+    """ 
+        Attributes:
+            spec (EnvAutoscalingSpec): Env-level autoscaler config. The master switch lives per-group on
+                EnvAutoscalingGroup.enabled so groups can be toggled independently.
      """
 
-    additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
+    spec: EnvAutoscalingSpec
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        
+        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
+        spec = self.spec.to_dict()
+
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update({
+            "spec": spec,
+        })
 
         return field_dict
 
@@ -55,22 +67,29 @@ class EnvClusterMemberAnnotations:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
         d = dict(src_dict)
-        env_cluster_member_annotations = cls(
+        spec = EnvAutoscalingSpec.from_dict(d.pop("spec"))
+
+
+
+
+        env_autoscaling_spec_envelope = cls(
+            spec=spec,
         )
 
 
-        env_cluster_member_annotations.additional_properties = d
-        return env_cluster_member_annotations
+        env_autoscaling_spec_envelope.additional_properties = d
+        return env_autoscaling_spec_envelope
 
     @property
     def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
-    def __getitem__(self, key: str) -> str:
+    def __getitem__(self, key: str) -> Any:
         return self.additional_properties[key]
 
-    def __setitem__(self, key: str, value: str) -> None:
+    def __setitem__(self, key: str, value: Any) -> None:
         self.additional_properties[key] = value
 
     def __delitem__(self, key: str) -> None:

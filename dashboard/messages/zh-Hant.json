@@ -217,7 +217,6 @@
   "sandboxes.typescript": "TypeScript",
 
   "pools.title": "沙箱預熱池",
-  "pools.docs": "文件",
   "pools.newPool": "新增預熱池",
   "pools.deleteTitle": "刪除預熱池",
   "pools.deleteDescription": "此動作將刪除 SandboxPool 並終止所有關聯的 Pod。此動作無法復原。",
@@ -364,8 +363,6 @@
   "pools.validation.replicasAboveMax": "副本數 ({replicas}) 不能大於最大副本數 ({max})",
   "pools.col.autoscalingEnabled": "已開啟自動擴縮容 · 最小: {{min}} / 最大: {{max}}",
   "pools.metricsFor": "資源池：{{name}}",
-  "pools.poolDocsSheet.title": "Pool 文件",
-  "pools.noPoolDocs": "此 Pool 暫無專用文件。",
 
   "templates.title": "沙箱範本",
   "templates.newTemplate": "新增範本",
@@ -810,10 +807,12 @@
   "apiKeys.promoteConfirm": "確認提升",
   "common.advanced": "進階",
 
-  "pools.apiKeyRequired.title": "需要 API 金鑰",
-  "pools.apiKeyRequired.description": "建立預熱池前，您需要先建立一個 API 金鑰。API 金鑰用於驗證您的身份，確保平台可正確追蹤您的資源。",
-  "pools.apiKeyRequired.poolDocsDescription": "您目前的 API 金鑰為舊版本（平台未保存完整金鑰內容），無法用於渲染文件中的範例程式碼。請前往 API 金鑰頁面建立一個新金鑰，即可正常檢視 Pool 使用文件。",
-  "pools.apiKeyRequired.goToApiKeys": "前往 API 金鑰頁面",
+  "envs.docs": "文件",
+  "envs.envDocsSheet.title": "Env 文件",
+  "envs.noEnvDocs": "此 Env 暫無文件。",
+  "envs.apiKeyRequired.title": "需要 API 金鑰",
+  "envs.apiKeyRequired.envDocsDescription": "您目前的 API 金鑰為舊版本（平台未保存完整金鑰內容），無法用於渲染文件中的範例程式碼。請前往 API 金鑰頁面建立一個新金鑰，即可正常檢視 Env 使用文件。",
+  "envs.apiKeyRequired.goToApiKeys": "前往 API 金鑰頁面",
 
   "prometheus.expandChart": "展開圖表",
   "prometheus.copyPromql": "複製 PromQL 查詢",

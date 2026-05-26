@@ -17,6 +17,7 @@
 // Unified re-export for all query options and mutations
 
 export * from "./env"
+export * from "./env-autoscaler"
 export * from "./pool"
 export * from "./sandbox"
 export * from "./template"

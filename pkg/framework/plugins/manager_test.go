@@ -34,12 +34,12 @@ type mutatingPlugin struct {
 
 func (p *mutatingPlugin) Name() string { return "mutating-" + p.label }
 
-func (p *mutatingPlugin) PreCreatePod(_ context.Context, pod *corev1.Pod, _ *agentsv1alpha1.SandboxPool) *domain.AppError {
+func (p *mutatingPlugin) PreCreatePod(_ context.Context, pod *corev1.Pod, _ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
 	pod.Labels["test/ran-"+p.label] = testLabelRan
-	return nil
+	return true, nil
 }
 
 // failingPlugin always returns an error from PreCreatePod.
@@ -49,15 +49,15 @@ type failingPlugin struct {
 
 func (p *failingPlugin) Name() string { return "failing" }
 
-func (p *failingPlugin) PreCreatePod(_ context.Context, _ *corev1.Pod, _ *agentsv1alpha1.SandboxPool) *domain.AppError {
-	return domain.NewInternal("intentional test failure", nil)
+func (p *failingPlugin) PreCreatePod(_ context.Context, _ *corev1.Pod, _ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
+	return false, domain.NewInternal("intentional test failure", nil)
 }
 
 func TestPreCreatePodHooks_NilManager(t *testing.T) {
 	var m *PluginManager
 	pod := &corev1.Pod{}
 	pool := &agentsv1alpha1.SandboxPool{}
-	if err := m.PreCreatePodHooks(context.Background(), pod, pool); err != nil {
+	if _, err := m.PreCreatePodHooks(context.Background(), pod, pool); err != nil {
 		t.Fatalf("nil manager should be no-op, got: %v", err)
 	}
 }
@@ -67,8 +67,12 @@ func TestPreCreatePodHooks_SinglePlugin_MutatesPod(t *testing.T) {
 	pod := &corev1.Pod{}
 	pool := &agentsv1alpha1.SandboxPool{}
 
-	if err := m.PreCreatePodHooks(context.Background(), pod, pool); err != nil {
+	updated, err := m.PreCreatePodHooks(context.Background(), pod, pool)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !updated {
+		t.Fatal("expected updated=true from mutating plugin")
 	}
 	if pod.Labels["test/ran-a"] != testLabelRan {
 		t.Fatal("plugin did not mutate pod")
@@ -89,7 +93,7 @@ func TestPreCreatePodHooks_MultiPlugin_ShortCircuitOnError(t *testing.T) {
 	pod := &corev1.Pod{}
 	pool := &agentsv1alpha1.SandboxPool{}
 
-	err := m.PreCreatePodHooks(context.Background(), pod, pool)
+	_, err := m.PreCreatePodHooks(context.Background(), pod, pool)
 	if err == nil {
 		t.Fatal("expected error from failingPlugin")
 	}

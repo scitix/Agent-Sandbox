@@ -28,14 +28,14 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="EnvClusterMemberLabels")
+T = TypeVar("T", bound="EnvClusterMemberConfigLabels")
 
 
 
 @_attrs_define
-class EnvClusterMemberLabels:
-    """ Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata (e.g. quota.scitix.ai/url) that the
-    Env itself doesn't need to interpret.
+class EnvClusterMemberConfigLabels:
+    """ User-supplied SandboxPool metadata.labels (e.g. quota.scitix.ai/url). Plugins may consume these for routing
+    decisions; their output lands on the server-internal member.metadata, not here.
 
      """
 
@@ -57,12 +57,12 @@ class EnvClusterMemberLabels:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        env_cluster_member_labels = cls(
+        env_cluster_member_config_labels = cls(
         )
 
 
-        env_cluster_member_labels.additional_properties = d
-        return env_cluster_member_labels
+        env_cluster_member_config_labels.additional_properties = d
+        return env_cluster_member_config_labels
 
     @property
     def additional_keys(self) -> list[str]:

@@ -116,7 +116,7 @@ export const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ""
 export const SUPPRESSED_ERROR_CODES: string[] = [
   "SANDBOX_CREATE_TIMEOUT",
   // API_KEY_REQUIRED is handled in-page: create-pool-sheet.tsx and
-  // pool-docs-sheet.tsx show a dialog guiding the user to the API Keys page.
+  // env-docs-sheet.tsx show a dialog guiding the user to the API Keys page.
   // Suppress the global toast to avoid showing two messages at once.
   "API_KEY_REQUIRED",
 ]

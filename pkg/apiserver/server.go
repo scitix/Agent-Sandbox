@@ -31,7 +31,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
-	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envmember"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
@@ -146,8 +145,7 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 
 	svcs := router.Services{
 		Sandbox:              sandboxSvc,
-		SandboxEnv:           service.NewSandboxEnvService(k8sClient, service.NewPoolAdmitter(pluginManager), instanceTypeProv, quotaProv),
-		EnvMemberPool:        envmember.New(k8sClient, service.NewPoolAdmitter(pluginManager), instanceTypeProv, quotaProv),
+		SandboxEnv:           service.NewSandboxEnvService(k8sClient, pluginManager, instanceTypeProv, quotaProv),
 		SandboxTemplate:      service.NewSandboxTemplateService(k8sClient),
 		APIKey:               service.NewAPIKeyServiceWithSync(cfg.KeyStore, syncSvc),
 		Quota:                service.NewQuotaServiceFromProvider(quotaProv),

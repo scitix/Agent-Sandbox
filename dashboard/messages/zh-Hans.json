@@ -217,7 +217,6 @@
   "sandboxes.typescript": "TypeScript",
 
   "pools.title": "沙箱预热池",
-  "pools.docs": "文档",
   "pools.newPool": "新建预热池",
   "pools.deleteTitle": "删除预热池",
   "pools.deleteDescription": "此操作将删除 SandboxPool 并终止所有关联的沙箱。此操作不可撤销",
@@ -364,8 +363,6 @@
   "pools.validation.replicasAboveMax": "副本数 ({replicas}) 不能大于最大副本数 ({max})",
   "pools.col.autoscalingEnabled": "已开启自动扩缩容 · 最小: {{min}} / 最大: {{max}}",
   "pools.metricsFor": "资源池：{{name}}",
-  "pools.poolDocsSheet.title": "Pool 文档",
-  "pools.noPoolDocs": "此 Pool 暂无专用文档。",
 
   "templates.title": "沙箱模板",
   "templates.newTemplate": "新建模板",
@@ -821,10 +818,12 @@
   "apiKeys.promoteConfirm": "确认提升",
   "common.advanced": "高级",
 
-  "pools.apiKeyRequired.title": "需要 API 密钥",
-  "pools.apiKeyRequired.description": "创建预热池前，您需要先创建一个 API 密钥。API 密钥用于验证您的身份，确保平台可正确追踪您的资源。",
-  "pools.apiKeyRequired.poolDocsDescription": "您当前的 API 密钥为旧版本（平台未保存完整密钥内容），无法用于渲染文档中的示例代码。请前往 API 密钥页面创建一个新密钥，即可正常查看 Pool 使用文档。",
-  "pools.apiKeyRequired.goToApiKeys": "前往 API 密钥页面",
+  "envs.docs": "文档",
+  "envs.envDocsSheet.title": "Env 文档",
+  "envs.noEnvDocs": "此 Env 暂无文档。",
+  "envs.apiKeyRequired.title": "需要 API 密钥",
+  "envs.apiKeyRequired.envDocsDescription": "您当前的 API 密钥为旧版本（平台未保存完整密钥内容），无法用于渲染文档中的示例代码。请前往 API 密钥页面创建一个新密钥，即可正常查看 Env 使用文档。",
+  "envs.apiKeyRequired.goToApiKeys": "前往 API 密钥页面",
 
   "datasets.title": "数据集",
   "datasets.searchPlaceholder": "搜索数据集和镜像...",

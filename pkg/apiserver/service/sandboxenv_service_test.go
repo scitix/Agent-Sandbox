@@ -21,11 +21,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
-	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envcommon"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
@@ -49,13 +48,12 @@ func newEnv(name, team, user string) *agentsv1alpha1.SandboxEnv {
 				{
 					ClusterID: "local",
 					Members: []agentsv1alpha1.EnvClusterMember{
-						{Name: name, ScalingGroup: "1c4Gi"},
+						{Name: name, Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "1c4Gi"}},
 					},
 				},
 			},
 			Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
-				Enabled: false,
-				Groups:  []agentsv1alpha1.EnvAutoscalingGroup{{Name: "1c4Gi"}},
+				Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "1c4Gi"}},
 			},
 		},
 	}
@@ -143,96 +141,9 @@ func TestSandboxEnvService_Get_ProjectsSpec(t *testing.T) {
 	}
 }
 
-func TestSandboxEnvService_UpdateAutoscaling_Persists(t *testing.T) {
-	svc := newEnvService(t, newEnv(envTestName, "team-1", "user-1"))
-
-	enabled := true
-	maxR := int32(20)
-	mode := gen.Default
-	cooldown := int32(60)
-	groups := []gen.EnvAutoscalingGroup{{
-		Name:        "1c4Gi",
-		MaxReplicas: ptr.To(maxR),
-		ScaleUpPolicy: &gen.PoolScaleUpPolicy{
-			Mode:            &mode,
-			CooldownSeconds: ptr.To(cooldown),
-		},
-	}}
-	input := UpdateSandboxEnvInput{
-		Name:      "env-a",
-		Namespace: "default",
-		Autoscaling: &gen.EnvAutoscalingSpec{
-			Enabled: &enabled,
-			Groups:  &groups,
-		},
-	}
-	result, err := svc.Update(context.Background(), input)
-	if err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	if result.Spec.Autoscaling == nil || result.Spec.Autoscaling.Enabled == nil || !*result.Spec.Autoscaling.Enabled {
-		t.Errorf("Enabled not persisted: %+v", result.Spec.Autoscaling)
-	}
-	if result.Spec.Autoscaling.Groups == nil || len(*result.Spec.Autoscaling.Groups) != 1 {
-		t.Fatalf("Groups not persisted: %+v", result.Spec.Autoscaling.Groups)
-	}
-	g := (*result.Spec.Autoscaling.Groups)[0]
-	if g.MaxReplicas == nil || *g.MaxReplicas != 20 {
-		t.Errorf("MaxReplicas not persisted: %+v", g.MaxReplicas)
-	}
-}
-
-func TestSandboxEnvService_UpdateAutoscaling_NotFound(t *testing.T) {
-	svc := newEnvService(t)
-	_, err := svc.Update(context.Background(), UpdateSandboxEnvInput{
-		Name:        "ghost",
-		Namespace:   "default",
-		Autoscaling: &gen.EnvAutoscalingSpec{},
-	})
-	if err == nil || err.Code != domain.ErrCodeNotFound {
-		t.Fatalf("expected NotFound, got %+v", err)
-	}
-}
-
-func TestSandboxEnvService_UpdateAutoscaling_RejectsInvalidMode(t *testing.T) {
-	svc := newEnvService(t, newEnv(envTestName, "team-1", "user-1"))
-	bogus := gen.PoolScaleUpPolicyMode("Bogus")
-	groups := []gen.EnvAutoscalingGroup{{
-		Name: "1c4Gi",
-		ScaleUpPolicy: &gen.PoolScaleUpPolicy{
-			Mode: &bogus,
-		},
-	}}
-	_, err := svc.Update(context.Background(), UpdateSandboxEnvInput{
-		Name:      "env-a",
-		Namespace: "default",
-		Autoscaling: &gen.EnvAutoscalingSpec{
-			Groups: &groups,
-		},
-	})
-	if err == nil || err.Code != domain.ErrCodeBadRequest {
-		t.Fatalf("expected BadRequest, got %+v", err)
-	}
-}
-
-func TestSandboxEnvService_UpdateAutoscaling_RejectsEmptyGroupName(t *testing.T) {
-	svc := newEnvService(t, newEnv(envTestName, "team-1", "user-1"))
-	groups := []gen.EnvAutoscalingGroup{{Name: ""}}
-	_, err := svc.Update(context.Background(), UpdateSandboxEnvInput{
-		Name:      "env-a",
-		Namespace: "default",
-		Autoscaling: &gen.EnvAutoscalingSpec{
-			Groups: &groups,
-		},
-	})
-	if err == nil || err.Code != domain.ErrCodeBadRequest {
-		t.Fatalf("expected BadRequest, got %+v", err)
-	}
-}
-
 // poolWithOwner returns a SandboxPool (in envTestNamespace) whose
 // OwnerReferences include the supplied SandboxEnv name — used to validate
-// the PoolToGen OwningEnv projection and the env-scoped Pool lookups.
+// the envcommon.PoolToGen OwningEnv projection and the env-scoped Pool lookups.
 // Pass envName="" to produce an unowned pool.
 func poolWithOwner(name, envName string) *agentsv1alpha1.SandboxPool {
 	pool := &agentsv1alpha1.SandboxPool{
@@ -255,7 +166,7 @@ func poolWithOwner(name, envName string) *agentsv1alpha1.SandboxPool {
 
 func TestPoolToGen_SetsOwningEnvFromOwnerRef(t *testing.T) {
 	pool := poolWithOwner("pool-a", envTestName)
-	result := PoolToGen(context.Background(), pool, nil)
+	result := envcommon.PoolToGen(context.Background(), pool)
 	if result.OwningEnv == nil || *result.OwningEnv != "env-a" {
 		t.Errorf("OwningEnv = %v, want env-a", result.OwningEnv)
 	}
@@ -263,7 +174,7 @@ func TestPoolToGen_SetsOwningEnvFromOwnerRef(t *testing.T) {
 
 func TestPoolToGen_OwningEnvNilWhenNoOwnerRef(t *testing.T) {
 	pool := poolWithOwner("pool-a", "")
-	result := PoolToGen(context.Background(), pool, nil)
+	result := envcommon.PoolToGen(context.Background(), pool)
 	if result.OwningEnv != nil {
 		t.Errorf("OwningEnv = %v, want nil", *result.OwningEnv)
 	}

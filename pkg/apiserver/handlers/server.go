@@ -36,6 +36,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envautoscaler"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envmember"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
@@ -56,7 +57,6 @@ const adminUser = "admin"
 type Services struct {
 	Sandbox         service.SandboxService
 	SandboxEnv      service.SandboxEnvService
-	EnvMemberPool   envmember.Service
 	SandboxTemplate service.SandboxTemplateService
 	APIKey          service.APIKeyService
 	Quota           service.QuotaService
@@ -83,7 +83,6 @@ type Services struct {
 type Server struct {
 	sandbox      service.SandboxService
 	env          service.SandboxEnvService
-	envMember    envmember.Service
 	template     service.SandboxTemplateService
 	apikey       service.APIKeyService
 	quota        service.QuotaService
@@ -116,7 +115,6 @@ func NewServer(svcs Services) *Server {
 	return &Server{
 		sandbox:              svcs.Sandbox,
 		env:                  svcs.SandboxEnv,
-		envMember:            svcs.EnvMemberPool,
 		template:             svcs.SandboxTemplate,
 		apikey:               svcs.APIKey,
 		quota:                svcs.Quota,
@@ -471,6 +469,31 @@ func (s *Server) GetSandboxEnv(ctx context.Context, req gen.GetSandboxEnvRequest
 		}
 		return gen.GetSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
 	}
+
+	// Render env docs template on the server so the client gets a
+	// ready-to-copy snippet. When the raw docs reference ${AGBX_API_KEY} and
+	// the user has no key with a recoverable plaintext token, return
+	// API_KEY_REQUIRED (422) so the frontend can guide them to the API Keys
+	// page.
+	raw := ""
+	if result.EnvDocs != nil {
+		raw = *result.EnvDocs
+	}
+	rendered, renderErr := s.renderEnvDocs(ctx, raw, result.Name, s.forwarder.LocalClusterID(), auth)
+	if renderErr != nil {
+		switch renderErr.Code {
+		case domain.ErrCodeUnprocessableEntity:
+			return gen.GetSandboxEnv422JSONResponse(errResp(ctx, renderErr)), nil
+		default:
+			return gen.GetSandboxEnv500JSONResponse(errResp(ctx, renderErr)), nil
+		}
+	}
+	if rendered != "" {
+		result.EnvDocs = ptr.To(rendered)
+	} else {
+		result.EnvDocs = nil
+	}
+
 	return gen.GetSandboxEnv200JSONResponse{Env: *result}, nil
 }
 
@@ -500,14 +523,6 @@ func (s *Server) CreateSandboxEnv(ctx context.Context, req gen.CreateSandboxEnvR
 	}
 	if req.Body.Mode != nil {
 		input.Mode = agentsv1alpha1.SandboxEnvMode(*req.Body.Mode)
-	}
-	if req.Body.Members != nil {
-		members, err := membersFromGen(*req.Body.Members)
-		if err != nil {
-			return gen.CreateSandboxEnv400JSONResponse{Error: err.Error()}, nil
-		}
-		input.Members = members
-		input.LocalClusterID = s.forwarder.LocalClusterID()
 	}
 	if req.Body.Overrides != nil {
 		ov, err := envOverridesFromGen(req.Body.Overrides)
@@ -544,17 +559,8 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 	}
 	auth := authFrom(ctx)
 	input := service.UpdateSandboxEnvInput{
-		Name:        req.Name,
-		Namespace:   auth.Namespace,
-		Autoscaling: req.Body.Autoscaling,
-	}
-	if req.Body.Members != nil {
-		members, err := membersFromGen(*req.Body.Members)
-		if err != nil {
-			return gen.UpdateSandboxEnv400JSONResponse{Error: err.Error()}, nil
-		}
-		input.Members = &members
-		input.LocalClusterID = s.forwarder.LocalClusterID()
+		Name:      req.Name,
+		Namespace: auth.Namespace,
 	}
 	if req.Body.Overrides != nil {
 		ov, err := envOverridesFromGen(req.Body.Overrides)
@@ -564,7 +570,7 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 		input.Overrides = ov
 		input.ImagePullSecret = req.Body.Overrides.ImagePullSecret
 	}
-	if input.Autoscaling == nil && input.Members == nil && input.Overrides == nil && input.ImagePullSecret == nil {
+	if input.Overrides == nil && input.ImagePullSecret == nil {
 		return gen.UpdateSandboxEnv400JSONResponse{Error: "at least one editable field must be provided"}, nil
 	}
 
@@ -594,60 +600,6 @@ func (s *Server) DeleteSandboxEnv(ctx context.Context, req gen.DeleteSandboxEnvR
 		}
 	}
 	return gen.DeleteSandboxEnv202JSONResponse(*result), nil
-}
-
-// membersFromGen converts wire EnvClusterMember objects (pointer fields, json
-// marshallable) into the CRD shape consumed by the service layer. Skips
-// nameless entries — the CRD spec requires a non-empty member name. The
-// second return is reserved for future validation errors (e.g. cross-field
-// member constraints); today it is always nil.
-func membersFromGen(in []gen.EnvClusterMember) ([]agentsv1alpha1.EnvClusterMember, error) { //nolint:unparam
-	if len(in) == 0 {
-		return nil, nil
-	}
-	out := make([]agentsv1alpha1.EnvClusterMember, 0, len(in))
-	for _, m := range in {
-		if m.Name == "" {
-			continue
-		}
-		cm := agentsv1alpha1.EnvClusterMember{Name: m.Name}
-		if m.InstanceType != nil {
-			cm.InstanceType = *m.InstanceType
-		}
-		if m.Multiplier != nil {
-			cm.Multiplier = *m.Multiplier
-		}
-		if m.ScalingGroup != nil {
-			cm.ScalingGroup = *m.ScalingGroup
-		}
-		if m.MaxReplicas != nil {
-			v := *m.MaxReplicas
-			cm.MaxReplicas = &v
-		}
-		if m.Priority != nil {
-			cm.Priority = *m.Priority
-		}
-		if m.ScaleUpPriority != nil {
-			cm.ScaleUpPriority = *m.ScaleUpPriority
-		}
-		if m.ScaleDownPriority != nil {
-			cm.ScaleDownPriority = *m.ScaleDownPriority
-		}
-		if m.Replicas != nil {
-			cm.Replicas = *m.Replicas
-		}
-		if m.InlineResources != nil {
-			cm.InlineResources = inlineResourcesFromGen(m.InlineResources)
-		}
-		if m.Labels != nil {
-			cm.Labels = *m.Labels
-		}
-		if m.Annotations != nil {
-			cm.Annotations = *m.Annotations
-		}
-		out = append(out, cm)
-	}
-	return out, nil
 }
 
 // envOverridesFromGen projects the wire Env-level Overrides into the CRD
@@ -743,31 +695,32 @@ func (s *Server) SyncSandboxEnvTemplate(ctx context.Context, req gen.SyncSandbox
 
 // memberFromCreateEnvPoolRequest converts the wire create-request into the
 // CRD shape consumed by AddMemberPool. The server derives Name and
-// ScalingGroup downstream — those fields are intentionally not populated
-// here.
+// Config.ScalingGroup downstream — those fields are intentionally not
+// populated here; Metadata + Spec are filled by the service layer after
+// PreCreatePool admission runs.
 func memberFromCreateEnvPoolRequest(body *gen.CreateEnvSandboxPoolRequest) agentsv1alpha1.EnvClusterMember {
 	var cm agentsv1alpha1.EnvClusterMember
 	if body.InstanceType != nil {
-		cm.InstanceType = *body.InstanceType
+		cm.Config.InstanceType = *body.InstanceType
 	}
 	if body.Multiplier != nil {
-		cm.Multiplier = *body.Multiplier
+		cm.Config.Multiplier = *body.Multiplier
 	}
 	if body.MaxReplicas != nil {
 		v := *body.MaxReplicas
-		cm.MaxReplicas = &v
+		cm.Config.MaxReplicas = &v
 	}
 	if body.Replicas != nil {
-		cm.Replicas = *body.Replicas
+		cm.Config.Replicas = *body.Replicas
 	}
 	if body.InlineResources != nil {
-		cm.InlineResources = inlineResourcesFromGen(body.InlineResources)
+		cm.Config.InlineResources = inlineResourcesFromGen(body.InlineResources)
 	}
 	if body.Labels != nil {
-		cm.Labels = *body.Labels
+		cm.Config.Labels = *body.Labels
 	}
 	if body.Annotations != nil {
-		cm.Annotations = *body.Annotations
+		cm.Config.Annotations = *body.Annotations
 	}
 	return cm
 }
@@ -778,7 +731,7 @@ func (s *Server) CreateEnvSandboxPool(ctx context.Context, req gen.CreateEnvSand
 	}
 	auth := authFrom(ctx)
 	member := memberFromCreateEnvPoolRequest(req.Body)
-	result, appErr := s.envMember.Add(ctx, auth.Namespace, req.Name, s.forwarder.LocalClusterID(), member)
+	result, appErr := s.env.AddMember(ctx, auth.Namespace, req.Name, s.forwarder.LocalClusterID(), member)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeBadRequest:
@@ -798,7 +751,7 @@ func (s *Server) CreateEnvSandboxPool(ctx context.Context, req gen.CreateEnvSand
 
 func (s *Server) ListEnvSandboxPools(ctx context.Context, req gen.ListEnvSandboxPoolsRequestObject) (gen.ListEnvSandboxPoolsResponseObject, error) {
 	auth := authFrom(ctx)
-	items, appErr := s.envMember.List(ctx, auth.Namespace, req.Name)
+	items, appErr := s.env.ListMembers(ctx, auth.Namespace, req.Name)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -817,7 +770,7 @@ func (s *Server) ListEnvSandboxPools(ctx context.Context, req gen.ListEnvSandbox
 
 func (s *Server) GetEnvSandboxPool(ctx context.Context, req gen.GetEnvSandboxPoolRequestObject) (gen.GetEnvSandboxPoolResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.envMember.Get(ctx, auth.Namespace, req.Name, req.PoolName)
+	result, appErr := s.env.GetMember(ctx, auth.Namespace, req.Name, req.PoolName)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -834,7 +787,7 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 		return gen.UpdateEnvSandboxPool400JSONResponse{Error: "request body is required"}, nil
 	}
 	auth := authFrom(ctx)
-	patch := envmember.Patch{}
+	patch := envmember.MemberPoolPatch{}
 	if req.Body.Replicas != nil {
 		v := *req.Body.Replicas
 		patch.Replicas = &v
@@ -843,7 +796,7 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 		v := *req.Body.MaxReplicas
 		patch.MaxReplicas = &v
 	}
-	result, appErr := s.envMember.Update(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID(), patch)
+	result, appErr := s.env.UpdateMember(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID(), patch)
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeBadRequest:
@@ -861,7 +814,7 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 
 func (s *Server) DeleteEnvSandboxPool(ctx context.Context, req gen.DeleteEnvSandboxPoolRequestObject) (gen.DeleteEnvSandboxPoolResponseObject, error) {
 	auth := authFrom(ctx)
-	result, appErr := s.envMember.Delete(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID())
+	result, appErr := s.env.DeleteMember(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID())
 	if appErr != nil {
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
@@ -876,6 +829,115 @@ func (s *Server) DeleteEnvSandboxPool(ctx context.Context, req gen.DeleteEnvSand
 		Name:      result.Name,
 		Namespace: result.Namespace,
 		Status:    result.Status,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Env-scoped autoscaler config
+// ---------------------------------------------------------------------------
+
+func (s *Server) GetEnvAutoscaling(ctx context.Context, req gen.GetEnvAutoscalingRequestObject) (gen.GetEnvAutoscalingResponseObject, error) {
+	auth := authFrom(ctx)
+	spec, appErr := s.env.GetAutoscaling(ctx, auth.Namespace, req.Name)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.GetEnvAutoscaling404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.GetEnvAutoscaling500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.GetEnvAutoscaling200JSONResponse{Spec: *spec}, nil
+}
+
+func (s *Server) ListEnvAutoscalingGroups(ctx context.Context, req gen.ListEnvAutoscalingGroupsRequestObject) (gen.ListEnvAutoscalingGroupsResponseObject, error) {
+	auth := authFrom(ctx)
+	items, appErr := s.env.ListAutoscalingGroups(ctx, auth.Namespace, req.Name)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.ListEnvAutoscalingGroups404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.ListEnvAutoscalingGroups500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.ListEnvAutoscalingGroups200JSONResponse{Items: items, Total: len(items)}, nil
+}
+
+func (s *Server) AddEnvAutoscalingGroup(ctx context.Context, req gen.AddEnvAutoscalingGroupRequestObject) (gen.AddEnvAutoscalingGroupResponseObject, error) {
+	if req.Body == nil {
+		return gen.AddEnvAutoscalingGroup400JSONResponse{Error: "request body is required"}, nil
+	}
+	auth := authFrom(ctx)
+	result, appErr := s.env.AddAutoscalingGroup(ctx, auth.Namespace, req.Name, req.Body)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeBadRequest:
+			return gen.AddEnvAutoscalingGroup400JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeNotFound:
+			return gen.AddEnvAutoscalingGroup404JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeConflict:
+			return gen.AddEnvAutoscalingGroup409JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.AddEnvAutoscalingGroup500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.AddEnvAutoscalingGroup201JSONResponse{Group: *result}, nil
+}
+
+func (s *Server) GetEnvAutoscalingGroup(ctx context.Context, req gen.GetEnvAutoscalingGroupRequestObject) (gen.GetEnvAutoscalingGroupResponseObject, error) {
+	auth := authFrom(ctx)
+	result, appErr := s.env.GetAutoscalingGroup(ctx, auth.Namespace, req.Name, req.GroupName)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.GetEnvAutoscalingGroup404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.GetEnvAutoscalingGroup500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.GetEnvAutoscalingGroup200JSONResponse{Group: *result}, nil
+}
+
+func (s *Server) UpdateEnvAutoscalingGroup(ctx context.Context, req gen.UpdateEnvAutoscalingGroupRequestObject) (gen.UpdateEnvAutoscalingGroupResponseObject, error) {
+	if req.Body == nil {
+		return gen.UpdateEnvAutoscalingGroup400JSONResponse{Error: "request body is required"}, nil
+	}
+	auth := authFrom(ctx)
+	patch := envautoscaler.GroupPatch{
+		Enabled:         req.Body.Enabled,
+		MinReplicas:     req.Body.MinReplicas,
+		MaxReplicas:     req.Body.MaxReplicas,
+		ScaleUpPolicy:   req.Body.ScaleUpPolicy,
+		ScaleDownPolicy: req.Body.ScaleDownPolicy,
+	}
+	result, appErr := s.env.UpdateAutoscalingGroup(ctx, auth.Namespace, req.Name, req.GroupName, patch)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeBadRequest:
+			return gen.UpdateEnvAutoscalingGroup400JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeNotFound:
+			return gen.UpdateEnvAutoscalingGroup404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.UpdateEnvAutoscalingGroup500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.UpdateEnvAutoscalingGroup200JSONResponse{Group: *result}, nil
+}
+
+func (s *Server) DeleteEnvAutoscalingGroup(ctx context.Context, req gen.DeleteEnvAutoscalingGroupRequestObject) (gen.DeleteEnvAutoscalingGroupResponseObject, error) {
+	auth := authFrom(ctx)
+	if appErr := s.env.DeleteAutoscalingGroup(ctx, auth.Namespace, req.Name, req.GroupName); appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.DeleteEnvAutoscalingGroup404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.DeleteEnvAutoscalingGroup500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.DeleteEnvAutoscalingGroup200JSONResponse{
+		Name:   req.GroupName,
+		Status: "Deleted",
 	}, nil
 }
 

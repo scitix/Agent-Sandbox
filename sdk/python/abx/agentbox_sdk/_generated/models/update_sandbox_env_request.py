@@ -26,8 +26,6 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.env_autoscaling_spec import EnvAutoscalingSpec
-  from ..models.env_cluster_member import EnvClusterMember
   from ..models.env_overrides import EnvOverrides
 
 
@@ -40,20 +38,15 @@ T = TypeVar("T", bound="UpdateSandboxEnvRequest")
 
 @_attrs_define
 class UpdateSandboxEnvRequest:
-    """ Patch one or more editable Env spec fields. Omitted fields are left unchanged.
+    """ Patch one or more editable Env shell fields. Omitted fields are left unchanged. Members are managed through
+    `/envs/{name}/sandboxpools/*` and autoscaling through `/envs/{name}/autoscaling/*`.
 
         Attributes:
-            autoscaling (EnvAutoscalingSpec | Unset):
-            members (list[EnvClusterMember] | Unset): Replaces the local cluster's member list. Each member carries its own
-                replicas and per-Pool overrides. Plugin-relevant metadata (e.g. quota URLs) belongs in each member's
-                labels/annotations.
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The
                 Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull
                 credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.
      """
 
-    autoscaling: EnvAutoscalingSpec | Unset = UNSET
-    members: list[EnvClusterMember] | Unset = UNSET
     overrides: EnvOverrides | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -62,22 +55,7 @@ class UpdateSandboxEnvRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
-        from ..models.env_cluster_member import EnvClusterMember
         from ..models.env_overrides import EnvOverrides
-        autoscaling: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.autoscaling, Unset):
-            autoscaling = self.autoscaling.to_dict()
-
-        members: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.members, Unset):
-            members = []
-            for members_item_data in self.members:
-                members_item = members_item_data.to_dict()
-                members.append(members_item)
-
-
-
         overrides: dict[str, Any] | Unset = UNSET
         if not isinstance(self.overrides, Unset):
             overrides = self.overrides.to_dict()
@@ -87,10 +65,6 @@ class UpdateSandboxEnvRequest:
         field_dict.update(self.additional_properties)
         field_dict.update({
         })
-        if autoscaling is not UNSET:
-            field_dict["autoscaling"] = autoscaling
-        if members is not UNSET:
-            field_dict["members"] = members
         if overrides is not UNSET:
             field_dict["overrides"] = overrides
 
@@ -100,32 +74,8 @@ class UpdateSandboxEnvRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
-        from ..models.env_cluster_member import EnvClusterMember
         from ..models.env_overrides import EnvOverrides
         d = dict(src_dict)
-        _autoscaling = d.pop("autoscaling", UNSET)
-        autoscaling: EnvAutoscalingSpec | Unset
-        if isinstance(_autoscaling,  Unset):
-            autoscaling = UNSET
-        else:
-            autoscaling = EnvAutoscalingSpec.from_dict(_autoscaling)
-
-
-
-
-        _members = d.pop("members", UNSET)
-        members: list[EnvClusterMember] | Unset = UNSET
-        if _members is not UNSET:
-            members = []
-            for members_item_data in _members:
-                members_item = EnvClusterMember.from_dict(members_item_data)
-
-
-
-                members.append(members_item)
-
-
         _overrides = d.pop("overrides", UNSET)
         overrides: EnvOverrides | Unset
         if isinstance(_overrides,  Unset):
@@ -137,8 +87,6 @@ class UpdateSandboxEnvRequest:
 
 
         update_sandbox_env_request = cls(
-            autoscaling=autoscaling,
-            members=members,
             overrides=overrides,
         )
 

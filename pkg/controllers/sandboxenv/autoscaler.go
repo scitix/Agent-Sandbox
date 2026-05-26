@@ -89,11 +89,12 @@ func (r *SandboxEnvReconciler) syncAutoscaling(ctx context.Context, env *agentsv
 		return ctrl.Result{}, err
 	}
 
-	if env.Spec.Autoscaling == nil || !env.Spec.Autoscaling.Enabled {
-		return ctrl.Result{}, nil
-	}
 	group := pickAutoscalingGroup(env)
 	if group == nil {
+		// Autoscaling is per-group: when no group declares Enabled=true
+		// the autoscaler stays dormant on this cycle. IdleZeroSince
+		// bookkeeping above still runs so a delayed Enabled toggle can
+		// act immediately.
 		return ctrl.Result{}, nil
 	}
 
@@ -141,14 +142,20 @@ func (r *SandboxEnvReconciler) loadMemberPools(ctx context.Context, ns string, m
 }
 
 // pickAutoscalingGroup returns the autoscaling group the Reconciler operates
-// on this cycle. MVP semantics: pick the first group in env.Spec.Autoscaling
-// (typically the only one). Multi-group will route per-member based on
+// on this cycle. MVP semantics: pick the first Enabled=true group in
+// env.Spec.Autoscaling.Groups; falls back to nil when none is enabled (which
+// short-circuits the caller). Multi-group will route per-member based on
 // member.ScalingGroup once multi-resource Envs land.
 func pickAutoscalingGroup(env *agentsv1alpha1.SandboxEnv) *agentsv1alpha1.EnvAutoscalingGroup {
-	if env == nil || env.Spec.Autoscaling == nil || len(env.Spec.Autoscaling.Groups) == 0 {
+	if env == nil || env.Spec.Autoscaling == nil {
 		return nil
 	}
-	return &env.Spec.Autoscaling.Groups[0]
+	for i := range env.Spec.Autoscaling.Groups {
+		if env.Spec.Autoscaling.Groups[i].Enabled {
+			return &env.Spec.Autoscaling.Groups[i]
+		}
+	}
+	return nil
 }
 
 // syncIdleZeroSince mirrors the SandboxPool autoscaler's bookkeeping for the
@@ -258,8 +265,10 @@ func (r *SandboxEnvReconciler) reconcileScaleUp(
 	sorted := make([]memberWithPool, len(members))
 	copy(sorted, members)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].spec.ScaleUpPriority != sorted[j].spec.ScaleUpPriority {
-			return sorted[i].spec.ScaleUpPriority < sorted[j].spec.ScaleUpPriority
+		iPri := sorted[i].spec.Config.EffectiveScaleUpPriority()
+		jPri := sorted[j].spec.Config.EffectiveScaleUpPriority()
+		if iPri != jPri {
+			return iPri < jPri
 		}
 		return sorted[i].spec.Name < sorted[j].spec.Name
 	})
@@ -390,8 +399,8 @@ func (r *SandboxEnvReconciler) attemptMemberScaleUp(
 ) memberAttempt {
 	current := m.pool.Spec.Replicas
 	candidate := current + deltaRemaining
-	if m.spec.MaxReplicas != nil && *m.spec.MaxReplicas > 0 && candidate > *m.spec.MaxReplicas {
-		candidate = *m.spec.MaxReplicas
+	if m.spec.Config.MaxReplicas != nil && *m.spec.Config.MaxReplicas > 0 && candidate > *m.spec.Config.MaxReplicas {
+		candidate = *m.spec.Config.MaxReplicas
 	}
 	if maxR > 0 {
 		if h := maxR - aggDesired + current; candidate > h {

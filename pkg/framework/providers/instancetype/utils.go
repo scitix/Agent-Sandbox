@@ -34,5 +34,5 @@ func DeriveResourceKey(observed corev1.ResourceRequirements) string {
 		return "default"
 	}
 
-	return fmt.Sprintf("%dc%dGi", cpu, memGi)
+	return fmt.Sprintf("%dc%dgi", cpu, memGi)
 }

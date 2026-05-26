@@ -122,12 +122,12 @@ export function createEnvColumns(
     },
     {
       id: "autoscaling",
-      accessorFn: (row) => row.spec.autoscaling?.enabled === true,
+      accessorFn: (row) => (row.spec.autoscaling?.groups ?? []).some((g) => g.enabled),
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t("envs.col.autoscaling")} />
       ),
       cell: ({ row }) => {
-        const enabled = row.original.spec.autoscaling?.enabled === true
+        const enabled = (row.original.spec.autoscaling?.groups ?? []).some((g) => g.enabled)
         return (
           <Badge
             variant={enabled ? "default" : "outline"}

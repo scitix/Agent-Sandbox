@@ -154,8 +154,8 @@ func TestReconcile_A_FreshAdoption(t *testing.T) {
 	if len(env.Spec.Clusters[0].Members) != 1 || env.Spec.Clusters[0].Members[0].Name != testPoolName {
 		t.Fatalf("expected one member named %q, got %+v", testPoolName, env.Spec.Clusters[0].Members)
 	}
-	if env.Spec.Clusters[0].Members[0].InlineResources == nil {
-		t.Errorf("expected InlineResources to be set (Noop provider), got nil")
+	if env.Spec.Clusters[0].Members[0].Config.InlineResources == nil {
+		t.Errorf("expected Config.InlineResources to be set (Noop provider), got nil")
 	}
 
 	freshPool := &agentsv1alpha1.SandboxPool{}
@@ -253,7 +253,7 @@ func TestReconcile_C_AdminPreCreatedEnv(t *testing.T) {
 					Members: []agentsv1alpha1.EnvClusterMember{
 						// Stored with the derived group already — second
 						// reconcile then sees no drift and is a no-op.
-						{Name: testPoolName, ScalingGroup: testDerivedKey},
+						{Name: testPoolName, Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: testDerivedKey}},
 					},
 				},
 			},
@@ -304,7 +304,7 @@ func TestReconcile_BackfillsLegacyDefaultGroup(t *testing.T) {
 				{
 					ClusterID: testCluster,
 					Members: []agentsv1alpha1.EnvClusterMember{
-						{Name: testPoolName, ScalingGroup: fallbackScalingGroup},
+						{Name: testPoolName, Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: fallbackScalingGroup}},
 					},
 				},
 			},
@@ -316,7 +316,7 @@ func TestReconcile_BackfillsLegacyDefaultGroup(t *testing.T) {
 
 	envAfter := &agentsv1alpha1.SandboxEnv{}
 	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
-	got := envAfter.Spec.Clusters[0].Members[0].ScalingGroup
+	got := envAfter.Spec.Clusters[0].Members[0].Config.ScalingGroup
 	if got != testDerivedKey {
 		t.Errorf("ScalingGroup not migrated: got %q, want %q", got, testDerivedKey)
 	}
@@ -434,16 +434,16 @@ func TestPoolFullyAdopted_UIDMismatch(t *testing.T) {
 func TestBuildMemberFromPool_InlineFallback(t *testing.T) {
 	pool := newPool()
 	m := buildMemberFromPool(pool, "", 0, testDerivedKey)
-	if m.InstanceType != "" || m.Multiplier != 0 {
-		t.Errorf("unexpected catalog metadata: %+v", m)
+	if m.Config.InstanceType != "" || m.Config.Multiplier != 0 {
+		t.Errorf("unexpected catalog metadata: %+v", m.Config)
 	}
-	if m.ScalingGroup != testDerivedKey {
-		t.Errorf("ScalingGroup = %q, want %q", m.ScalingGroup, testDerivedKey)
+	if m.Config.ScalingGroup != testDerivedKey {
+		t.Errorf("ScalingGroup = %q, want %q", m.Config.ScalingGroup, testDerivedKey)
 	}
-	if m.InlineResources == nil {
-		t.Fatalf("expected InlineResources, got nil")
+	if m.Config.InlineResources == nil {
+		t.Fatalf("expected Config.InlineResources, got nil")
 	}
-	cpu := m.InlineResources.Requests[corev1.ResourceCPU]
+	cpu := m.Config.InlineResources.Requests[corev1.ResourceCPU]
 	if cpu.Cmp(resource.MustParse("2")) != 0 {
 		t.Errorf("CPU = %s, want 2", cpu.String())
 	}
@@ -452,14 +452,14 @@ func TestBuildMemberFromPool_InlineFallback(t *testing.T) {
 func TestBuildMemberFromPool_CatalogMatch(t *testing.T) {
 	pool := newPool()
 	m := buildMemberFromPool(pool, "sci.c2", 1, "sci.c2")
-	if m.InstanceType != "sci.c2" || m.Multiplier != 1 {
-		t.Errorf("instance metadata not set: %+v", m)
+	if m.Config.InstanceType != "sci.c2" || m.Config.Multiplier != 1 {
+		t.Errorf("instance metadata not set: %+v", m.Config)
 	}
-	if m.ScalingGroup != "sci.c2" {
-		t.Errorf("ScalingGroup = %q, want %q", m.ScalingGroup, "sci.c2")
+	if m.Config.ScalingGroup != "sci.c2" {
+		t.Errorf("ScalingGroup = %q, want %q", m.Config.ScalingGroup, "sci.c2")
 	}
-	if m.InlineResources != nil {
-		t.Errorf("expected InlineResources empty when catalog matched, got %+v", m.InlineResources)
+	if m.Config.InlineResources != nil {
+		t.Errorf("expected Config.InlineResources empty when catalog matched, got %+v", m.Config.InlineResources)
 	}
 }
 

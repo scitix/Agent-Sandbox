@@ -29,7 +29,6 @@ from typing import cast
 if TYPE_CHECKING:
   from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
   from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
-  from ..models.env_cluster_member import EnvClusterMember
   from ..models.env_overrides import EnvOverrides
   from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
 
@@ -49,9 +48,6 @@ class CreateSandboxEnvRequest:
                 QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit.
             template_ref (SandboxEnvTemplateRef):
             mode (CreateSandboxEnvRequestMode | Unset):  Default: CreateSandboxEnvRequestMode.WARMPOOL.
-            members (list[EnvClusterMember] | Unset): Member SandboxPools materialised by the Env Reconciler in the local
-                cluster segment. Each member becomes one Pool with member.labels/annotations stamped verbatim and per-Pool
-                fields (replicas, overrides.resourceMultiplier) applied to that Pool only.
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The
                 Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull
                 credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.
@@ -62,7 +58,6 @@ class CreateSandboxEnvRequest:
     name: str
     template_ref: SandboxEnvTemplateRef
     mode: CreateSandboxEnvRequestMode | Unset = CreateSandboxEnvRequestMode.WARMPOOL
-    members: list[EnvClusterMember] | Unset = UNSET
     overrides: EnvOverrides | Unset = UNSET
     labels: CreateSandboxEnvRequestLabels | Unset = UNSET
     annotations: CreateSandboxEnvRequestAnnotations | Unset = UNSET
@@ -75,7 +70,6 @@ class CreateSandboxEnvRequest:
     def to_dict(self) -> dict[str, Any]:
         from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
         from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
-        from ..models.env_cluster_member import EnvClusterMember
         from ..models.env_overrides import EnvOverrides
         from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
         name = self.name
@@ -85,15 +79,6 @@ class CreateSandboxEnvRequest:
         mode: str | Unset = UNSET
         if not isinstance(self.mode, Unset):
             mode = self.mode.value
-
-
-        members: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.members, Unset):
-            members = []
-            for members_item_data in self.members:
-                members_item = members_item_data.to_dict()
-                members.append(members_item)
-
 
 
         overrides: dict[str, Any] | Unset = UNSET
@@ -117,8 +102,6 @@ class CreateSandboxEnvRequest:
         })
         if mode is not UNSET:
             field_dict["mode"] = mode
-        if members is not UNSET:
-            field_dict["members"] = members
         if overrides is not UNSET:
             field_dict["overrides"] = overrides
         if labels is not UNSET:
@@ -134,7 +117,6 @@ class CreateSandboxEnvRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
         from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
-        from ..models.env_cluster_member import EnvClusterMember
         from ..models.env_overrides import EnvOverrides
         from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
         d = dict(src_dict)
@@ -153,18 +135,6 @@ class CreateSandboxEnvRequest:
             mode = CreateSandboxEnvRequestMode(_mode)
 
 
-
-
-        _members = d.pop("members", UNSET)
-        members: list[EnvClusterMember] | Unset = UNSET
-        if _members is not UNSET:
-            members = []
-            for members_item_data in _members:
-                members_item = EnvClusterMember.from_dict(members_item_data)
-
-
-
-                members.append(members_item)
 
 
         _overrides = d.pop("overrides", UNSET)
@@ -201,7 +171,6 @@ class CreateSandboxEnvRequest:
             name=name,
             template_ref=template_ref,
             mode=mode,
-            members=members,
             overrides=overrides,
             labels=labels,
             annotations=annotations,

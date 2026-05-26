@@ -23,7 +23,7 @@ import (
 )
 
 // stubAPIKeyService implements just the ListByTeamAndUser method used by
-// renderPoolDocs. Other methods panic so any unexpected call is caught.
+// renderEnvDocs. Other methods panic so any unexpected call is caught.
 type stubAPIKeyService struct {
 	items   []service.APIKeyItem
 	listErr *domain.AppError
@@ -58,9 +58,9 @@ func newTestServer(stub *stubAPIKeyService) *Server {
 	return &Server{apikey: stub}
 }
 
-func TestRenderPoolDocs_EmptyRaw(t *testing.T) {
+func TestRenderEnvDocs_EmptyRaw(t *testing.T) {
 	s := newTestServer(&stubAPIKeyService{})
-	got, err := s.renderPoolDocs(context.Background(), "", "p", "c", domain.AuthInfo{Team: "t", User: "u"})
+	got, err := s.renderEnvDocs(context.Background(), "", "e", "c", domain.AuthInfo{Team: "t", User: "u"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,25 +69,27 @@ func TestRenderPoolDocs_EmptyRaw(t *testing.T) {
 	}
 }
 
-func TestRenderPoolDocs_SubstitutesAllVariables(t *testing.T) {
+func TestRenderEnvDocs_SubstitutesAllVariables(t *testing.T) {
 	stub := &stubAPIKeyService{
 		items: []service.APIKeyItem{
 			{KeyMetadata: service.KeyMetadata{RawToken: "agbx_newkey"}},
 		},
 	}
 	s := newTestServer(stub)
-	raw := "pool=${AGBX_POOL_NAME} cluster=${AGBX_CLUSTER_ID} key=${AGBX_API_KEY}"
-	got, err := s.renderPoolDocs(context.Background(), raw, "mypool", "cluster3", domain.AuthInfo{Team: "t", User: "alice"})
+	raw := "env=${AGBX_ENV_NAME} pool=${AGBX_POOL_NAME} cluster=${AGBX_CLUSTER_ID} key=${AGBX_API_KEY}"
+	got, err := s.renderEnvDocs(context.Background(), raw, "myenv", "cluster3", domain.AuthInfo{Team: "t", User: "alice"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "pool=mypool cluster=cluster3 key=agbx_newkey"
+	// ${AGBX_POOL_NAME} renders to the env name for backward compatibility
+	// with docs authored against the old per-pool docs surface.
+	want := "env=myenv pool=myenv cluster=cluster3 key=agbx_newkey"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}
 }
 
-func TestRenderPoolDocs_PicksFirstKeyWithRawToken(t *testing.T) {
+func TestRenderEnvDocs_PicksFirstKeyWithRawToken(t *testing.T) {
 	stub := &stubAPIKeyService{
 		items: []service.APIKeyItem{
 			{KeyMetadata: service.KeyMetadata{RawToken: ""}},              // legacy, skipped
@@ -96,7 +98,7 @@ func TestRenderPoolDocs_PicksFirstKeyWithRawToken(t *testing.T) {
 		},
 	}
 	s := newTestServer(stub)
-	got, err := s.renderPoolDocs(context.Background(), "k=${AGBX_API_KEY}", "p", "c", domain.AuthInfo{Team: "t", User: "u"})
+	got, err := s.renderEnvDocs(context.Background(), "k=${AGBX_API_KEY}", "e", "c", domain.AuthInfo{Team: "t", User: "u"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,14 +107,14 @@ func TestRenderPoolDocs_PicksFirstKeyWithRawToken(t *testing.T) {
 	}
 }
 
-func TestRenderPoolDocs_NoUsableKeyReturnsAPIKeyRequired(t *testing.T) {
+func TestRenderEnvDocs_NoUsableKeyReturnsAPIKeyRequired(t *testing.T) {
 	stub := &stubAPIKeyService{
 		items: []service.APIKeyItem{
 			{KeyMetadata: service.KeyMetadata{RawToken: ""}}, // legacy only
 		},
 	}
 	s := newTestServer(stub)
-	got, err := s.renderPoolDocs(context.Background(), "k=${AGBX_API_KEY}", "p", "c", domain.AuthInfo{Team: "t", User: "u"})
+	got, err := s.renderEnvDocs(context.Background(), "k=${AGBX_API_KEY}", "e", "c", domain.AuthInfo{Team: "t", User: "u"})
 	if err == nil {
 		t.Fatalf("want error, got nil (rendered=%q)", got)
 	}
@@ -124,19 +126,19 @@ func TestRenderPoolDocs_NoUsableKeyReturnsAPIKeyRequired(t *testing.T) {
 	}
 }
 
-func TestRenderPoolDocs_NoApiKeyPlaceholderSkipsLookup(t *testing.T) {
+func TestRenderEnvDocs_NoApiKeyPlaceholderSkipsLookup(t *testing.T) {
 	// Stub that would fail if asked to list keys — proves the helper does not
 	// query the key store when ${AGBX_API_KEY} is absent.
 	stub := &stubAPIKeyService{
 		listErr: domain.NewInternal("should not be called", nil),
 	}
 	s := newTestServer(stub)
-	got, err := s.renderPoolDocs(context.Background(), "pool=${AGBX_POOL_NAME}", "mypool", "c", domain.AuthInfo{Team: "t", User: "u"})
+	got, err := s.renderEnvDocs(context.Background(), "env=${AGBX_ENV_NAME}", "myenv", "c", domain.AuthInfo{Team: "t", User: "u"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "pool=mypool" {
-		t.Fatalf("want pool=mypool, got %q", got)
+	if got != "env=myenv" {
+		t.Fatalf("want env=myenv, got %q", got)
 	}
 }
 
@@ -147,10 +149,10 @@ func TestRenderTemplateDocs_EmptyRaw(t *testing.T) {
 	}
 }
 
-func TestRenderTemplateDocs_SubstitutesPoolNameAndApiKey(t *testing.T) {
-	raw := "pool=${AGBX_POOL_NAME} key=${AGBX_API_KEY}"
+func TestRenderTemplateDocs_SubstitutesEnvNameAndApiKey(t *testing.T) {
+	raw := "env=${AGBX_ENV_NAME} key=${AGBX_API_KEY}"
 	got := renderTemplateDocs(raw, "cluster3")
-	want := "pool=YOUR_POOL_NAME key=YOUR_API_KEY"
+	want := "env=YOUR_ENV_NAME key=YOUR_API_KEY"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}
@@ -165,9 +167,9 @@ func TestRenderTemplateDocs_SubstitutesRealClusterID(t *testing.T) {
 }
 
 func TestRenderTemplateDocs_SubstitutesAllVariables(t *testing.T) {
-	raw := "pool=${AGBX_POOL_NAME} cluster=${AGBX_CLUSTER_ID} key=${AGBX_API_KEY}"
+	raw := "env=${AGBX_ENV_NAME} pool=${AGBX_POOL_NAME} cluster=${AGBX_CLUSTER_ID} key=${AGBX_API_KEY}"
 	got := renderTemplateDocs(raw, "cluster3")
-	want := "pool=YOUR_POOL_NAME cluster=cluster3 key=YOUR_API_KEY"
+	want := "env=YOUR_ENV_NAME pool=YOUR_ENV_NAME cluster=cluster3 key=YOUR_API_KEY"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}

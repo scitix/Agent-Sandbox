@@ -160,101 +160,168 @@ type EnvClusterSpec struct {
 }
 
 // EnvClusterMember describes one SandboxPool participating in this Env.
+//
+// The shape is a three-bucket split:
+//
+//   - Name: identity within the Env (the list map key).
+//   - Metadata + Spec: server-managed snapshot of the materialised SandboxPool,
+//     captured AFTER PreCreatePool admission ran at the API layer. The Env
+//     Reconciler stamps these onto the live Pool verbatim — it never re-runs
+//     plugin admission, so plugin side-effects (Reservation submit, scheduling
+//     labels, NodeAffinity, …) survive Pool recreate / Env re-apply without
+//     redoing the side-effect. **Not exposed through the REST API.** Template
+//     upgrades do NOT auto-propagate into Spec; an explicit RefreshMember API
+//     (Phase 2 TODO) is the way to align an existing member with a newer
+//     Template revision.
+//   - Config: user-declared intent (sizing, scaling-group bookkeeping, routing
+//     priorities). This is the only bucket exposed through the REST API.
+//     Plugins do not mutate Config — it stays equal to whatever the caller
+//     supplied at AddMember/UpdateMember time so it remains a faithful
+//     description of the request shape.
 type EnvClusterMember struct {
 	// Name is the SandboxPool's metadata.name within the Env's namespace.
-	// Acts as the list map key for Members.
+	// Acts as the list map key for Members. Must equal Metadata.Name once
+	// the Reconciler materialises the Pool; the Reconciler overwrites
+	// Metadata.Name with Name at stamp time if they disagree.
 	// +required
 	Name string `json:"name"`
 
-	// Labels are stamped verbatim onto the member SandboxPool's metadata.labels
-	// at create time. The Env Reconciler also propagates updates so a label
-	// added/removed here propagates onto the live Pool.
-	//
-	// This is the canonical extension point for plugin-driven metadata that
-	// the Env itself doesn't need to interpret. For example, the Scitix quota
-	// reservation plugin consumes the "quota.scitix.ai/url" label on a Pool
-	// to look up the backing ScitixQuota CR — putting that label here keeps
-	// the Env CRD plugin-agnostic.
+	// Metadata is the snapshot of the candidate Pool's ObjectMeta after
+	// PreCreatePool, with server-managed fields (UID, ResourceVersion,
+	// Generation, CreationTimestamp, ManagedFields, OwnerReferences)
+	// stripped. The Reconciler propagates Labels, Annotations, and
+	// Finalizers onto the live Pool's ObjectMeta when materialising it.
+	// +optional
+	Metadata metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// Spec is the snapshot of the candidate SandboxPoolSpec after
+	// PreCreatePool. The Reconciler stamps the whole Spec verbatim when
+	// creating the live Pool and uses equality.Semantic.DeepEqual to
+	// detect drift between Spec and the live Pool on subsequent
+	// reconciles. Replicas in Spec is the initial value at AddMember
+	// time — the autoscaler owns the live Pool's Replicas thereafter
+	// and the Reconciler does NOT force Spec.Replicas back onto it.
+	// +optional
+	Spec SandboxPoolSpec `json:"spec,omitempty"`
+
+	// Config carries user-declared intent: sizing (InstanceType/Multiplier
+	// or InlineResources), autoscaling bookkeeping (ScalingGroup,
+	// MaxReplicas), and routing priorities. Plugins do not mutate Config,
+	// so it remains a faithful description of the caller's request.
+	// +optional
+	Config EnvClusterMemberConfig `json:"config,omitempty"`
+}
+
+// EnvClusterMemberConfig captures the user-declared intent for one member.
+// Plugins never write to this — it stays equal to the caller-supplied value
+// across the lifetime of the member.
+type EnvClusterMemberConfig struct {
+	// Labels are caller-supplied SandboxPool metadata.labels stamped onto
+	// the rendered candidate Pool BEFORE PreCreatePool runs. Plugins
+	// typically consume these for routing decisions (e.g. the
+	// "quota.scitix.ai/url" label selects which ScitixQuota CR backs the
+	// member). The plugin output — original + any plugin-added labels —
+	// lands in Member.Metadata.Labels; Config.Labels stays equal to the
+	// caller's input.
 	// +optional
 	Labels map[string]string `json:"labels,omitempty"`
 
-	// Annotations are stamped verbatim onto the member SandboxPool's
-	// metadata.annotations at create time, with the same propagation
-	// semantics as Labels. Use for non-identifying plugin payloads (e.g.
-	// reservation hints, audit metadata).
+	// Annotations are caller-supplied SandboxPool metadata.annotations,
+	// same propagation rules as Labels.
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
 
-	// InstanceType references an entry in the cluster-wide InstanceType catalog.
-	// Mutually informative with InlineResources: if both are set, InstanceType
-	// wins and InlineResources serves as a transitional record for migration.
+	// InstanceType references an entry in the cluster-wide InstanceType
+	// catalog. Mutually informative with InlineResources: if both are set,
+	// InstanceType wins and InlineResources serves as a transitional
+	// record for migration.
 	// +optional
 	InstanceType string `json:"instanceType,omitempty"`
 
-	// Multiplier scales InstanceType's resources. Required when InstanceType is set.
+	// Multiplier scales InstanceType's resources. Required when
+	// InstanceType is set.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	Multiplier int32 `json:"multiplier,omitempty"`
 
-	// InlineResources is the Phase 1 migration escape hatch: when the source
-	// SandboxPool predates InstanceType labelling, the Pool's PodSpec resources
-	// are copied here verbatim. New Envs created via the Dashboard should leave
-	// this empty and use InstanceType+Multiplier instead.
+	// InlineResources is the Phase 1 migration escape hatch (legacy Pools
+	// without an InstanceType label) AND the source of truth used by a
+	// future RefreshMember API to keep resource sizing stable when the
+	// underlying Template is upgraded. New Envs created via the Dashboard
+	// should leave this empty and use InstanceType+Multiplier instead.
 	// +optional
 	InlineResources *corev1.ResourceRequirements `json:"inlineResources,omitempty"`
 
-	// ScalingGroup names the autoscaling group this member belongs to. Members
-	// in the same group must share the same effective resources (= InstanceType
-	// × Multiplier or identical InlineResources). Empty means the member is
-	// excluded from autoscaling.
+	// ScalingGroup names the autoscaling group this member belongs to.
+	// Members in the same group must share the same effective resources
+	// (= InstanceType × Multiplier or identical InlineResources). Empty
+	// means the member is excluded from autoscaling.
 	// +optional
 	// +kubebuilder:default=default
 	ScalingGroup string `json:"scalingGroup,omitempty"`
 
-	// MaxReplicas is the upper bound on this member's spec.replicas. Reserved
-	// for Phase 2 multi-member routing — enforced by the Env autoscaler when
-	// distributing scale-up delta across members. Phase 1 ignores it.
+	// Replicas is the initial spec.replicas value applied to this member
+	// Pool when the Env Reconciler creates it. Autoscaling owns the
+	// replica value afterwards — the Reconciler does NOT force this
+	// baseline back on subsequent reconciles.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	Replicas int32 `json:"replicas,omitempty"`
+
+	// MaxReplicas is the upper bound on this member's spec.replicas.
+	// Enforced by the Env autoscaler when distributing scale-up delta
+	// across members.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
-	// Priority controls routing order: lower priority is preferred. Reserved
-	// for Phase 2; Phase 1 ignores it.
+	// Priority is the canonical routing/scaling preference: lower wins.
+	// Also acts as the default for ScaleUpPriority / ScaleDownPriority
+	// when those are unset.
 	// +optional
 	Priority int32 `json:"priority,omitempty"`
 
-	// ScaleUpPriority controls scale-up order within a scalingGroup: lower
-	// values are scaled up first. Same-value tiebreak: (clusterID, name)
-	// lexicographic. Reserved for Phase 2; Phase 1 ignores it.
-	// +optional
-	ScaleUpPriority int32 `json:"scaleUpPriority,omitempty"`
-
-	// ScaleDownPriority controls scale-down order: lower values shrink first.
+	// ScaleUpPriority overrides Priority for scale-up ordering within a
+	// scalingGroup. Same-value tiebreak: (clusterID, name) lexicographic.
+	// When nil, EffectiveScaleUpPriority falls back to Priority.
 	// Reserved for Phase 2; Phase 1 ignores it.
 	// +optional
-	ScaleDownPriority int32 `json:"scaleDownPriority,omitempty"`
+	ScaleUpPriority *int32 `json:"scaleUpPriority,omitempty"`
 
-	// Replicas is the initial spec.replicas value applied to this member
-	// Pool when the Env Reconciler creates it. Different members can have
-	// different replica counts (e.g. small T4 pool + large A100 pool in
-	// the same E2B Env). Autoscaling owns the replica value afterwards —
-	// the Reconciler does NOT force this baseline back on subsequent
-	// reconciles.
+	// ScaleDownPriority overrides Priority for scale-down ordering: lower
+	// values shrink first. When nil, EffectiveScaleDownPriority falls back
+	// to Priority. Reserved for Phase 2; Phase 1 ignores it.
 	// +optional
-	// +kubebuilder:validation:Minimum=0
-	Replicas int32 `json:"replicas,omitempty"`
+	ScaleDownPriority *int32 `json:"scaleDownPriority,omitempty"`
 }
 
-// EnvAutoscalingSpec configures the Env-level autoscaler.
-type EnvAutoscalingSpec struct {
-	// Enabled toggles the autoscaler on/off. When false, member Pool replicas
-	// are managed manually.
-	// +optional
-	// +kubebuilder:default=false
-	Enabled bool `json:"enabled,omitempty"`
+// EffectiveScaleUpPriority returns ScaleUpPriority when set, otherwise
+// Priority. Use this when picking which member in a scalingGroup gets
+// scale-up traffic first.
+func (c EnvClusterMemberConfig) EffectiveScaleUpPriority() int32 {
+	if c.ScaleUpPriority != nil {
+		return *c.ScaleUpPriority
+	}
+	return c.Priority
+}
 
-	// Groups is the list of autoscaling groups. In Phase 1 there is exactly
-	// one group named "default" populated from the source Pool's autoscaling.
+// EffectiveScaleDownPriority returns ScaleDownPriority when set, otherwise
+// Priority. Use this when picking which member in a scalingGroup shrinks
+// first.
+func (c EnvClusterMemberConfig) EffectiveScaleDownPriority() int32 {
+	if c.ScaleDownPriority != nil {
+		return *c.ScaleDownPriority
+	}
+	return c.Priority
+}
+
+// EnvAutoscalingSpec configures the Env-level autoscaler. The Enabled
+// switch lives on each EnvAutoscalingGroup so groups can be toggled
+// independently — a group with Enabled=false is dormant; its members'
+// Pool replicas stay where the user (or other actors) put them.
+type EnvAutoscalingSpec struct {
+	// Groups is the list of autoscaling groups. Each group is keyed by Name
+	// and toggles its own Enabled bit independently.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -264,9 +331,18 @@ type EnvAutoscalingSpec struct {
 // EnvAutoscalingGroup is one Env-level autoscaling unit, applied jointly to
 // every member referencing this group.
 type EnvAutoscalingGroup struct {
-	// Name matches EnvClusterMember.ScalingGroup. Required.
+	// Name matches EnvClusterMember.ScalingGroup. Required. The Env
+	// rejects groups whose Name does not match the ScalingGroup of at
+	// least one member — empty-group policies have no effect and would
+	// confuse the autoscaler's per-group iteration.
 	// +required
 	Name string `json:"name"`
+
+	// Enabled toggles the autoscaler on/off for this group. When false,
+	// member Pool replicas in this scaling group are managed manually.
+	// +optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
 
 	// MinReplicas is the lower bound for the aggregate (group) replica count.
 	// +optional

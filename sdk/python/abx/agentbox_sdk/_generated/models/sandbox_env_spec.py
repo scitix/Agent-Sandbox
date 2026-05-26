@@ -50,7 +50,8 @@ class SandboxEnvSpec:
                 creates a SandboxJob per request.
             defaults (SandboxEnvDefaults | Unset):
             clusters (list[EnvClusterSpec] | Unset):
-            autoscaling (EnvAutoscalingSpec | Unset):
+            autoscaling (EnvAutoscalingSpec | Unset): Env-level autoscaler config. The master switch lives per-group on
+                EnvAutoscalingGroup.enabled so groups can be toggled independently.
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The
                 Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull
                 credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.

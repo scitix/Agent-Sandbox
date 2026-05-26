@@ -73,25 +73,25 @@ spec:
 
                   Autoscaling.Enabled=false, member Pool replicas are managed manually.'
                 properties:
-                  enabled:
-                    default: false
-                    description: 'Enabled toggles the autoscaler on/off. When false,
-                      member Pool replicas
-
-                      are managed manually.'
-                    type: boolean
                   groups:
-                    description: 'Groups is the list of autoscaling groups. In Phase
-                      1 there is exactly
+                    description: 'Groups is the list of autoscaling groups. Each group
+                      is keyed by Name
 
-                      one group named "default" populated from the source Pool''s
-                      autoscaling.'
+                      and toggles its own Enabled bit independently.'
                     items:
                       description: 'EnvAutoscalingGroup is one Env-level autoscaling
                         unit, applied jointly to
 
                         every member referencing this group.'
                       properties:
+                        enabled:
+                          default: false
+                          description: 'Enabled toggles the autoscaler on/off for
+                            this group. When false,
+
+                            member Pool replicas in this scaling group are managed
+                            manually.'
+                          type: boolean
                         maxReplicas:
                           description: 'MaxReplicas is the upper bound for the aggregate
                             (group) replica count.
@@ -107,8 +107,11 @@ spec:
                           minimum: 0
                           type: integer
                         name:
-                          description: Name matches EnvClusterMember.ScalingGroup.
-                            Required.
+                          description: "Name matches EnvClusterMember.ScalingGroup.\
+                            \ Required. The Env\nrejects groups whose Name does not\
+                            \ match the ScalingGroup of at\nleast one member \u2014\
+                            \ empty-group policies have no effect and would\nconfuse\
+                            \ the autoscaler's per-group iteration."
                           type: string
                         scaleDownPolicy:
                           description: ScaleDownPolicy reuses the existing SandboxPool
@@ -251,70 +254,604 @@ spec:
 
                         Phase 1 supports exactly one member per cluster.'
                       items:
-                        description: EnvClusterMember describes one SandboxPool participating
-                          in this Env.
+                        description: "EnvClusterMember describes one SandboxPool participating\
+                          \ in this Env.\n\nThe shape is a three-bucket split:\n\n\
+                          \  - Name: identity within the Env (the list map key).\n\
+                          \  - Metadata + Spec: server-managed snapshot of the materialised\
+                          \ SandboxPool,\n    captured AFTER PreCreatePool admission\
+                          \ ran at the API layer. The Env\n    Reconciler stamps these\
+                          \ onto the live Pool verbatim \u2014 it never re-runs\n\
+                          \    plugin admission, so plugin side-effects (Reservation\
+                          \ submit, scheduling\n    labels, NodeAffinity, \u2026)\
+                          \ survive Pool recreate / Env re-apply without\n    redoing\
+                          \ the side-effect. **Not exposed through the REST API.**\
+                          \ Template\n    upgrades do NOT auto-propagate into Spec;\
+                          \ an explicit RefreshMember API\n    (Phase 2 TODO) is the\
+                          \ way to align an existing member with a newer\n    Template\
+                          \ revision.\n  - Config: user-declared intent (sizing, scaling-group\
+                          \ bookkeeping, routing\n    priorities). This is the only\
+                          \ bucket exposed through the REST API.\n    Plugins do not\
+                          \ mutate Config \u2014 it stays equal to whatever the caller\n\
+                          \    supplied at AddMember/UpdateMember time so it remains\
+                          \ a faithful\n    description of the request shape."
                         properties:
-                          annotations:
-                            additionalProperties:
-                              type: string
-                            description: 'Annotations are stamped verbatim onto the
-                              member SandboxPool''s
+                          config:
+                            description: 'Config carries user-declared intent: sizing
+                              (InstanceType/Multiplier
 
-                              metadata.annotations at create time, with the same propagation
+                              or InlineResources), autoscaling bookkeeping (ScalingGroup,
 
-                              semantics as Labels. Use for non-identifying plugin
-                              payloads (e.g.
+                              MaxReplicas), and routing priorities. Plugins do not
+                              mutate Config,
 
-                              reservation hints, audit metadata).'
-                            type: object
-                          inlineResources:
-                            description: 'InlineResources is the Phase 1 migration
-                              escape hatch: when the source
-
-                              SandboxPool predates InstanceType labelling, the Pool''s
-                              PodSpec resources
-
-                              are copied here verbatim. New Envs created via the Dashboard
-                              should leave
-
-                              this empty and use InstanceType+Multiplier instead.'
+                              so it remains a faithful description of the caller''s
+                              request.'
                             properties:
-                              claims:
-                                description: 'Claims lists the names of resources,
-                                  defined in spec.resourceClaims,
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: 'Annotations are caller-supplied SandboxPool
+                                  metadata.annotations,
 
-                                  that are used by this container.
+                                  same propagation rules as Labels.'
+                                type: object
+                              inlineResources:
+                                description: 'InlineResources is the Phase 1 migration
+                                  escape hatch (legacy Pools
+
+                                  without an InstanceType label) AND the source of
+                                  truth used by a
+
+                                  future RefreshMember API to keep resource sizing
+                                  stable when the
+
+                                  underlying Template is upgraded. New Envs created
+                                  via the Dashboard
+
+                                  should leave this empty and use InstanceType+Multiplier
+                                  instead.'
+                                properties:
+                                  claims:
+                                    description: 'Claims lists the names of resources,
+                                      defined in spec.resourceClaims,
+
+                                      that are used by this container.
 
 
-                                  This field depends on the
+                                      This field depends on the
 
-                                  DynamicResourceAllocation feature gate.
+                                      DynamicResourceAllocation feature gate.
 
 
-                                  This field is immutable. It can only be set for
-                                  containers.'
+                                      This field is immutable. It can only be set
+                                      for containers.'
+                                    items:
+                                      description: ResourceClaim references one entry
+                                        in PodSpec.ResourceClaims.
+                                      properties:
+                                        name:
+                                          description: 'Name must match the name of
+                                            one entry in pod.spec.resourceClaims of
+
+                                            the Pod where this field is used. It makes
+                                            that resource available
+
+                                            inside a container.'
+                                          type: string
+                                        request:
+                                          description: 'Request is the name chosen
+                                            for a request in the referenced claim.
+
+                                            If empty, everything from the claim is
+                                            made available, otherwise
+
+                                            only the result of this request.'
+                                          type: string
+                                      required:
+                                      - name
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-map-keys:
+                                    - name
+                                    x-kubernetes-list-type: map
+                                  limits:
+                                    additionalProperties:
+                                      anyOf:
+                                      - type: integer
+                                      - type: string
+                                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                      x-kubernetes-int-or-string: true
+                                    description: 'Limits describes the maximum amount
+                                      of compute resources allowed.
+
+                                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
+                                    type: object
+                                  requests:
+                                    additionalProperties:
+                                      anyOf:
+                                      - type: integer
+                                      - type: string
+                                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                      x-kubernetes-int-or-string: true
+                                    description: 'Requests describes the minimum amount
+                                      of compute resources required.
+
+                                      If Requests is omitted for a container, it defaults
+                                      to Limits if that is explicitly specified,
+
+                                      otherwise to an implementation-defined value.
+                                      Requests cannot exceed Limits.
+
+                                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
+                                    type: object
+                                type: object
+                              instanceType:
+                                description: 'InstanceType references an entry in
+                                  the cluster-wide InstanceType
+
+                                  catalog. Mutually informative with InlineResources:
+                                  if both are set,
+
+                                  InstanceType wins and InlineResources serves as
+                                  a transitional
+
+                                  record for migration.'
+                                type: string
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: "Labels are caller-supplied SandboxPool\
+                                  \ metadata.labels stamped onto\nthe rendered candidate\
+                                  \ Pool BEFORE PreCreatePool runs. Plugins\ntypically\
+                                  \ consume these for routing decisions (e.g. the\n\
+                                  \"quota.scitix.ai/url\" label selects which ScitixQuota\
+                                  \ CR backs the\nmember). The plugin output \u2014\
+                                  \ original + any plugin-added labels \u2014\nlands\
+                                  \ in Member.Metadata.Labels; Config.Labels stays\
+                                  \ equal to the\ncaller's input."
+                                type: object
+                              maxReplicas:
+                                description: 'MaxReplicas is the upper bound on this
+                                  member''s spec.replicas.
+
+                                  Enforced by the Env autoscaler when distributing
+                                  scale-up delta
+
+                                  across members.'
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              multiplier:
+                                description: 'Multiplier scales InstanceType''s resources.
+                                  Required when
+
+                                  InstanceType is set.'
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              priority:
+                                description: 'Priority is the canonical routing/scaling
+                                  preference: lower wins.
+
+                                  Also acts as the default for ScaleUpPriority / ScaleDownPriority
+
+                                  when those are unset.'
+                                format: int32
+                                type: integer
+                              replicas:
+                                description: "Replicas is the initial spec.replicas\
+                                  \ value applied to this member\nPool when the Env\
+                                  \ Reconciler creates it. Autoscaling owns the\n\
+                                  replica value afterwards \u2014 the Reconciler does\
+                                  \ NOT force this\nbaseline back on subsequent reconciles."
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              scaleDownPriority:
+                                description: 'ScaleDownPriority overrides Priority
+                                  for scale-down ordering: lower
+
+                                  values shrink first. When nil, EffectiveScaleDownPriority
+                                  falls back
+
+                                  to Priority. Reserved for Phase 2; Phase 1 ignores
+                                  it.'
+                                format: int32
+                                type: integer
+                              scaleUpPriority:
+                                description: 'ScaleUpPriority overrides Priority for
+                                  scale-up ordering within a
+
+                                  scalingGroup. Same-value tiebreak: (clusterID, name)
+                                  lexicographic.
+
+                                  When nil, EffectiveScaleUpPriority falls back to
+                                  Priority.
+
+                                  Reserved for Phase 2; Phase 1 ignores it.'
+                                format: int32
+                                type: integer
+                              scalingGroup:
+                                default: default
+                                description: "ScalingGroup names the autoscaling group\
+                                  \ this member belongs to.\nMembers in the same group\
+                                  \ must share the same effective resources\n(= InstanceType\
+                                  \ \xD7 Multiplier or identical InlineResources).\
+                                  \ Empty\nmeans the member is excluded from autoscaling."
+                                type: string
+                            type: object
+                          metadata:
+                            description: 'Metadata is the snapshot of the candidate
+                              Pool''s ObjectMeta after
+
+                              PreCreatePool, with server-managed fields (UID, ResourceVersion,
+
+                              Generation, CreationTimestamp, ManagedFields, OwnerReferences)
+
+                              stripped. The Reconciler propagates Labels, Annotations,
+                              and
+
+                              Finalizers onto the live Pool''s ObjectMeta when materialising
+                              it.'
+                            type: object
+                          name:
+                            description: 'Name is the SandboxPool''s metadata.name
+                              within the Env''s namespace.
+
+                              Acts as the list map key for Members. Must equal Metadata.Name
+                              once
+
+                              the Reconciler materialises the Pool; the Reconciler
+                              overwrites
+
+                              Metadata.Name with Name at stamp time if they disagree.'
+                            type: string
+                          spec:
+                            description: "Spec is the snapshot of the candidate SandboxPoolSpec\
+                              \ after\nPreCreatePool. The Reconciler stamps the whole\
+                              \ Spec verbatim when\ncreating the live Pool and uses\
+                              \ equality.Semantic.DeepEqual to\ndetect drift between\
+                              \ Spec and the live Pool on subsequent\nreconciles.\
+                              \ Replicas in Spec is the initial value at AddMember\n\
+                              time \u2014 the autoscaler owns the live Pool's Replicas\
+                              \ thereafter\nand the Reconciler does NOT force Spec.Replicas\
+                              \ back onto it."
+                            properties:
+                              defaultIdleTimeout:
+                                description: 'DefaultIdleTimeout is the default idle
+                                  timeout applied to sandboxes created
+
+                                  in this pool when the CreateSandbox request does
+                                  not specify an idleTimeout.
+
+                                  If nil, sandboxes have no idle timeout by default
+                                  (they run until explicitly released).'
+                                type: string
+                              defaultStartupTimeout:
+                                description: 'DefaultStartupTimeout is the default
+                                  startup timeout applied to sandbox create
+
+                                  requests in this pool when the CreateSandbox request
+                                  does not specify a startupTimeout.
+
+                                  It also serves as the upper bound for the Starting
+                                  phase: the controller deletes any pod
+
+                                  that has been in Starting phase longer than this
+                                  value.
+
+
+                                  When nil, the controller does not enforce an upper
+                                  bound on the Starting phase
+
+                                  (pods with a per-pod agentbox.navix.sh/startup-timeout
+                                  annotation are still cleaned up),
+
+                                  and create requests without an explicit startupTimeout
+                                  use the internal default (2 minutes).'
+                                type: string
+                              idleImage:
+                                description: 'IdleImage is the image to use when Pods
+                                  are in the idle state.
+
+                                  If not specified, the image from Template.Spec.Containers[0].Image
+                                  will be used.'
+                                type: string
+                              podCreationImagePolicy:
+                                allOf:
+                                - enum:
+                                  - PoolDefaultImage
+                                  - IdleImage
+                                - enum:
+                                  - PoolDefaultImage
+                                  - IdleImage
+                                default: IdleImage
+                                description: "PodCreationImagePolicy controls which\
+                                  \ image newly created Pods start with,\nregardless\
+                                  \ of whether replicas are increased manually or\
+                                  \ by autoscaling.\n  - PoolDefaultImage: preserve\
+                                  \ template container image (current behavior)\n\
+                                  \  - IdleImage:        override the first container\
+                                  \ image with spec.idleImage"
+                                type: string
+                              replicas:
+                                description: 'Replicas is the total desired number
+                                  of Pods (Idle + Running + Starting + Stopping).
+
+                                  Adjusted by the SandboxEnv autoscaler (when the
+                                  Pool is owned by an Env) or
+
+                                  directly by the operator for unmanaged Pools.'
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              runtimes:
+                                description: 'Runtimes specifies the runtimes to use
+                                  for the sandbox pods. Each runtime has a type and
+                                  optional configuration.
+
+                                  If not specified, a default runtime will be used.'
                                 items:
-                                  description: ResourceClaim references one entry
-                                    in PodSpec.ResourceClaims.
                                   properties:
+                                    config:
+                                      description: 'Config contains runtime-specific
+                                        configuration parameters.
+
+                                        The content and structure of this field depend
+                                        on the runtime type.'
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    description:
+                                      description: Description is a human-readable
+                                        description of this runtime.
+                                      type: string
+                                    logDir:
+                                      description: 'LogDir is the path to the runtime''s
+                                        log file inside the container.
+
+                                        When set, the GetLogs API can retrieve runtime
+                                        logs via file read.
+
+                                        Example: "/tmp/envd.log"'
+                                      type: string
                                     name:
-                                      description: 'Name must match the name of one
-                                        entry in pod.spec.resourceClaims of
+                                      description: 'Name specifies the name of the
+                                        runtime to use for the sandbox pods.
 
-                                        the Pod where this field is used. It makes
-                                        that resource available
-
-                                        inside a container.'
+                                        Supported values are "e2b", "swerex", "aiosanbdox",
+                                        etc.'
                                       type: string
-                                    request:
-                                      description: 'Request is the name chosen for
-                                        a request in the referenced claim.
+                                    port:
+                                      description: Port specifies the port number
+                                        that the runtime should listen on for incoming
+                                        connections.
+                                      format: int32
+                                      type: integer
+                                    protocol:
+                                      default: TCP
+                                      description: 'Protocol for port. Must be UDP,
+                                        TCP, or SCTP.
 
-                                        If empty, everything from the claim is made
-                                        available, otherwise
-
-                                        only the result of this request.'
+                                        Defaults to "TCP".'
                                       type: string
+                                    readinessProbe:
+                                      description: ReadinessProbe defines the readiness
+                                        check configuration for the runtime.
+                                      properties:
+                                        exec:
+                                          description: Exec specifies a command to
+                                            execute in the container.
+                                          properties:
+                                            command:
+                                              description: 'Command is the command
+                                                line to execute inside the container,
+                                                the working directory for the
+
+                                                command  is root (''/'') in the container''s
+                                                filesystem. The command is simply
+                                                exec''d, it is
+
+                                                not run inside a shell, so traditional
+                                                shell instructions (''|'', etc) won''t
+                                                work. To use
+
+                                                a shell, you need to explicitly call
+                                                out to that shell.
+
+                                                Exit status of 0 is treated as live/healthy
+                                                and non-zero is unhealthy.'
+                                              items:
+                                                type: string
+                                              type: array
+                                              x-kubernetes-list-type: atomic
+                                          type: object
+                                        failureThreshold:
+                                          description: 'Minimum consecutive failures
+                                            for the probe to be considered failed
+                                            after having succeeded.
+
+                                            Defaults to 3. Minimum value is 1.'
+                                          format: int32
+                                          type: integer
+                                        grpc:
+                                          description: GRPC specifies a GRPC HealthCheckRequest.
+                                          properties:
+                                            port:
+                                              description: Port number of the gRPC
+                                                service. Number must be in the range
+                                                1 to 65535.
+                                              format: int32
+                                              type: integer
+                                            service:
+                                              default: ''
+                                              description: 'Service is the name of
+                                                the service to place in the gRPC HealthCheckRequest
+
+                                                (see https://github.com/grpc/grpc/blob/master/doc/health-checking.md).
+
+
+                                                If this is not specified, the default
+                                                behavior is defined by gRPC.'
+                                              type: string
+                                          required:
+                                          - port
+                                          type: object
+                                        httpGet:
+                                          description: HTTPGet specifies an HTTP GET
+                                            request to perform.
+                                          properties:
+                                            host:
+                                              description: 'Host name to connect to,
+                                                defaults to the pod IP. You probably
+                                                want to set
+
+                                                "Host" in httpHeaders instead.'
+                                              type: string
+                                            httpHeaders:
+                                              description: Custom headers to set in
+                                                the request. HTTP allows repeated
+                                                headers.
+                                              items:
+                                                description: HTTPHeader describes
+                                                  a custom header to be used in HTTP
+                                                  probes
+                                                properties:
+                                                  name:
+                                                    description: 'The header field
+                                                      name.
+
+                                                      This will be canonicalized upon
+                                                      output, so case-variant names
+                                                      will be understood as the same
+                                                      header.'
+                                                    type: string
+                                                  value:
+                                                    description: The header field
+                                                      value
+                                                    type: string
+                                                required:
+                                                - name
+                                                - value
+                                                type: object
+                                              type: array
+                                              x-kubernetes-list-type: atomic
+                                            path:
+                                              description: Path to access on the HTTP
+                                                server.
+                                              type: string
+                                            port:
+                                              anyOf:
+                                              - type: integer
+                                              - type: string
+                                              description: 'Name or number of the
+                                                port to access on the container.
+
+                                                Number must be in the range 1 to 65535.
+
+                                                Name must be an IANA_SVC_NAME.'
+                                              x-kubernetes-int-or-string: true
+                                            scheme:
+                                              description: 'Scheme to use for connecting
+                                                to the host.
+
+                                                Defaults to HTTP.'
+                                              type: string
+                                          required:
+                                          - port
+                                          type: object
+                                        initialDelaySeconds:
+                                          description: 'Number of seconds after the
+                                            container has started before liveness
+                                            probes are initiated.
+
+                                            More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes'
+                                          format: int32
+                                          type: integer
+                                        periodSeconds:
+                                          description: 'How often (in seconds) to
+                                            perform the probe.
+
+                                            Default to 10 seconds. Minimum value is
+                                            1.'
+                                          format: int32
+                                          type: integer
+                                        successThreshold:
+                                          description: 'Minimum consecutive successes
+                                            for the probe to be considered successful
+                                            after having failed.
+
+                                            Defaults to 1. Must be 1 for liveness
+                                            and startup. Minimum value is 1.'
+                                          format: int32
+                                          type: integer
+                                        tcpSocket:
+                                          description: TCPSocket specifies a connection
+                                            to a TCP port.
+                                          properties:
+                                            host:
+                                              description: 'Optional: Host name to
+                                                connect to, defaults to the pod IP.'
+                                              type: string
+                                            port:
+                                              anyOf:
+                                              - type: integer
+                                              - type: string
+                                              description: 'Number or name of the
+                                                port to access on the container.
+
+                                                Number must be in the range 1 to 65535.
+
+                                                Name must be an IANA_SVC_NAME.'
+                                              x-kubernetes-int-or-string: true
+                                          required:
+                                          - port
+                                          type: object
+                                        terminationGracePeriodSeconds:
+                                          description: 'Optional duration in seconds
+                                            the pod needs to terminate gracefully
+                                            upon probe failure.
+
+                                            The grace period is the duration in seconds
+                                            after the processes running in the pod
+                                            are sent
+
+                                            a termination signal and the time when
+                                            the processes are forcibly halted with
+                                            a kill signal.
+
+                                            Set this value longer than the expected
+                                            cleanup time for your process.
+
+                                            If this value is nil, the pod''s terminationGracePeriodSeconds
+                                            will be used. Otherwise, this
+
+                                            value overrides the value provided by
+                                            the pod spec.
+
+                                            Value must be non-negative integer. The
+                                            value zero indicates stop immediately
+                                            via
+
+                                            the kill signal (no opportunity to shut
+                                            down).
+
+                                            This is a beta field and requires enabling
+                                            ProbeTerminationGracePeriod feature gate.
+
+                                            Minimum value is 1. spec.terminationGracePeriodSeconds
+                                            is used if unset.'
+                                          format: int64
+                                          type: integer
+                                        timeoutSeconds:
+                                          description: 'Number of seconds after which
+                                            the probe times out.
+
+                                            Defaults to 1 second. Minimum value is
+                                            1.
+
+                                            More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes'
+                                          format: int32
+                                          type: integer
+                                      type: object
                                   required:
                                   - name
                                   type: object
@@ -322,126 +859,28 @@ spec:
                                 x-kubernetes-list-map-keys:
                                 - name
                                 x-kubernetes-list-type: map
-                              limits:
-                                additionalProperties:
-                                  anyOf:
-                                  - type: integer
-                                  - type: string
-                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                                  x-kubernetes-int-or-string: true
-                                description: 'Limits describes the maximum amount
-                                  of compute resources allowed.
+                              template:
+                                description: 'Template defines the Pod template. ALL
+                                  Pods in this Pool share the same
 
-                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
-                                type: object
-                              requests:
-                                additionalProperties:
-                                  anyOf:
-                                  - type: integer
-                                  - type: string
-                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                                  x-kubernetes-int-or-string: true
-                                description: 'Requests describes the minimum amount
-                                  of compute resources required.
+                                  resources (requests/limits). The image specified
+                                  here is used as the IDLE image
 
-                                  If Requests is omitted for a container, it defaults
-                                  to Limits if that is explicitly specified,
+                                  unless IdleImage is explicitly set.'
+                                x-kubernetes-preserve-unknown-fields: true
+                              templateName:
+                                description: 'TemplateName references a cluster-scoped
+                                  SandboxTemplate to use as the base
 
-                                  otherwise to an implementation-defined value. Requests
-                                  cannot exceed Limits.
+                                  configuration. When set, the template''s EmbeddedSandboxTemplate
+                                  is copied at
 
-                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
-                                type: object
+                                  creation time. Inline fields in SandboxPoolSpec
+                                  override template fields.'
+                                type: string
+                            required:
+                            - replicas
                             type: object
-                          instanceType:
-                            description: 'InstanceType references an entry in the
-                              cluster-wide InstanceType catalog.
-
-                              Mutually informative with InlineResources: if both are
-                              set, InstanceType
-
-                              wins and InlineResources serves as a transitional record
-                              for migration.'
-                            type: string
-                          labels:
-                            additionalProperties:
-                              type: string
-                            description: "Labels are stamped verbatim onto the member\
-                              \ SandboxPool's metadata.labels\nat create time. The\
-                              \ Env Reconciler also propagates updates so a label\n\
-                              added/removed here propagates onto the live Pool.\n\n\
-                              This is the canonical extension point for plugin-driven\
-                              \ metadata that\nthe Env itself doesn't need to interpret.\
-                              \ For example, the Scitix quota\nreservation plugin\
-                              \ consumes the \"quota.scitix.ai/url\" label on a Pool\n\
-                              to look up the backing ScitixQuota CR \u2014 putting\
-                              \ that label here keeps\nthe Env CRD plugin-agnostic."
-                            type: object
-                          maxReplicas:
-                            description: "MaxReplicas is the upper bound on this member's\
-                              \ spec.replicas. Reserved\nfor Phase 2 multi-member\
-                              \ routing \u2014 enforced by the Env autoscaler when\n\
-                              distributing scale-up delta across members. Phase 1\
-                              \ ignores it."
-                            format: int32
-                            minimum: 0
-                            type: integer
-                          multiplier:
-                            description: Multiplier scales InstanceType's resources.
-                              Required when InstanceType is set.
-                            format: int32
-                            minimum: 0
-                            type: integer
-                          name:
-                            description: 'Name is the SandboxPool''s metadata.name
-                              within the Env''s namespace.
-
-                              Acts as the list map key for Members.'
-                            type: string
-                          priority:
-                            description: 'Priority controls routing order: lower priority
-                              is preferred. Reserved
-
-                              for Phase 2; Phase 1 ignores it.'
-                            format: int32
-                            type: integer
-                          replicas:
-                            description: "Replicas is the initial spec.replicas value\
-                              \ applied to this member\nPool when the Env Reconciler\
-                              \ creates it. Different members can have\ndifferent\
-                              \ replica counts (e.g. small T4 pool + large A100 pool\
-                              \ in\nthe same E2B Env). Autoscaling owns the replica\
-                              \ value afterwards \u2014\nthe Reconciler does NOT force\
-                              \ this baseline back on subsequent\nreconciles."
-                            format: int32
-                            minimum: 0
-                            type: integer
-                          scaleDownPriority:
-                            description: 'ScaleDownPriority controls scale-down order:
-                              lower values shrink first.
-
-                              Reserved for Phase 2; Phase 1 ignores it.'
-                            format: int32
-                            type: integer
-                          scaleUpPriority:
-                            description: 'ScaleUpPriority controls scale-up order
-                              within a scalingGroup: lower
-
-                              values are scaled up first. Same-value tiebreak: (clusterID,
-                              name)
-
-                              lexicographic. Reserved for Phase 2; Phase 1 ignores
-                              it.'
-                            format: int32
-                            type: integer
-                          scalingGroup:
-                            default: default
-                            description: "ScalingGroup names the autoscaling group\
-                              \ this member belongs to. Members\nin the same group\
-                              \ must share the same effective resources (= InstanceType\n\
-                              \xD7 Multiplier or identical InlineResources). Empty\
-                              \ means the member is\nexcluded from autoscaling."
-                            type: string
                         required:
                         - name
                         type: object

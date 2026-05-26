@@ -164,8 +164,10 @@ func (r *SandboxPoolReconciler) createPod(ctx context.Context, sandboxPool *agen
 	}
 	maps.Copy(pod.Annotations, sandboxPool.Annotations)
 
-	// Create the Pod
-	if appErr := r.PluginManager.PreCreatePodHooks(ctx, pod, sandboxPool); appErr != nil {
+	// Create the Pod. PreCreatePod runs before the API submit, so plugin
+	// mutations on `pod` are picked up by the Create call below — no
+	// separate Update is needed and the updated flag is purely informational.
+	if _, appErr := r.PluginManager.PreCreatePodHooks(ctx, pod, sandboxPool); appErr != nil {
 		klog.ErrorS(appErr, "Plugin PreCreatePod failed, aborting pod creation", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
 		return appErr
 	}

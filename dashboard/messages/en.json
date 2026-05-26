@@ -217,7 +217,6 @@
   "sandboxes.typescript": "TypeScript",
 
   "pools.title": "Sandbox Pools",
-  "pools.docs": "Docs",
   "pools.newPool": "New Pool",
   "pools.deleteTitle": "Delete Pool",
   "pools.deleteDescription": "This will delete the SandboxPool and terminate all associated pods. This action cannot be undone.",
@@ -364,8 +363,6 @@
   "pools.validation.replicasAboveMax": "Replicas ({replicas}) must be ≤ Max Replicas ({max})",
   "pools.col.autoscalingEnabled": "Autoscaling enabled · min: {{min}} / max: {{max}}",
   "pools.metricsFor": "Pool: {{name}}",
-  "pools.poolDocsSheet.title": "Pool Docs",
-  "pools.noPoolDocs": "No pool-specific documentation available for this Pool.",
 
   "templates.title": "Sandbox Templates",
   "templates.newTemplate": "New Template",
@@ -820,10 +817,12 @@
   "common.revoke": "Revoke",
   "common.advanced": "Advanced",
 
-  "pools.apiKeyRequired.title": "API Key Required",
-  "pools.apiKeyRequired.description": "You need to create an API Key before creating a SandboxPool. An API Key is required to verify your identity and ensure the platform can properly track your resources.",
-  "pools.apiKeyRequired.poolDocsDescription": "Your current API keys are legacy (the full key content was not saved by the platform) and cannot be used to render the sample snippets in these docs. Please create a new API key on the API Keys page so the Pool docs can be rendered correctly.",
-  "pools.apiKeyRequired.goToApiKeys": "Go to API Keys",
+  "envs.docs": "Docs",
+  "envs.envDocsSheet.title": "Env Docs",
+  "envs.noEnvDocs": "No documentation available for this Env.",
+  "envs.apiKeyRequired.title": "API Key Required",
+  "envs.apiKeyRequired.envDocsDescription": "Your current API keys are legacy (the full key content was not saved by the platform) and cannot be used to render the sample snippets in these docs. Please create a new API key on the API Keys page so the Env docs can be rendered correctly.",
+  "envs.apiKeyRequired.goToApiKeys": "Go to API Keys",
 
   "datasets.title": "Datasets",
   "datasets.searchPlaceholder": "Search datasets and images...",

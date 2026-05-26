@@ -36,12 +36,8 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
-import type {
-  AgentEnvAutoscalingGroup,
-  AgentEnvAutoscalingSpec,
-  AgentSandboxEnv,
-} from "@/lib/api/client"
-import { useUpdateEnv } from "@/lib/queries"
+import type { AgentSandboxEnv } from "@/lib/api/client"
+import { useAddEnvAutoscalingGroup, useUpdateEnvAutoscalingGroup } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 
 interface Props {
@@ -100,7 +96,8 @@ function EditAutoscalingInner({
   onClose: () => void
 }) {
   const { t } = useTranslation()
-  const updateMutation = useUpdateEnv()
+  const addGroupMutation = useAddEnvAutoscalingGroup(env.name)
+  const updateGroupMutation = useUpdateEnvAutoscalingGroup(env.name)
 
   const defaults = useMemo<FormValues>(
     () => extractGroupForForm(env, scalingGroupName),
@@ -118,26 +115,30 @@ function EditAutoscalingInner({
   })
 
   const onSubmit = handleSubmit(async (values) => {
-    const body = {
-      autoscaling: mergeGroupIntoAutoscaling(env.spec.autoscaling, scalingGroupName, values),
-    }
-    await new Promise<void>((resolve, reject) => {
-      updateMutation.mutate(
-        { params: { path: { name: env.name } }, body },
-        {
-          onSuccess: () => {
-            toast.success(
-              t("envs.poolAutoscaling.toast", {
-                group: scalingGroupName,
-              }),
-            )
-            onClose()
-            resolve()
-          },
-          onError: (err) => reject(err),
-        },
+    try {
+      // Enabled is per-group now: include it directly in the Add/Update
+      // payload alongside policy fields. No separate SetEnabled call.
+      const groupExists = (env.spec.autoscaling?.groups ?? []).some(
+        (g) => g.name === scalingGroupName,
       )
-    }).catch((err: unknown) => toast.error(extractError(err)))
+      const groupBody = { enabled: values.enabled, ...buildGroupBody(values) }
+      if (groupExists) {
+        await runMutation(updateGroupMutation, {
+          params: { path: { name: env.name, groupName: scalingGroupName } },
+          body: groupBody,
+        })
+      } else {
+        await runMutation(addGroupMutation, {
+          params: { path: { name: env.name } },
+          body: { name: scalingGroupName, ...groupBody },
+        })
+      }
+
+      toast.success(t("envs.poolAutoscaling.toast", { group: scalingGroupName }))
+      onClose()
+    } catch (err: unknown) {
+      toast.error(extractError(err))
+    }
   })
 
   return (
@@ -303,7 +304,7 @@ function extractGroupForForm(env: AgentSandboxEnv, groupName: string): FormValue
   const auto = env.spec.autoscaling
   const group = auto?.groups?.find((g) => g.name === groupName)
   return {
-    enabled: auto?.enabled ?? false,
+    enabled: group?.enabled ?? false,
     minReplicas: group?.minReplicas,
     maxReplicas: group?.maxReplicas,
     scaleUpMode: (group?.scaleUpPolicy?.mode ?? undefined) as
@@ -320,58 +321,59 @@ function extractGroupForForm(env: AgentSandboxEnv, groupName: string): FormValue
   }
 }
 
-function mergeGroupIntoAutoscaling(
-  current: AgentEnvAutoscalingSpec | undefined,
-  groupName: string,
-  v: FormValues,
-): AgentEnvAutoscalingSpec {
-  const next: AgentEnvAutoscalingGroup = {
-    name: groupName,
-    ...(v.minReplicas !== undefined && { minReplicas: v.minReplicas }),
-    ...(v.maxReplicas !== undefined && { maxReplicas: v.maxReplicas }),
-    ...((v.scaleUpMode !== undefined ||
-      v.cooldownSeconds !== undefined ||
-      v.idleThresholdSeconds !== undefined ||
-      v.saturationCooldownSeconds !== undefined) && {
-      scaleUpPolicy: {
-        ...(v.scaleUpMode && { mode: v.scaleUpMode }),
-        ...(v.cooldownSeconds !== undefined && { cooldownSeconds: v.cooldownSeconds }),
-        ...(v.idleThresholdSeconds !== undefined && {
-          idleThresholdSeconds: v.idleThresholdSeconds,
-        }),
-        ...(v.saturationCooldownSeconds !== undefined && {
-          saturationCooldownSeconds: v.saturationCooldownSeconds,
-        }),
-      },
-    }),
-    ...((v.idleTimeoutSeconds !== undefined ||
-      v.stabilizationSeconds !== undefined ||
-      v.protectionWindowSeconds !== undefined) && {
-      scaleDownPolicy: {
-        ...(v.idleTimeoutSeconds !== undefined && { idleTimeoutSeconds: v.idleTimeoutSeconds }),
-        ...(v.stabilizationSeconds !== undefined && {
-          stabilizationSeconds: v.stabilizationSeconds,
-        }),
-        ...(v.protectionWindowSeconds !== undefined && {
-          protectionWindowSeconds: v.protectionWindowSeconds,
-        }),
-      },
-    }),
-  }
-  const existingGroups = current?.groups ?? []
-  let replaced = false
-  const groups = existingGroups.map((g) => {
-    if (g.name === groupName) {
-      replaced = true
-      return next
+// buildGroupBody projects the form values into the shared shape used by
+// both Add (POST) and Update (PUT) — the request bodies have the same
+// fields except for the group `name`, which Add provides via the body and
+// Update via the URL path.
+function buildGroupBody(v: FormValues) {
+  const body: Record<string, unknown> = {}
+  if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
+  if (v.maxReplicas !== undefined) body.maxReplicas = v.maxReplicas
+  if (
+    v.scaleUpMode !== undefined ||
+    v.cooldownSeconds !== undefined ||
+    v.idleThresholdSeconds !== undefined ||
+    v.saturationCooldownSeconds !== undefined
+  ) {
+    const up: Record<string, unknown> = {}
+    if (v.scaleUpMode) up.mode = v.scaleUpMode
+    if (v.cooldownSeconds !== undefined) up.cooldownSeconds = v.cooldownSeconds
+    if (v.idleThresholdSeconds !== undefined) up.idleThresholdSeconds = v.idleThresholdSeconds
+    if (v.saturationCooldownSeconds !== undefined) {
+      up.saturationCooldownSeconds = v.saturationCooldownSeconds
     }
-    return g
-  })
-  if (!replaced) groups.push(next)
-  return {
-    enabled: v.enabled,
-    groups,
+    body.scaleUpPolicy = up
   }
+  if (
+    v.idleTimeoutSeconds !== undefined ||
+    v.stabilizationSeconds !== undefined ||
+    v.protectionWindowSeconds !== undefined
+  ) {
+    const down: Record<string, unknown> = {}
+    if (v.idleTimeoutSeconds !== undefined) down.idleTimeoutSeconds = v.idleTimeoutSeconds
+    if (v.stabilizationSeconds !== undefined) down.stabilizationSeconds = v.stabilizationSeconds
+    if (v.protectionWindowSeconds !== undefined) {
+      down.protectionWindowSeconds = v.protectionWindowSeconds
+    }
+    body.scaleDownPolicy = down
+  }
+  return body
+}
+
+// runMutation wraps the openapi-react-query mutate() into a promise so the
+// submit handler can `await` it. Required because the queries package
+// exposes only the imperative .mutate(input, { onSuccess, onError })
+// callback style.
+function runMutation<TInput>(
+  mutation: { mutate: (input: TInput, opts: { onSuccess: () => void; onError: (e: unknown) => void }) => void },
+  input: TInput,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    mutation.mutate(input, {
+      onSuccess: () => resolve(),
+      onError: (err) => reject(err),
+    })
+  })
 }
 
 function extractError(err: unknown): string {
