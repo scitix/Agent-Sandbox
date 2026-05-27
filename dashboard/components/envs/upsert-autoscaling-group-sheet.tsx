@@ -68,6 +68,7 @@ const formSchema = z.object({
   scaleUpMode: z.enum(["Conservative", "Default", "Aggressive"]).optional(),
   cooldownSeconds: optionalSeconds,
   idleThresholdSeconds: optionalSeconds,
+  idleZeroQuietWindowSeconds: optionalSeconds,
   saturationCooldownSeconds: optionalSeconds,
   idleTimeoutSeconds: optionalSeconds,
   stabilizationSeconds: optionalSeconds,
@@ -75,6 +76,25 @@ const formSchema = z.object({
 })
 
 type FormValues = z.infer<typeof formSchema>
+
+// crdDefaults mirrors the kubebuilder `+kubebuilder:default=` markers on
+// PoolScaleUpPolicy / PoolScaleDownPolicy / EnvAutoscalingGroup. The
+// Create form prefills these so the user sees the same explicit values
+// the API server would otherwise stamp on admission. Keep this table in
+// lockstep with api/v1alpha1/autoscaler_types.go and sandboxenv_types.go.
+const crdDefaults = {
+  enabled: true,
+  minReplicas: 0,
+  maxReplicas: undefined, // unset → no ceiling (Aggressive mode requires explicit value via CRD CEL)
+  scaleUpMode: "Default" as const,
+  cooldownSeconds: 30,
+  idleThresholdSeconds: 30,
+  idleZeroQuietWindowSeconds: 300,
+  saturationCooldownSeconds: 60,
+  idleTimeoutSeconds: 300,
+  stabilizationSeconds: 60,
+  protectionWindowSeconds: 10,
+}
 
 export function UpsertAutoscalingGroupSheet({ env, group, open, onOpenChange }: Props) {
   return (
@@ -228,28 +248,16 @@ function UpsertInner({
           />
 
           <div className="grid grid-cols-2 gap-3">
-            <Field>
-              <FieldLabel className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
-                {t("envs.editAutoscaling.field.minReplicas")}
-              </FieldLabel>
-              <Input
-                {...register("minReplicas")}
-                type="number"
-                min={0}
-                className="h-9 font-mono text-sm"
-              />
-            </Field>
-            <Field>
-              <FieldLabel className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
-                {t("envs.editAutoscaling.field.maxReplicas")}
-              </FieldLabel>
-              <Input
-                {...register("maxReplicas")}
-                type="number"
-                min={0}
-                className="h-9 font-mono text-sm"
-              />
-            </Field>
+            <SecondsField
+              label={t("envs.editAutoscaling.field.minReplicas")}
+              description={t("envs.editAutoscaling.field.minReplicasDesc")}
+              {...register("minReplicas")}
+            />
+            <SecondsField
+              label={t("envs.editAutoscaling.field.maxReplicas")}
+              description={t("envs.editAutoscaling.field.maxReplicasDesc")}
+              {...register("maxReplicas")}
+            />
           </div>
 
           <fieldset className="space-y-3 rounded border p-3">
@@ -287,18 +295,29 @@ function UpsertInner({
                   </Select>
                 )}
               />
+              <FieldDescription>
+                {t("envs.editAutoscaling.field.scaleUpModeDesc")}
+              </FieldDescription>
             </Field>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <SecondsField
                 label={t("envs.editAutoscaling.field.cooldownSeconds")}
+                description={t("envs.editAutoscaling.field.cooldownSecondsDesc")}
                 {...register("cooldownSeconds")}
               />
               <SecondsField
                 label={t("envs.editAutoscaling.field.idleThresholdSeconds")}
+                description={t("envs.editAutoscaling.field.idleThresholdSecondsDesc")}
                 {...register("idleThresholdSeconds")}
               />
               <SecondsField
+                label={t("envs.editAutoscaling.field.idleZeroQuietWindowSeconds")}
+                description={t("envs.editAutoscaling.field.idleZeroQuietWindowSecondsDesc")}
+                {...register("idleZeroQuietWindowSeconds")}
+              />
+              <SecondsField
                 label={t("envs.editAutoscaling.field.saturationCooldownSeconds")}
+                description={t("envs.editAutoscaling.field.saturationCooldownSecondsDesc")}
                 {...register("saturationCooldownSeconds")}
               />
             </div>
@@ -308,17 +327,20 @@ function UpsertInner({
             <legend className="text-foreground px-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">
               {t("envs.editAutoscaling.scaleDownSection")}
             </legend>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <SecondsField
                 label={t("envs.editAutoscaling.field.idleTimeoutSeconds")}
+                description={t("envs.editAutoscaling.field.idleTimeoutSecondsDesc")}
                 {...register("idleTimeoutSeconds")}
               />
               <SecondsField
                 label={t("envs.editAutoscaling.field.stabilizationSeconds")}
+                description={t("envs.editAutoscaling.field.stabilizationSecondsDesc")}
                 {...register("stabilizationSeconds")}
               />
               <SecondsField
                 label={t("envs.editAutoscaling.field.protectionWindowSeconds")}
+                description={t("envs.editAutoscaling.field.protectionWindowSecondsDesc")}
                 {...register("protectionWindowSeconds")}
               />
             </div>
@@ -380,68 +402,96 @@ function ScalingGroupCombobox({
 
 const SecondsField = ((
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  { label, ...rest }: { label: string } & any,
+  { label, description, ...rest }: { label: string; description?: string } & any,
 ) => (
   <Field>
     <FieldLabel className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.12em] uppercase">
       {label}
     </FieldLabel>
     <Input {...rest} type="number" min={0} className="h-9 font-mono text-sm" />
+    {description && (
+      <FieldDescription className="text-[10px] leading-snug">{description}</FieldDescription>
+    )}
   </Field>
-)) as (props: { label: string; name: string }) => React.ReactElement
+)) as (props: {
+  label: string
+  description?: string
+  name: string
+}) => React.ReactElement
 
+// extractGroupForForm produces the react-hook-form defaultValues.
+//
+//   - Create (group == null): seed every field with the CRD's
+//     kubebuilder default, so the user sees the values the API server
+//     would have stamped anyway. No more "what does empty mean" guessing.
+//   - Update (group != null): seed every field with the current CR
+//     value. Fields the server has filled in via kubebuilder defaults
+//     come back as concrete numbers and round-trip through the form
+//     without surprise.
 function extractGroupForForm(group: AgentEnvAutoscalingGroup | null): FormValues {
+  if (group === null) {
+    return { ...crdDefaults, name: undefined }
+  }
   return {
-    name: group?.name,
-    enabled: group?.enabled ?? true,
-    minReplicas: group?.minReplicas,
-    maxReplicas: group?.maxReplicas,
-    scaleUpMode: (group?.scaleUpPolicy?.mode ?? undefined) as
+    name: group.name,
+    enabled: group.enabled ?? crdDefaults.enabled,
+    minReplicas: group.minReplicas ?? crdDefaults.minReplicas,
+    maxReplicas: group.maxReplicas,
+    scaleUpMode: (group.scaleUpPolicy?.mode ?? crdDefaults.scaleUpMode) as
       | "Conservative"
       | "Default"
-      | "Aggressive"
-      | undefined,
-    cooldownSeconds: group?.scaleUpPolicy?.cooldownSeconds,
-    idleThresholdSeconds: group?.scaleUpPolicy?.idleThresholdSeconds,
-    saturationCooldownSeconds: group?.scaleUpPolicy?.saturationCooldownSeconds,
-    idleTimeoutSeconds: group?.scaleDownPolicy?.idleTimeoutSeconds,
-    stabilizationSeconds: group?.scaleDownPolicy?.stabilizationSeconds,
-    protectionWindowSeconds: group?.scaleDownPolicy?.protectionWindowSeconds,
+      | "Aggressive",
+    cooldownSeconds: group.scaleUpPolicy?.cooldownSeconds ?? crdDefaults.cooldownSeconds,
+    idleThresholdSeconds:
+      group.scaleUpPolicy?.idleThresholdSeconds ?? crdDefaults.idleThresholdSeconds,
+    idleZeroQuietWindowSeconds:
+      group.scaleUpPolicy?.idleZeroQuietWindowSeconds ?? crdDefaults.idleZeroQuietWindowSeconds,
+    saturationCooldownSeconds:
+      group.scaleUpPolicy?.saturationCooldownSeconds ?? crdDefaults.saturationCooldownSeconds,
+    idleTimeoutSeconds:
+      group.scaleDownPolicy?.idleTimeoutSeconds ?? crdDefaults.idleTimeoutSeconds,
+    stabilizationSeconds:
+      group.scaleDownPolicy?.stabilizationSeconds ?? crdDefaults.stabilizationSeconds,
+    protectionWindowSeconds:
+      group.scaleDownPolicy?.protectionWindowSeconds ?? crdDefaults.protectionWindowSeconds,
   }
 }
 
+// buildGroupBody translates the form values into the wire patch.
+//
+//   - When enabled=false, only `enabled` plus the bounds are sent.
+//     Omitting scaleUpPolicy / scaleDownPolicy follows the server's
+//     "nil = unchanged" semantic: if the user toggles the group off,
+//     the previously-configured policy values are preserved so toggling
+//     it back on restores the same behaviour.
+//   - When enabled=true, every leaf is included so the user's choices
+//     replace the live policy verbatim.
 function buildGroupBody(v: FormValues) {
   const body: Record<string, unknown> = {}
   if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
   if (v.maxReplicas !== undefined) body.maxReplicas = v.maxReplicas
-  if (
-    v.scaleUpMode !== undefined ||
-    v.cooldownSeconds !== undefined ||
-    v.idleThresholdSeconds !== undefined ||
-    v.saturationCooldownSeconds !== undefined
-  ) {
-    const up: Record<string, unknown> = {}
-    if (v.scaleUpMode) up.mode = v.scaleUpMode
-    if (v.cooldownSeconds !== undefined) up.cooldownSeconds = v.cooldownSeconds
-    if (v.idleThresholdSeconds !== undefined) up.idleThresholdSeconds = v.idleThresholdSeconds
-    if (v.saturationCooldownSeconds !== undefined) {
-      up.saturationCooldownSeconds = v.saturationCooldownSeconds
-    }
-    body.scaleUpPolicy = up
+  if (!v.enabled) {
+    return body
   }
-  if (
-    v.idleTimeoutSeconds !== undefined ||
-    v.stabilizationSeconds !== undefined ||
-    v.protectionWindowSeconds !== undefined
-  ) {
-    const down: Record<string, unknown> = {}
-    if (v.idleTimeoutSeconds !== undefined) down.idleTimeoutSeconds = v.idleTimeoutSeconds
-    if (v.stabilizationSeconds !== undefined) down.stabilizationSeconds = v.stabilizationSeconds
-    if (v.protectionWindowSeconds !== undefined) {
-      down.protectionWindowSeconds = v.protectionWindowSeconds
-    }
-    body.scaleDownPolicy = down
+  const up: Record<string, unknown> = {}
+  if (v.scaleUpMode) up.mode = v.scaleUpMode
+  if (v.cooldownSeconds !== undefined) up.cooldownSeconds = v.cooldownSeconds
+  if (v.idleThresholdSeconds !== undefined) up.idleThresholdSeconds = v.idleThresholdSeconds
+  if (v.idleZeroQuietWindowSeconds !== undefined) {
+    up.idleZeroQuietWindowSeconds = v.idleZeroQuietWindowSeconds
   }
+  if (v.saturationCooldownSeconds !== undefined) {
+    up.saturationCooldownSeconds = v.saturationCooldownSeconds
+  }
+  body.scaleUpPolicy = up
+
+  const down: Record<string, unknown> = {}
+  if (v.idleTimeoutSeconds !== undefined) down.idleTimeoutSeconds = v.idleTimeoutSeconds
+  if (v.stabilizationSeconds !== undefined) down.stabilizationSeconds = v.stabilizationSeconds
+  if (v.protectionWindowSeconds !== undefined) {
+    down.protectionWindowSeconds = v.protectionWindowSeconds
+  }
+  body.scaleDownPolicy = down
   return body
 }
 

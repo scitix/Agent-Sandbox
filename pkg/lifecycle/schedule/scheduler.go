@@ -42,7 +42,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
@@ -194,8 +193,7 @@ type PoolScheduler struct {
 	team     string
 	user     string
 
-	k8sClient    client.Client
-	scaleUpGroup singleflight.Group
+	k8sClient client.Client
 
 	reqCh     chan *ClaimRequest
 	triggerCh chan struct{}
@@ -229,9 +227,11 @@ func (s *PoolScheduler) Snapshot() Snapshot {
 }
 
 // NewPoolScheduler allocates a scheduler without starting its goroutine.
-// team/user identify the owning pool for metrics labelling. k8sClient may be
-// nil; in that case writeScaleUpPendingAnnotation is skipped (useful for unit
-// tests that do not exercise the scale-up signal).
+// team/user identify the owning pool for metrics labelling. k8sClient may
+// be nil; in that case the background status writer that mirrors the
+// in-memory queue length onto SandboxPool.Status.PendingRequests is
+// skipped (useful for unit tests that exercise only the in-process
+// dispatch path).
 func NewPoolScheduler(ns, name, team, user string, k8sClient client.Client) *PoolScheduler {
 	return &PoolScheduler{
 		poolNS:      ns,
@@ -396,18 +396,17 @@ func (s *PoolScheduler) handleRequest(ctx context.Context, req *ClaimRequest) {
 		return
 	}
 
-	// Queue empty — put the request back and try to refresh / scale up.
+	// Queue empty — put the request back and try to refresh.
 	s.requeue(req)
 
 	if s.queue.len() < lowWaterMark {
 		s.refreshReady(ctx)
 	}
-	// Dispatch again in case the refresh admitted something.
+	// Dispatch again in case the refresh admitted something. Pending
+	// demand is now visible to the autoscaler directly through the
+	// PoolScheduler.Snapshot() reactive signal (QueueLen > 0 with
+	// IdleReady == 0), so we don't need to emit a separate doorbell.
 	s.tryDispatchPending(ctx)
-
-	if s.queue.len() == 0 && s.hasPending() {
-		s.triggerScaleUpOnce()
-	}
 }
 
 // tryDispatchPending pops requests from reqCh while queued pods exist. Returns
@@ -632,49 +631,6 @@ func (s *PoolScheduler) drainAll(err error) {
 			return
 		}
 	}
-}
-
-// triggerScaleUpOnce fires a best-effort goroutine to write the pool's
-// PoolScaleUpPendingAnnotationKey. singleflight deduplicates concurrent calls
-// for one pool so rapid pending arrivals don't produce an annotation storm.
-func (s *PoolScheduler) triggerScaleUpOnce() {
-	if s.k8sClient == nil {
-		return
-	}
-	key := s.poolNS + "/" + s.poolName
-	go func() {
-		_, _, _ = s.scaleUpGroup.Do(key, func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			return nil, writeScaleUpPendingAnnotation(ctx, s.k8sClient, s.poolNS, s.poolName)
-		})
-	}()
-}
-
-// writeScaleUpPendingAnnotation patches PoolScaleUpPendingAnnotationKey onto
-// the SandboxPool when the annotation is absent or stale (> 30 s). Idempotent.
-//
-// The annotation is a signal consumed by the SandboxEnv autoscaler — its only
-// purpose is to communicate "this Pool has pending claim demand right now".
-// The Pool reconciler reads it too, to suppress scale-down under demand.
-func writeScaleUpPendingAnnotation(ctx context.Context, c client.Client, ns, name string) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		pool := &agentsv1alpha1.SandboxPool{}
-		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, pool); err != nil {
-			return err
-		}
-		if ts := pool.Annotations[agentsv1alpha1.PoolScaleUpPendingAnnotationKey]; ts != "" {
-			if t, err := time.Parse(time.RFC3339, ts); err == nil && time.Since(t) < 30*time.Second {
-				return nil
-			}
-		}
-		base := pool.DeepCopy()
-		if pool.Annotations == nil {
-			pool.Annotations = map[string]string{}
-		}
-		pool.Annotations[agentsv1alpha1.PoolScaleUpPendingAnnotationKey] = time.Now().UTC().Format(time.RFC3339)
-		return c.Patch(ctx, pool, client.MergeFrom(base))
-	})
 }
 
 // shouldWriteStatus decides whether the throttled status writer should issue

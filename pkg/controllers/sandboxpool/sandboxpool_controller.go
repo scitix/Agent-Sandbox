@@ -394,22 +394,19 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		"idle", status.IdleReplicas, "running", status.RunningReplicas,
 		"starting", status.StartingReplicas, "stopping", status.StoppingReplicas, "failed", status.FailedReplicas)
 
-	// ── Clear residual / overridden scale-down-protected annotations ─────────
+	// ── Clear residual scale-down-protected annotations ─────────────────────
 	//
 	// The scheduler's ready queue (pkg/lifecycle/schedule/ready_queue.go) drops
 	// any idle pod that carries SandboxScaleDownProtectedAnnotationKey, so a
 	// stale annotation (e.g. from a scale-down cycle that never reached the
-	// delete step) silently removes the pod from the schedulable set. Two
-	// situations call for a proactive cleanup here:
+	// delete step) silently removes the pod from the schedulable set. When
+	// no scale-down is planned this cycle (current ≤ desired) the annotation
+	// has no purpose — clear it and wake the scheduler so it refreshes
+	// immediately instead of waiting for its 10s pollTimer.
 	//
-	//   (a) No scale-down is planned this cycle (current ≤ desired) — the
-	//       annotation has no purpose; clear it.
-	//   (b) Scale-down would normally fire, but the scheduler reported pending
-	//       claim demand via PoolScaleUpPendingAnnotationKey. Demand wins —
-	//       release the protection and skip scale-down for this cycle.
-	//
-	// After clearing we wake the scheduler so it refreshes immediately instead
-	// of waiting for its 10s pollTimer (and its exponential backoff).
+	// When current > desired, the autoscaler already factored in reactive
+	// demand (PoolScheduler.Snapshot().QueueLen / IdleReady) before lowering
+	// spec.replicas, so this loop simply executes the decision.
 	if currentReplicas <= desiredReplicas {
 		if n := r.unmarkStaleScaleDownProtected(ctx, pods); n > 0 {
 			klog.V(2).InfoS("Cleared stale scale-down-protected annotations",
@@ -418,20 +415,6 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 				r.IdleNotifier.NotifyIdleAvailable(sandboxPool.Namespace, sandboxPool.Name)
 			}
 		}
-	} else if isPendingScaleUpAnnotationFresh(sandboxPool, 0) {
-		excess := currentReplicas - desiredReplicas
-		klog.InfoS("Skipping scale-down: scheduler reported pending claim demand",
-			"namespace", sandboxPool.Namespace, "name", sandboxPool.Name, "excess", excess)
-		if n := r.unmarkStaleScaleDownProtected(ctx, pods); n > 0 {
-			klog.V(2).InfoS("Cleared scale-down-protected annotations due to pending demand",
-				"namespace", sandboxPool.Namespace, "name", sandboxPool.Name, "count", n)
-			if r.IdleNotifier != nil {
-				r.IdleNotifier.NotifyIdleAvailable(sandboxPool.Namespace, sandboxPool.Name)
-			}
-		}
-		// Skip scale-down for this cycle; requeue so the next reconcile re-evaluates
-		// once the demand burst clears.
-		return reconcile.Result{RequeueAfter: RequeueAfter}, nil
 	}
 
 	// ── Scale up ─────────────────────────────────────────────────────────────
@@ -617,18 +600,10 @@ func (r *SandboxPoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	builder := ctrl.NewControllerManagedBy(mgr).
-		// Use GenerationChangedPredicate to filter status-only updates (which do
-		// not increment metadata.generation), preventing the reconcile-storm
-		// caused by Status().Update() re-triggering itself. We also allow
-		// annotation-only changes through so that the scheduler's writes to
-		// PoolScaleUpPendingAnnotationKey (an annotation-only patch) wake the
-		// controller, letting it release scale-down-protection under demand.
-		// SandboxPool annotations change rarely, so this widening does not
-		// create a reconcile storm.
-		For(&agentsv1alpha1.SandboxPool{}, ctrlbuilder.WithPredicates(predicate.Or(
-			predicate.GenerationChangedPredicate{},
-			predicate.AnnotationChangedPredicate{},
-		))).
+		// Use GenerationChangedPredicate to filter status-only updates (which
+		// do not increment metadata.generation), preventing the reconcile
+		// storm caused by Status().Update() re-triggering itself.
+		For(&agentsv1alpha1.SandboxPool{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("sandboxpool").
 		// Allow multiple SandboxPool objects to be reconciled concurrently.
 		// Each pool is an independent unit of work; serialising them behind a

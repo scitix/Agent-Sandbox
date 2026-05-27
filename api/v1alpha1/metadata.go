@@ -137,16 +137,6 @@ const (
 	// the protection window started. Cleared if the Pod is claimed before deletion.
 	SandboxScaleDownProtectedAnnotationKey = "agentbox.navix.sh/scale-down-protected"
 
-	// PoolScaleUpPendingAnnotationKey is set on the SandboxPool when a Create
-	// request triggered a scale-up. The value is the RFC3339 timestamp of the
-	// trigger. Cleared by the Reconciler after processing.
-	//
-	// Legacy doorbell — superseded by the in-process PoolScheduler.Snapshot()
-	// (QueueLen / IdleReady) and LastSandboxCreateTimeAnnotationKey, which
-	// the Pool autoscaler reads directly. The annotation is kept while
-	// remaining writers are migrated off.
-	PoolScaleUpPendingAnnotationKey = "agentbox.navix.sh/scale-up-pending"
-
 	// LastSandboxCreateTimeAnnotationKey is the throttled persistent mirror
 	// of the in-process LastCreateTracker: the most recent wall-clock time
 	// the apiserver served a Sandbox.Create request for this Pool. Written
@@ -160,12 +150,6 @@ const (
 	//
 	// The value is RFC3339 UTC. Absence is treated as "never observed".
 	LastSandboxCreateTimeAnnotationKey = "agentbox.navix.sh/last-sandbox-create-time"
-
-	// EnvScaleUpPendingAnnotationKey is set on a SandboxEnv when EnvScheduler
-	// holds pending requests it could not forward to any member (typically
-	// because all members hit Saturated). The value is the RFC3339 trigger
-	// time; the Env Reconciler clears it after processing.
-	EnvScaleUpPendingAnnotationKey = "agentbox.navix.sh/env-scale-up-pending"
 
 	// LabelSyncSource marks the origin of a resource.
 	// "global" means the resource was created/synced via ws-proxy (global key manager).

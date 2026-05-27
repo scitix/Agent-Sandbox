@@ -1017,6 +1017,42 @@ export interface components {
              * @description Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability — the Env autoscaler reads the live in-process Snapshot instead.
              */
             pendingRequests?: number;
+            autoscaling?: components["schemas"]["PoolAutoScalingStatus"];
+        };
+        /** @description Per-Pool autoscaler decision state. Sole writer is the SandboxPool reconciler running the autoscaling decision pipeline. */
+        PoolAutoScalingStatus: {
+            /**
+             * Format: date-time
+             * @description Most recent wall-clock time spec.replicas grew (probe accepted at least one additional replica). Drives the success cooldown gate (scaleUpPolicy.cooldownSeconds).
+             */
+            lastScaleUpTime?: string;
+            /**
+             * Format: date-time
+             * @description Most recent wall-clock time spec.replicas shrank by one. Drives scaleDownPolicy.stabilizationSeconds.
+             */
+            lastScaleDownTime?: string;
+            /**
+             * Format: date-time
+             * @description When the Pool's idle replica count first hit zero in the current continuous-zero window; cleared when idle > 0. Drives the proactive scaleUpPolicy.idleThresholdSeconds trigger.
+             */
+            idleZeroSince?: string;
+            /**
+             * Format: date-time
+             * @description Most recent wall-clock time the admission probe ran for a scale-up attempt, regardless of outcome. Combined with lastScaleUpAttemptResult and scaleUpPolicy.saturationCooldownSeconds drives the saturation cooldown.
+             */
+            lastScaleUpAttemptTime?: string;
+            /**
+             * @description Outcome of the most recent admission probe. Enough = probe accepted the full target; JustRight = partial admission (reserved for finer-grained reporting); Insufficient = cluster has no headroom; Failed = invalid spec or internal probe error.
+             * @enum {string}
+             */
+            lastScaleUpAttemptResult?: "Enough" | "JustRight" | "Insufficient" | "Failed";
+            /** @description Short single-line description of the most recent non-Enough probe result. Empty when lastScaleUpAttemptResult is Enough. */
+            scaleUpErrorMessage?: string;
+            /**
+             * Format: int64
+             * @description metadata.generation observed when the autoscaler last wrote this block. Clients use it to confirm status freshness relative to spec.
+             */
+            observedGeneration?: number;
         };
         /** @description Legacy pool-create overrides. Image-only — per-Pool resource sizing flows through EnvClusterMember.{instanceType,multiplier,inlineResources} now. */
         PoolTemplateOverrides: {

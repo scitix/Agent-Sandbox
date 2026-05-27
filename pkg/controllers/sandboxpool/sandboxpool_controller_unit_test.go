@@ -1555,64 +1555,6 @@ func TestReconcile_UnmarksStaleProtection_NoScaleDown(t *testing.T) {
 	}
 }
 
-// TestReconcile_PendingDemand_OverridesScaleDown covers the demand-override
-// case: current(3) > desired(2) would normally trigger scale-down, but a
-// fresh PoolScaleUpPendingAnnotationKey on the pool tells the controller the
-// scheduler has waiters. We expect: protection stripped from all idle pods,
-// no deletions, and an early requeue.
-func TestReconcile_PendingDemand_OverridesScaleDown(t *testing.T) {
-	const ns, poolName = "default", "demand-pool"
-	pool := makePoolForGuard(ns, poolName, 2)
-	if pool.Annotations == nil {
-		pool.Annotations = map[string]string{}
-	}
-	pool.Annotations[agentsv1alpha1.PoolScaleUpPendingAnnotationKey] = time.Now().UTC().Format(time.RFC3339)
-
-	pods := []*corev1.Pod{
-		makeProtectedIdlePod("p1", ns, poolName, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)),
-		makeProtectedIdlePod("p2", ns, poolName, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)),
-		makeProtectedIdlePod("p3", ns, poolName, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)),
-	}
-	objs := make([]client.Object, 0, 1+len(pods))
-	objs = append(objs, pool)
-	for _, p := range pods {
-		objs = append(objs, p)
-	}
-	cli := newTestClientBuilder(t).WithObjects(objs...).Build()
-	notifier := &fakeIdleNotifier{}
-	r := &SandboxPoolReconciler{
-		Client:       cli,
-		Scheme:       setupScheme(t),
-		expectations: NewPoolExpectations(),
-		IdleNotifier: notifier,
-	}
-
-	res, err := r.reconcilePods(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("reconcilePods: %v", err)
-	}
-	if res.RequeueAfter == 0 {
-		t.Error("expected RequeueAfter to be set so the next cycle re-evaluates")
-	}
-
-	// No pod should be deleted, every pod loses the annotation.
-	podList := &corev1.PodList{}
-	if err := cli.List(context.Background(), podList); err != nil {
-		t.Fatalf("list pods: %v", err)
-	}
-	if len(podList.Items) != 3 {
-		t.Errorf("expected 3 pods preserved, got %d", len(podList.Items))
-	}
-	for i := range podList.Items {
-		if v := podList.Items[i].Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey]; v != "" {
-			t.Errorf("pod %s still has annotation: %q", podList.Items[i].Name, v)
-		}
-	}
-	if len(notifier.notified) == 0 {
-		t.Error("expected NotifyIdleAvailable to fire under pending demand")
-	}
-}
-
 // ── PodCreationImagePolicy tests ──────────────────────────────────────────────
 
 func TestCreatePod_PolicyPoolDefaultImage(t *testing.T) {

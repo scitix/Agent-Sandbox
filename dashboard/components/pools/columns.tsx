@@ -240,7 +240,7 @@ export function createPoolColumns(
       const group = options?.scalingGroupByPool?.get(row.original.name) ?? ""
       const state = observed?.state ?? ""
       const saturatedUntil = observed?.saturatedUntil
-      const lastResult = observed?.lastScaleUpAttemptResult
+      const lastResult = row.original.status?.autoscaling?.lastScaleUpAttemptResult
       if (!group && !state && !saturatedUntil && !lastResult)
         return <span className="text-muted-foreground text-xs">—</span>
       return (
@@ -257,7 +257,7 @@ export function createPoolColumns(
               <RelativeTime date={saturatedUntil} />
             </span>
           )}
-          {lastResult && lastResult !== "Success" && (
+          {lastResult && lastResult !== "Enough" && (
             <span className="text-muted-foreground text-[10px]">{lastResult}</span>
           )}
         </div>

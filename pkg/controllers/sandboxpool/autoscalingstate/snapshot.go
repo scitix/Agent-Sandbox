@@ -135,10 +135,11 @@ func (s *Snapshot) GroupIdleTotal() int32 {
 	return total
 }
 
-// IsReactiveDemand reports whether the in-process scheduler currently has
-// at least one claim request queued AND no idle Pod available to serve it.
-// This is the reactive (immediate) scale-up signal that replaces the
-// previous PoolScaleUpPendingAnnotationKey doorbell.
+// IsReactiveDemand reports whether the in-process scheduler currently
+// has at least one claim request queued AND no idle Pod available to
+// serve it. This is the autoscaler's immediate scale-up signal: an
+// unsatisfied claim means the cluster has real, present-tense demand
+// for an additional replica.
 //
 // Returns false when no PoolScheduler has been registered for this Pool
 // yet — in that case there can be no queued claims either.

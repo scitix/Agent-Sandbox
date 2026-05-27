@@ -69,6 +69,8 @@ from .list_sandbox_pools_result import ListSandboxPoolsResult
 from .list_sandbox_templates_result import ListSandboxTemplatesResult
 from .list_sandboxes_result import ListSandboxesResult
 from .namespaces_result import NamespacesResult
+from .pool_auto_scaling_status import PoolAutoScalingStatus
+from .pool_auto_scaling_status_last_scale_up_attempt_result import PoolAutoScalingStatusLastScaleUpAttemptResult
 from .pool_scale_down_policy import PoolScaleDownPolicy
 from .pool_scale_up_policy import PoolScaleUpPolicy
 from .pool_scale_up_policy_mode import PoolScaleUpPolicyMode
@@ -195,6 +197,8 @@ __all__ = (
     "ListSandboxPoolsResult",
     "ListSandboxTemplatesResult",
     "NamespacesResult",
+    "PoolAutoScalingStatus",
+    "PoolAutoScalingStatusLastScaleUpAttemptResult",
     "PoolScaleDownPolicy",
     "PoolScaleUpPolicy",
     "PoolScaleUpPolicyMode",

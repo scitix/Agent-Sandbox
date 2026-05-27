@@ -24,7 +24,6 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { Eye, MoreVertical, Pencil, Trash2 } from "lucide-react"
 
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
-import { RelativeTime } from "@/components/custom/relative-time"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -49,22 +48,6 @@ function pickAggregateGroup(env: AgentSandboxEnv) {
   const groups = env.status?.scalingGroups
   if (!groups || groups.length === 0) return undefined
   return groups[0]
-}
-
-/**
- * Returns the latest LastScaleUpTime across every scaling group, or null
- * when no group has scaled up yet. After the per-group refactor the
- * autoscaler bookkeeping lives on EnvScalingGroupStatus, so the list
- * column shows the max to keep one row = one Env.
- */
-function latestScalingGroupScaleUp(env: AgentSandboxEnv): string | null {
-  let latest: string | null = null
-  for (const g of env.status?.scalingGroups ?? []) {
-    const ts = g.lastScaleUpTime
-    if (!ts) continue
-    if (!latest || ts > latest) latest = ts
-  }
-  return latest
 }
 
 export function createEnvColumns(
@@ -162,34 +145,6 @@ export function createEnvColumns(
       cell: ({ row }) => {
         const agg = pickAggregateGroup(row.original)
         return <span className="font-mono text-xs">{agg?.totalRunning ?? 0}</span>
-      },
-    },
-    {
-      id: "totalPending",
-      accessorFn: (row) => pickAggregateGroup(row)?.totalPending ?? 0,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t("envs.col.totalPending")} />
-      ),
-      cell: ({ row }) => {
-        const agg = pickAggregateGroup(row.original)
-        const v = agg?.totalPending ?? 0
-        return (
-          <span className={`font-mono text-xs ${v > 0 ? "text-amber-600" : "text-muted-foreground"}`}>
-            {v}
-          </span>
-        )
-      },
-    },
-    {
-      id: "lastScaleUp",
-      accessorFn: (row) => latestScalingGroupScaleUp(row),
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t("envs.col.lastScaleUp")} />
-      ),
-      cell: ({ row }) => {
-        const ts = latestScalingGroupScaleUp(row.original)
-        if (!ts) return <span className="text-muted-foreground text-xs">—</span>
-        return <RelativeTime date={ts} />
       },
     },
     {

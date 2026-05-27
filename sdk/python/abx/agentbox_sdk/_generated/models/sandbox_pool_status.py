@@ -24,7 +24,10 @@ from ..types import UNSET, Unset
 
 from ..models.sandbox_pool_status_phase import SandboxPoolStatusPhase
 from ..types import UNSET, Unset
+from typing import cast
 
+if TYPE_CHECKING:
+  from ..models.pool_auto_scaling_status import PoolAutoScalingStatus
 
 
 
@@ -53,6 +56,8 @@ class SandboxPoolStatus:
             pending_requests (int | Unset): Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s
                 when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability —
                 the Env autoscaler reads the live in-process Snapshot instead.
+            autoscaling (PoolAutoScalingStatus | Unset): Per-Pool autoscaler decision state. Sole writer is the SandboxPool
+                reconciler running the autoscaling decision pipeline.
      """
 
     phase: SandboxPoolStatusPhase | Unset = UNSET
@@ -63,6 +68,7 @@ class SandboxPoolStatus:
     stopping_replicas: int | Unset = UNSET
     failed_replicas: int | Unset = UNSET
     pending_requests: int | Unset = UNSET
+    autoscaling: PoolAutoScalingStatus | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -70,6 +76,7 @@ class SandboxPoolStatus:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.pool_auto_scaling_status import PoolAutoScalingStatus
         phase: str | Unset = UNSET
         if not isinstance(self.phase, Unset):
             phase = self.phase.value
@@ -88,6 +95,10 @@ class SandboxPoolStatus:
         failed_replicas = self.failed_replicas
 
         pending_requests = self.pending_requests
+
+        autoscaling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.autoscaling, Unset):
+            autoscaling = self.autoscaling.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -110,6 +121,8 @@ class SandboxPoolStatus:
             field_dict["failedReplicas"] = failed_replicas
         if pending_requests is not UNSET:
             field_dict["pendingRequests"] = pending_requests
+        if autoscaling is not UNSET:
+            field_dict["autoscaling"] = autoscaling
 
         return field_dict
 
@@ -117,6 +130,7 @@ class SandboxPoolStatus:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.pool_auto_scaling_status import PoolAutoScalingStatus
         d = dict(src_dict)
         _phase = d.pop("phase", UNSET)
         phase: SandboxPoolStatusPhase | Unset
@@ -142,6 +156,16 @@ class SandboxPoolStatus:
 
         pending_requests = d.pop("pendingRequests", UNSET)
 
+        _autoscaling = d.pop("autoscaling", UNSET)
+        autoscaling: PoolAutoScalingStatus | Unset
+        if isinstance(_autoscaling,  Unset):
+            autoscaling = UNSET
+        else:
+            autoscaling = PoolAutoScalingStatus.from_dict(_autoscaling)
+
+
+
+
         sandbox_pool_status = cls(
             phase=phase,
             idle_replicas=idle_replicas,
@@ -151,6 +175,7 @@ class SandboxPoolStatus:
             stopping_replicas=stopping_replicas,
             failed_replicas=failed_replicas,
             pending_requests=pending_requests,
+            autoscaling=autoscaling,
         )
 
 

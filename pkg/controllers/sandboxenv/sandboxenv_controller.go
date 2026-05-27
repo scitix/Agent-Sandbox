@@ -163,12 +163,13 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // SetupWithManager wires the Reconciler into the controller-runtime manager.
 //
 // Watches:
-//   - SandboxEnv (primary): generation + annotation changes (the latter so the
-//     EnvScaleUpPendingAnnotationKey written by EnvScheduler wakes us up).
-//   - SandboxPool (secondary): enqueues a reconcile under the Pool's name so
-//     the Reconciler can refresh status / drive the autoscaler when status
-//     fields move. The Pool name is used as the Env name in Phase 1 (1:1
-//     adoption guarantees this).
+//   - SandboxEnv (primary): generation changes only — status-only updates
+//     do not re-enqueue, which prevents a reconcile storm from
+//     Status().Patch() re-triggering itself.
+//   - SandboxPool (secondary): enqueues a reconcile under the Pool's
+//     name so the Reconciler can refresh status aggregates and propagate
+//     spec drift to the live Pool when member fields move. The Pool name
+//     equals the Env name when the Env owns exactly one same-named Pool.
 func (r *SandboxEnvReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.LocalClusterID == "" {
 		// Open-source single-cluster default. Reuse "local" sentinel so the
@@ -190,10 +191,7 @@ func (r *SandboxEnvReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	builder := ctrl.NewControllerManagedBy(mgr).
 		Named("sandboxenv").
-		For(&agentsv1alpha1.SandboxEnv{}, ctrlbuilder.WithPredicates(predicate.Or(
-			predicate.GenerationChangedPredicate{},
-			predicate.AnnotationChangedPredicate{},
-		))).
+		For(&agentsv1alpha1.SandboxEnv{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 4}).
 		Watches(&agentsv1alpha1.SandboxPool{}, handler.Funcs{
 			CreateFunc: func(_ context.Context, e event.CreateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
