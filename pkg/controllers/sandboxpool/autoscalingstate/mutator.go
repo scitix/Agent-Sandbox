@@ -24,7 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -37,11 +37,17 @@ import (
 //   - PatchStatus  schedules one or more mutations against
 //     Pool.Status.AutoScaling. Multiple PatchStatus calls compose
 //     (applied in registration order); Commit folds them into a single
-//     status sub-resource patch.
+//     SandboxPool status sub-resource patch.
 //
-//   - SetTargetReplicas requests an update to Pool.Spec.Replicas. May be
-//     called at most once per Mutator; the last call wins. A no-op is
-//     elided at Commit time when target == current.
+//   - SetTargetReplicas requests a desired-replicas update. The write
+//     target is Env.Spec.Clusters[i].Members[j].Spec.Replicas on the
+//     owning SandboxEnv (NOT Pool.Spec.Replicas directly). The
+//     existing Env reconciler's drift loop propagates the change onto
+//     the live Pool, which keeps a single writer of Pool.Spec.Replicas
+//     and reuses the manual UpdateMember path for free. May be called
+//     at most once per Mutator; the last call wins. Requires
+//     Snapshot.Env to be non-nil — Decide is responsible for the
+//     guard.
 //
 //   - MarkPodScaleDownProtected / UnmarkPodScaleDownProtected queue
 //     per-Pod annotation patches.
@@ -139,12 +145,20 @@ func (m *Mutator) UnmarkPodScaleDownProtected(pod *corev1.Pod) {
 	})
 }
 
-// EmitEvent queues an event for the Pool. eventType matches corev1
-// EventTypeNormal / EventTypeWarning; reason is a short CamelCase code;
-// format/args produce the human-readable message via fmt.Sprintf.
-func (m *Mutator) EmitEvent(eventType, reason, format string, args ...any) {
+// EmitEvent queues an event for the Pool. The arguments map onto the
+// k8s.io/client-go/tools/events.EventRecorder.Eventf signature:
+//   - eventType matches corev1.EventTypeNormal / EventTypeWarning;
+//   - action is a short verb describing what the controller did
+//     (e.g. "ScaleUp", "ScaleDown"). It feeds into the event's
+//     `action` field, which the newer events API surfaces alongside
+//     reason for richer telemetry;
+//   - reason is the more specific CamelCase code conventionally
+//     prefixed with the subsystem (e.g. "AutoscalerScaleUp");
+//   - format/args produce the human-readable message via fmt.Sprintf.
+func (m *Mutator) EmitEvent(eventType, action, reason, format string, args ...any) {
 	m.events = append(m.events, eventOp{
 		eventType: eventType,
+		action:    action,
 		reason:    reason,
 		message:   fmt.Sprintf(format, args...),
 	})
@@ -157,8 +171,8 @@ func (m *Mutator) HasWrites() bool {
 }
 
 // Commit applies the accumulated writes in fixed order:
-//  1. Spec patch (Pool.Spec.Replicas)
-//  2. Status patch (Pool.Status.AutoScaling)
+//  1. Env spec patch (Env.Spec.Clusters[i].Members[j].Spec.Replicas)
+//  2. Pool status patch (Pool.Status.AutoScaling)
 //  3. Per-Pod annotation patches
 //  4. Events
 //
@@ -169,36 +183,49 @@ func (m *Mutator) HasWrites() bool {
 //
 // recorder may be nil; events are then dropped silently (useful in tests
 // and in code paths that have not yet wired up the event sink).
-func (m *Mutator) Commit(ctx context.Context, c client.Client, recorder record.EventRecorder) error {
+func (m *Mutator) Commit(ctx context.Context, c client.Client, recorder events.EventRecorder) error {
 	if m == nil || m.snap == nil || m.snap.Pool == nil {
 		return fmt.Errorf("autoscalingstate: nil Mutator or Snapshot")
 	}
 	if c == nil {
 		return fmt.Errorf("autoscalingstate: client.Client is required")
 	}
-	key := client.ObjectKey{Namespace: m.snap.Pool.Namespace, Name: m.snap.Pool.Name}
+	poolKey := client.ObjectKey{Namespace: m.snap.Pool.Namespace, Name: m.snap.Pool.Name}
 
-	// 1) Spec patch — write first so a subsequent failure on Status does
-	//    not strand the decision; the next reconcile re-derives status
-	//    from observed state.
+	// 1) Env spec patch — Member.Spec.Replicas on the owning Env. The
+	//    existing Env reconciler then propagates the change onto the
+	//    live Pool, so Pool.Spec.Replicas keeps a single writer. We
+	//    write Env first because a subsequent failure on the Pool
+	//    status patch leaves the decision recorded on the spec side
+	//    (which is the user-visible source of truth); the status
+	//    timestamps can be reconstructed by the next reconcile from
+	//    observed state. The reverse order would race: a successful
+	//    status patch without the spec change would mark "cooled down"
+	//    without anything actually happening.
 	if m.targetReplicas != nil {
-		if err := patchSpecReplicasWithRetry(ctx, c, key, *m.targetReplicas); err != nil {
-			return fmt.Errorf("patch spec.replicas: %w", err)
+		if m.snap.Env == nil {
+			return fmt.Errorf("autoscalingstate: SetTargetReplicas called without owning Env in Snapshot")
+		}
+		envKey := client.ObjectKey{Namespace: m.snap.Env.Namespace, Name: m.snap.Env.Name}
+		if err := patchEnvMemberReplicasWithRetry(ctx, c, envKey, m.snap.Pool.Name, *m.targetReplicas); err != nil {
+			return fmt.Errorf("patch env %s/%s member %q replicas: %w",
+				m.snap.Env.Namespace, m.snap.Env.Name, m.snap.Pool.Name, err)
 		}
 	}
 
-	// 2) Status patch — single sub-resource patch applies all mutators.
+	// 2) Pool status patch — single sub-resource patch applies all mutators.
 	if len(m.statusMutators) > 0 {
-		if err := patchStatusWithRetry(ctx, c, key, m.statusMutators); err != nil {
+		if err := patchStatusWithRetry(ctx, c, poolKey, m.statusMutators); err != nil {
 			return fmt.Errorf("patch status.autoscaling: %w", err)
 		}
 	}
 
 	// 3) Per-Pod annotation patches — best-effort but with retry-on-conflict.
-	//    A NotFound on the Pod is logged via the returned error; the caller
-	//    decides whether to requeue. We bail on first failure for the same
-	//    reason — partial annotation flips leave the protection state
-	//    half-applied which the next reconcile can untangle.
+	//    A NotFound on the Pod is treated as success (the entry is gone, the
+	//    operation is vacuously satisfied). Other errors abort Commit on
+	//    first failure for the same reason: a partial annotation flip
+	//    leaves the protection state half-applied, which the next
+	//    reconcile can untangle.
 	for _, op := range m.podAnnOps {
 		if err := op.apply(ctx, c); err != nil {
 			return fmt.Errorf("patch pod %s annotations: %w", op.podRef, err)
@@ -206,10 +233,15 @@ func (m *Mutator) Commit(ctx context.Context, c client.Client, recorder record.E
 	}
 
 	// 4) Events — emit only after successful writes so the recorded
-	//    message reflects persisted state.
+	//    message reflects persisted state. The newer
+	//    events.EventRecorder.Eventf signature carries `regarding`,
+	//    `related`, `eventtype`, `reason`, `action`, and `note`;
+	//    autoscaler events have no second object so `related` is nil,
+	//    and the message has already been formatted in EmitEvent so we
+	//    pass it through as the literal `note`.
 	if recorder != nil {
 		for _, ev := range m.events {
-			recorder.Event(m.snap.Pool, ev.eventType, ev.reason, ev.message)
+			recorder.Eventf(m.snap.Pool, nil, ev.eventType, ev.reason, ev.action, "%s", ev.message)
 		}
 	}
 	return nil
@@ -251,26 +283,55 @@ func (op podAnnotationOp) apply(ctx context.Context, c client.Client) error {
 
 type eventOp struct {
 	eventType string
+	action    string
 	reason    string
 	message   string
 }
 
-// patchSpecReplicasWithRetry updates Pool.Spec.Replicas to target. Re-reads
-// the Pool on every retry so conflicts caused by drift in other spec fields
-// don't blow up the autoscaler.
-func patchSpecReplicasWithRetry(ctx context.Context, c client.Client, key client.ObjectKey, target int32) error {
+// patchEnvMemberReplicasWithRetry updates the named member's Spec.Replicas
+// in the owning Env's spec to target. Walks every cluster segment so the
+// helper works regardless of which cluster the member lives in — the
+// Pool autoscaler does not need to know the local cluster ID. A member
+// not found is reported as an error so the caller (and observability) can
+// distinguish "Pool reconciler ran against stale Env" from "wrote
+// successfully".
+//
+// Re-reads the Env on every retry so conflicts caused by unrelated spec
+// drift (other members, autoscaling toggles, etc.) don't blow up the
+// autoscaler.
+func patchEnvMemberReplicasWithRetry(ctx context.Context, c client.Client, key client.ObjectKey, poolName string, target int32) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		cur := &agentsv1alpha1.SandboxPool{}
+		cur := &agentsv1alpha1.SandboxEnv{}
 		if err := c.Get(ctx, key, cur); err != nil {
 			return err
 		}
-		if cur.Spec.Replicas == target {
+		ci, mi, ok := findMemberIndex(cur, poolName)
+		if !ok {
+			return fmt.Errorf("member %q not present in env %s/%s", poolName, key.Namespace, key.Name)
+		}
+		if cur.Spec.Clusters[ci].Members[mi].Spec.Replicas == target {
 			return nil
 		}
 		base := cur.DeepCopy()
-		cur.Spec.Replicas = target
+		cur.Spec.Clusters[ci].Members[mi].Spec.Replicas = target
 		return c.Patch(ctx, cur, client.MergeFrom(base))
 	})
+}
+
+// findMemberIndex returns the (clusterIdx, memberIdx) coordinates of the
+// member named poolName inside env.Spec, or ok=false when no such
+// member exists. Member names are unique across the Env so the first
+// match is authoritative.
+func findMemberIndex(env *agentsv1alpha1.SandboxEnv, poolName string) (clusterIdx, memberIdx int, ok bool) {
+	for ci := range env.Spec.Clusters {
+		ms := env.Spec.Clusters[ci].Members
+		for mi := range ms {
+			if ms[mi].Name == poolName {
+				return ci, mi, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 // patchStatusWithRetry runs every mutator against the live

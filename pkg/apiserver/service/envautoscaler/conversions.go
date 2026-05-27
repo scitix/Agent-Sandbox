@@ -41,10 +41,10 @@ func SpecToGen(a *agentsv1alpha1.EnvAutoscalingSpec) *gen.EnvAutoscalingSpec {
 }
 
 // GroupToGen projects one CRD EnvAutoscalingGroup into the wire shape.
-// ScaleUpPolicy and ScaleDownPolicy are CRD value types after the
-// Pool-Centric Autoscaling redesign, so both always project to non-nil
-// wire pointers — the wire still uses pointers to preserve the
-// "field not sent" semantic, but the CR side has nothing to omit.
+// ScaleUpPolicy and ScaleDownPolicy are CRD value types and always
+// project to non-nil wire pointers — the wire format still uses
+// pointers to preserve the "field not sent" semantic, but the CR side
+// has nothing to omit.
 func GroupToGen(g agentsv1alpha1.EnvAutoscalingGroup) gen.EnvAutoscalingGroup {
 	out := gen.EnvAutoscalingGroup{Name: g.Name, Enabled: ptr.To(g.Enabled)}
 	if g.MinReplicas != nil {

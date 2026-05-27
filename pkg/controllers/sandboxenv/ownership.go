@@ -22,12 +22,6 @@ import (
 // status segment with IsLocal=true preset and ClusterID prefilled.
 type localStatusMutator func(local *agentsv1alpha1.EnvClusterStatus)
 
-// scalingGroupStatusMutator is invoked with a writable pointer to a named
-// scaling group's status entry. The entry is upserted if missing so the
-// autoscaler can write IdleZeroSince / LastScaleUpTime onto a group that
-// status aggregation hasn't filled yet.
-type scalingGroupStatusMutator func(g *agentsv1alpha1.EnvScalingGroupStatus)
-
 // mutateLocalClusterStatus is the chokepoint for status segment mutation. A
 // freshly created segment
 // is kept regardless of content because the Reconciler needs to record
@@ -70,39 +64,6 @@ func findLocalClusterSpec(env *agentsv1alpha1.SandboxEnv, localClusterID string)
 		}
 	}
 	return agentsv1alpha1.EnvClusterSpec{}, false
-}
-
-// findScalingGroupStatus returns a copy of the named group's status entry
-// or the zero value (Name == "") when none exists. Use for read paths.
-func findScalingGroupStatus(env *agentsv1alpha1.SandboxEnv, groupName string) agentsv1alpha1.EnvScalingGroupStatus {
-	if env == nil || groupName == "" {
-		return agentsv1alpha1.EnvScalingGroupStatus{}
-	}
-	for i := range env.Status.ScalingGroups {
-		if env.Status.ScalingGroups[i].Name == groupName {
-			return *env.Status.ScalingGroups[i].DeepCopy()
-		}
-	}
-	return agentsv1alpha1.EnvScalingGroupStatus{}
-}
-
-// mutateScalingGroupStatus is the chokepoint for per-group status mutation.
-// Upserts a new entry with Name preset if one is missing — the autoscaler
-// needs to record IdleZeroSince / LastScaleUpTime independent of when
-// syncStatus next runs.
-func mutateScalingGroupStatus(env *agentsv1alpha1.SandboxEnv, groupName string, mutator scalingGroupStatusMutator) {
-	if env == nil || groupName == "" || mutator == nil {
-		return
-	}
-	for i := range env.Status.ScalingGroups {
-		if env.Status.ScalingGroups[i].Name == groupName {
-			mutator(&env.Status.ScalingGroups[i])
-			return
-		}
-	}
-	seg := agentsv1alpha1.EnvScalingGroupStatus{Name: groupName}
-	mutator(&seg)
-	env.Status.ScalingGroups = append(env.Status.ScalingGroups, seg)
 }
 
 // hasForeignClusterSegments returns true when the Env's spec or status

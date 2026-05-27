@@ -41,6 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/autoscalingstate"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 	pkgmetrics "github.com/scitix/agent-sandbox/pkg/metrics"
@@ -92,6 +93,22 @@ type SandboxPoolReconciler struct {
 	// pods, N pending creations are recorded; subsequent Reconcile calls skip
 	// scaling until all N Pod Add events are observed (or a 5-minute TTL fires).
 	expectations *PoolExpectations
+
+	// AutoscalingLoader is the per-Pool autoscaler's Snapshot builder.
+	// nil disables the autoscaler entirely (legacy mode, unit tests
+	// that only exercise pod reconciliation). When set, it must be
+	// driven by the same K8s client + LastCreateTracker +
+	// SchedulerLookup the rest of the process is using; see
+	// cmd/sandbox/app for wire-up.
+	AutoscalingLoader *autoscalingstate.Loader
+
+	// AutoscalingEventRecorder is the events-API event recorder used
+	// by the autoscaler's Mutator.Commit to emit ScaleUp / ScaleDown
+	// events on the SandboxPool. May be nil; in that case the
+	// autoscaler's events are dropped silently. Kept separate from
+	// the existing Recorder field above because the two are wired
+	// through different injection paths.
+	AutoscalingEventRecorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools,verbs=get;list;watch;create;update;patch;delete
@@ -141,6 +158,21 @@ func (r *SandboxPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return reconcile.Result{}, err
 		}
 		return reconcile.Result{Requeue: true}, nil
+	}
+
+	// Run the autoscaling decision pipeline BEFORE Pod reconciliation
+	// so any Spec.Replicas / Status.AutoScaling writes land before the
+	// pod-execution loop reads them. The autoscaler writes to the
+	// owning Env's Member.Spec.Replicas; the Env reconciler then
+	// propagates the change onto this Pool's Spec.Replicas on its
+	// next pass, which triggers a fresh Reconcile here and the
+	// reconcilePods loop below picks up the new desired count.
+	//
+	// When AutoscalingLoader is nil (unit tests, deployments that
+	// run the controller without an autoscaler), this is a no-op
+	// and we fall straight through to pod reconciliation.
+	if err := r.syncAutoscaling(ctx, sandboxPool); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	// Reconcile Pod replicas

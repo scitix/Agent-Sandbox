@@ -16,17 +16,28 @@ package autoscalingstate
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 )
+
+// fakeEventRecorder is the test-side stand-in for the
+// k8s.io/client-go/tools/events.EventRecorder interface. The new
+// events API has no stdlib FakeRecorder, so we implement just enough
+// to capture (eventType, reason, action, message) tuples for assertion.
+type fakeEventRecorder struct{ events []string }
+
+func (f *fakeEventRecorder) Eventf(_, _ runtime.Object, eventType, reason, action, note string, args ...any) {
+	f.events = append(f.events, fmt.Sprintf("%s %s %s %s", eventType, reason, action, fmt.Sprintf(note, args...)))
+}
 
 // ---------- Mutator accumulators ----------
 
@@ -118,45 +129,93 @@ func TestCommit_StatusPatch_SetsFields(t *testing.T) {
 	}
 }
 
-func TestCommit_SpecPatch_UpdatesReplicas(t *testing.T) {
+func TestCommit_SpecPatch_UpdatesEnvMemberReplicas(t *testing.T) {
 	scheme := newTestScheme(t)
 	pool := poolFixture{name: "p", replicas: 2}.build()
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool).Build()
+	env := envFixture{
+		members: []agentsv1alpha1.EnvClusterMember{{
+			Name: pool.Name,
+			Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 2},
+		}},
+	}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool, env).Build()
 
-	m := NewMutator(&Snapshot{Pool: pool})
+	m := NewMutator(&Snapshot{Pool: pool, Env: env})
 	m.SetTargetReplicas(5)
 
 	if err := m.Commit(context.Background(), c, nil); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	got := &agentsv1alpha1.SandboxPool{}
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: pool.Namespace, Name: pool.Name}, got); err != nil {
-		t.Fatalf("get: %v", err)
+	gotEnv := &agentsv1alpha1.SandboxEnv{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: env.Namespace, Name: env.Name}, gotEnv); err != nil {
+		t.Fatalf("get env: %v", err)
 	}
-	if got.Spec.Replicas != 5 {
-		t.Errorf("Spec.Replicas = %d, want 5", got.Spec.Replicas)
+	if got := gotEnv.Spec.Clusters[0].Members[0].Spec.Replicas; got != 5 {
+		t.Errorf("Env Member.Spec.Replicas = %d, want 5", got)
+	}
+	// The live Pool spec must NOT be touched directly — that's the Env
+	// reconciler's job once it observes the Env change.
+	gotPool := &agentsv1alpha1.SandboxPool{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: pool.Namespace, Name: pool.Name}, gotPool); err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	if gotPool.Spec.Replicas != 2 {
+		t.Errorf("Pool.Spec.Replicas was modified to %d; only Env reconciler should write it", gotPool.Spec.Replicas)
 	}
 }
 
 func TestCommit_SpecPatch_NoOpWhenSameValue(t *testing.T) {
 	scheme := newTestScheme(t)
 	pool := poolFixture{name: "p", replicas: 4}.build()
-	// Pre-set resourceVersion so we can confirm "no patch issued" by
-	// observing the object is untouched.
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool).Build()
+	env := envFixture{
+		members: []agentsv1alpha1.EnvClusterMember{{
+			Name: pool.Name,
+			Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 4},
+		}},
+	}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool, env).Build()
 
-	m := NewMutator(&Snapshot{Pool: pool})
+	m := NewMutator(&Snapshot{Pool: pool, Env: env})
 	m.SetTargetReplicas(4) // same as current
 
 	if err := m.Commit(context.Background(), c, nil); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	got := &agentsv1alpha1.SandboxPool{}
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: pool.Namespace, Name: pool.Name}, got); err != nil {
-		t.Fatalf("get: %v", err)
+	gotEnv := &agentsv1alpha1.SandboxEnv{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: env.Namespace, Name: env.Name}, gotEnv); err != nil {
+		t.Fatalf("get env: %v", err)
 	}
-	if got.Spec.Replicas != 4 {
-		t.Errorf("Spec.Replicas changed unexpectedly to %d", got.Spec.Replicas)
+	if got := gotEnv.Spec.Clusters[0].Members[0].Spec.Replicas; got != 4 {
+		t.Errorf("Env Member.Spec.Replicas changed unexpectedly to %d", got)
+	}
+}
+
+func TestCommit_SpecPatch_RequiresEnvInSnapshot(t *testing.T) {
+	scheme := newTestScheme(t)
+	pool := poolFixture{name: "p", replicas: 1}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool).Build()
+
+	m := NewMutator(&Snapshot{Pool: pool}) // no Env on snapshot
+	m.SetTargetReplicas(2)
+
+	if err := m.Commit(context.Background(), c, nil); err == nil {
+		t.Error("expected error when SetTargetReplicas called without Env in Snapshot")
+	}
+}
+
+func TestCommit_SpecPatch_MemberNotPresent(t *testing.T) {
+	scheme := newTestScheme(t)
+	pool := poolFixture{name: "missing"}.build()
+	env := envFixture{
+		members: []agentsv1alpha1.EnvClusterMember{{Name: "other"}},
+	}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool, env).Build()
+
+	m := NewMutator(&Snapshot{Pool: pool, Env: env})
+	m.SetTargetReplicas(3)
+
+	if err := m.Commit(context.Background(), c, nil); err == nil {
+		t.Error("expected error when target pool name not in env members")
 	}
 }
 
@@ -247,23 +306,27 @@ func TestCommit_PodAnnotation_PodGone_NotFatal(t *testing.T) {
 func TestCommit_EmitEvent(t *testing.T) {
 	scheme := newTestScheme(t)
 	pool := poolFixture{name: "p"}.build()
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool).Build()
-	rec := record.NewFakeRecorder(8)
+	env := envFixture{
+		members: []agentsv1alpha1.EnvClusterMember{{
+			Name: pool.Name,
+			Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 2},
+		}},
+	}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool, env).Build()
+	rec := &fakeEventRecorder{}
 
-	m := NewMutator(&Snapshot{Pool: pool})
+	m := NewMutator(&Snapshot{Pool: pool, Env: env})
 	m.SetTargetReplicas(3) // ensures Commit has at least one write to flush
-	m.EmitEvent(corev1.EventTypeNormal, "ScaleUp", "scaled from %d to %d", 2, 3)
+	m.EmitEvent(corev1.EventTypeNormal, "ScaleUp", "AutoscalerScaleUp", "scaled from %d to %d", 2, 3)
 
 	if err := m.Commit(context.Background(), c, rec); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	select {
-	case ev := <-rec.Events:
-		if want := "Normal ScaleUp scaled from 2 to 3"; ev != want {
-			t.Errorf("event = %q, want %q", ev, want)
-		}
-	default:
-		t.Error("expected one recorded event")
+	if got, want := len(rec.events), 1; got != want {
+		t.Fatalf("recorded %d events, want %d", got, want)
+	}
+	if want := "Normal AutoscalerScaleUp ScaleUp scaled from 2 to 3"; rec.events[0] != want {
+		t.Errorf("event = %q, want %q", rec.events[0], want)
 	}
 }
 

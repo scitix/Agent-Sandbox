@@ -141,11 +141,10 @@ const (
 	// request triggered a scale-up. The value is the RFC3339 timestamp of the
 	// trigger. Cleared by the Reconciler after processing.
 	//
-	// SCHEDULED FOR REMOVAL: the Pool-Centric Autoscaling redesign
-	// (docs/proposals/20260527-pool-centric-autoscaling.md) replaces this
-	// annotation-based doorbell with the in-process PoolScheduler.Snapshot()
-	// (QueueLen / IdleReady) plus LastSandboxCreateTimeAnnotationKey. The
-	// constant is retained until S5/S6 of that proposal land.
+	// Legacy doorbell — superseded by the in-process PoolScheduler.Snapshot()
+	// (QueueLen / IdleReady) and LastSandboxCreateTimeAnnotationKey, which
+	// the Pool autoscaler reads directly. The annotation is kept while
+	// remaining writers are migrated off.
 	PoolScaleUpPendingAnnotationKey = "agentbox.navix.sh/scale-up-pending"
 
 	// LastSandboxCreateTimeAnnotationKey is the throttled persistent mirror

@@ -37,6 +37,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolmigration"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
+	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/autoscalingstate"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat"
 	"github.com/scitix/agent-sandbox/pkg/framework"
@@ -333,7 +334,7 @@ func Run(opts Options) {
 	// ---- in-process Sandbox.Create timestamp tracker -------------------------
 	// Bumps from sandbox.Create live in memory and flush to the
 	// LastSandboxCreateTimeAnnotationKey on Pool every 5 s. The Pool
-	// autoscaler (S4) reads the in-memory value directly; the persisted
+	// autoscaler reads the in-memory value directly; the persisted
 	// annotation is the restart-survival mirror. Manager owns the loop's
 	// lifecycle via mgr.Add so it shuts down with the controller.
 	lastCreateTracker := lastcreate.NewTracker(mgr.GetClient(), 0)
@@ -392,15 +393,30 @@ func Run(opts Options) {
 	hooksRunner := poststarthooks.NewRunner(envoyGatewayBaseURL, clientset, restCfg)
 
 	// ---- controllers ---------------------------------------------------------
+	// Autoscaler wiring: the Loader reads the K8s cache, the in-process
+	// PoolScheduler registry (via schedulerLookup, which is the same
+	// interface envscheduler.Manager uses for routing), and the
+	// LastCreateTracker we just constructed. nil schedulerLookup is
+	// tolerated by the Loader — it simply leaves reactive demand
+	// signals unobserved, which degrades to "proactive-only" behaviour
+	// instead of crashing.
+	autoscalingLoader := &autoscalingstate.Loader{
+		Client:     mgr.GetClient(),
+		Schedulers: schedulerLookup,
+		LastCreate: lastCreateTracker,
+		Clock:      autoscalingstate.SystemClock(),
+	}
 	if err := (&sandboxpool.SandboxPoolReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Clientset:        clientset,
-		SandboxStore:     sandboxStore,
-		PluginManager:    pluginManager,
-		IdleNotifier:     idleNotifier,
-		DigestResolver:   digestResolver,
-		SandboxReadyHook: hooksRunner,
+		Client:                   mgr.GetClient(),
+		Scheme:                   mgr.GetScheme(),
+		Clientset:                clientset,
+		SandboxStore:             sandboxStore,
+		PluginManager:            pluginManager,
+		IdleNotifier:             idleNotifier,
+		DigestResolver:           digestResolver,
+		SandboxReadyHook:         hooksRunner,
+		AutoscalingLoader:        autoscalingLoader,
+		AutoscalingEventRecorder: mgr.GetEventRecorder("sandboxpool-autoscaler"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxPool")
 		os.Exit(1)

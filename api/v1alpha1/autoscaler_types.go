@@ -50,8 +50,8 @@ type PoolScaleUpPolicy struct {
 	// zero, the autoscaler will NOT fire a proactive scale-up. Reactive
 	// scale-ups (queue length > 0 with no idle Pod) ignore this window
 	// — a real waiter always wins. Set to 0 to disable the quiet-window
-	// gate (proactive scale-up fires the moment IdleThresholdSeconds
-	// elapses, restoring the pre-redesign behaviour).
+	// gate so proactive scale-up fires the moment IdleThresholdSeconds
+	// elapses.
 	// Defaults to 300 (5 minutes).
 	// +optional
 	// +kubebuilder:validation:Minimum=0

@@ -28,9 +28,6 @@
 // the LastCreateTracker interface in
 // pkg/controllers/sandboxpool/autoscalingstate/. The persisted
 // annotation only matters across process restarts.
-//
-// See docs/proposals/20260527-pool-centric-autoscaling.md §8 for the
-// full design.
 package lastcreate
 
 import (

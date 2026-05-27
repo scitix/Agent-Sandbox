@@ -17,32 +17,29 @@
 //
 // The package follows a three-step pipeline:
 //
-//  1. Loader.Load(pool)  — build a Snapshot capturing every input the
+//  1. Loader.Load(pool) — build a Snapshot capturing every input the
 //     decision logic needs (the Pool, its owning SandboxEnv, sibling Pools
 //     in the same scaling group, the in-process PoolScheduler queue stats,
 //     the in-process LastCreateTracker value, idle Pod ages).
 //
-//  2. Decision logic (lives in the parent sandboxpool package, added in a
-//     later proposal step) consumes the Snapshot and accumulates writes
-//     into a Mutator via PatchStatus / SetTargetReplicas / Mark* helpers.
+//  2. Decide(snap, mut) — pure function in this same package consumes
+//     the Snapshot and accumulates writes into a Mutator via
+//     PatchStatus / SetTargetReplicas / Mark* helpers. No K8s I/O.
 //
 //  3. Mutator.Commit(ctx, client, recorder) — applies the accumulated
-//     writes in a single pass: one status sub-resource patch (with
-//     retry-on-conflict), one spec patch, and N per-Pod annotation patches.
+//     writes in a single pass: at most one Env-spec patch, one
+//     Pool-status sub-resource patch, and N per-Pod annotation patches,
+//     each wrapped in retry.RetryOnConflict.
 //
-// This separation matters because:
+// The separation matters because:
 //
-//   - The decision logic stays pure: easy to unit-test by hand-building a
-//     Snapshot and asserting on the resulting Mutator without standing up
-//     a fake K8s client.
+//   - The decision logic stays pure and is easy to unit-test by
+//     hand-building a Snapshot and asserting on the resulting Mutator
+//     without standing up a fake K8s client.
 //
 //   - All status writes coalesce: a single reconcile pass writes the
-//     SandboxPool status at most once. This eliminates the cache-race
-//     class of bugs that the proposal's §0.2 problem #3 documents, where
-//     multiple intra-reconcile status patches against a slowly-propagating
-//     informer cache could silently drop bookkeeping fields and allow the
-//     cooldown gate to be bypassed.
-//
-// See ../agentbox/docs/proposals/20260527-pool-centric-autoscaling.md for the full
-// design context.
+//     SandboxPool status at most once. This avoids the cache-race
+//     class of bugs where multiple intra-reconcile status patches
+//     against a slowly-propagating informer cache silently drop
+//     bookkeeping fields and let the cooldown gate be bypassed.
 package autoscalingstate

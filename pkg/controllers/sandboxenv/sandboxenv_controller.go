@@ -39,7 +39,6 @@ import (
 	"context"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -145,14 +144,11 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Autoscaling decision.
-	res, err := r.syncAutoscaling(ctx, env)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if res.RequeueAfter == 0 {
-		res.RequeueAfter = RequeueAfter
-	}
+	// Autoscaling decisions live on the per-Pool SandboxPool reconciler.
+	// The Pool autoscaler writes back to
+	// Env.Spec.Clusters[].Members[].Spec.Replicas; this reconciler's
+	// drift loop propagates that change onto the live Pool.
+	res := ctrl.Result{RequeueAfter: RequeueAfter}
 	if r.EnvRouterSync != nil {
 		// Belt-and-braces resync of the in-process router cache. Cheap (one
 		// RWMutex.Lock + map write); guarantees the router never lags the
@@ -214,13 +210,4 @@ func (r *SandboxEnvReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		})
 
 	return builder.Complete(r)
-}
-
-// emitEvent is a thin wrapper that gracefully handles a nil Recorder so tests
-// can construct the Reconciler without one.
-func (r *SandboxEnvReconciler) emitEvent(env *agentsv1alpha1.SandboxEnv, action, reason, format string, args ...any) {
-	if r.Recorder == nil || env == nil {
-		return
-	}
-	r.Recorder.Eventf(env, nil, corev1.EventTypeNormal, reason, action, format, args...)
 }

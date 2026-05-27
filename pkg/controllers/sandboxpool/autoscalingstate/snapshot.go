@@ -213,7 +213,8 @@ func (l *Loader) Load(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (*S
 	snap.LastCreateAt = resolveLastCreate(pool, l.LastCreate)
 
 	// 2) Reverse-lookup the owning Env. Prefer the LabelEnv index; fall
-	//    back to ownerReferences for Pools created before the redesign.
+	//    back to ownerReferences when the label is missing (older Pools
+	//    that pre-date label stamping).
 	envName, hasEnv := resolveEnvName(pool)
 	if !hasEnv {
 		return snap, nil

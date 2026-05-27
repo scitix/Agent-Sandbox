@@ -33,10 +33,10 @@ type SchedulerLookup interface {
 }
 
 // LastCreateTracker exposes the in-process "most recent Create" timestamp
-// for a Pool. Production wires this to lifecycle/lastcreate.Tracker (to be
-// added in step S3 of the redesign); tests inject a fake. nil is treated
-// as "tracker not wired" — the Snapshot loader falls back to the
-// LastSandboxCreateTimeAnnotationKey on the Pool object.
+// for a Pool. Production wires this to lifecycle/lastcreate.Tracker;
+// tests inject a fake. nil is treated as "tracker not wired" — the
+// Snapshot loader falls back to the LastSandboxCreateTimeAnnotationKey
+// on the Pool object.
 type LastCreateTracker interface {
 	// Get returns the most recent Create timestamp the tracker has seen
 	// for the given pool, and whether any timestamp was recorded.

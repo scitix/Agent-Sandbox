@@ -217,7 +217,7 @@ type SandboxPoolStatus struct {
 // PoolAutoScalingStatus carries the autoscaler's per-Pool decision state.
 // Every field is set/read exclusively by the SandboxPool reconciler running
 // the autoscaling decision pipeline; the SandboxEnv reconciler must never
-// write these fields. See docs/proposals/20260527-pool-centric-autoscaling.md.
+// write these fields.
 type PoolAutoScalingStatus struct {
 	// LastScaleUpTime is the wall-clock time of the most recent successful
 	// scale-up (spec.replicas increased) on this Pool. Drives the
