@@ -120,8 +120,10 @@ func defaultGroupEnabled() agentsv1alpha1.EnvAutoscalingGroup {
 }
 
 // runDecide is the shorthand used by every test below: build the
-// snapshot, run Decide, return (target replicas if set; -1 sentinel
-// otherwise) and the snapshot for further status assertions.
+// snapshot, run Decide, and report the replicas target the autoscaler
+// chose. Scale-down sets m.targetReplicas directly; scale-up buffers a
+// ScaleUpAttempt resolved by Commit. We surface either path uniformly
+// as (target, true) so tests don't have to know which branch fired.
 func runDecide(t *testing.T, s scenario) (target int32, hasTarget bool, mut *Mutator) {
 	t.Helper()
 	snap := s.build()
@@ -129,6 +131,9 @@ func runDecide(t *testing.T, s scenario) (target int32, hasTarget bool, mut *Mut
 	Decide(snap, mut)
 	if v, ok := mut.TargetReplicas(); ok {
 		return v, true, mut
+	}
+	if _, t2, ok := mut.PendingScaleUpAttempt(); ok {
+		return t2, true, mut
 	}
 	return 0, false, mut
 }
@@ -247,10 +252,11 @@ func TestScaleUp_ReactiveDemand_FromZero(t *testing.T) {
 	if !ok || target != 1 {
 		t.Fatalf("expected target=1 with reactive demand from 0, got ok=%v target=%d", ok, target)
 	}
-	s := statusOf(mut)
-	if s.LastScaleUpTime == nil || s.LastScaleUpAttemptResult != ScaleUpAttemptResultSuccess {
-		t.Errorf("expected success status, got %+v", s)
-	}
+	// LastScaleUpTime / LastScaleUpAttemptResult are written by
+	// Mutator.Commit after the Prober runs. See
+	// TestMutator_ResolveScaleUpAttempt_* for that path; here we only
+	// assert Decide staged the intent.
+	_ = mut
 }
 
 // ---------- Scale-up: idleZero proactive trigger ----------
@@ -507,8 +513,8 @@ func TestScaleUp_DoNotYieldWhenSiblingNotRipe(t *testing.T) {
 	mut := NewMutator(snap)
 	Decide(snap, mut)
 
-	if _, ok := mut.TargetReplicas(); !ok {
-		t.Error("self should scale up because higher-priority sibling is not ripe (already has idle)")
+	if _, _, ok := mut.PendingScaleUpAttempt(); !ok {
+		t.Error("self should stage a scale-up attempt because higher-priority sibling is not ripe (already has idle)")
 	}
 }
 

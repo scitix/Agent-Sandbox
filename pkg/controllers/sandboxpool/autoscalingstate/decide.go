@@ -24,16 +24,6 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 )
 
-// Values for PoolAutoScalingStatus.LastScaleUpAttemptResult. Kept as
-// constants so callers and tests can compare without typo-prone string
-// literals.
-const (
-	ScaleUpAttemptResultSuccess               = "Success"
-	ScaleUpAttemptResultInsufficientResources = "InsufficientResources"
-	ScaleUpAttemptResultInvalidSpec           = "InvalidSpec"
-	ScaleUpAttemptResultInternalError         = "InternalError"
-)
-
 // Decide is the pure-function entry point of the Pool autoscaler.
 // Given a fully-loaded Snapshot it computes whatever bookkeeping +
 // spec writes the autoscaler wants for this reconcile cycle and
@@ -101,24 +91,26 @@ func updateIdleZeroSince(snap *Snapshot, mut *Mutator) {
 }
 
 // evaluateScaleUp runs the scale-up decision pipeline. Returns true
-// iff it committed a SetTargetReplicas (i.e. the Pool's desired
-// replicas actually grew this cycle).
+// iff it staged a ScaleUpAttempt (the actual probe + spec write are
+// performed in Mutator.Commit). "Returned true" is the signal to skip
+// scale-down for this cycle — even when the probe later rejects the
+// growth, we don't want same-cycle shrink on top.
 //
 // The order is deliberately:
-//  1. Honour scale-up cooldown.
+//  1. Honour the dual cooldown (success cooldown + saturation cooldown).
 //  2. Identify which trigger (reactive / proactive) fires.
 //  3. Yield to a higher-priority sibling that also wants to grow.
 //  4. Compute the target replicas, clamped by member.MaxReplicas
 //     and group.MaxReplicas (group aggregate ceiling).
-//  5. Commit the spec write + LastScaleUpTime status update.
+//  5. Stage a ScaleUpAttempt; Mutator.Commit consults the Prober and
+//     writes status + spec based on the probe outcome.
 func evaluateScaleUp(snap *Snapshot, mut *Mutator) bool {
 	policy := snap.Group.ScaleUpPolicy
 	if scaleUpCooldownActive(snap, policy) {
 		return false
 	}
 
-	trigger, ok := pickScaleUpTrigger(snap, policy)
-	if !ok {
+	if _, ok := pickScaleUpTrigger(snap, policy); !ok {
 		return false
 	}
 
@@ -132,16 +124,7 @@ func evaluateScaleUp(snap *Snapshot, mut *Mutator) bool {
 		return false
 	}
 
-	mut.SetTargetReplicas(target)
-	now := metav1.NewTime(snap.Now)
-	mut.PatchStatus(func(s *agentsv1alpha1.PoolAutoScalingStatus) {
-		s.LastScaleUpTime = &now
-		s.LastScaleUpAttemptResult = ScaleUpAttemptResultSuccess
-		s.ScaleUpErrorMessage = ""
-	})
-	mut.EmitEvent(corev1.EventTypeNormal, "ScaleUp", "AutoscalerScaleUp",
-		"increased %s/%s replicas from %d to %d (trigger: %s)",
-		snap.Pool.Namespace, snap.Pool.Name, current, target, trigger)
+	mut.ScaleUpAttempt(current, target)
 	return true
 }
 
@@ -180,19 +163,53 @@ func pickScaleUpTrigger(snap *Snapshot, policy agentsv1alpha1.PoolScaleUpPolicy)
 	return "idleZero", true
 }
 
-// scaleUpCooldownActive reports whether LastScaleUpTime sits inside
-// the policy's cooldown window. Honouring this gate is what stops
-// the cache-race "double scale-up" the §0.2 incident report
-// documents.
+// scaleUpCooldownActive reports whether the Pool is inside either of
+// two cooldown windows that block further scale-up attempts:
+//
+//   - success cooldown: LastScaleUpTime + CooldownSeconds. Prevents
+//     two successful scale-ups firing closer together than the
+//     configured cadence, and is the gate that catches cache-race
+//     "double scale-up" symptoms.
+//
+//   - saturation cooldown: LastScaleUpAttemptTime + SaturationCooldownSeconds,
+//     applied only when the last attempt's result was non-Enough
+//     (Insufficient / JustRight / Failed). Prevents the autoscaler
+//     from re-probing the plugin chain immediately after the cluster
+//     told us "no headroom" or "spec invalid".
+//
+// Either window active → cooldown active.
 func scaleUpCooldownActive(snap *Snapshot, policy agentsv1alpha1.PoolScaleUpPolicy) bool {
-	if policy.CooldownSeconds <= 0 {
+	s := snap.Pool.Status.AutoScaling
+	if s == nil {
 		return false
 	}
-	if snap.Pool.Status.AutoScaling == nil || snap.Pool.Status.AutoScaling.LastScaleUpTime == nil {
+	if policy.CooldownSeconds > 0 && s.LastScaleUpTime != nil {
+		if snap.Now.Sub(s.LastScaleUpTime.Time) < time.Duration(policy.CooldownSeconds)*time.Second {
+			return true
+		}
+	}
+	if policy.SaturationCooldownSeconds > 0 && s.LastScaleUpAttemptTime != nil && isSaturatingResult(s.LastScaleUpAttemptResult) {
+		if snap.Now.Sub(s.LastScaleUpAttemptTime.Time) < time.Duration(policy.SaturationCooldownSeconds)*time.Second {
+			return true
+		}
+	}
+	return false
+}
+
+// isSaturatingResult reports whether the given result implies the Pool
+// is saturated for cooldown purposes — i.e. the last attempt told us
+// "the cluster cannot fit more" (or "this spec is wrong"), so retrying
+// soon is wasteful. PoolScaleUpAttemptEnough and empty (never tried)
+// do NOT saturate.
+func isSaturatingResult(r agentsv1alpha1.PoolScaleUpAttemptResult) bool {
+	switch r {
+	case agentsv1alpha1.PoolScaleUpAttemptInsufficient,
+		agentsv1alpha1.PoolScaleUpAttemptJustRight,
+		agentsv1alpha1.PoolScaleUpAttemptFailed:
+		return true
+	default:
 		return false
 	}
-	elapsed := snap.Now.Sub(snap.Pool.Status.AutoScaling.LastScaleUpTime.Time)
-	return elapsed < time.Duration(policy.CooldownSeconds)*time.Second
 }
 
 // shouldYieldToHigherPriority returns true when at least one sibling

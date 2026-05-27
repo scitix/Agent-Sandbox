@@ -722,21 +722,6 @@ func envStatusToGen(status *agentsv1alpha1.SandboxEnvStatus) *gen.SandboxEnvStat
 			if g.TotalDesired > 0 {
 				eg.TotalDesired = ptr.To(g.TotalDesired)
 			}
-			if g.TotalPending > 0 {
-				eg.TotalPending = ptr.To(g.TotalPending)
-			}
-			if g.LastScaleUpTime != nil {
-				t := g.LastScaleUpTime.UTC()
-				eg.LastScaleUpTime = &t
-			}
-			if g.LastScaleDownTime != nil {
-				t := g.LastScaleDownTime.UTC()
-				eg.LastScaleDownTime = &t
-			}
-			if g.IdleZeroSince != nil {
-				t := g.IdleZeroSince.UTC()
-				eg.IdleZeroSince = &t
-			}
 			groups = append(groups, eg)
 		}
 		out.ScalingGroups = &groups
@@ -793,12 +778,6 @@ func envObservedMemberToGen(m agentsv1alpha1.EnvObservedMember) gen.EnvObservedM
 	if m.SaturatedUntil != nil {
 		t := m.SaturatedUntil.UTC()
 		out.SaturatedUntil = &t
-	}
-	if m.LastScaleUpAttemptResult != "" {
-		out.LastScaleUpAttemptResult = ptr.To(m.LastScaleUpAttemptResult)
-	}
-	if m.ScaleUpErrorMessage != "" {
-		out.ScaleUpErrorMessage = ptr.To(m.ScaleUpErrorMessage)
 	}
 	return out
 }

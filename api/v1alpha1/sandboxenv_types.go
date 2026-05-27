@@ -514,30 +514,21 @@ type EnvObservedMember struct {
 	PendingRequests int32 `json:"pendingRequests,omitempty"`
 
 	// SaturatedUntil marks this member as ineligible for routing/scaling
-	// until the given time. Set by the Env autoscaler after a probe returned
-	// InsufficientResources / InvalidSpec; cleared on next successful probe
-	// or naturally when the time elapses. The router (EnvScheduler) holds
-	// saturated members back from the primary candidate list but still
-	// tries them as fallback when no fresh member can accept the request.
+	// until the given time. Read-only mirror of
+	// SandboxPool.Status.AutoScaling.SaturatedUntil, refreshed by the Env
+	// reconciler's status aggregation; the source of truth is the per-Pool
+	// autoscaler. The router (EnvScheduler) holds saturated members back
+	// from the primary candidate list but still tries them as fallback
+	// when no fresh member can accept the request.
 	// +optional
 	SaturatedUntil *metav1.Time `json:"saturatedUntil,omitempty"`
-
-	// LastScaleUpAttemptResult records the outcome of the most recent
-	// probe-and-patch attempt against this member. Values:
-	// "Success" | "InsufficientResources" | "InternalError" | "InvalidSpec".
-	// Useful for `kubectl describe sbe` triage.
-	// +optional
-	LastScaleUpAttemptResult string `json:"lastScaleUpAttemptResult,omitempty"`
-
-	// ScaleUpErrorMessage carries the most recent non-success probe error
-	// message verbatim for diagnostics. Empty when LastScaleUpAttemptResult
-	// is "Success".
-	// +optional
-	ScaleUpErrorMessage string `json:"scaleUpErrorMessage,omitempty"`
 }
 
 // EnvScalingGroupStatus aggregates a scalingGroup's runtime state across all
-// members and carries the autoscaler's per-group wall-clock bookkeeping.
+// members. Per-Pool autoscaling bookkeeping (LastScaleUpTime,
+// LastScaleDownTime, IdleZeroSince, etc.) lives on
+// SandboxPool.Status.AutoScaling; this struct only carries cross-member
+// aggregates.
 type EnvScalingGroupStatus struct {
 	// Name matches the autoscaling group's Name and is the list map key.
 	// +required
@@ -550,30 +541,6 @@ type EnvScalingGroupStatus struct {
 	TotalRunning int32 `json:"totalRunning,omitempty"`
 	// +optional
 	TotalDesired int32 `json:"totalDesired,omitempty"`
-	// TotalPending aggregates ObservedMember.PendingRequests across all
-	// members of this group. Drives the reactive scale-up signal — when
-	// > 0 the Env autoscaler considers the group under demand even before
-	// the legacy annotation-based wake-up fires.
-	// +optional
-	TotalPending int32 `json:"totalPending,omitempty"`
-
-	// LastScaleUpTime records the latest scale-up event for this group.
-	// Each group has its own cooldown window so unrelated groups don't
-	// block one another.
-	// +optional
-	LastScaleUpTime *metav1.Time `json:"lastScaleUpTime,omitempty"`
-
-	// LastScaleDownTime records the latest scale-down event for this
-	// group. Drives the per-group scale-down stabilization window.
-	// +optional
-	LastScaleDownTime *metav1.Time `json:"lastScaleDownTime,omitempty"`
-
-	// IdleZeroSince records when this group's aggregate idle count first
-	// dropped to zero in the current continuous-zero window. Drives the
-	// proactive (idleThresholdSeconds) scale-up trigger. Cleared when
-	// group idle > 0.
-	// +optional
-	IdleZeroSince *metav1.Time `json:"idleZeroSince,omitempty"`
 }
 
 // Condition type constants for SandboxEnv.

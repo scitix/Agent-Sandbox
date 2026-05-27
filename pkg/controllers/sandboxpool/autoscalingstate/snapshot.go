@@ -94,6 +94,13 @@ type Snapshot struct {
 	// scaleDownPolicy.idleTimeoutSeconds.
 	IdlePodAges []time.Duration
 
+	// Prober runs the cluster-admission probe (PreUpdatePool plugin
+	// chain) the autoscaler consults before committing a scale-up.
+	// nil disables probing and behaves as "every target is admissible"
+	// — convenient in unit tests, equivalent to the pre-S6 behaviour
+	// where the autoscaler trusted its own computed target.
+	Prober Prober
+
 	// Now is the wall-clock time captured at Load entry. Used by every
 	// duration comparison downstream so a single Snapshot evaluates
 	// consistently end-to-end even if the decision logic runs slowly.
@@ -173,6 +180,12 @@ type Loader struct {
 	// on the Pool object.
 	LastCreate LastCreateTracker
 
+	// Prober is the admission probe runner injected into every
+	// Snapshot. nil is allowed; the autoscaler then treats every
+	// scale-up target as admissible (matching the unit-test
+	// fast path).
+	Prober Prober
+
 	// Clock provides Now(). When nil, SystemClock() is used.
 	Clock Clock
 }
@@ -200,7 +213,7 @@ func (l *Loader) Load(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (*S
 		clk = SystemClock()
 	}
 
-	snap := &Snapshot{Pool: pool, Now: clk.Now()}
+	snap := &Snapshot{Pool: pool, Prober: l.Prober, Now: clk.Now()}
 
 	// 1) In-process signals first — these are pure memory reads so we
 	//    never short-circuit them on later errors.

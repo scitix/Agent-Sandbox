@@ -51,13 +51,9 @@ class EnvObservedMember:
             current_replicas (int | Unset):
             pending_requests (int | Unset): Mirror of SandboxPool.status.pendingRequests for this member — throttled at the
                 source so visible value lags actual queue depth by up to ~3s.
-            saturated_until (datetime.datetime | Unset): Set by the autoscaler when a PreUpdatePool probe returned
-                InsufficientResources or InvalidSpec. Until this time, the autoscaler skips probing this member and the router
-                deprioritises it.
-            last_scale_up_attempt_result (str | Unset): Outcome of the most recent probe-and-patch attempt: Success |
-                InsufficientResources | InternalError | InvalidSpec.
-            scale_up_error_message (str | Unset): Short error description from the most recent non-Success probe. Empty when
-                LastScaleUpAttemptResult is Success.
+            saturated_until (datetime.datetime | Unset): Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil.
+                Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot
+                fit additional replicas.
      """
 
     name: str
@@ -70,8 +66,6 @@ class EnvObservedMember:
     current_replicas: int | Unset = UNSET
     pending_requests: int | Unset = UNSET
     saturated_until: datetime.datetime | Unset = UNSET
-    last_scale_up_attempt_result: str | Unset = UNSET
-    scale_up_error_message: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -104,10 +98,6 @@ class EnvObservedMember:
         if not isinstance(self.saturated_until, Unset):
             saturated_until = self.saturated_until.isoformat()
 
-        last_scale_up_attempt_result = self.last_scale_up_attempt_result
-
-        scale_up_error_message = self.scale_up_error_message
-
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -132,10 +122,6 @@ class EnvObservedMember:
             field_dict["pendingRequests"] = pending_requests
         if saturated_until is not UNSET:
             field_dict["saturatedUntil"] = saturated_until
-        if last_scale_up_attempt_result is not UNSET:
-            field_dict["lastScaleUpAttemptResult"] = last_scale_up_attempt_result
-        if scale_up_error_message is not UNSET:
-            field_dict["scaleUpErrorMessage"] = scale_up_error_message
 
         return field_dict
 
@@ -180,10 +166,6 @@ class EnvObservedMember:
 
 
 
-        last_scale_up_attempt_result = d.pop("lastScaleUpAttemptResult", UNSET)
-
-        scale_up_error_message = d.pop("scaleUpErrorMessage", UNSET)
-
         env_observed_member = cls(
             name=name,
             instance_type=instance_type,
@@ -195,8 +177,6 @@ class EnvObservedMember:
             current_replicas=current_replicas,
             pending_requests=pending_requests,
             saturated_until=saturated_until,
-            last_scale_up_attempt_result=last_scale_up_attempt_result,
-            scale_up_error_message=scale_up_error_message,
         )
 
 

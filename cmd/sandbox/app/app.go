@@ -404,6 +404,7 @@ func Run(opts Options) {
 		Client:     mgr.GetClient(),
 		Schedulers: schedulerLookup,
 		LastCreate: lastCreateTracker,
+		Prober:     &sandboxpool.PluginProber{PluginManager: pluginManager},
 		Clock:      autoscalingstate.SystemClock(),
 	}
 	if err := (&sandboxpool.SandboxPoolReconciler{

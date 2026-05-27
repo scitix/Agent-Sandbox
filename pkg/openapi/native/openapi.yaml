@@ -1179,13 +1179,7 @@ components:
         saturatedUntil:
           type: string
           format: date-time
-          description: "Set by the autoscaler when a PreUpdatePool probe returned InsufficientResources or InvalidSpec. Until this time, the autoscaler skips probing this member and the router deprioritises it."
-        lastScaleUpAttemptResult:
-          type: string
-          description: "Outcome of the most recent probe-and-patch attempt: Success | InsufficientResources | InternalError | InvalidSpec."
-        scaleUpErrorMessage:
-          type: string
-          description: "Short error description from the most recent non-Success probe. Empty when LastScaleUpAttemptResult is Success."
+          description: "Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil. Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot fit additional replicas."
 
     EnvClusterStatus:
       type: object
@@ -1219,22 +1213,6 @@ components:
         totalDesired:
           type: integer
           format: int32
-        totalPending:
-          type: integer
-          format: int32
-          description: "Aggregate ObservedMember.pendingRequests across all members of this group."
-        lastScaleUpTime:
-          type: string
-          format: date-time
-          description: "Most recent scale-up event for this group. Drives the per-group cooldown window."
-        lastScaleDownTime:
-          type: string
-          format: date-time
-          description: "Most recent scale-down event for this group. Drives the per-group stabilization window."
-        idleZeroSince:
-          type: string
-          format: date-time
-          description: "When this group's aggregate idle count first dropped to zero in the current continuous-zero window; clears when group idle > 0. Drives the proactive scale-up trigger."
 
     EnvCondition:
       type: object

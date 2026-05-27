@@ -222,9 +222,8 @@ spec:
                                 \ scale-up. Reactive\nscale-ups (queue length > 0\
                                 \ with no idle Pod) ignore this window\n\u2014 a real\
                                 \ waiter always wins. Set to 0 to disable the quiet-window\n\
-                                gate (proactive scale-up fires the moment IdleThresholdSeconds\n\
-                                elapses, restoring the pre-redesign behaviour).\n\
-                                Defaults to 300 (5 minutes)."
+                                gate so proactive scale-up fires the moment IdleThresholdSeconds\n\
+                                elapses.\nDefaults to 300 (5 minutes)."
                               format: int32
                               minimum: 0
                               type: integer
@@ -1191,17 +1190,6 @@ spec:
                             description: InstanceType / Multiplier are echoed from
                               spec for convenience.
                             type: string
-                          lastScaleUpAttemptResult:
-                            description: 'LastScaleUpAttemptResult records the outcome
-                              of the most recent
-
-                              probe-and-patch attempt against this member. Values:
-
-                              "Success" | "InsufficientResources" | "InternalError"
-                              | "InvalidSpec".
-
-                              Useful for `kubectl describe sbe` triage.'
-                            type: string
                           multiplier:
                             format: int32
                             type: integer
@@ -1226,29 +1214,22 @@ spec:
                             description: 'SaturatedUntil marks this member as ineligible
                               for routing/scaling
 
-                              until the given time. Set by the Env autoscaler after
-                              a probe returned
+                              until the given time. Read-only mirror of
 
-                              InsufficientResources / InvalidSpec; cleared on next
-                              successful probe
+                              SandboxPool.Status.AutoScaling.SaturatedUntil, refreshed
+                              by the Env
 
-                              or naturally when the time elapses. The router (EnvScheduler)
-                              holds
+                              reconciler''s status aggregation; the source of truth
+                              is the per-Pool
 
-                              saturated members back from the primary candidate list
-                              but still
+                              autoscaler. The router (EnvScheduler) holds saturated
+                              members back
 
-                              tries them as fallback when no fresh member can accept
-                              the request.'
+                              from the primary candidate list but still tries them
+                              as fallback
+
+                              when no fresh member can accept the request.'
                             format: date-time
-                            type: string
-                          scaleUpErrorMessage:
-                            description: 'ScaleUpErrorMessage carries the most recent
-                              non-success probe error
-
-                              message verbatim for diagnostics. Empty when LastScaleUpAttemptResult
-
-                              is "Success".'
                             type: string
                           state:
                             description: State summarises whether the member can currently
@@ -1373,38 +1354,14 @@ spec:
                   description: 'EnvScalingGroupStatus aggregates a scalingGroup''s
                     runtime state across all
 
-                    members and carries the autoscaler''s per-group wall-clock bookkeeping.'
+                    members. Per-Pool autoscaling bookkeeping (LastScaleUpTime,
+
+                    LastScaleDownTime, IdleZeroSince, etc.) lives on
+
+                    SandboxPool.Status.AutoScaling; this struct only carries cross-member
+
+                    aggregates.'
                   properties:
-                    idleZeroSince:
-                      description: 'IdleZeroSince records when this group''s aggregate
-                        idle count first
-
-                        dropped to zero in the current continuous-zero window. Drives
-                        the
-
-                        proactive (idleThresholdSeconds) scale-up trigger. Cleared
-                        when
-
-                        group idle > 0.'
-                      format: date-time
-                      type: string
-                    lastScaleDownTime:
-                      description: 'LastScaleDownTime records the latest scale-down
-                        event for this
-
-                        group. Drives the per-group scale-down stabilization window.'
-                      format: date-time
-                      type: string
-                    lastScaleUpTime:
-                      description: 'LastScaleUpTime records the latest scale-up event
-                        for this group.
-
-                        Each group has its own cooldown window so unrelated groups
-                        don''t
-
-                        block one another.'
-                      format: date-time
-                      type: string
                     name:
                       description: Name matches the autoscaling group's Name and is
                         the list map key.
@@ -1415,14 +1372,6 @@ spec:
                     totalIdle:
                       description: TotalIdle / TotalRunning / TotalDesired aggregate
                         across members.
-                      format: int32
-                      type: integer
-                    totalPending:
-                      description: "TotalPending aggregates ObservedMember.PendingRequests\
-                        \ across all\nmembers of this group. Drives the reactive scale-up\
-                        \ signal \u2014 when\n> 0 the Env autoscaler considers the\
-                        \ group under demand even before\nthe legacy annotation-based\
-                        \ wake-up fires."
                       format: int32
                       type: integer
                     totalRunning:

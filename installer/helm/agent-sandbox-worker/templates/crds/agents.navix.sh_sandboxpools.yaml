@@ -455,21 +455,46 @@ spec:
                     format: date-time
                     type: string
                   lastScaleUpAttemptResult:
-                    description: "LastScaleUpAttemptResult records the outcome of\
-                      \ the most recent\nscale-up evaluation. One of:\n  \"Success\"\
-                      \ | \"InsufficientResources\" | \"InvalidSpec\" | \"InternalError\"\
-                      \nEmpty before the first attempt. Useful for `kubectl describe\
-                      \ sbp`."
+                    description: 'LastScaleUpAttemptResult records the outcome of
+                      the most recent
+
+                      scale-up admission probe. Empty before the first attempt; one
+                      of
+
+                      the PoolScaleUpAttemptResult enum values otherwise.'
+                    enum:
+                    - Enough
+                    - JustRight
+                    - Insufficient
+                    - Failed
+                    type: string
+                  lastScaleUpAttemptTime:
+                    description: 'LastScaleUpAttemptTime records when the autoscaler
+                      last invoked
+
+                      the admission probe for a scale-up, regardless of whether the
+
+                      probe accepted the target. Together with LastScaleUpAttemptResult
+
+                      and the group''s SaturationCooldownSeconds it drives the saturation
+
+                      cooldown: when the last attempt was Insufficient / JustRight
+                      /
+
+                      Failed, the autoscaler and router treat the Pool as saturated
+
+                      until SaturationCooldownSeconds has elapsed past this timestamp.'
+                    format: date-time
                     type: string
                   lastScaleUpTime:
                     description: 'LastScaleUpTime is the wall-clock time of the most
-                      recent successful
+                      recent
 
-                      scale-up (spec.replicas increased) on this Pool. Drives the
+                      scale-up that actually increased spec.replicas (the probe
 
-                      scaleUpPolicy.cooldownSeconds gate so two scale-ups never fire
+                      accepted at least one additional replica). Drives the success
 
-                      closer together than the configured cooldown.'
+                      cooldown gate (scaleUpPolicy.cooldownSeconds).'
                     format: date-time
                     type: string
                   observedGeneration:
@@ -482,29 +507,14 @@ spec:
                       status is current with respect to the spec they care about.'
                     format: int64
                     type: integer
-                  saturatedUntil:
-                    description: 'SaturatedUntil marks this Pool as ineligible for
-                      scale-up attempts
-
-                      until the given time. Set when a plugin probe returned
-
-                      InsufficientResources or InvalidSpec and the autoscaler should
-                      not
-
-                      retry until natural cooldown expiry. EnvScheduler routing also
-                      reads
-
-                      this field to drop the Pool from the primary candidate set.'
-                    format: date-time
-                    type: string
                   scaleUpErrorMessage:
                     description: 'ScaleUpErrorMessage is a short single-line description
                       of the most
 
-                      recent non-Success scale-up result, suitable for surfacing to
+                      recent non-Enough scale-up result, suitable for surfacing to
                       the
 
-                      dashboard. Empty when LastScaleUpAttemptResult is "Success".'
+                      dashboard. Empty when LastScaleUpAttemptResult is Enough.'
                     type: string
                 type: object
               conditions:

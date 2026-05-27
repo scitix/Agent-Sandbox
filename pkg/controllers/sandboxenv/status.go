@@ -16,6 +16,7 @@ package sandboxenv
 
 import (
 	"context"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -64,7 +65,7 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 			state = agentsv1alpha1.ObservedMemberStateInconsistent
 		}
 
-		observed = append(observed, agentsv1alpha1.EnvObservedMember{
+		om := agentsv1alpha1.EnvObservedMember{
 			Name:               member.Name,
 			InstanceType:       member.Config.InstanceType,
 			Multiplier:         member.Config.Multiplier,
@@ -74,7 +75,17 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 			RunningCount:       pool.Status.RunningReplicas,
 			DesiredReplicas:    pool.Spec.Replicas,
 			CurrentReplicas:    pool.Spec.Replicas,
-		})
+			PendingRequests:    pool.Status.PendingRequests,
+		}
+		// SaturatedUntil is derived for the router's convenience. The
+		// per-Pool autoscaler records LastScaleUpAttemptTime +
+		// LastScaleUpAttemptResult on Pool.Status.AutoScaling; here
+		// we project those into a saturation end time using the
+		// group's SaturationCooldownSeconds. This lets EnvScheduler
+		// keep its existing "compare an end timestamp to now" filter
+		// without reaching into Pool status semantics.
+		om.SaturatedUntil = deriveSaturatedUntil(env, pool, &member)
+		observed = append(observed, om)
 		if member.Config.ScalingGroup != "" {
 			g, ok := byGroup[member.Config.ScalingGroup]
 			if !ok {
@@ -94,30 +105,12 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		local.LastSnapshotTime = &now
 	})
 
-	// Group rollup by member.ScalingGroup. We rebuild the slice to drop
-	// stale group entries (members may have been removed from spec) but
-	// PRESERVE the autoscaler's per-group time bookkeeping
-	// (LastScaleUpTime / LastScaleDownTime / IdleZeroSince) when the group
-	// still exists — those fields are owned by syncAutoscaling, not by
-	// this rollup.
-	preservedTimes := map[string]agentsv1alpha1.EnvScalingGroupStatus{}
-	for _, g := range env.Status.ScalingGroups {
-		preservedTimes[g.Name] = g
-	}
+	// Group rollup by member.ScalingGroup. Per-Pool autoscaling
+	// bookkeeping lives on SandboxPool.Status.AutoScaling, so the group
+	// status here only carries cross-member aggregates.
 	env.Status.ScalingGroups = env.Status.ScalingGroups[:0]
 	for name, totals := range byGroup {
 		setScalingGroupStatus(env, name, totals.idle, totals.running, totals.desired)
-		if prev, ok := preservedTimes[name]; ok {
-			for i := range env.Status.ScalingGroups {
-				if env.Status.ScalingGroups[i].Name != name {
-					continue
-				}
-				env.Status.ScalingGroups[i].LastScaleUpTime = prev.LastScaleUpTime
-				env.Status.ScalingGroups[i].LastScaleDownTime = prev.LastScaleDownTime
-				env.Status.ScalingGroups[i].IdleZeroSince = prev.IdleZeroSince
-				break
-			}
-		}
 	}
 
 	env.Status.LocalMemberCount = int32(len(observed))
@@ -159,6 +152,72 @@ func setScalingGroupStatus(env *agentsv1alpha1.SandboxEnv, name string, totalIdl
 		TotalRunning: totalRunning,
 		TotalDesired: totalDesired,
 	})
+}
+
+// deriveSaturatedUntil computes the router-friendly saturation end
+// timestamp from the per-Pool autoscaler's last attempt state plus the
+// owning scaling group's SaturationCooldownSeconds. Returns nil when:
+//   - the autoscaler has not yet recorded an attempt;
+//   - the last attempt was Enough (no saturation);
+//   - the Pool's group is unknown or its policy disables saturation
+//     cooldown (SaturationCooldownSeconds == 0);
+//   - the computed end time is already in the past (cooldown elapsed).
+//
+// The returned pointer is freshly allocated so the caller can store it
+// on EnvObservedMember without aliasing.
+func deriveSaturatedUntil(env *agentsv1alpha1.SandboxEnv, pool *agentsv1alpha1.SandboxPool, member *agentsv1alpha1.EnvClusterMember) *metav1.Time {
+	if pool.Status.AutoScaling == nil ||
+		pool.Status.AutoScaling.LastScaleUpAttemptTime == nil {
+		return nil
+	}
+	if !isSaturatingResult(pool.Status.AutoScaling.LastScaleUpAttemptResult) {
+		return nil
+	}
+	cooldown := saturationCooldownForMember(env, member)
+	if cooldown <= 0 {
+		return nil
+	}
+	until := pool.Status.AutoScaling.LastScaleUpAttemptTime.Add(cooldown)
+	if !until.After(time.Now()) {
+		return nil
+	}
+	t := metav1.NewTime(until)
+	return &t
+}
+
+// isSaturatingResult mirrors the autoscaler's check so the Env-derived
+// saturation hint stays in lockstep with the Pool decision logic.
+// Kept tiny + standalone to avoid an import cycle between sandboxenv
+// and the autoscalingstate decision package.
+func isSaturatingResult(r agentsv1alpha1.PoolScaleUpAttemptResult) bool {
+	switch r {
+	case agentsv1alpha1.PoolScaleUpAttemptInsufficient,
+		agentsv1alpha1.PoolScaleUpAttemptJustRight,
+		agentsv1alpha1.PoolScaleUpAttemptFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// saturationCooldownForMember returns the configured saturation
+// cooldown for the member's scaling group, or 0 when the group is
+// disabled, unknown, or autoscaling isn't configured on the Env.
+func saturationCooldownForMember(env *agentsv1alpha1.SandboxEnv, member *agentsv1alpha1.EnvClusterMember) time.Duration {
+	if env.Spec.Autoscaling == nil || member.Config.ScalingGroup == "" {
+		return 0
+	}
+	for i := range env.Spec.Autoscaling.Groups {
+		g := &env.Spec.Autoscaling.Groups[i]
+		if g.Name != member.Config.ScalingGroup {
+			continue
+		}
+		if g.ScaleUpPolicy.SaturationCooldownSeconds <= 0 {
+			return 0
+		}
+		return time.Duration(g.ScaleUpPolicy.SaturationCooldownSeconds) * time.Second
+	}
+	return 0
 }
 
 // effectiveResources resolves the member's effective Pod resources. Phase 1

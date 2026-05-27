@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
@@ -64,8 +65,17 @@ type Mutator struct {
 
 	statusMutators []StatusMutateFunc
 	targetReplicas *int32
+	scaleUpAttempt *scaleUpAttempt
 	podAnnOps      []podAnnotationOp
 	events         []eventOp
+}
+
+// scaleUpAttempt records a scale-up intent that will be resolved at
+// Commit time by running the Snapshot.Prober. Stored as a single
+// op (last write wins) — Decide invokes ScaleUpAttempt at most once
+// per cycle.
+type scaleUpAttempt struct {
+	from, target int32
 }
 
 // StatusMutateFunc mutates the autoscaling sub-status in place. The
@@ -115,6 +125,32 @@ func (m *Mutator) TargetReplicas() (int32, bool) {
 		return 0, false
 	}
 	return *m.targetReplicas, true
+}
+
+// ScaleUpAttempt registers a scale-up intent that Commit will resolve
+// by calling the Snapshot's Prober. Use this from Decide instead of
+// SetTargetReplicas for autoscaler-initiated scale-ups so the probe
+// is consulted and saturation state is recorded. Calling
+// ScaleUpAttempt with target <= from is a no-op; later calls overwrite
+// earlier ones.
+//
+// The resulting writes (status + spec + event) are NOT computed until
+// Commit, because the probe is I/O. ScaleUpAttempt only buffers the
+// intent.
+func (m *Mutator) ScaleUpAttempt(from, target int32) {
+	if target <= from {
+		return
+	}
+	m.scaleUpAttempt = &scaleUpAttempt{from: from, target: target}
+}
+
+// PendingScaleUpAttempt reports the buffered intent, useful for test
+// assertions on the decision logic before Commit runs the probe.
+func (m *Mutator) PendingScaleUpAttempt() (from, target int32, present bool) {
+	if m.scaleUpAttempt == nil {
+		return 0, 0, false
+	}
+	return m.scaleUpAttempt.from, m.scaleUpAttempt.target, true
 }
 
 // MarkPodScaleDownProtected stamps the scale-down-protected annotation
@@ -167,7 +203,10 @@ func (m *Mutator) EmitEvent(eventType, action, reason, format string, args ...an
 // HasWrites reports whether Commit would issue any K8s write. Useful for
 // the reconciler's "nothing changed" fast-path logging.
 func (m *Mutator) HasWrites() bool {
-	return len(m.statusMutators) > 0 || m.targetReplicas != nil || len(m.podAnnOps) > 0
+	return len(m.statusMutators) > 0 ||
+		m.targetReplicas != nil ||
+		m.scaleUpAttempt != nil ||
+		len(m.podAnnOps) > 0
 }
 
 // Commit applies the accumulated writes in fixed order:
@@ -191,6 +230,13 @@ func (m *Mutator) Commit(ctx context.Context, c client.Client, recorder events.E
 		return fmt.Errorf("autoscalingstate: client.Client is required")
 	}
 	poolKey := client.ObjectKey{Namespace: m.snap.Pool.Namespace, Name: m.snap.Pool.Name}
+
+	// 0) Resolve scale-up attempts first — they read from the cluster
+	//    (probe) and write into the same status/spec/event buffers the
+	//    later phases consume.
+	if m.scaleUpAttempt != nil {
+		m.resolveScaleUpAttempt(ctx)
+	}
 
 	// 1) Env spec patch — Member.Spec.Replicas on the owning Env. The
 	//    existing Env reconciler then propagates the change onto the
@@ -286,6 +332,87 @@ type eventOp struct {
 	action    string
 	reason    string
 	message   string
+}
+
+// resolveScaleUpAttempt runs the cluster-admission probe queued by
+// ScaleUpAttempt and translates the outcome into spec/status writes
+// plus a user-visible event. It must run BEFORE the spec/status patches
+// in Commit because:
+//   - the probe is the source of truth for the final Accepted target,
+//     which feeds m.targetReplicas;
+//   - the probe outcome drives PoolAutoScalingStatus.LastScaleUpAttempt*,
+//     which the success/saturation cooldowns read on the next reconcile.
+//
+// nil Snapshot.Prober short-circuits with PoolScaleUpAttemptEnough,
+// matching the unit-test fast path where plugin admission isn't wired.
+func (m *Mutator) resolveScaleUpAttempt(ctx context.Context) {
+	a := m.scaleUpAttempt
+	now := metav1.NewTime(m.snap.Now)
+
+	accepted, result, errMsg := m.probeAccepted(ctx, a.from, a.target)
+
+	// 1) Status — always update the attempt fingerprint; only stamp
+	//    LastScaleUpTime when the probe actually let us grow.
+	m.statusMutators = append(m.statusMutators, func(s *agentsv1alpha1.PoolAutoScalingStatus) {
+		s.LastScaleUpAttemptTime = &now
+		s.LastScaleUpAttemptResult = result
+		if accepted > a.from {
+			s.LastScaleUpTime = &now
+		}
+		if result == agentsv1alpha1.PoolScaleUpAttemptEnough {
+			s.ScaleUpErrorMessage = ""
+		} else {
+			s.ScaleUpErrorMessage = errMsg
+		}
+	})
+
+	// 2) Spec — only when the probe accepted at least one more replica.
+	if accepted > a.from {
+		v := accepted
+		m.targetReplicas = &v
+	}
+
+	// 3) Event — Normal when we grew (full or partial), Warning when
+	//    saturation/failure kept us at current.
+	pool := m.snap.Pool
+	switch {
+	case accepted > a.from && result == agentsv1alpha1.PoolScaleUpAttemptEnough:
+		m.events = append(m.events, eventOp{
+			eventType: corev1.EventTypeNormal,
+			action:    "ScaleUp",
+			reason:    "AutoscalerScaleUp",
+			message: fmt.Sprintf("increased %s/%s replicas from %d to %d",
+				pool.Namespace, pool.Name, a.from, accepted),
+		})
+	case accepted > a.from:
+		// Partial admission — kept in this branch separately so future
+		// finer-grained reporting (PoolScaleUpAttemptJustRight) can
+		// override the message without re-introducing dead branches.
+		m.events = append(m.events, eventOp{
+			eventType: corev1.EventTypeNormal,
+			action:    "ScaleUp",
+			reason:    "AutoscalerScaleUpPartial",
+			message: fmt.Sprintf("partially increased %s/%s replicas from %d to %d (requested %d, plugin accepted %d): %s",
+				pool.Namespace, pool.Name, a.from, accepted, a.target, accepted, errMsg),
+		})
+	default:
+		m.events = append(m.events, eventOp{
+			eventType: corev1.EventTypeWarning,
+			action:    "ScaleUpAttempt",
+			reason:    "AutoscalerScaleUpRejected",
+			message: fmt.Sprintf("scale-up of %s/%s to %d rejected (%s): %s",
+				pool.Namespace, pool.Name, a.target, result, errMsg),
+		})
+	}
+}
+
+// probeAccepted dispatches to the Snapshot's Prober if wired; otherwise
+// trivially accepts the full target.
+func (m *Mutator) probeAccepted(ctx context.Context, from, target int32) (int32, agentsv1alpha1.PoolScaleUpAttemptResult, string) {
+	if m.snap.Prober == nil {
+		return target, agentsv1alpha1.PoolScaleUpAttemptEnough, ""
+	}
+	return m.snap.Prober.Probe(ctx, m.snap.Pool, from, target)
 }
 
 // patchEnvMemberReplicasWithRetry updates the named member's Spec.Replicas

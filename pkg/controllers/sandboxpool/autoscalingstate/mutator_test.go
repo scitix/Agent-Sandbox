@@ -303,6 +303,179 @@ func TestCommit_PodAnnotation_PodGone_NotFatal(t *testing.T) {
 	}
 }
 
+// ---------- ScaleUpAttempt + probe resolution ----------
+
+// fakeProber returns canned (accepted, result, msg) tuples so probe
+// outcomes can be unit-tested without standing up the plugin chain.
+type fakeProber struct {
+	accepted int32
+	result   agentsv1alpha1.PoolScaleUpAttemptResult
+	errMsg   string
+}
+
+func (f *fakeProber) Probe(_ context.Context, _ *agentsv1alpha1.SandboxPool, _, _ int32) (int32, agentsv1alpha1.PoolScaleUpAttemptResult, string) {
+	return f.accepted, f.result, f.errMsg
+}
+
+func TestMutator_ResolveScaleUpAttempt_Enough(t *testing.T) {
+	scheme := newTestScheme(t)
+	pool := poolFixture{name: "p", replicas: 2}.build()
+	env := envFixture{members: []agentsv1alpha1.EnvClusterMember{{
+		Name: pool.Name,
+		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 2},
+	}}}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pool, env).
+		WithStatusSubresource(&agentsv1alpha1.SandboxPool{}).
+		Build()
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC).Local()
+
+	snap := &Snapshot{
+		Pool:   pool,
+		Env:    env,
+		Prober: &fakeProber{accepted: 5, result: agentsv1alpha1.PoolScaleUpAttemptEnough},
+		Now:    now,
+	}
+	m := NewMutator(snap)
+	m.ScaleUpAttempt(2, 5)
+
+	if err := m.Commit(context.Background(), c, nil); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	gotEnv := &agentsv1alpha1.SandboxEnv{}
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: env.Namespace, Name: env.Name}, gotEnv)
+	if v := gotEnv.Spec.Clusters[0].Members[0].Spec.Replicas; v != 5 {
+		t.Errorf("Env Member.Spec.Replicas = %d, want 5", v)
+	}
+	gotPool := &agentsv1alpha1.SandboxPool{}
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: pool.Namespace, Name: pool.Name}, gotPool)
+	as := gotPool.Status.AutoScaling
+	if as == nil || as.LastScaleUpTime == nil {
+		t.Fatalf("expected LastScaleUpTime set, got %+v", as)
+	}
+	if as.LastScaleUpAttemptResult != agentsv1alpha1.PoolScaleUpAttemptEnough {
+		t.Errorf("Result = %q, want Enough", as.LastScaleUpAttemptResult)
+	}
+	if as.ScaleUpErrorMessage != "" {
+		t.Errorf("ScaleUpErrorMessage = %q, want empty", as.ScaleUpErrorMessage)
+	}
+}
+
+func TestMutator_ResolveScaleUpAttempt_Insufficient_FullReject(t *testing.T) {
+	scheme := newTestScheme(t)
+	pool := poolFixture{name: "p", replicas: 2}.build()
+	env := envFixture{members: []agentsv1alpha1.EnvClusterMember{{
+		Name: pool.Name,
+		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 2},
+	}}}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pool, env).
+		WithStatusSubresource(&agentsv1alpha1.SandboxPool{}).
+		Build()
+
+	snap := &Snapshot{
+		Pool: pool,
+		Env:  env,
+		// Plugin says nothing extra accepted.
+		Prober: &fakeProber{accepted: 2, result: agentsv1alpha1.PoolScaleUpAttemptInsufficient, errMsg: "no headroom"},
+		Now:    time.Now(),
+	}
+	m := NewMutator(snap)
+	m.ScaleUpAttempt(2, 5)
+
+	if err := m.Commit(context.Background(), c, nil); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	gotEnv := &agentsv1alpha1.SandboxEnv{}
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: env.Namespace, Name: env.Name}, gotEnv)
+	if v := gotEnv.Spec.Clusters[0].Members[0].Spec.Replicas; v != 2 {
+		t.Errorf("Env Member.Spec.Replicas = %d, want unchanged 2", v)
+	}
+	gotPool := &agentsv1alpha1.SandboxPool{}
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: pool.Namespace, Name: pool.Name}, gotPool)
+	as := gotPool.Status.AutoScaling
+	if as == nil || as.LastScaleUpAttemptTime == nil {
+		t.Fatalf("expected LastScaleUpAttemptTime set, got %+v", as)
+	}
+	if as.LastScaleUpTime != nil {
+		t.Error("LastScaleUpTime should remain nil when nothing was accepted")
+	}
+	if as.LastScaleUpAttemptResult != agentsv1alpha1.PoolScaleUpAttemptInsufficient {
+		t.Errorf("Result = %q, want Insufficient", as.LastScaleUpAttemptResult)
+	}
+	if as.ScaleUpErrorMessage != "no headroom" {
+		t.Errorf("ScaleUpErrorMessage = %q, want %q", as.ScaleUpErrorMessage, "no headroom")
+	}
+}
+
+func TestMutator_ResolveScaleUpAttempt_PartialAccept(t *testing.T) {
+	scheme := newTestScheme(t)
+	pool := poolFixture{name: "p", replicas: 2}.build()
+	env := envFixture{members: []agentsv1alpha1.EnvClusterMember{{
+		Name: pool.Name,
+		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 2},
+	}}}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pool, env).
+		WithStatusSubresource(&agentsv1alpha1.SandboxPool{}).
+		Build()
+
+	snap := &Snapshot{
+		Pool: pool,
+		Env:  env,
+		// Plugin admits 4 out of requested 7 — partial accept reports
+		// Insufficient today (JustRight is the future refinement).
+		Prober: &fakeProber{accepted: 4, result: agentsv1alpha1.PoolScaleUpAttemptInsufficient, errMsg: "cap at 4"},
+		Now:    time.Now(),
+	}
+	m := NewMutator(snap)
+	m.ScaleUpAttempt(2, 7)
+
+	if err := m.Commit(context.Background(), c, nil); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	gotEnv := &agentsv1alpha1.SandboxEnv{}
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: env.Namespace, Name: env.Name}, gotEnv)
+	if v := gotEnv.Spec.Clusters[0].Members[0].Spec.Replicas; v != 4 {
+		t.Errorf("Env Member.Spec.Replicas = %d, want partial 4", v)
+	}
+	gotPool := &agentsv1alpha1.SandboxPool{}
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: pool.Namespace, Name: pool.Name}, gotPool)
+	as := gotPool.Status.AutoScaling
+	if as.LastScaleUpTime == nil {
+		t.Error("partial accept should stamp LastScaleUpTime (we did grow)")
+	}
+	if as.LastScaleUpAttemptResult != agentsv1alpha1.PoolScaleUpAttemptInsufficient {
+		t.Errorf("Result = %q, want Insufficient", as.LastScaleUpAttemptResult)
+	}
+}
+
+func TestMutator_ResolveScaleUpAttempt_NoProber_TrivialAccept(t *testing.T) {
+	scheme := newTestScheme(t)
+	pool := poolFixture{name: "p", replicas: 1}.build()
+	env := envFixture{members: []agentsv1alpha1.EnvClusterMember{{
+		Name: pool.Name,
+		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 1},
+	}}}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pool, env).
+		WithStatusSubresource(&agentsv1alpha1.SandboxPool{}).
+		Build()
+
+	snap := &Snapshot{Pool: pool, Env: env, Now: time.Now()} // no Prober wired
+	m := NewMutator(snap)
+	m.ScaleUpAttempt(1, 3)
+
+	if err := m.Commit(context.Background(), c, nil); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	gotEnv := &agentsv1alpha1.SandboxEnv{}
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: env.Namespace, Name: env.Name}, gotEnv)
+	if v := gotEnv.Spec.Clusters[0].Members[0].Spec.Replicas; v != 3 {
+		t.Errorf("nil-Prober path should trivially accept the target: got %d, want 3", v)
+	}
+}
+
 func TestCommit_EmitEvent(t *testing.T) {
 	scheme := newTestScheme(t)
 	pool := poolFixture{name: "p"}.build()

@@ -937,13 +937,6 @@ spec:
                             description: InstanceType / Multiplier are echoed from
                               spec for convenience.
                             type: string
-                          lastScaleUpAttemptResult:
-                            description: |-
-                              LastScaleUpAttemptResult records the outcome of the most recent
-                              probe-and-patch attempt against this member. Values:
-                              "Success" | "InsufficientResources" | "InternalError" | "InvalidSpec".
-                              Useful for `kubectl describe sbe` triage.
-                            type: string
                           multiplier:
                             format: int32
                             type: integer
@@ -964,18 +957,13 @@ spec:
                           saturatedUntil:
                             description: |-
                               SaturatedUntil marks this member as ineligible for routing/scaling
-                              until the given time. Set by the Env autoscaler after a probe returned
-                              InsufficientResources / InvalidSpec; cleared on next successful probe
-                              or naturally when the time elapses. The router (EnvScheduler) holds
-                              saturated members back from the primary candidate list but still
-                              tries them as fallback when no fresh member can accept the request.
+                              until the given time. Read-only mirror of
+                              SandboxPool.Status.AutoScaling.SaturatedUntil, refreshed by the Env
+                              reconciler's status aggregation; the source of truth is the per-Pool
+                              autoscaler. The router (EnvScheduler) holds saturated members back
+                              from the primary candidate list but still tries them as fallback
+                              when no fresh member can accept the request.
                             format: date-time
-                            type: string
-                          scaleUpErrorMessage:
-                            description: |-
-                              ScaleUpErrorMessage carries the most recent non-success probe error
-                              message verbatim for diagnostics. Empty when LastScaleUpAttemptResult
-                              is "Success".
                             type: string
                           state:
                             description: State summarises whether the member can currently
@@ -1082,29 +1070,11 @@ spec:
                 items:
                   description: |-
                     EnvScalingGroupStatus aggregates a scalingGroup's runtime state across all
-                    members and carries the autoscaler's per-group wall-clock bookkeeping.
+                    members. Per-Pool autoscaling bookkeeping (LastScaleUpTime,
+                    LastScaleDownTime, IdleZeroSince, etc.) lives on
+                    SandboxPool.Status.AutoScaling; this struct only carries cross-member
+                    aggregates.
                   properties:
-                    idleZeroSince:
-                      description: |-
-                        IdleZeroSince records when this group's aggregate idle count first
-                        dropped to zero in the current continuous-zero window. Drives the
-                        proactive (idleThresholdSeconds) scale-up trigger. Cleared when
-                        group idle > 0.
-                      format: date-time
-                      type: string
-                    lastScaleDownTime:
-                      description: |-
-                        LastScaleDownTime records the latest scale-down event for this
-                        group. Drives the per-group scale-down stabilization window.
-                      format: date-time
-                      type: string
-                    lastScaleUpTime:
-                      description: |-
-                        LastScaleUpTime records the latest scale-up event for this group.
-                        Each group has its own cooldown window so unrelated groups don't
-                        block one another.
-                      format: date-time
-                      type: string
                     name:
                       description: Name matches the autoscaling group's Name and is
                         the list map key.
@@ -1115,14 +1085,6 @@ spec:
                     totalIdle:
                       description: TotalIdle / TotalRunning / TotalDesired aggregate
                         across members.
-                      format: int32
-                      type: integer
-                    totalPending:
-                      description: |-
-                        TotalPending aggregates ObservedMember.PendingRequests across all
-                        members of this group. Drives the reactive scale-up signal — when
-                        > 0 the Env autoscaler considers the group under demand even before
-                        the legacy annotation-based wake-up fires.
                       format: int32
                       type: integer
                     totalRunning:

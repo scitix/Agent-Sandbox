@@ -14,16 +14,21 @@
 
 // Package sandboxenv implements the SandboxEnv Reconciler.
 //
-// Responsibilities (Phase 1):
+// Responsibilities:
 //
-//  1. Autoscaling — when Autoscaling.Enabled=true, the Reconciler runs
-//     scale-up/down decisions against the single member Pool and patches the
-//     Pool's spec.replicas accordingly. The Pool Reconciler skips its own
-//     legacy autoscaler whenever an Env OwnerReference is present.
-//  2. Status aggregation — the Reconciler mirrors idle/running counts from the
-//     member Pool into Env.status.clusters[local].observedMembers and
-//     publishes time-based fields used by the autoscaler (IdleZeroSince,
-//     LastScaleUpTime, LastScaleDownTime).
+//  1. Pool materialisation — render each Env.Spec.Clusters[].Members[]
+//     entry into a live SandboxPool and propagate drift (labels,
+//     annotations, default timeouts, replicas, embedded template).
+//     Pool.Spec.Replicas drift is the channel through which the
+//     per-Pool autoscaler pushes its scale decisions back onto the
+//     live Pool — the autoscaler writes Member.Spec.Replicas on the
+//     Env CR, and this reconciler stamps it onto the Pool.
+//  2. Status aggregation — mirror idle/running/pending counts and the
+//     per-Pool SaturatedUntil from member Pools into
+//     Env.Status.Clusters[local].ObservedMembers, plus per-group
+//     totals. Cross-member aggregation only; per-Pool autoscaling
+//     bookkeeping (LastScale*Time, IdleZeroSince, ...) lives on
+//     SandboxPool.Status.AutoScaling, not here.
 //
 // Adoption (Pool → same-named Env) is handled by an independent transitional
 // reconciler in poolmigration/ — see that package for migration semantics.
@@ -31,7 +36,7 @@
 // Multi-cluster prep:
 //   - Spec/status segments are organised by ClusterID; the Reconciler only
 //     mutates the segment matching its own LocalClusterID. See ownership.go.
-//   - Phase 2 will introduce a Hub-driven Sync that populates foreign segments;
+//   - A Hub-driven Sync (not implemented) will populate foreign segments;
 //     this Reconciler ignores them.
 package sandboxenv
 
@@ -83,15 +88,15 @@ type SandboxEnvReconciler struct {
 	// mutated. Required; the controller refuses to start when empty.
 	LocalClusterID string
 
-	// Recorder, when non-nil, emits Kubernetes Events on autoscaler decisions.
-	// Initialised in SetupWithManager when not pre-set.
+	// Recorder, when non-nil, emits Kubernetes Events on member-Pool
+	// materialisation / drift outcomes. Initialised in SetupWithManager
+	// when not pre-set.
 	Recorder events.EventRecorder
 
-	// PluginManager, when non-nil, gates scale-up via PreUpdatePool admission
-	// probes (scheduler reservation / quota plugins). The autoscaler binary-
-	// searches the probe range when a plugin reports InsufficientResources to
-	// converge on a scheduler-acceptable target. When nil (test mode), every
-	// candidate replicas value is admitted unconditionally.
+	// PluginManager, when non-nil, gates Pool materialisation via
+	// PreCreatePool / PreUpdatePool admission (scheduler reservation,
+	// quota, ...). When nil (test mode) every materialisation is
+	// admitted unconditionally.
 	PluginManager *plugins.PluginManager
 
 	// EnvRouterSync, when non-nil, is invoked at the end of every successful
@@ -144,10 +149,6 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Autoscaling decisions live on the per-Pool SandboxPool reconciler.
-	// The Pool autoscaler writes back to
-	// Env.Spec.Clusters[].Members[].Spec.Replicas; this reconciler's
-	// drift loop propagates that change onto the live Pool.
 	res := ctrl.Result{RequeueAfter: RequeueAfter}
 	if r.EnvRouterSync != nil {
 		// Belt-and-braces resync of the in-process router cache. Cheap (one

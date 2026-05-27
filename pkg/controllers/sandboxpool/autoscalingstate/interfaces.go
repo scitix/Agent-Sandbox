@@ -15,8 +15,10 @@
 package autoscalingstate
 
 import (
+	"context"
 	"time"
 
+	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/schedule"
 )
 
@@ -41,6 +43,30 @@ type LastCreateTracker interface {
 	// Get returns the most recent Create timestamp the tracker has seen
 	// for the given pool, and whether any timestamp was recorded.
 	Get(namespace, poolName string) (time.Time, bool)
+}
+
+// Prober runs a PreUpdatePool admission probe against the cluster to
+// discover how many additional replicas the plugin chain (scheduler
+// reservation, quota, ...) will actually accept. The autoscaler uses
+// it before committing a scale-up so it can patch a partial value and
+// record SaturatedUntil-style cooldown state when the cluster has no
+// headroom.
+//
+// Production wires Prober to plugins.ProbeAcceptedReplicas via the
+// SandboxPool reconciler's PluginManager. Tests inject a fake that
+// returns canned (Accepted, Result) tuples. nil Prober is treated as
+// "every probe trivially succeeds" — useful in unit tests that don't
+// care about plugin admission.
+type Prober interface {
+	// Probe asks the plugin chain whether scaling pool's replicas
+	// from `current` to `target` is admissible. Implementations must
+	// satisfy:
+	//   - current <= Accepted <= target
+	//   - Accepted == target  ⇔  Result == PoolScaleUpAttemptEnough
+	//   - errMsg is empty when Result == Enough; otherwise it carries
+	//     a short, single-line diagnostic suitable for surfacing on
+	//     PoolAutoScalingStatus.ScaleUpErrorMessage.
+	Probe(ctx context.Context, pool *agentsv1alpha1.SandboxPool, current, target int32) (accepted int32, result agentsv1alpha1.PoolScaleUpAttemptResult, errMsg string)
 }
 
 // Clock is the wall-clock abstraction used by the Snapshot and Mutator.

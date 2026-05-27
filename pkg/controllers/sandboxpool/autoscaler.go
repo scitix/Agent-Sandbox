@@ -22,7 +22,64 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/autoscalingstate"
+	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 )
+
+// PluginProber adapts the plugin framework's ProbeAcceptedReplicas
+// (binary-search admission probe) to the autoscalingstate.Prober
+// interface. nil PluginManager is allowed — the underlying helper
+// returns ProbeOK(target) when no plugins are registered, so the
+// autoscaler behaves as if every target is admissible.
+//
+// Held outside the autoscalingstate package so that package stays
+// free of the plugins import — keeps the pure-function decision logic
+// from pulling in the entire plugin framework.
+type PluginProber struct {
+	PluginManager *plugins.PluginManager
+}
+
+// Probe translates plugins.ProbeAcceptedReplicas's outcome into the
+// PoolScaleUpAttemptResult enum. The mapping is:
+//
+//	ProbeOK                            -> Enough
+//	ProbeInsufficientResources         -> Insufficient (partial admission is
+//	                                     still reported as Insufficient until
+//	                                     finer-grained reporting is wired)
+//	ProbeInvalidSpec / ProbeInternalError -> Failed
+func (p *PluginProber) Probe(ctx context.Context, pool *agentsv1alpha1.SandboxPool, current, target int32) (int32, agentsv1alpha1.PoolScaleUpAttemptResult, string) {
+	if p == nil {
+		return target, agentsv1alpha1.PoolScaleUpAttemptEnough, ""
+	}
+	res := plugins.ProbeAcceptedReplicas(ctx, p.PluginManager, pool, nil, current, target)
+	switch res.Kind {
+	case plugins.ProbeOK:
+		return res.Accepted, agentsv1alpha1.PoolScaleUpAttemptEnough, ""
+	case plugins.ProbeInsufficientResources:
+		// Accepted may be > current (partial) or == current (none).
+		// Both are reported as Insufficient for now; a follow-up can
+		// emit JustRight when Accepted > current to distinguish the
+		// partial-admission case for finer-grained UI.
+		return res.Accepted, agentsv1alpha1.PoolScaleUpAttemptInsufficient, truncProbeErr(res)
+	case plugins.ProbeInvalidSpec, plugins.ProbeInternalError:
+		return res.Accepted, agentsv1alpha1.PoolScaleUpAttemptFailed, truncProbeErr(res)
+	default:
+		return res.Accepted, agentsv1alpha1.PoolScaleUpAttemptFailed, "unknown probe result"
+	}
+}
+
+// truncProbeErr produces a short single-line description of the probe's
+// error suitable for surfacing on PoolAutoScalingStatus.ScaleUpErrorMessage.
+func truncProbeErr(res plugins.ProbeResult) string {
+	if res.Err == nil {
+		return ""
+	}
+	const max = 240
+	msg := res.Err.Message
+	if len(msg) > max {
+		msg = msg[:max] + "…"
+	}
+	return msg
+}
 
 // syncAutoscaling drives one cycle of the per-Pool autoscaler decision
 // pipeline: build a Snapshot via the configured Loader, run the pure

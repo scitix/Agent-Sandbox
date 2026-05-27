@@ -1384,13 +1384,9 @@ export interface components {
             pendingRequests?: number;
             /**
              * Format: date-time
-             * @description Set by the autoscaler when a PreUpdatePool probe returned InsufficientResources or InvalidSpec. Until this time, the autoscaler skips probing this member and the router deprioritises it.
+             * @description Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil. Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot fit additional replicas.
              */
             saturatedUntil?: string;
-            /** @description Outcome of the most recent probe-and-patch attempt: Success | InsufficientResources | InternalError | InvalidSpec. */
-            lastScaleUpAttemptResult?: string;
-            /** @description Short error description from the most recent non-Success probe. Empty when LastScaleUpAttemptResult is Success. */
-            scaleUpErrorMessage?: string;
         };
         EnvClusterStatus: {
             clusterID: string;
@@ -1408,26 +1404,6 @@ export interface components {
             totalRunning?: number;
             /** Format: int32 */
             totalDesired?: number;
-            /**
-             * Format: int32
-             * @description Aggregate ObservedMember.pendingRequests across all members of this group.
-             */
-            totalPending?: number;
-            /**
-             * Format: date-time
-             * @description Most recent scale-up event for this group. Drives the per-group cooldown window.
-             */
-            lastScaleUpTime?: string;
-            /**
-             * Format: date-time
-             * @description Most recent scale-down event for this group. Drives the per-group stabilization window.
-             */
-            lastScaleDownTime?: string;
-            /**
-             * Format: date-time
-             * @description When this group's aggregate idle count first dropped to zero in the current continuous-zero window; clears when group idle > 0. Drives the proactive scale-up trigger.
-             */
-            idleZeroSince?: string;
         };
         EnvCondition: {
             type: string;

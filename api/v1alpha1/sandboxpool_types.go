@@ -219,10 +219,10 @@ type SandboxPoolStatus struct {
 // the autoscaling decision pipeline; the SandboxEnv reconciler must never
 // write these fields.
 type PoolAutoScalingStatus struct {
-	// LastScaleUpTime is the wall-clock time of the most recent successful
-	// scale-up (spec.replicas increased) on this Pool. Drives the
-	// scaleUpPolicy.cooldownSeconds gate so two scale-ups never fire
-	// closer together than the configured cooldown.
+	// LastScaleUpTime is the wall-clock time of the most recent
+	// scale-up that actually increased spec.replicas (the probe
+	// accepted at least one additional replica). Drives the success
+	// cooldown gate (scaleUpPolicy.cooldownSeconds).
 	// +optional
 	LastScaleUpTime *metav1.Time `json:"lastScaleUpTime,omitempty"`
 
@@ -239,24 +239,25 @@ type PoolAutoScalingStatus struct {
 	// +optional
 	IdleZeroSince *metav1.Time `json:"idleZeroSince,omitempty"`
 
-	// SaturatedUntil marks this Pool as ineligible for scale-up attempts
-	// until the given time. Set when a plugin probe returned
-	// InsufficientResources or InvalidSpec and the autoscaler should not
-	// retry until natural cooldown expiry. EnvScheduler routing also reads
-	// this field to drop the Pool from the primary candidate set.
+	// LastScaleUpAttemptTime records when the autoscaler last invoked
+	// the admission probe for a scale-up, regardless of whether the
+	// probe accepted the target. Together with LastScaleUpAttemptResult
+	// and the group's SaturationCooldownSeconds it drives the saturation
+	// cooldown: when the last attempt was Insufficient / JustRight /
+	// Failed, the autoscaler and router treat the Pool as saturated
+	// until SaturationCooldownSeconds has elapsed past this timestamp.
 	// +optional
-	SaturatedUntil *metav1.Time `json:"saturatedUntil,omitempty"`
+	LastScaleUpAttemptTime *metav1.Time `json:"lastScaleUpAttemptTime,omitempty"`
 
 	// LastScaleUpAttemptResult records the outcome of the most recent
-	// scale-up evaluation. One of:
-	//   "Success" | "InsufficientResources" | "InvalidSpec" | "InternalError"
-	// Empty before the first attempt. Useful for `kubectl describe sbp`.
+	// scale-up admission probe. Empty before the first attempt; one of
+	// the PoolScaleUpAttemptResult enum values otherwise.
 	// +optional
-	LastScaleUpAttemptResult string `json:"lastScaleUpAttemptResult,omitempty"`
+	LastScaleUpAttemptResult PoolScaleUpAttemptResult `json:"lastScaleUpAttemptResult,omitempty"`
 
 	// ScaleUpErrorMessage is a short single-line description of the most
-	// recent non-Success scale-up result, suitable for surfacing to the
-	// dashboard. Empty when LastScaleUpAttemptResult is "Success".
+	// recent non-Enough scale-up result, suitable for surfacing to the
+	// dashboard. Empty when LastScaleUpAttemptResult is Enough.
 	// +optional
 	ScaleUpErrorMessage string `json:"scaleUpErrorMessage,omitempty"`
 

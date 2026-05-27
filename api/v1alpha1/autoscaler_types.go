@@ -110,6 +110,46 @@ const (
 	PoolScaleUpModeAggressive PoolScaleUpMode = "Aggressive"
 )
 
+// PoolScaleUpAttemptResult is the outcome of the most recent scale-up
+// attempt against a Pool, recorded on PoolAutoScalingStatus. Combined
+// with LastScaleUpAttemptTime and the group's SaturationCooldownSeconds
+// it lets both the autoscaler and the router decide whether the Pool is
+// currently saturated without storing a derived end timestamp.
+// +kubebuilder:validation:Enum=Enough;JustRight;Insufficient;Failed
+type PoolScaleUpAttemptResult string
+
+const (
+	// PoolScaleUpAttemptEnough — the admission probe accepted the full
+	// requested target; no headroom signal from the plugin chain. The
+	// next scale-up attempt is only gated by the success cooldown
+	// (CooldownSeconds), not by SaturationCooldownSeconds.
+	PoolScaleUpAttemptEnough PoolScaleUpAttemptResult = "Enough"
+
+	// PoolScaleUpAttemptJustRight — the probe accepted strictly less
+	// than the requested target but more than the current count
+	// (partial admission). The autoscaler patched the partial value
+	// and treats the Pool as saturated until SaturationCooldownSeconds
+	// elapses, because the cluster is known to be at a ceiling.
+	//
+	// Reserved for finer-grained reporting; the current autoscaler
+	// emits Insufficient for partial admissions and reserves
+	// JustRight for a future refinement that distinguishes "we got
+	// some" from "we got none".
+	PoolScaleUpAttemptJustRight PoolScaleUpAttemptResult = "JustRight"
+
+	// PoolScaleUpAttemptInsufficient — the probe rejected the target
+	// with InsufficientResources (cluster cannot fit more pods). The
+	// Pool is saturated; the autoscaler skips probing until
+	// SaturationCooldownSeconds elapses.
+	PoolScaleUpAttemptInsufficient PoolScaleUpAttemptResult = "Insufficient"
+
+	// PoolScaleUpAttemptFailed — the probe returned InvalidSpec or
+	// an Internal error. Like Insufficient it triggers saturation
+	// cooldown, and the surfaced ScaleUpErrorMessage helps diagnose
+	// the misconfiguration.
+	PoolScaleUpAttemptFailed PoolScaleUpAttemptResult = "Failed"
+)
+
 // PodCreationImagePolicy defines which image createPod should use.
 // +kubebuilder:validation:Enum=PoolDefaultImage;IdleImage
 type PodCreationImagePolicy string
