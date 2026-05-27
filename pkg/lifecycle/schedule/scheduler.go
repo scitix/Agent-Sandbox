@@ -277,7 +277,12 @@ func (s *PoolScheduler) Enqueue(req *ClaimRequest) bool {
 	}
 	select {
 	case s.reqCh <- req:
-		s.pendingClaims.Add(1)
+		pending := s.pendingClaims.Add(1)
+		klog.V(3).InfoS("schedule: enqueued claim",
+			"pool", s.poolNS+"/"+s.poolName,
+			"pendingClaims", pending,
+			"idleReady", s.queue.len(),
+		)
 		// Wake the scheduler goroutine so it dispatches without waiting for
 		// the poll timer.
 		select {
@@ -286,6 +291,10 @@ func (s *PoolScheduler) Enqueue(req *ClaimRequest) bool {
 		}
 		return true
 	default:
+		klog.V(2).InfoS("schedule: Enqueue rejected — reqCh full (backpressure to caller)",
+			"pool", s.poolNS+"/"+s.poolName,
+			"capacity", reqChanCap,
+		)
 		return false
 	}
 }
@@ -803,12 +812,20 @@ func shouldWriteStatus(last, cur int32) bool {
 	return float64(diff)/float64(last) >= statusWriteRelativeDelta
 }
 
-// runStatusWriter periodically mirrors the in-process QueueLen onto
-// SandboxPool.Status.PendingRequests so it's visible via kubectl / Dashboard
-// without scraping in-process state. Throttled by statusWriteInterval +
-// statusWriteRelativeDelta to keep apiserver writes well-bounded even when
-// many pools are active. Started from Run(); no-op when k8sClient is nil
-// (unit-test mode).
+// runStatusWriter periodically mirrors the in-process pendingClaims
+// count onto SandboxPool.Status.PendingRequests so it's visible via
+// kubectl / Dashboard without scraping in-process state. Throttled by
+// statusWriteInterval + statusWriteRelativeDelta to keep apiserver
+// writes well-bounded even when many pools are active.
+//
+// Sourcing the value from pendingClaims (not len(reqCh)) is critical:
+// requests that the Run loop has pulled off the channel sit in the
+// goroutine-local `waiting` slice while they wait for an idle pod, so
+// len(reqCh) is misleadingly close to zero whenever the scheduler is
+// actively retrying. The atomic counter tracks the true in-flight
+// count across both buffers.
+//
+// Started from Run(); no-op when k8sClient is nil (unit-test mode).
 func (s *PoolScheduler) runStatusWriter(ctx context.Context) {
 	if s.k8sClient == nil {
 		return
@@ -823,7 +840,7 @@ func (s *PoolScheduler) runStatusWriter(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			cur := int32(len(s.reqCh))
+			cur := s.pendingClaims.Load()
 			if !shouldWriteStatus(last, cur) {
 				continue
 			}
@@ -832,6 +849,8 @@ func (s *PoolScheduler) runStatusWriter(ctx context.Context) {
 					"pool", s.poolNS+"/"+s.poolName, "value", cur)
 				continue
 			}
+			klog.V(3).InfoS("schedule: patched pendingRequests",
+				"pool", s.poolNS+"/"+s.poolName, "prev", last, "value", cur)
 			last = cur
 		}
 	}

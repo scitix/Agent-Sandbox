@@ -20,6 +20,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 )
@@ -58,12 +59,25 @@ func Decide(snap *Snapshot, mut *Mutator) {
 	updateIdleZeroSince(snap, mut)
 
 	if !snap.IsAutoscalingEnabled() {
+		klog.V(3).InfoS("autoscaler: autoscaling disabled — skipping scale-up/down",
+			"pool", poolKeyFor(snap),
+			"hasGroup", snap.Group != nil,
+			"groupEnabled", snap.Group != nil && snap.Group.Enabled,
+		)
 		return
 	}
 	if scaledUp := evaluateScaleUp(snap, mut); scaledUp {
 		return
 	}
 	evaluateScaleDown(snap, mut)
+}
+
+// poolKeyFor is a small helper to keep log lines compact.
+func poolKeyFor(snap *Snapshot) string {
+	if snap == nil || snap.Pool == nil {
+		return ""
+	}
+	return snap.Pool.Namespace + "/" + snap.Pool.Name
 }
 
 // updateIdleZeroSince syncs Pool.Status.AutoScaling.IdleZeroSince with
@@ -105,27 +119,78 @@ func updateIdleZeroSince(snap *Snapshot, mut *Mutator) {
 //  5. Stage a ScaleUpAttempt; Mutator.Commit consults the Prober and
 //     writes status + spec based on the probe outcome.
 func evaluateScaleUp(snap *Snapshot, mut *Mutator) bool {
+	key := poolKeyFor(snap)
 	policy := snap.Group.ScaleUpPolicy
+
 	if scaleUpCooldownActive(snap, policy) {
+		klog.V(2).InfoS("autoscaler: scale-up gated by cooldown",
+			"pool", key,
+			"lastScaleUpTime", asStatus(snap).LastScaleUpTime,
+			"lastScaleUpAttemptTime", asStatus(snap).LastScaleUpAttemptTime,
+			"lastScaleUpAttemptResult", asStatus(snap).LastScaleUpAttemptResult,
+			"cooldownSeconds", policy.CooldownSeconds,
+			"saturationCooldownSeconds", policy.SaturationCooldownSeconds,
+		)
 		return false
 	}
 
-	if _, ok := pickScaleUpTrigger(snap, policy); !ok {
+	trigger, ok := pickScaleUpTrigger(snap, policy)
+	if !ok {
+		klog.V(2).InfoS("autoscaler: scale-up not triggered",
+			"pool", key,
+			"reactiveDemand", snap.IsReactiveDemand(),
+			"idleZeroSince", asStatus(snap).IdleZeroSince,
+			"idleThresholdSeconds", policy.IdleThresholdSeconds,
+			"idleZeroQuietWindowSeconds", policy.IdleZeroQuietWindowSeconds,
+			"lastCreateAt", snap.LastCreateAt,
+			"now", snap.Now,
+		)
 		return false
 	}
 
 	if shouldYieldToHigherPriority(snap) {
+		klog.V(2).InfoS("autoscaler: scale-up yielded to higher-priority sibling",
+			"pool", key,
+			"trigger", trigger,
+			"selfPriority", snap.MemberConfig.EffectiveScaleUpPriority(),
+		)
 		return false
 	}
 
 	current := snap.Pool.Spec.Replicas
 	target := computeScaleUpTarget(snap, policy, current)
 	if target <= current {
+		var groupMax any = "<unset>"
+		if snap.Group.MaxReplicas != nil {
+			groupMax = *snap.Group.MaxReplicas
+		}
+		klog.V(2).InfoS("autoscaler: scale-up target not above current (likely clamped by group/member cap)",
+			"pool", key,
+			"current", current,
+			"target", target,
+			"groupMaxReplicas", groupMax,
+			"groupDesiredTotal", snap.GroupDesiredTotal(),
+		)
 		return false
 	}
 
+	klog.V(2).InfoS("autoscaler: staging scale-up attempt",
+		"pool", key,
+		"trigger", trigger,
+		"current", current,
+		"target", target,
+	)
 	mut.ScaleUpAttempt(current, target)
 	return true
+}
+
+// asStatus returns the Pool.Status.AutoScaling block or an empty
+// placeholder so log statements can dereference without nil checks.
+func asStatus(snap *Snapshot) *agentsv1alpha1.PoolAutoScalingStatus {
+	if snap == nil || snap.Pool == nil || snap.Pool.Status.AutoScaling == nil {
+		return &agentsv1alpha1.PoolAutoScalingStatus{}
+	}
+	return snap.Pool.Status.AutoScaling
 }
 
 // pickScaleUpTrigger selects which scale-up trigger fires this cycle,
@@ -336,11 +401,22 @@ func applyScaleUpMode(mode agentsv1alpha1.PoolScaleUpMode, current int32) int32 
 // scale-down is intentionally not done — gives the next reconcile a
 // chance to observe the new state before deciding to go further.
 func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
+	key := poolKeyFor(snap)
 	if snap.IsReactiveDemand() {
+		klog.V(3).InfoS("autoscaler: scale-down skipped (reactive demand)",
+			"pool", key,
+			"queueLen", snap.PoolSchedSnap.QueueLen,
+			"idleReady", snap.PoolSchedSnap.IdleReady,
+		)
 		return
 	}
 	policy := snap.Group.ScaleDownPolicy
 	if scaleDownStabilizationActive(snap, policy) {
+		klog.V(3).InfoS("autoscaler: scale-down gated by stabilization window",
+			"pool", key,
+			"lastScaleDownTime", asStatus(snap).LastScaleDownTime,
+			"stabilizationSeconds", policy.StabilizationSeconds,
+		)
 		return
 	}
 	current := snap.Pool.Spec.Replicas
@@ -348,13 +424,28 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 		return
 	}
 	if !groupMinReplicasHeadroomAvailable(snap, current) {
+		klog.V(3).InfoS("autoscaler: scale-down gated by group MinReplicas",
+			"pool", key,
+			"groupDesiredTotal", snap.GroupDesiredTotal(),
+			"minReplicas", snap.Group.MinReplicas,
+		)
 		return
 	}
 	if !oldestIdleEligible(snap, policy) {
+		klog.V(3).InfoS("autoscaler: scale-down skipped (no idle pod aged enough)",
+			"pool", key,
+			"idleTimeoutSeconds", policy.IdleTimeoutSeconds,
+			"idlePodCount", len(snap.IdlePodAges),
+		)
 		return
 	}
 
 	target := current - 1
+	klog.V(2).InfoS("autoscaler: scaling down",
+		"pool", key,
+		"current", current,
+		"target", target,
+	)
 	mut.SetTargetReplicas(target)
 	now := metav1.NewTime(snap.Now)
 	mut.PatchStatus(func(s *agentsv1alpha1.PoolAutoScalingStatus) {

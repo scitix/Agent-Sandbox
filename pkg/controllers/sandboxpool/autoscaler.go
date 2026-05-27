@@ -95,7 +95,8 @@ func truncProbeErr(res plugins.ProbeResult) string {
 // normal back-off kicks in.
 func (r *SandboxPoolReconciler) syncAutoscaling(ctx context.Context, pool *agentsv1alpha1.SandboxPool) error {
 	if r.AutoscalingLoader == nil {
-		// Autoscaler not wired (unit tests, legacy deployments). Skip.
+		klog.V(4).InfoS("autoscaler: skip (loader not wired)",
+			"namespace", pool.Namespace, "name", pool.Name)
 		return nil
 	}
 
@@ -106,9 +107,49 @@ func (r *SandboxPoolReconciler) syncAutoscaling(ctx context.Context, pool *agent
 		return err
 	}
 
+	// Summary log at V(2): every reconcile lands one line per Pool that
+	// captures the *inputs* the decision logic just saw. Pair it with
+	// the per-branch logs in Decide / evaluateScale* to follow why a
+	// given cycle did or did not commit a change.
+	if klogV := klog.V(2); klogV.Enabled() {
+		var (
+			schedQueueLen int
+			schedIdle     int
+			groupEnabled  bool
+			groupName     string
+			lastCreateAt  any = "<nil>"
+		)
+		if snap.PoolSchedSnap != nil {
+			schedQueueLen = snap.PoolSchedSnap.QueueLen
+			schedIdle = snap.PoolSchedSnap.IdleReady
+		}
+		if snap.Group != nil {
+			groupEnabled = snap.Group.Enabled
+			groupName = snap.Group.Name
+		}
+		if snap.LastCreateAt != nil {
+			lastCreateAt = snap.LastCreateAt
+		}
+		klogV.InfoS("autoscaler: snapshot",
+			"namespace", pool.Namespace, "name", pool.Name,
+			"specReplicas", pool.Spec.Replicas,
+			"idleReplicas", pool.Status.IdleReplicas,
+			"schedQueueLen", schedQueueLen,
+			"schedIdleReady", schedIdle,
+			"groupName", groupName,
+			"groupEnabled", groupEnabled,
+			"siblings", len(snap.SiblingPools),
+			"lastCreateAt", lastCreateAt,
+			"hasEnv", snap.Env != nil,
+			"hasMemberConfig", snap.MemberConfig != nil,
+		)
+	}
+
 	mut := autoscalingstate.NewMutator(snap)
 	autoscalingstate.Decide(snap, mut)
 	if !mut.HasWrites() {
+		klog.V(4).InfoS("autoscaler: no writes accumulated this cycle",
+			"namespace", pool.Namespace, "name", pool.Name)
 		return nil
 	}
 

@@ -600,10 +600,22 @@ func (r *SandboxPoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	builder := ctrl.NewControllerManagedBy(mgr).
-		// Use GenerationChangedPredicate to filter status-only updates (which
-		// do not increment metadata.generation), preventing the reconcile
-		// storm caused by Status().Update() re-triggering itself.
-		For(&agentsv1alpha1.SandboxPool{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// GenerationChangedPredicate filters status-only updates (which do
+		// not increment metadata.generation), preventing the reconcile
+		// storm caused by Status().Patch() re-triggering itself.
+		// AnnotationChangedPredicate widens the watch back to annotation
+		// changes specifically so the LastSandboxCreateTimeAnnotationKey
+		// patch from lifecycle/lastcreate.Tracker — the canonical
+		// "demand was just observed" signal — wakes this reconciler.
+		// Without it a Pool sitting at 0 replicas with no Pods produces
+		// zero K8s events under load and the autoscaler would only run
+		// on the 10 s RequeueAfter tick. Pool annotations change at
+		// most every flushInterval (5 s) per active pool, so this
+		// widening does not create a reconcile storm.
+		For(&agentsv1alpha1.SandboxPool{}, ctrlbuilder.WithPredicates(predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		))).
 		Named("sandboxpool").
 		// Allow multiple SandboxPool objects to be reconciled concurrently.
 		// Each pool is an independent unit of work; serialising them behind a
