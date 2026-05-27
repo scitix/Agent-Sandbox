@@ -394,6 +394,13 @@ func TestReconcilePools_UpdatesLabelDrift(t *testing.T) {
 	if got.Labels["foreign"] != "untouched" {
 		t.Errorf("foreign labels must be preserved, got %+v", got.Labels)
 	}
+	// Migration semantic: a Pool that pre-dates LabelEnv stamping gets
+	// the label added on its next drift reconcile. The Pool autoscaler's
+	// sibling lookup depends on this label being present.
+	if got.Labels[agentsv1alpha1.LabelEnv] != env.Name {
+		t.Errorf("LabelEnv missing after drift reconcile: got %q, want %q (labels: %+v)",
+			got.Labels[agentsv1alpha1.LabelEnv], env.Name, got.Labels)
+	}
 }
 
 // TestReconcilePools_OverridesChangeDoesNotPropagate replaces the old

@@ -178,16 +178,25 @@ func Validate(spec *agentsv1alpha1.SandboxPoolSpec) error {
 // from the supplied existence flag so a Secret created or deleted after
 // AddMember still propagates onto the Pool.
 //
+// LabelEnv is stamped unconditionally and overwrites any caller-supplied
+// value — the Env reconciler is the authoritative source for that
+// indexing label, and downstream consumers (e.g. the Pool autoscaler's
+// listSiblings) rely on the label being present on every Env-owned
+// Pool. Pools created before this stamping was introduced get the
+// label added the next time updateMemberPoolIfDrifted runs against them.
+//
 // Unlike RenderSandboxPool this function does NOT consult the Template or
 // run plugin admission — plugin side-effects already live inside
 // Member.Metadata + Member.Spec by construction (AddMember captures them
 // post-PreCreatePool). The Env Reconciler is the only intended caller.
 func MaterializeFromMember(env *agentsv1alpha1.SandboxEnv, member agentsv1alpha1.EnvClusterMember, ipsExists bool) *agentsv1alpha1.SandboxPool {
+	labels := copyMapNonNil(member.Metadata.Labels)
+	labels[agentsv1alpha1.LabelEnv] = env.Name
 	pool := &agentsv1alpha1.SandboxPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            member.Name,
 			Namespace:       env.Namespace,
-			Labels:          copyMapNonNil(member.Metadata.Labels),
+			Labels:          labels,
 			Annotations:     copyMapNonNil(member.Metadata.Annotations),
 			OwnerReferences: []metav1.OwnerReference{OwnerReferenceForEnv(env)},
 		},

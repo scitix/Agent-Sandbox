@@ -332,6 +332,97 @@ func TestUpdate_RejectsReplicasWhenAutoscalingOn(t *testing.T) {
 	}
 }
 
+// TestUpdate_AllowsNoopReplicasResendUnderAutoscaling guards the
+// regression where Dashboard "edit member" forms (which re-submit
+// every field) were rejected with "replicas is owned by the
+// autoscaler" even when the value the form sent equalled the stored
+// value. The intent of the rejection is to forbid manual *changes*
+// while the autoscaler owns the field — not to refuse acknowledgement
+// of the current value.
+func TestUpdate_AllowsNoopReplicasResendUnderAutoscaling(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
+		{
+			Name:   "m1",
+			Spec:   agentsv1alpha1.SandboxPoolSpec{Replicas: 4},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "2c8Gi"},
+		},
+	}
+	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
+		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{Name: "2c8Gi", Enabled: true}},
+	}
+	svc := newService(t, env)
+
+	// Resend replicas=4 alongside a maxReplicas edit. Should succeed
+	// even though the group has autoscaling enabled.
+	same := int32(4)
+	mr := int32(8)
+	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
+		envmember.MemberPoolPatch{Replicas: &same, MaxReplicas: &mr}); err != nil {
+		t.Fatalf("no-op replicas resend rejected: %+v", err)
+	}
+	// Different replicas value is still rejected.
+	diff := int32(7)
+	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
+		envmember.MemberPoolPatch{Replicas: &diff}); err == nil || err.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected BadRequest for actual replicas change, got %+v", err)
+	}
+}
+
+// TestAdd_DefaultReplicasFromGroupMin confirms that joining an
+// autoscaling group with min > existing-siblings-total lifts the new
+// member's replicas to satisfy the shortfall. With minReplicas=3 and
+// no existing members, a request supplying replicas=0 (the form
+// default) yields a Pool with replicas=3.
+func TestAdd_DefaultReplicasFromGroupMin(t *testing.T) {
+	env := newEnvForPoolOps()
+	min := int32(3)
+	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
+		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{
+			// memberWithResources(...) derives ScalingGroup "2c8gi"
+			// (lower-case) from its 2 CPU / 8 GiB request.
+			Name:        "2c8gi",
+			Enabled:     true,
+			MinReplicas: &min,
+		}},
+	}
+	svc := newService(t, env)
+
+	pool, err := svc.AddMember(context.Background(), envTestNamespace, testEnvName, envLocalCluster, memberWithResources(0))
+	if err != nil {
+		t.Fatalf("Add: %+v", err)
+	}
+	if pool.Spec.Replicas != 3 {
+		t.Fatalf("expected replicas defaulted to group min=3, got %d", pool.Spec.Replicas)
+	}
+}
+
+// TestAdd_RejectsExceedingGroupMax asserts that a request whose
+// explicit replicas would push the group above maxReplicas is denied
+// with BadRequest rather than silently clamped.
+func TestAdd_RejectsExceedingGroupMax(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{
+		Name:   "existing",
+		Spec:   agentsv1alpha1.SandboxPoolSpec{Replicas: 8},
+		Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "2c8gi"},
+	}}
+	max := int32(10)
+	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
+		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{
+			Name:        "2c8gi",
+			Enabled:     true,
+			MaxReplicas: &max,
+		}},
+	}
+	svc := newService(t, env)
+
+	_, err := svc.AddMember(context.Background(), envTestNamespace, testEnvName, envLocalCluster, memberWithResources(5))
+	if err == nil || err.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected BadRequest exceeding maxReplicas, got %+v", err)
+	}
+}
+
 func TestUpdate_NotFound_404(t *testing.T) {
 	svc := newService(t, newEnvForPoolOps())
 

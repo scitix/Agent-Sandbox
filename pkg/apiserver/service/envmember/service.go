@@ -147,6 +147,34 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 		}
 	}
 
+	// When this member joins an autoscaling-enabled scaling group, the
+	// group's aggregate bounds (min/max) shape the initial replicas
+	// value:
+	//   - default: max(min - existing-siblings-total, 0). New Pools
+	//     joining an already-satisfied group start at 0; new Pools
+	//     joining an under-served group lift the shortfall.
+	//   - reject: when the caller explicitly asked for more replicas
+	//     than the group's max headroom allows. Soft-clamping silently
+	//     would be confusing — a caller asking for 5 and getting 2
+	//     deserves to know.
+	if g := findEnabledScalingGroup(env, member.Config.ScalingGroup); g != nil {
+		existingTotal := sumGroupReplicas(env, localClusterID, member.Config.ScalingGroup, "")
+		if member.Spec.Replicas == 0 && g.MinReplicas != nil {
+			if shortfall := *g.MinReplicas - existingTotal; shortfall > 0 {
+				member.Spec.Replicas = shortfall
+			}
+		}
+		if g.MaxReplicas != nil {
+			projected := existingTotal + member.Spec.Replicas
+			if projected > *g.MaxReplicas {
+				return nil, domain.NewBadRequest(fmt.Sprintf(
+					"adding member %q with replicas=%d would push scalingGroup %q to %d, exceeding maxReplicas=%d (existing total=%d). Lower replicas, raise the group's maxReplicas, or remove an existing member first.",
+					member.Name, member.Spec.Replicas, member.Config.ScalingGroup,
+					projected, *g.MaxReplicas, existingTotal))
+			}
+		}
+	}
+
 	candidate, appErr := s.renderCandidate(ctx, env, member)
 	if appErr != nil {
 		return nil, appErr
@@ -222,8 +250,18 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	if existing == nil {
 		return nil, domain.NewNotFound(fmt.Sprintf("member pool %q not found in env %q", poolName, envName))
 	}
-	if patch.Replicas != nil && scalingGroupHasAutoscaling(env, existing.Config.ScalingGroup) {
-		return nil, domain.NewBadRequest(fmt.Sprintf("replicas is owned by the autoscaler for scalingGroup %q; only maxReplicas can be edited", existing.Config.ScalingGroup))
+	// When the member belongs to an autoscaling-enabled group, replicas
+	// is owned by the autoscaler — but a no-op resend (the value the
+	// client read back from the API just now, unchanged) is allowed.
+	// Otherwise a Dashboard "edit member" form that re-submits every
+	// field would be unable to update maxReplicas without also dropping
+	// replicas from the request body, which is unfriendly to most form
+	// libraries.
+	if patch.Replicas != nil && *patch.Replicas != existing.Spec.Replicas &&
+		scalingGroupHasAutoscaling(env, existing.Config.ScalingGroup) {
+		return nil, domain.NewBadRequest(fmt.Sprintf(
+			"replicas is owned by the autoscaler for scalingGroup %q; only maxReplicas can be edited (current replicas=%d, requested=%d)",
+			existing.Config.ScalingGroup, existing.Spec.Replicas, *patch.Replicas))
 	}
 
 	// Build the updated member by overlaying patch onto existing — preserves

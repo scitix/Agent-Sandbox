@@ -126,3 +126,49 @@ func scalingGroupHasAutoscaling(env *agentsv1alpha1.SandboxEnv, groupName string
 	}
 	return false
 }
+
+// findEnabledScalingGroup returns a pointer to the autoscaling group
+// matching groupName when the group exists AND is enabled. Returns nil
+// otherwise — manual-replicas mode, group absent, or group disabled.
+// The pointer is into env.Spec.Autoscaling.Groups; callers must not
+// mutate through it.
+func findEnabledScalingGroup(env *agentsv1alpha1.SandboxEnv, groupName string) *agentsv1alpha1.EnvAutoscalingGroup {
+	if env == nil || env.Spec.Autoscaling == nil || groupName == "" {
+		return nil
+	}
+	for i := range env.Spec.Autoscaling.Groups {
+		g := &env.Spec.Autoscaling.Groups[i]
+		if g.Name == groupName && g.Enabled {
+			return g
+		}
+	}
+	return nil
+}
+
+// sumGroupReplicas adds up the spec.replicas of every member in
+// localClusterID whose Config.ScalingGroup matches groupName, excluding
+// the member whose name equals excludeName (used to omit self when
+// computing "other siblings' total"). Set excludeName to "" to count
+// every member.
+func sumGroupReplicas(env *agentsv1alpha1.SandboxEnv, localClusterID, groupName, excludeName string) int32 {
+	if env == nil || groupName == "" {
+		return 0
+	}
+	var total int32
+	for ci := range env.Spec.Clusters {
+		if env.Spec.Clusters[ci].ClusterID != localClusterID {
+			continue
+		}
+		for mi := range env.Spec.Clusters[ci].Members {
+			m := &env.Spec.Clusters[ci].Members[mi]
+			if m.Config.ScalingGroup != groupName {
+				continue
+			}
+			if m.Name == excludeName {
+				continue
+			}
+			total += m.Spec.Replicas
+		}
+	}
+	return total
+}

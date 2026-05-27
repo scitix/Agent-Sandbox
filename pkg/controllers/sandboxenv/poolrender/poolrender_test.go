@@ -370,6 +370,15 @@ func TestMaterializeFromMember_PropagatesIdentityLabels(t *testing.T) {
 	if pool.Labels["quota.scitix.ai/url"] != "lab.math.x" {
 		t.Errorf("config label missing on materialised pool: %+v", pool.Labels)
 	}
+	// LabelEnv is the autoritative Env-owned indexing label; it must
+	// be stamped on every materialised pool regardless of the member
+	// snapshot's content, so the Pool autoscaler's sibling lookup and
+	// any operator-side `kubectl get sbp -l agentbox.navix.sh/env=X`
+	// query work uniformly.
+	if pool.Labels[agentsv1alpha1.LabelEnv] != env.Name {
+		t.Errorf("LabelEnv = %q, want %q (pool labels: %+v)",
+			pool.Labels[agentsv1alpha1.LabelEnv], env.Name, pool.Labels)
+	}
 	if pool.Annotations["agentbox.io/reservation"] != "preferred" {
 		t.Errorf("annotation missing on materialised pool: %+v", pool.Annotations)
 	}
