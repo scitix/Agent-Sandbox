@@ -17,6 +17,7 @@ package sandboxpool
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -54,9 +55,26 @@ const (
 	// FinalizerName is the finalizer name for SandboxPool
 	FinalizerName = "agentbox.navix.sh/finalizer"
 
-	// RequeueAfter is the duration to wait before requeuing
+	// RequeueAfter is the *base* duration between two reconciles when the
+	// reconciler has no specific timer to honour. jitteredRequeueAfter
+	// wraps this with ±20 % per-cycle jitter so a fleet of Pools that all
+	// reconciled at start-up doesn't keep hammering the API server in
+	// lockstep every 10 s. Even with naturally desynced wake times, the
+	// jitter keeps the load uniform after restarts / leader change.
 	RequeueAfter = 10 * time.Second
+
+	// RequeueJitter is the relative jitter applied to RequeueAfter.
+	// ±20 % spreads the cluster wake events over an 8–12 s window.
+	RequeueJitter = 0.20
 )
+
+// jitteredRequeueAfter returns RequeueAfter shifted by a uniform random
+// fraction in [-RequeueJitter, +RequeueJitter]. Safe for concurrent use
+// (math/rand/v2 is lock-free as of Go 1.22).
+func jitteredRequeueAfter() time.Duration {
+	delta := float64(RequeueAfter) * RequeueJitter * (2*rand.Float64() - 1)
+	return RequeueAfter + time.Duration(delta)
+}
 
 // SandboxPoolReconciler reconciles a SandboxPool object
 type SandboxPoolReconciler struct {
@@ -175,8 +193,23 @@ func (r *SandboxPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return reconcile.Result{}, err
 	}
 
-	// Reconcile Pod replicas
-	return r.reconcilePods(ctx, sandboxPool)
+	// Reconcile Pod replicas.
+	//
+	// We *always* ensure a positive RequeueAfter so the autoscaler runs
+	// on a periodic cadence even when the pod loop has nothing to do.
+	// Without this, a steady-state pool (current == desired, no pod
+	// events, no Create traffic) would never re-enter syncAutoscaling
+	// — scale-down decisions driven by idle-timeout would never fire,
+	// and IdleZeroSince / saturation state would drift silently.
+	//
+	// Any explicit shorter requeue produced by reconcilePods (e.g.
+	// scale-down protection window, expectations back-off) is left
+	// untouched.
+	res, err := r.reconcilePods(ctx, sandboxPool)
+	if err == nil && res.RequeueAfter == 0 {
+		res.RequeueAfter = jitteredRequeueAfter()
+	}
+	return res, err
 }
 
 // handleDeletion handles the deletion of a SandboxPool by cleaning up associated Pods

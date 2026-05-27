@@ -42,6 +42,7 @@ package sandboxenv
 
 import (
 	"context"
+	"math/rand/v2"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -63,10 +64,23 @@ import (
 )
 
 const (
-	// RequeueAfter is the periodic re-evaluation interval for an Env that
-	// otherwise sees no events. Matches the SandboxPool controller's cadence.
+	// RequeueAfter is the *base* periodic re-evaluation interval for an
+	// Env that otherwise sees no events. jitteredRequeueAfter spreads
+	// the actual wake times over a ±20 % window so a fleet of Envs that
+	// all reconciled at startup doesn't keep hammering the API server
+	// in lockstep.
 	RequeueAfter = 10 * time.Second
+
+	// RequeueJitter is the relative jitter applied to RequeueAfter.
+	RequeueJitter = 0.20
 )
+
+// jitteredRequeueAfter returns RequeueAfter shifted by a uniform random
+// fraction in [-RequeueJitter, +RequeueJitter].
+func jitteredRequeueAfter() time.Duration {
+	delta := float64(RequeueAfter) * RequeueJitter * (2*rand.Float64() - 1)
+	return RequeueAfter + time.Duration(delta)
+}
 
 // EnvRouterSync is the minimal contract the SandboxEnv Reconciler uses to
 // keep the in-process Env router's cache in sync with K8s state. The
@@ -149,7 +163,7 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	res := ctrl.Result{RequeueAfter: RequeueAfter}
+	res := ctrl.Result{RequeueAfter: jitteredRequeueAfter()}
 	if r.EnvRouterSync != nil {
 		// Belt-and-braces resync of the in-process router cache. Cheap (one
 		// RWMutex.Lock + map write); guarantees the router never lags the
