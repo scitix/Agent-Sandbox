@@ -44,6 +44,7 @@ import (
 	plugininstancetype "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	pluginquota "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/framework/providerset"
+	"github.com/scitix/agent-sandbox/pkg/lifecycle/lastcreate"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -327,6 +328,23 @@ func Run(opts Options) {
 	var idleNotifier sandboxpool.IdleNotifier
 	if n, ok := sandboxSvc.(sandboxpool.IdleNotifier); ok {
 		idleNotifier = n
+	}
+
+	// ---- in-process Sandbox.Create timestamp tracker -------------------------
+	// Bumps from sandbox.Create live in memory and flush to the
+	// LastSandboxCreateTimeAnnotationKey on Pool every 5 s. The Pool
+	// autoscaler (S4) reads the in-memory value directly; the persisted
+	// annotation is the restart-survival mirror. Manager owns the loop's
+	// lifecycle via mgr.Add so it shuts down with the controller.
+	lastCreateTracker := lastcreate.NewTracker(mgr.GetClient(), 0)
+	if r, ok := sandboxSvc.(interface {
+		SetLastCreateTracker(service.LastCreateBumper)
+	}); ok {
+		r.SetLastCreateTracker(lastCreateTracker)
+	}
+	if err := mgr.Add(lastCreateTracker); err != nil {
+		setupLog.Error(err, "Failed to add LastCreateTracker to manager")
+		os.Exit(1)
 	}
 
 	// ---- Env-level request router -------------------------------------------

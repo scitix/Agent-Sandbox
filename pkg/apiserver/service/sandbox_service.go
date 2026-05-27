@@ -127,8 +127,36 @@ type k8sSandboxService struct {
 
 	envRouter EnvRouter // may be nil; set via SetEnvRouter at startup
 
+	// lastCreateTracker accumulates the most recent Sandbox.Create
+	// timestamp per Pool in process memory and flushes it to the
+	// LastSandboxCreateTimeAnnotationKey on a 5 s cadence. The Pool
+	// autoscaler reads the in-memory value directly (the same process
+	// runs both the API server and the controller manager); the
+	// annotation is the persisted mirror surviving restarts. May be
+	// nil in unit tests that don't exercise the autoscaling path.
+	lastCreateTracker LastCreateBumper
+
 	schedulersMu sync.RWMutex
 	schedulers   map[string]*schedule.PoolScheduler // key: "namespace/name"
+}
+
+// LastCreateBumper is the minimal interface k8sSandboxService needs from
+// pkg/lifecycle/lastcreate.Tracker. Defined here (rather than imported)
+// so the service package stays free of the concrete dependency and the
+// tracker can be swapped/disabled in tests.
+type LastCreateBumper interface {
+	// Bump records the current time as the most-recent Sandbox.Create
+	// for the named Pool. Must be safe to call from the request hot
+	// path; the production implementation takes a brief mutex on an
+	// in-memory map.
+	Bump(namespace, name string)
+}
+
+// SetLastCreateTracker wires the in-process Sandbox.Create timestamp
+// tracker. Called once at startup from cmd/sandbox/app. Nil disables
+// the bookkeeping (Bump becomes a no-op via nil-receiver semantics).
+func (s *k8sSandboxService) SetLastCreateTracker(t LastCreateBumper) {
+	s.lastCreateTracker = t
 }
 
 // SetEnvRouter wires the Env-level request router so Sandbox.Create can
@@ -353,6 +381,16 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		appErr := domain.NewNotFound(fmt.Sprintf("sandbox pool %s/%s not found", input.Namespace, input.PoolName))
 		appErr.Detail = s.buildAvailablePoolsDetail(ctx, input.Namespace, input.Labels[agentsv1alpha1.LabelTeam], input.Labels[agentsv1alpha1.LabelUser])
 		return nil, appErr
+	}
+
+	// Record this Create on the in-process LastCreateTracker so the Pool
+	// autoscaler's quiet-window gate sees fresh activity. Bump is O(1)
+	// in-memory; the periodic flush to the Pool annotation happens in
+	// a background goroutine owned by the controller manager. Skipped
+	// when the tracker is unwired (unit tests) — interface nil-check
+	// because a nil interface value would panic on method dispatch.
+	if s.lastCreateTracker != nil {
+		s.lastCreateTracker.Bump(pool.Namespace, pool.Name)
 	}
 
 	containerImages, err := s.resolveContainerImages(pool, input)
