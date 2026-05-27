@@ -139,8 +139,13 @@ type Snapshot struct {
 	// IdleReady is the number of idle Pods currently admitted to the ready
 	// queue and not reserved — what would be popped if a request arrived now.
 	IdleReady int
-	// QueueLen is the number of ClaimRequests currently buffered in reqCh
-	// waiting for an idle pod (i.e. unsatisfied demand).
+	// QueueLen is the total number of ClaimRequests this scheduler is
+	// holding that have not yet reached a terminal result. Counts both
+	// requests still in the producer→consumer channel AND requests
+	// parked inside the scheduler goroutine waiting for an idle pod.
+	// Sourced from an atomic counter so the value stays stable while a
+	// request transiently moves between buffers (the autoscaler relies
+	// on this for its reactive demand signal).
 	QueueLen int
 	// ReservedCount is the number of pods currently reserved (handed off to
 	// a CAS goroutine but not yet observed back as Idle/Starting through the
@@ -207,6 +212,19 @@ type PoolScheduler struct {
 	inflightCAS  chan struct{}
 	lastRefresh  atomic.Int64 // unix nanos; 0 means never
 	lastDispatch atomic.Int64 // unix nanos of most recent successful doCAS; 0 means never
+
+	// pendingClaims tracks every in-flight ClaimRequest — incremented
+	// when Enqueue admits one, decremented when a terminal result
+	// (success / hard error / expired) lands on its ResultCh. The
+	// retriable-CAS path does NOT decrement: the request is still
+	// in flight, just re-circulating through reqCh.
+	//
+	// Exposed to external readers via Snapshot.QueueLen because
+	// len(reqCh) alone is racy — a request transiently disappears
+	// between the Run loop's pop and the no-pod park, which would
+	// otherwise let the Pool autoscaler read 0 mid-bounce and
+	// conclude "no reactive demand" when there genuinely is some.
+	pendingClaims atomic.Int32
 }
 
 // Snapshot returns a point-in-time view of the scheduler's internal counters.
@@ -219,7 +237,7 @@ func (s *PoolScheduler) Snapshot() Snapshot {
 	}
 	return Snapshot{
 		IdleReady:      s.queue.len(),
-		QueueLen:       len(s.reqCh),
+		QueueLen:       int(s.pendingClaims.Load()),
 		ReservedCount:  s.reserved.size(),
 		InflightCAS:    len(s.inflightCAS),
 		LastDispatchAt: lastDispatch,
@@ -259,6 +277,7 @@ func (s *PoolScheduler) Enqueue(req *ClaimRequest) bool {
 	}
 	select {
 	case s.reqCh <- req:
+		s.pendingClaims.Add(1)
 		// Wake the scheduler goroutine so it dispatches without waiting for
 		// the poll timer.
 		select {
@@ -269,6 +288,40 @@ func (s *PoolScheduler) Enqueue(req *ClaimRequest) bool {
 	default:
 		return false
 	}
+}
+
+// failRequest is the single chokepoint for sending a terminal result with
+// an error back to the caller. It:
+//
+//   - emits a V(2) log line with the diagnostic context (reason, ctx.Err,
+//     deadline) so debug sessions can correlate scheduler decisions
+//     against caller-visible failures;
+//   - decrements pendingClaims so Snapshot.QueueLen stays accurate;
+//   - sends on req.ResultCh non-blocking — callers are expected to
+//     provide a buffered channel of capacity ≥ 1 so the first send
+//     always succeeds even after the caller goroutine returned (e.g.
+//     HTTP client disconnect). On the rare full-channel case we drop
+//     the send rather than wedge the scheduler goroutine.
+func (s *PoolScheduler) failRequest(req *ClaimRequest, err error, reason string) {
+	var ctxErr error
+	if req.Ctx != nil {
+		ctxErr = req.Ctx.Err()
+	}
+	klog.V(2).InfoS("schedule: failing claim request",
+		"pool", s.poolNS+"/"+s.poolName,
+		"reason", reason,
+		"err", err,
+		"ctxErr", ctxErr,
+		"deadline", req.Deadline,
+		"enqueuedAt", req.EnqueuedAt,
+	)
+	select {
+	case req.ResultCh <- ClaimResult{Err: err}:
+	default:
+		klog.V(3).InfoS("schedule: result channel full while failing request — caller already drained or disconnected",
+			"pool", s.poolNS+"/"+s.poolName, "reason", reason)
+	}
+	s.pendingClaims.Add(-1)
 }
 
 // NotifyIdle is called when a pod transitions Stopping → Idle for this pool.
@@ -306,7 +359,22 @@ func (s *PoolScheduler) Shutdown() {
 
 // Run is the scheduler goroutine; call it exactly once per scheduler.
 func (s *PoolScheduler) Run(ctx context.Context) {
+	// `waiting` holds requests that have already been pulled off
+	// reqCh but could not be paired with an idle pod yet. It is the
+	// goroutine-local "parking lot" — only this goroutine ever reads
+	// or writes it, so no synchronisation is needed. Parking here
+	// instead of bouncing back into reqCh eliminates the hot-spin
+	// where `case req := <-s.reqCh` would otherwise fire on every
+	// iteration of the select while a request can't be served.
+	var waiting []*ClaimRequest
+
 	defer func() {
+		// Shutdown: surface every still-pending request as a failure
+		// so callers unblock. drainAll covers reqCh; the loop covers
+		// waiting.
+		for _, req := range waiting {
+			s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "scheduler shutdown")
+		}
 		s.drainAll(inplaceupdate.ErrNoIdlePodsAvailable)
 		s.updateGauges()
 		close(s.doneCh)
@@ -333,40 +401,64 @@ func (s *PoolScheduler) Run(ctx context.Context) {
 			return
 
 		case req := <-s.reqCh:
-			s.handleRequest(ctx, req)
+			waiting = s.handleRequest(ctx, req, waiting)
 
 		case <-s.idleCh:
 			// A Stopping → Idle transition completed; new pods are likely
-			// visible. Refresh and dispatch anything that was waiting.
+			// visible. Refresh and try to drain the parking lot.
 			s.refreshReady(ctx)
-			s.tryDispatchPending(ctx)
+			waiting = s.dispatchFromWaiting(ctx, waiting)
 			curPollInterval = pollInterval
 			resetTimer(pollTimer, curPollInterval)
 
 		case <-s.triggerCh:
-			// A new request arrived (or a prior CAS reported retriable); try
-			// to dispatch whatever is already queued.
-			s.tryDispatchPending(ctx)
+			// A new request arrived (or a prior CAS reported retriable).
+			// Drain the parking lot — the new pod that came back from a
+			// retriable CAS may now be eligible after its reservation
+			// TTL expires, and a fresh refreshReady already ran during
+			// handleRequest if needed.
+			waiting = s.dispatchFromWaiting(ctx, waiting)
 			curPollInterval = pollInterval
 			resetTimer(pollTimer, curPollInterval)
 
 		case <-pollTimer.C:
-			// Fallback: informer may have missed a wakeup. Refresh, dispatch,
-			// advance back-off if we still couldn't progress.
+			// Fallback: informer may have missed a wakeup. Refresh and
+			// drain. Advance back-off only when nothing changed and
+			// work still exists.
 			s.refreshReady(ctx)
-			if s.tryDispatchPending(ctx) {
+			before := len(waiting)
+			waiting = s.dispatchFromWaiting(ctx, waiting)
+			switch {
+			case len(waiting) < before:
 				curPollInterval = pollInterval
-			} else if s.hasPending() {
+			case len(waiting) > 0 || s.hasPending():
 				curPollInterval = nextPollInterval(curPollInterval)
 				klog.V(5).InfoS("schedule: no idle pods, backing off",
-					"pool", s.poolNS+"/"+s.poolName, "nextInterval", curPollInterval)
+					"pool", s.poolNS+"/"+s.poolName,
+					"waiting", len(waiting),
+					"nextInterval", curPollInterval)
+			default:
+				curPollInterval = pollInterval
 			}
 			resetTimer(pollTimer, curPollInterval)
 
 		case <-expireTimer.C:
+			waiting = s.filterExpiredWaiting(waiting)
 			s.expireReqCh()
 			if n := s.reserved.sweep(); n > 0 {
 				pkgmetrics.ScheduleReservationTTLExpiredTotal.With(s.plabels()).Add(float64(n))
+			}
+			// Doubling the expire tick as a low-rate dispatch retry
+			// is what keeps a parked request progressing when the
+			// idleCh / triggerCh / pollTimer wake-ups don't fire
+			// (refresh got throttled, a reservation TTL just freed
+			// a pod, NotifyIdle was missed by the upstream, etc.).
+			// expireCheckInterval = 300 ms is short enough to honour
+			// sub-second wait SLOs and far slower than the spin the
+			// previous design accidentally produced.
+			if len(waiting) > 0 {
+				s.refreshReady(ctx)
+				waiting = s.dispatchFromWaiting(ctx, waiting)
 			}
 			s.updateGauges()
 			expireTimer.Reset(expireCheckInterval)
@@ -378,52 +470,72 @@ func (s *PoolScheduler) Run(ctx context.Context) {
 // Request handling
 // ---------------------------------------------------------------------------
 
-// handleRequest dispatches req if a pod is available, otherwise re-enqueues
-// it into reqCh for later dispatch. It never blocks on apiserver calls.
-func (s *PoolScheduler) handleRequest(ctx context.Context, req *ClaimRequest) {
+// handleRequest processes one request fresh off reqCh. If an idle pod is
+// available it spawns the doCAS goroutine immediately; otherwise the
+// request is parked in `waiting` and returned for the caller (the Run
+// loop) to keep track of. handleRequest never blocks on apiserver
+// calls — refreshReady is throttled and async-friendly.
+//
+// The returned slice is `waiting` itself (possibly with one element
+// appended); the caller MUST replace its local variable with the
+// returned value, since append may realloc.
+func (s *PoolScheduler) handleRequest(ctx context.Context, req *ClaimRequest, waiting []*ClaimRequest) []*ClaimRequest {
 	if req.isExpired() {
-		req.ResultCh <- ClaimResult{Err: inplaceupdate.ErrNoIdlePodsAvailable}
-		return
+		s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "expired before dispatch")
+		return waiting
 	}
 
 	pod, ok, discarded := s.queue.popUnreservedAndReserve(ctx, s.k8sClient, s.reserved)
 	if discarded > 0 {
 		pkgmetrics.ScheduleReadyQueueEvictedTotal.With(s.plabels()).Add(float64(discarded))
 	}
-	s.updateGauges()
 	if ok {
 		go s.doCAS(req, pod)
-		return
+		s.updateGauges()
+		return waiting
 	}
 
-	// Queue empty — put the request back and try to refresh.
-	s.requeue(req)
+	// No pod — park the request. The autoscaler sees the pending
+	// demand via pendingClaims (Snapshot.QueueLen); the next
+	// idleCh / triggerCh / pollTimer event will run
+	// dispatchFromWaiting to revisit.
+	waiting = append(waiting, req)
+	klog.V(4).InfoS("schedule: parked request waiting for idle pod",
+		"pool", s.poolNS+"/"+s.poolName,
+		"waiting", len(waiting),
+		"idleReady", s.queue.len(),
+	)
 
+	// Best-effort refresh in case the ready queue is just behind the
+	// informer cache. dispatchFromWaiting will retry if refresh
+	// admitted something usable.
 	if s.queue.len() < lowWaterMark {
 		s.refreshReady(ctx)
+		waiting = s.dispatchFromWaiting(ctx, waiting)
 	}
-	// Dispatch again in case the refresh admitted something. Pending
-	// demand is now visible to the autoscaler directly through the
-	// PoolScheduler.Snapshot() reactive signal (QueueLen > 0 with
-	// IdleReady == 0), so we don't need to emit a separate doorbell.
-	s.tryDispatchPending(ctx)
+	s.updateGauges()
+	return waiting
 }
 
-// tryDispatchPending pops requests from reqCh while queued pods exist. Returns
-// true if at least one request was dispatched. Stops as soon as the queue or
-// the channel runs dry.
-func (s *PoolScheduler) tryDispatchPending(ctx context.Context) bool {
-	dispatched := false
-	for {
-		var req *ClaimRequest
-		select {
-		case req = <-s.reqCh:
-		default:
-			s.updateGauges()
-			return dispatched
-		}
+// dispatchFromWaiting walks the parking lot in arrival order and pairs
+// each request with an idle pod. As soon as the ready queue runs dry,
+// the remaining requests are kept in place (FIFO order preserved).
+// Expired requests are dropped with a failure result regardless of pod
+// availability.
+//
+// The returned slice replaces the input — append may realloc, so the
+// caller MUST use the returned value.
+func (s *PoolScheduler) dispatchFromWaiting(ctx context.Context, waiting []*ClaimRequest) []*ClaimRequest {
+	if len(waiting) == 0 {
+		return waiting
+	}
+	// out reuses the underlying array — safe because every read from
+	// `waiting[i]` happens before the corresponding write to
+	// `out[len(out)]` (sequential single-goroutine traversal).
+	out := waiting[:0]
+	for i, req := range waiting {
 		if req.isExpired() {
-			req.ResultCh <- ClaimResult{Err: inplaceupdate.ErrNoIdlePodsAvailable}
+			s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "expired while waiting")
 			continue
 		}
 		pod, ok, discarded := s.queue.popUnreservedAndReserve(ctx, s.k8sClient, s.reserved)
@@ -431,22 +543,44 @@ func (s *PoolScheduler) tryDispatchPending(ctx context.Context) bool {
 			pkgmetrics.ScheduleReadyQueueEvictedTotal.With(s.plabels()).Add(float64(discarded))
 		}
 		if !ok {
-			s.requeue(req)
-			s.updateGauges()
-			return dispatched
+			// No more pods — keep this request and everything after
+			// it in their original order.
+			out = append(out, waiting[i:]...)
+			break
 		}
 		go s.doCAS(req, pod)
-		dispatched = true
 	}
+	s.updateGauges()
+	return out
 }
 
-// requeue returns req to reqCh. If the channel is unexpectedly full, fail the
-// request; this should be vanishingly rare because we just popped from it.
+// filterExpiredWaiting removes expired requests from the parking lot
+// (called from the expireTimer tick). Keeps everything else in place.
+func (s *PoolScheduler) filterExpiredWaiting(waiting []*ClaimRequest) []*ClaimRequest {
+	if len(waiting) == 0 {
+		return waiting
+	}
+	out := waiting[:0]
+	for _, req := range waiting {
+		if req.isExpired() {
+			s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "expired in waiting (expireTick)")
+			continue
+		}
+		out = append(out, req)
+	}
+	return out
+}
+
+// requeue returns req to reqCh for the doCAS retriable path: the pod
+// turned out to be unusable (phase race / not-found / conflict) but
+// the request itself is still valid and should be re-attempted by the
+// next dispatch cycle. If reqCh is unexpectedly full the request is
+// failed instead of dropped silently.
 func (s *PoolScheduler) requeue(req *ClaimRequest) {
 	select {
 	case s.reqCh <- req:
 	default:
-		req.ResultCh <- ClaimResult{Err: inplaceupdate.ErrNoIdlePodsAvailable}
+		s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "reqCh full on requeue (retriable CAS)")
 	}
 }
 
@@ -465,26 +599,18 @@ func (s *PoolScheduler) doCAS(req *ClaimRequest, pod corev1.Pod) {
 	s.inflightCAS <- struct{}{}
 	defer func() { <-s.inflightCAS }()
 
-	// Re-check expiry after acquiring the inflight slot. A request may have
-	// been valid when it was popped from the queue, but if the caller's context
-	// was cancelled (HTTP disconnect) while we were waiting for a slot (or
-	// immediately before), we must not claim the pod — the result channel has
-	// no live reader and the pod would be stranded in Starting until
-	// startup-timeout fires.
+	// Re-check expiry after acquiring the inflight slot. A request may
+	// have been valid when it was popped from the queue, but if the
+	// caller's context was cancelled (HTTP disconnect) while we were
+	// waiting for a slot we must not claim the pod — the result
+	// channel may have no reader and the pod would be stranded in
+	// Starting until startup-timeout fires.
 	if req.isExpired() {
-		// Return the pod to availability: release the reservation so a later
-		// refreshReady can re-admit it, and requeue the request so callers
-		// with active contexts can still claim it.
+		// Release the reservation so a later refreshReady can re-admit
+		// this pod for a different request. Fail the expired request
+		// directly — there's no value in keeping it alive any longer.
 		s.reserved.release(pod.Name)
-		// Best-effort requeue: if the channel is full (extremely rare — we just
-		// drained from it), just notify the result channel with the expiry error
-		// so the caller is unblocked.
-		select {
-		case s.reqCh <- req:
-			s.wake()
-		default:
-			req.ResultCh <- ClaimResult{Err: inplaceupdate.ErrNoIdlePodsAvailable}
-		}
+		s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "expired after inflight slot acquire")
 		pkgmetrics.ScheduleCASOutcomeTotal.With(outcomeLabels(s.plabels(), "expired")).Inc()
 		return
 	}
@@ -516,17 +642,30 @@ func (s *PoolScheduler) doCAS(req *ClaimRequest, pod corev1.Pod) {
 	labels := s.plabels()
 	switch {
 	case updateErr == nil:
-		req.ResultCh <- ClaimResult{Pod: fresh}
+		// Non-blocking send — caller's ResultCh is expected to have
+		// buffer ≥ 1. If the caller already disconnected we still
+		// surface the success outcome via metrics + counter.
+		select {
+		case req.ResultCh <- ClaimResult{Pod: fresh}:
+		default:
+			klog.V(3).InfoS("schedule: result channel full on success (caller drained or disconnected)",
+				"pool", s.poolNS+"/"+s.poolName, "pod", pod.Name)
+		}
+		s.pendingClaims.Add(-1)
 		s.lastDispatch.Store(time.Now().UnixNano())
 		pkgmetrics.ScheduleCASOutcomeTotal.With(outcomeLabels(labels, "success")).Inc()
 		// Reservation stays; TTL sweep evicts it after the informer catches up.
 
 	case updateErr == inplaceupdate.ErrUnexpectedPodPhase || errors.IsConflict(updateErr) || errors.IsNotFound(updateErr):
-		// Another actor beat us to the pod, or the pod was deleted between our
-		// cache-backed pop and the CAS Update (common during scale-down).
-		// Put the request back and keep the reservation — the pod is no longer
-		// Idle / no longer exists, so we must not re-admit it via a stale-cache
-		// refresh in the next few iterations.
+		// Another actor beat us to the pod, or the pod was deleted
+		// between our cache-backed pop and the CAS Update (common
+		// during scale-down). Put the request back and keep the
+		// reservation — the pod is no longer Idle / no longer exists,
+		// so we must not re-admit it via a stale-cache refresh in
+		// the next few iterations. pendingClaims stays unchanged
+		// because the request is still in flight.
+		klog.V(4).InfoS("schedule: CAS reported retriable conflict; requeueing claim",
+			"pool", s.poolNS+"/"+s.poolName, "pod", pod.Name, "err", updateErr)
 		s.requeue(req)
 		s.wake()
 		pkgmetrics.ScheduleCASOutcomeTotal.With(outcomeLabels(labels, "retriable")).Inc()
@@ -535,7 +674,7 @@ func (s *PoolScheduler) doCAS(req *ClaimRequest, pod corev1.Pod) {
 		// Hard error (Forbidden, transport error, etc.). Release the
 		// reservation so a future refresh may try this pod again.
 		s.reserved.release(pod.Name)
-		req.ResultCh <- ClaimResult{Err: updateErr}
+		s.failRequest(req, updateErr, "CAS hard error")
 		pkgmetrics.ScheduleCASOutcomeTotal.With(outcomeLabels(labels, "hard")).Inc()
 	}
 }
@@ -585,13 +724,17 @@ func (s *PoolScheduler) refreshReady(ctx context.Context) {
 // Utility: request-channel maintenance, scale-up signalling, metrics
 // ---------------------------------------------------------------------------
 
-// hasPending reports whether reqCh contains at least one request.
+// hasPending reports whether any request is still in flight — covers
+// both reqCh-buffered and parking-lot-waiting requests via the
+// atomic counter.
 func (s *PoolScheduler) hasPending() bool {
-	return len(s.reqCh) > 0
+	return s.pendingClaims.Load() > 0
 }
 
-// expireReqCh discards expired requests from reqCh in place. Inspects exactly
-// len(reqCh) items to avoid live-lock if a caller keeps enqueuing.
+// expireReqCh discards expired requests sitting in reqCh that the Run
+// loop has not yet picked up. Inspects exactly len(reqCh) items at
+// entry so a caller that keeps enqueueing can't live-lock this
+// helper.
 func (s *PoolScheduler) expireReqCh() {
 	n := len(s.reqCh)
 	if n == 0 {
@@ -603,7 +746,7 @@ outer:
 		select {
 		case req := <-s.reqCh:
 			if req.isExpired() {
-				req.ResultCh <- ClaimResult{Err: inplaceupdate.ErrNoIdlePodsAvailable}
+				s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "expired in reqCh (expireTick)")
 			} else {
 				live = append(live, req)
 			}
@@ -615,18 +758,19 @@ outer:
 		select {
 		case s.reqCh <- req:
 		default:
-			req.ResultCh <- ClaimResult{Err: inplaceupdate.ErrNoIdlePodsAvailable}
+			s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "reqCh full while re-enqueueing live request")
 		}
 	}
 }
 
-// drainAll rejects every remaining request in reqCh with err. Called from the
-// Run() defer; must not be called while anything else is consuming reqCh.
+// drainAll rejects every remaining request in reqCh with err. Called
+// from the Run() defer; must not be called while anything else is
+// consuming reqCh.
 func (s *PoolScheduler) drainAll(err error) {
 	for {
 		select {
 		case req := <-s.reqCh:
-			req.ResultCh <- ClaimResult{Err: err}
+			s.failRequest(req, err, "drainAll")
 		default:
 			return
 		}
