@@ -66,10 +66,46 @@ func Decide(snap *Snapshot, mut *Mutator) {
 		)
 		return
 	}
+	// Self-heal invariant: spec.replicas must never sit below the live
+	// RunningReplicas count. Running pods are claimed by active Sandboxes
+	// and are scale-down-protected; a target below them is a phantom
+	// decision the Pool reconciler can't act on. Raise the floor and
+	// defer further scale-up / scale-down to the next cycle so we see
+	// the corrected state.
+	if reconcileRunningFloor(snap, mut) {
+		return
+	}
 	if scaledUp := evaluateScaleUp(snap, mut); scaledUp {
 		return
 	}
 	evaluateScaleDown(snap, mut)
+}
+
+// reconcileRunningFloor raises Pool.Spec.Replicas to Status.RunningReplicas
+// when the persisted target has slipped below the claimed-pod count.
+// Returns true when a write was staged.
+//
+// This corrects the bug where an earlier scale-down (or a stale snapshot)
+// dropped spec.replicas below the actual Running pod count, leaving the
+// Pool reconciler unable to delete the excess (Running pods are
+// protected) and Env.Status.totalDesired permanently misrepresenting
+// cluster capacity.
+func reconcileRunningFloor(snap *Snapshot, mut *Mutator) bool {
+	if snap.Pool == nil {
+		return false
+	}
+	running := snap.Pool.Status.RunningReplicas
+	current := snap.Pool.Spec.Replicas
+	if running <= current {
+		return false
+	}
+	klog.V(2).InfoS("autoscaler: raising spec.replicas to RunningReplicas floor",
+		"pool", poolKeyFor(snap),
+		"current", current,
+		"running", running,
+	)
+	mut.SetTargetReplicas(running)
+	return true
 }
 
 // poolKeyFor is a small helper to keep log lines compact.
@@ -441,6 +477,15 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 	}
 
 	target := current - 1
+	// Defensive: never lower the target below RunningReplicas. The
+	// top-of-Decide self-heal usually keeps current >= running so this
+	// branch is rarely reached, but keeping the invariant adjacent to
+	// the scale-down site documents the rule for future edits.
+	if running := snap.Pool.Status.RunningReplicas; target < running {
+		klog.V(3).InfoS("autoscaler: scale-down blocked by RunningReplicas floor",
+			"pool", key, "wantTarget", target, "running", running)
+		return
+	}
 	klog.V(2).InfoS("autoscaler: scaling down",
 		"pool", key,
 		"current", current,

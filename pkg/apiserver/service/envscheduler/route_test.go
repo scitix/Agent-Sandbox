@@ -213,6 +213,46 @@ func TestRouteMulti_ExpiredSaturationIsIgnored(t *testing.T) {
 	}
 }
 
+// TestRouteMulti_MaxedOutMemberSkippedInFavourOfGrowable proves the
+// MaxedOutFilter is wired into the routing path: a Pool that's at its
+// MaxReplicas with no idle is bypassed in favour of a same-priority
+// sibling that can still grow. Reproduces the user-reported scenario
+// where one Pool sat saturated and the other still had headroom.
+func TestRouteMulti_MaxedOutMemberSkippedInFavourOfGrowable(t *testing.T) {
+	pools := newFakePools()
+	getter := &fakeEnvGetter{envs: map[types.NamespacedName]*agentsv1alpha1.SandboxEnv{}}
+	mgr := New(localID, pools, getter)
+
+	maxed := mkMember("maxed", 0)
+	maxed.Config.MaxReplicas = ptrInt32(2)
+	growable := mkMember("growable", 0)
+	growable.Config.MaxReplicas = ptrInt32(10)
+
+	env := makeEnv("e", maxed, growable)
+	// Reflect "maxed" sitting at its cap via Env.Status.
+	env.Status.Clusters = []agentsv1alpha1.EnvClusterStatus{
+		{
+			ClusterID: localID,
+			ObservedMembers: []agentsv1alpha1.EnvObservedMember{
+				{Name: "maxed", DesiredReplicas: 2},
+				{Name: "growable", DesiredReplicas: 2},
+			},
+		},
+	}
+	mgr.OnEnvUpsert(env)
+	getter.envs[types.NamespacedName{Namespace: "ns", Name: "e"}] = env
+
+	mgr.Route(context.Background(), types.NamespacedName{Namespace: "ns", Name: "e"}, makeReq())
+	if got := pools.GetScheduler("ns", "growable").Snapshot().QueueLen; got != 1 {
+		t.Errorf("growable QueueLen = %d, want 1 (maxed should have been filtered)", got)
+	}
+	if got := pools.GetScheduler("ns", "maxed"); got != nil && got.Snapshot().QueueLen != 0 {
+		t.Errorf("maxed should not have received the request, QueueLen = %d", got.Snapshot().QueueLen)
+	}
+}
+
+func ptrInt32(v int32) *int32 { return &v }
+
 // TestRouteMulti_DeterministicTiebreakerByName: two members tied on every
 // rank dimension are split by lexicographic name order to avoid flakiness.
 func TestRouteMulti_DeterministicTiebreakerByName(t *testing.T) {

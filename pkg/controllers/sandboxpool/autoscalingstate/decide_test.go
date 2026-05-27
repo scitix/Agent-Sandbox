@@ -37,6 +37,7 @@ type scenario struct {
 	// Pool spec/status
 	poolReplicas int32
 	poolIdle     int32
+	poolRunning  int32
 	poolStatus   *agentsv1alpha1.PoolAutoScalingStatus
 	poolAnn      map[string]string
 
@@ -58,7 +59,7 @@ func (s scenario) build() *Snapshot {
 	if s.now.IsZero() {
 		s.now = time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
 	}
-	pool := poolFixture{name: "self", replicas: s.poolReplicas, idle: s.poolIdle}.build()
+	pool := poolFixture{name: "self", replicas: s.poolReplicas, idle: s.poolIdle, running: s.poolRunning}.build()
 	if s.poolStatus != nil {
 		pool.Status.AutoScaling = s.poolStatus
 	}
@@ -604,6 +605,87 @@ func TestScaleDown_ReactiveDemandSkipsScaleDown(t *testing.T) {
 	// Belt-and-braces: also check no LastScaleDownTime got staged.
 	if s := statusOf(mut); s.LastScaleDownTime != nil {
 		t.Errorf("LastScaleDownTime should remain nil under reactive demand, got %v", s.LastScaleDownTime)
+	}
+}
+
+// ---------- RunningReplicas floor ----------
+
+// When spec.replicas has slipped below the live RunningReplicas count
+// (e.g. an earlier scale-down decision did not consider claimed pods),
+// the autoscaler must self-heal by raising spec.replicas to the running
+// floor and skipping scale-up / scale-down for this cycle.
+func TestDecide_RunningFloor_RaisesSpecAboveRunning(t *testing.T) {
+	g := defaultGroupEnabled()
+	target, ok, mut := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 0, // mirrors the production bug: spec dropped to 0
+		poolIdle:     0,
+		poolRunning:  3, // but 3 pods are actively claimed
+	})
+	if !ok {
+		t.Fatal("expected the autoscaler to stage a spec write to lift the floor")
+	}
+	if target != 3 {
+		t.Errorf("running floor not honoured: target = %d, want 3", target)
+	}
+	// Should not have staged LastScaleUpTime / LastScaleDownTime — the
+	// floor lift is bookkeeping, not a scaling decision.
+	if s := statusOf(mut); s.LastScaleUpTime != nil || s.LastScaleDownTime != nil {
+		t.Errorf("floor lift must not stamp scale-up/down timestamps, got %+v", s)
+	}
+}
+
+// When the running floor lift triggers, scale-up evaluation must NOT
+// also run in the same cycle. Otherwise a Pool with running=3 / idle=0
+// could be raised to 3 *and* then scaled up to 5 in one go.
+func TestDecide_RunningFloor_SuppressesScaleUpInSameCycle(t *testing.T) {
+	g := defaultGroupEnabled()
+	_, ok, mut := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 0,
+		poolIdle:     0,
+		poolRunning:  3,
+		// Reactive demand would normally fire a scale-up.
+		schedSnap: &schedule.Snapshot{QueueLen: 5, IdleReady: 0},
+	})
+	if !ok {
+		t.Fatal("expected the running-floor write")
+	}
+	if _, _, attempted := mut.PendingScaleUpAttempt(); attempted {
+		t.Error("scale-up must not be attempted in the same cycle as a floor lift")
+	}
+}
+
+// Scale-down must not lower the target below RunningReplicas even when
+// every other gate (timeout, stabilization, min) clears. Defends against
+// races where the snapshot saw current>=running but the per-cycle
+// decrement would push it below.
+func TestScaleDown_RunningFloor_Blocks(t *testing.T) {
+	g := defaultGroupEnabled()
+	g.MinReplicas = ptr.To(int32(0))
+	g.ScaleDownPolicy.IdleTimeoutSeconds = 1
+	g.ScaleDownPolicy.StabilizationSeconds = 0
+	// current=3, running=3, idle=0 — current is exactly at the running
+	// floor. Scale-down would propose current-1=2, which violates the
+	// floor and must be rejected.
+	_, ok, mut := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 3,
+		poolIdle:     0,
+		poolRunning:  3,
+		// Provide a stale idle-pod sample so oldestIdleEligible would
+		// otherwise pass — though with idle=0 the IdlePodAges feed
+		// only the eligibility gate, not the running-floor check.
+		idlePodAges: []time.Duration{10 * time.Minute},
+	})
+	if ok {
+		t.Error("scale-down must not fire when target would slip below RunningReplicas")
+	}
+	if s := statusOf(mut); s.LastScaleDownTime != nil {
+		t.Errorf("LastScaleDownTime should remain nil, got %v", s.LastScaleDownTime)
 	}
 }
 

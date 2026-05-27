@@ -16,7 +16,6 @@ package envscheduler
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -25,119 +24,93 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/schedule"
 )
 
-// routeMulti handles the multi-member case. It:
-//
-//  1. Filters to local members (cross-cluster routing is reserved for a
-//     future extension — see plan §12).
-//
-//  2. Splits the candidate list into "fresh" (SaturatedUntil not in the
-//     future per Env.Status) and "stale" (still in saturation cooldown).
-//     When at least one fresh member exists, the stale set is held back
-//     as a fallback. When all members are stale, the cooldown is ignored
-//     and the full list is tried — better to attempt a likely-rejected
-//     Pool than to fail the request outright.
-//
-//  3. Sorts each tier by (priority asc, snapshot.IdleReady desc,
-//     snapshot.QueueLen asc, poolName asc). Snapshot reads are atomic
-//     channel-len / queue-len reads on the PoolScheduler — sub-µs.
-//
-//  4. Iterates: first scheduler whose Enqueue accepts wins. If every
-//     candidate's reqCh is full, the call returns RouteSaturated and
-//     the caller surfaces backpressure to the client.
+// routeMulti handles the multi-member case. It builds one
+// CandidateContext per local member, runs them through the scoring
+// framework (filter → score → sort), then tries Enqueue on each pool
+// in best-first order. The first scheduler whose Enqueue accepts wins.
+// If every candidate refuses, the call returns RouteSaturated.
 func (m *Manager) routeMulti(_ context.Context, envKey types.NamespacedName, entry *envEntry, req *schedule.ClaimRequest) RouteResult {
+	cands := m.buildCandidates(envKey, entry)
+	if len(cands) == 0 {
+		return RouteResult{Kind: RouteNotFound}
+	}
+	ranked, _ := m.framework.Rank(cands)
+	for _, c := range ranked {
+		pool := m.pools.GetOrCreateScheduler(envKey.Namespace, c.Member.poolName, "", "")
+		if pool == nil {
+			continue
+		}
+		if pool.Enqueue(req) {
+			return RouteResult{Kind: RouteLocal, Pool: pool}
+		}
+	}
+	return RouteResult{Kind: RouteSaturated}
+}
+
+// buildCandidates materialises one CandidateContext per local member
+// of the env. Reads PoolScheduler.Snapshot for live counters and
+// SandboxEnv.Status.ObservedMember for DesiredReplicas + SaturatedUntil.
+// Both are O(1) atomic / map lookups on the hot path.
+func (m *Manager) buildCandidates(envKey types.NamespacedName, entry *envEntry) []CandidateContext {
 	now := time.Now()
-	saturated := map[string]bool{}
+	// Pull observed-member projections + per-scaling-group sibling
+	// totals from Env.Status (when available). The router has to know
+	// DesiredReplicas to score Headroom, and Σ-siblings to apply the
+	// group cap.
+	desiredByMember := map[string]int32{}
+	saturatedByMember := map[string]*time.Time{}
 	if m.envGetter != nil {
 		if env, ok := m.envGetter.GetEnv(envKey.Namespace, envKey.Name); ok {
 			for _, c := range env.Status.Clusters {
 				if c.ClusterID != m.local {
 					continue
 				}
-				for _, om := range c.ObservedMembers {
+				for i := range c.ObservedMembers {
+					om := &c.ObservedMembers[i]
+					desiredByMember[om.Name] = om.DesiredReplicas
 					if om.SaturatedUntil != nil && om.SaturatedUntil.After(now) {
-						saturated[om.Name] = true
+						t := om.SaturatedUntil.Time
+						saturatedByMember[om.Name] = &t
 					}
 				}
 			}
 		}
 	}
 
-	var fresh, stale []memberRef
-	for _, c := range entry.members {
-		if !c.isLocal {
-			continue // cross-cluster routing deferred
-		}
-		if saturated[c.poolName] {
-			stale = append(stale, c)
-		} else {
-			fresh = append(fresh, c)
-		}
-	}
-
-	if len(fresh) == 0 && len(stale) == 0 {
-		return RouteResult{Kind: RouteNotFound}
-	}
-
-	// Try fresh tier first; fall through to stale if all fresh are full.
-	for _, tier := range [][]memberRef{fresh, stale} {
-		if len(tier) == 0 {
+	// Σ DesiredReplicas per scalingGroup so each candidate's
+	// "siblings desired" is just (groupSum - self).
+	groupSum := map[string]int32{}
+	for _, mr := range entry.members {
+		if !mr.isLocal || mr.scalingGroup == "" {
 			continue
 		}
-		ranked := m.rankCandidates(envKey.Namespace, tier)
-		for _, c := range ranked {
-			pool := m.pools.GetOrCreateScheduler(envKey.Namespace, c.poolName, "", "")
-			if pool == nil {
-				continue
-			}
-			if pool.Enqueue(req) {
-				return RouteResult{Kind: RouteLocal, Pool: pool}
-			}
-		}
+		groupSum[mr.scalingGroup] += desiredByMember[mr.poolName]
 	}
-	return RouteResult{Kind: RouteSaturated}
-}
 
-// rankCandidates sorts a list of local member refs by:
-//   - priority ascending (lower number = higher routing preference)
-//   - then PoolScheduler.Snapshot().IdleReady DESC (prefer Pools with ready
-//     idle Pods so the request dispatches without a wait)
-//   - then PoolScheduler.Snapshot().QueueLen ASC (prefer less-backed-up Pools)
-//   - then poolName ascending (lexicographic) so ties are deterministic
-//
-// Snapshot is called once per candidate; result is captured locally to keep
-// the sort comparator branch-free and avoid re-reading volatile counters.
-func (m *Manager) rankCandidates(ns string, in []memberRef) []memberRef {
-	type ranked struct {
-		ref      memberRef
-		idle     int
-		queueLen int
-	}
-	scored := make([]ranked, 0, len(in))
-	for _, c := range in {
+	cands := make([]CandidateContext, 0, len(entry.members))
+	for _, mr := range entry.members {
+		if !mr.isLocal {
+			continue // cross-cluster routing deferred
+		}
 		var snap schedule.Snapshot
-		if sched := m.pools.GetScheduler(ns, c.poolName); sched != nil {
+		if sched := m.pools.GetScheduler(envKey.Namespace, mr.poolName); sched != nil {
 			snap = sched.Snapshot()
 		}
-		scored = append(scored, ranked{ref: c, idle: snap.IdleReady, queueLen: snap.QueueLen})
+		desired := desiredByMember[mr.poolName]
+		siblings := int32(0)
+		if mr.scalingGroup != "" {
+			siblings = groupSum[mr.scalingGroup] - desired
+		}
+		cands = append(cands, CandidateContext{
+			Now:                now,
+			Member:             mr,
+			Snap:               snap,
+			DesiredReplicas:    desired,
+			SiblingsDesiredSum: siblings,
+			SaturatedUntil:     saturatedByMember[mr.poolName],
+		})
 	}
-	sort.SliceStable(scored, func(i, j int) bool {
-		a, b := scored[i], scored[j]
-		if a.ref.priority != b.ref.priority {
-			return a.ref.priority < b.ref.priority
-		}
-		if a.idle != b.idle {
-			return a.idle > b.idle
-		}
-		if a.queueLen != b.queueLen {
-			return a.queueLen < b.queueLen
-		}
-		return a.ref.poolName < b.ref.poolName
-	})
-	out := make([]memberRef, len(scored))
-	for i := range scored {
-		out[i] = scored[i].ref
-	}
-	return out
+	return cands
 }
 
 // unused but exported helper kept here for future cross-cluster work —

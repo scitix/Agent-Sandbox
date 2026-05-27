@@ -16,7 +16,6 @@ package envscheduler
 
 import (
 	"context"
-	"time"
 
 	"k8s.io/apimachinery/pkg/types"
 
@@ -38,7 +37,16 @@ func New(localClusterID string, pools SchedulerLookup, envGetter EnvGetter) *Man
 		pools:     pools,
 		envGetter: envGetter,
 		local:     localClusterID,
+		framework: newDefaultFramework(),
 	}
+}
+
+// WithFramework swaps the scoring framework. Returns the receiver for
+// chaining. Intended for tests that want to assert against a custom
+// plugin set without re-wiring the whole Manager.
+func (m *Manager) WithFramework(f *Framework) *Manager {
+	m.framework = f
+	return m
 }
 
 // Resolve maps a Sandbox.Create `template` (formerly known as PoolName) to
@@ -132,16 +140,36 @@ func (m *Manager) OnEnvDelete(key types.NamespacedName) {
 func (m *Manager) buildEntry(env *agentsv1alpha1.SandboxEnv) *envEntry {
 	key := types.NamespacedName{Namespace: env.Namespace, Name: env.Name}
 	entry := &envEntry{key: key}
+	// Denormalise group MaxReplicas keyed by name so members can pick up
+	// their owning group's ceiling without re-walking the autoscaling
+	// spec on the request hot path.
+	groupMax := map[string]*int32{}
+	if env.Spec.Autoscaling != nil {
+		for i := range env.Spec.Autoscaling.Groups {
+			g := &env.Spec.Autoscaling.Groups[i]
+			if g.MaxReplicas != nil {
+				v := *g.MaxReplicas
+				groupMax[g.Name] = &v
+			}
+		}
+	}
 	for _, c := range env.Spec.Clusters {
 		isLocal := c.ClusterID == m.local
 		for _, sm := range c.Members {
+			var mMax *int32
+			if sm.Config.MaxReplicas != nil {
+				v := *sm.Config.MaxReplicas
+				mMax = &v
+			}
 			entry.members = append(entry.members, memberRef{
-				clusterID:       c.ClusterID,
-				poolName:        sm.Name,
-				isLocal:         isLocal,
-				priority:        sm.Config.Priority,
-				scaleUpPriority: sm.Config.EffectiveScaleUpPriority(),
-				scalingGroup:    sm.Config.ScalingGroup,
+				clusterID:         c.ClusterID,
+				poolName:          sm.Name,
+				isLocal:           isLocal,
+				priority:          sm.Config.Priority,
+				scaleUpPriority:   sm.Config.EffectiveScaleUpPriority(),
+				scalingGroup:      sm.Config.ScalingGroup,
+				memberMaxReplicas: mMax,
+				groupMaxReplicas:  groupMax[sm.Config.ScalingGroup],
 			})
 		}
 	}
@@ -151,18 +179,14 @@ func (m *Manager) buildEntry(env *agentsv1alpha1.SandboxEnv) *envEntry {
 // SelectPool picks the best local member of envKey to receive an incoming
 // Sandbox.Create request, returning its bare pool name (no cluster prefix).
 //
-// Selection rules match routeMulti's ranking: priority ascending, then
-// IdleReady descending, then QueueLen ascending, with deterministic name
-// tie-break. Saturated members are deferred to a fallback tier; when at
-// least one fresh member exists the fallback tier is not consulted.
-//
-// Returns "" when the env is unknown or has no eligible local members.
+// Selection runs the same filter + score framework used by routeMulti, so
+// the API-time Create path sees the same ranking the dispatch path would
+// apply. Returns "" when the env is unknown or has no eligible local
+// members.
 //
 // Unlike Route, SelectPool does NOT Enqueue — the caller is responsible
 // for that downstream (typically after fetching the chosen Pool, resolving
-// container images, etc.). This split lets the same selection logic run
-// at Create's entry so the rest of the function sees a concrete pool
-// name in input.PoolName.
+// container images, etc.).
 func (m *Manager) SelectPool(envKey types.NamespacedName) string {
 	m.mu.RLock()
 	entry, ok := m.envs[envKey]
@@ -170,48 +194,19 @@ func (m *Manager) SelectPool(envKey types.NamespacedName) string {
 	if !ok || len(entry.members) == 0 {
 		return ""
 	}
-
-	// Single-member fast path.
+	// Single-member fast path: no scoring needed.
 	if len(entry.members) == 1 && entry.members[0].isLocal {
 		return entry.members[0].poolName
 	}
-
-	saturated := map[string]bool{}
-	if m.envGetter != nil {
-		if env, ok := m.envGetter.GetEnv(envKey.Namespace, envKey.Name); ok {
-			now := time.Now()
-			for _, c := range env.Status.Clusters {
-				if c.ClusterID != m.local {
-					continue
-				}
-				for _, om := range c.ObservedMembers {
-					if om.SaturatedUntil != nil && om.SaturatedUntil.After(now) {
-						saturated[om.Name] = true
-					}
-				}
-			}
-		}
+	cands := m.buildCandidates(envKey, entry)
+	if len(cands) == 0 {
+		return ""
 	}
-
-	var fresh, stale []memberRef
-	for _, c := range entry.members {
-		if !c.isLocal {
-			continue
-		}
-		if saturated[c.poolName] {
-			stale = append(stale, c)
-		} else {
-			fresh = append(fresh, c)
-		}
+	ranked, _ := m.framework.Rank(cands)
+	if len(ranked) == 0 {
+		return ""
 	}
-	for _, tier := range [][]memberRef{fresh, stale} {
-		if len(tier) == 0 {
-			continue
-		}
-		ranked := m.rankCandidates(envKey.Namespace, tier)
-		return ranked[0].poolName
-	}
-	return ""
+	return ranked[0].Member.poolName
 }
 
 // Snapshot returns a list of the env keys currently known to the Manager,

@@ -72,6 +72,7 @@ type Manager struct {
 	pools     SchedulerLookup
 	envGetter EnvGetter
 	local     string
+	framework *Framework
 }
 
 // envEntry is the cached router-relevant projection of a SandboxEnv spec.
@@ -89,6 +90,19 @@ type memberRef struct {
 	priority        int32
 	scaleUpPriority int32
 	scalingGroup    string
+
+	// memberMaxReplicas is the per-member ceiling (Config.MaxReplicas).
+	// nil = unbounded at the member level — only the group ceiling
+	// applies. Used by Headroom and MaxedOut plugins to compute the
+	// effective per-Pool growth window without re-walking the spec.
+	memberMaxReplicas *int32
+
+	// groupMaxReplicas is the autoscaling group ceiling for the group
+	// named by scalingGroup. Denormalised at OnEnvUpsert time so the
+	// scheduling hot path never has to scan env.Spec.Autoscaling.
+	// nil = autoscaling not configured for this group / member has no
+	// group.
+	groupMaxReplicas *int32
 }
 
 // ResolveKind classifies how a `template` string resolved.

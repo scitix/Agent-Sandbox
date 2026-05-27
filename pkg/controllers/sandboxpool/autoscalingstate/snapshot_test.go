@@ -55,6 +55,7 @@ type poolFixture struct {
 	name     string
 	replicas int32
 	idle     int32
+	running  int32
 	envLabel string // when empty, defaults to testEnvName; "-" disables labelling
 }
 
@@ -76,7 +77,8 @@ func (f poolFixture) build() *agentsv1alpha1.SandboxPool {
 		},
 		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: f.replicas},
 		Status: agentsv1alpha1.SandboxPoolStatus{
-			IdleReplicas: f.idle,
+			IdleReplicas:    f.idle,
+			RunningReplicas: f.running,
 		},
 	}
 }
