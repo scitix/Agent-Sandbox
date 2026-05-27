@@ -205,6 +205,66 @@ type SandboxPoolStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// AutoScaling persists the Pool autoscaler's decision-time bookkeeping
+	// (last scale-up/down timestamps, idle-zero window start, saturation
+	// cooldown, last probe outcome). The Pool reconciler is the only writer.
+	// Nil when autoscaling is disabled on this Pool's owning Env group.
+	// +optional
+	AutoScaling *PoolAutoScalingStatus `json:"autoscaling,omitempty"`
+}
+
+// PoolAutoScalingStatus carries the autoscaler's per-Pool decision state.
+// Every field is set/read exclusively by the SandboxPool reconciler running
+// the autoscaling decision pipeline; the SandboxEnv reconciler must never
+// write these fields. See docs/proposals/20260527-pool-centric-autoscaling.md.
+type PoolAutoScalingStatus struct {
+	// LastScaleUpTime is the wall-clock time of the most recent successful
+	// scale-up (spec.replicas increased) on this Pool. Drives the
+	// scaleUpPolicy.cooldownSeconds gate so two scale-ups never fire
+	// closer together than the configured cooldown.
+	// +optional
+	LastScaleUpTime *metav1.Time `json:"lastScaleUpTime,omitempty"`
+
+	// LastScaleDownTime is the wall-clock time of the most recent
+	// successful scale-down (spec.replicas decreased) on this Pool. Drives
+	// scaleDownPolicy.stabilizationSeconds.
+	// +optional
+	LastScaleDownTime *metav1.Time `json:"lastScaleDownTime,omitempty"`
+
+	// IdleZeroSince is the wall-clock time at which this Pool's idle
+	// replica count first dropped to zero in the current continuous-zero
+	// window. Cleared the instant idle > 0 is observed. Drives the
+	// proactive scaleUpPolicy.idleThresholdSeconds trigger.
+	// +optional
+	IdleZeroSince *metav1.Time `json:"idleZeroSince,omitempty"`
+
+	// SaturatedUntil marks this Pool as ineligible for scale-up attempts
+	// until the given time. Set when a plugin probe returned
+	// InsufficientResources or InvalidSpec and the autoscaler should not
+	// retry until natural cooldown expiry. EnvScheduler routing also reads
+	// this field to drop the Pool from the primary candidate set.
+	// +optional
+	SaturatedUntil *metav1.Time `json:"saturatedUntil,omitempty"`
+
+	// LastScaleUpAttemptResult records the outcome of the most recent
+	// scale-up evaluation. One of:
+	//   "Success" | "InsufficientResources" | "InvalidSpec" | "InternalError"
+	// Empty before the first attempt. Useful for `kubectl describe sbp`.
+	// +optional
+	LastScaleUpAttemptResult string `json:"lastScaleUpAttemptResult,omitempty"`
+
+	// ScaleUpErrorMessage is a short single-line description of the most
+	// recent non-Success scale-up result, suitable for surfacing to the
+	// dashboard. Empty when LastScaleUpAttemptResult is "Success".
+	// +optional
+	ScaleUpErrorMessage string `json:"scaleUpErrorMessage,omitempty"`
+
+	// ObservedGeneration is the metadata.generation observed when the
+	// autoscaler last wrote this block. Clients may use it to confirm the
+	// status is current with respect to the spec they care about.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // +kubebuilder:object:root=true

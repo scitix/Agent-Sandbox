@@ -423,6 +423,90 @@ spec:
           status:
             description: status defines the observed state of SandboxPool
             properties:
+              autoscaling:
+                description: 'AutoScaling persists the Pool autoscaler''s decision-time
+                  bookkeeping
+
+                  (last scale-up/down timestamps, idle-zero window start, saturation
+
+                  cooldown, last probe outcome). The Pool reconciler is the only writer.
+
+                  Nil when autoscaling is disabled on this Pool''s owning Env group.'
+                properties:
+                  idleZeroSince:
+                    description: 'IdleZeroSince is the wall-clock time at which this
+                      Pool''s idle
+
+                      replica count first dropped to zero in the current continuous-zero
+
+                      window. Cleared the instant idle > 0 is observed. Drives the
+
+                      proactive scaleUpPolicy.idleThresholdSeconds trigger.'
+                    format: date-time
+                    type: string
+                  lastScaleDownTime:
+                    description: 'LastScaleDownTime is the wall-clock time of the
+                      most recent
+
+                      successful scale-down (spec.replicas decreased) on this Pool.
+                      Drives
+
+                      scaleDownPolicy.stabilizationSeconds.'
+                    format: date-time
+                    type: string
+                  lastScaleUpAttemptResult:
+                    description: "LastScaleUpAttemptResult records the outcome of\
+                      \ the most recent\nscale-up evaluation. One of:\n  \"Success\"\
+                      \ | \"InsufficientResources\" | \"InvalidSpec\" | \"InternalError\"\
+                      \nEmpty before the first attempt. Useful for `kubectl describe\
+                      \ sbp`."
+                    type: string
+                  lastScaleUpTime:
+                    description: 'LastScaleUpTime is the wall-clock time of the most
+                      recent successful
+
+                      scale-up (spec.replicas increased) on this Pool. Drives the
+
+                      scaleUpPolicy.cooldownSeconds gate so two scale-ups never fire
+
+                      closer together than the configured cooldown.'
+                    format: date-time
+                    type: string
+                  observedGeneration:
+                    description: 'ObservedGeneration is the metadata.generation observed
+                      when the
+
+                      autoscaler last wrote this block. Clients may use it to confirm
+                      the
+
+                      status is current with respect to the spec they care about.'
+                    format: int64
+                    type: integer
+                  saturatedUntil:
+                    description: 'SaturatedUntil marks this Pool as ineligible for
+                      scale-up attempts
+
+                      until the given time. Set when a plugin probe returned
+
+                      InsufficientResources or InvalidSpec and the autoscaler should
+                      not
+
+                      retry until natural cooldown expiry. EnvScheduler routing also
+                      reads
+
+                      this field to drop the Pool from the primary candidate set.'
+                    format: date-time
+                    type: string
+                  scaleUpErrorMessage:
+                    description: 'ScaleUpErrorMessage is a short single-line description
+                      of the most
+
+                      recent non-Success scale-up result, suitable for surfacing to
+                      the
+
+                      dashboard. Empty when LastScaleUpAttemptResult is "Success".'
+                    type: string
+                type: object
               conditions:
                 description: 'conditions represent the current state of the SandboxPool
                   resource.

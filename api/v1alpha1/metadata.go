@@ -87,6 +87,13 @@ const (
 	LabelTeam = "scheduling.navix.sh/team"
 	LabelUser = "scheduling.navix.sh/user"
 
+	// LabelEnv is stamped onto every member SandboxPool by the SandboxEnv
+	// reconciler at materialisation time, with the owning Env's
+	// metadata.name as value. Used by the Pool autoscaler to reverse-lookup
+	// the owning Env (for reading scaling-group constraints) and to list
+	// sibling Pools sharing the same Env without walking ownerReferences.
+	LabelEnv = "agentbox.navix.sh/env"
+
 	// SandboxTemplateDocsAnnotationKey stores Markdown documentation for the template.
 	// Read by the dashboard to display a documentation sheet.
 	SandboxTemplateDocsAnnotationKey = "agentbox.navix.sh/docs"
@@ -133,7 +140,27 @@ const (
 	// PoolScaleUpPendingAnnotationKey is set on the SandboxPool when a Create
 	// request triggered a scale-up. The value is the RFC3339 timestamp of the
 	// trigger. Cleared by the Reconciler after processing.
+	//
+	// SCHEDULED FOR REMOVAL: the Pool-Centric Autoscaling redesign
+	// (docs/proposals/20260527-pool-centric-autoscaling.md) replaces this
+	// annotation-based doorbell with the in-process PoolScheduler.Snapshot()
+	// (QueueLen / IdleReady) plus LastSandboxCreateTimeAnnotationKey. The
+	// constant is retained until S5/S6 of that proposal land.
 	PoolScaleUpPendingAnnotationKey = "agentbox.navix.sh/scale-up-pending"
+
+	// LastSandboxCreateTimeAnnotationKey is the throttled persistent mirror
+	// of the in-process LastCreateTracker: the most recent wall-clock time
+	// the apiserver served a Sandbox.Create request for this Pool. Written
+	// by a periodic flush (≈ every 5 s, only when the in-memory value
+	// advanced past the last-flushed value) so high-QPS Create traffic
+	// does not produce a per-request annotation patch.
+	//
+	// The Pool autoscaler reads this annotation as a fallback when the
+	// in-process tracker is empty (e.g. shortly after a process restart);
+	// the in-memory value always takes precedence when both exist.
+	//
+	// The value is RFC3339 UTC. Absence is treated as "never observed".
+	LastSandboxCreateTimeAnnotationKey = "agentbox.navix.sh/last-sandbox-create-time"
 
 	// EnvScaleUpPendingAnnotationKey is set on a SandboxEnv when EnvScheduler
 	// holds pending requests it could not forward to any member (typically
