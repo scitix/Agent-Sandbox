@@ -44,6 +44,9 @@ class PoolScaleUpPolicy:
             cooldown_seconds (int | Unset): Minimum seconds between two consecutive scale-up events (group-level).
             idle_threshold_seconds (int | Unset): Aggregate idleReplicas=0 must persist for this long before the proactive
                 trigger fires. Zero disables proactive scale-up.
+            idle_zero_quiet_window_seconds (int | Unset): Suppresses the proactive idleZero trigger when no Sandbox.Create
+                has been observed for the Pool within this many seconds. Reactive scale-ups (queue length > 0 with no idle Pod)
+                ignore this window. Set to 0 to disable the gate. Default 300.
             saturation_cooldown_seconds (int | Unset): How long a member stays marked saturated after a probe returned
                 InsufficientResources / InvalidSpec. Default 60s.
      """
@@ -51,6 +54,7 @@ class PoolScaleUpPolicy:
     mode: PoolScaleUpPolicyMode | Unset = UNSET
     cooldown_seconds: int | Unset = UNSET
     idle_threshold_seconds: int | Unset = UNSET
+    idle_zero_quiet_window_seconds: int | Unset = UNSET
     saturation_cooldown_seconds: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -68,6 +72,8 @@ class PoolScaleUpPolicy:
 
         idle_threshold_seconds = self.idle_threshold_seconds
 
+        idle_zero_quiet_window_seconds = self.idle_zero_quiet_window_seconds
+
         saturation_cooldown_seconds = self.saturation_cooldown_seconds
 
 
@@ -81,6 +87,8 @@ class PoolScaleUpPolicy:
             field_dict["cooldownSeconds"] = cooldown_seconds
         if idle_threshold_seconds is not UNSET:
             field_dict["idleThresholdSeconds"] = idle_threshold_seconds
+        if idle_zero_quiet_window_seconds is not UNSET:
+            field_dict["idleZeroQuietWindowSeconds"] = idle_zero_quiet_window_seconds
         if saturation_cooldown_seconds is not UNSET:
             field_dict["saturationCooldownSeconds"] = saturation_cooldown_seconds
 
@@ -105,12 +113,15 @@ class PoolScaleUpPolicy:
 
         idle_threshold_seconds = d.pop("idleThresholdSeconds", UNSET)
 
+        idle_zero_quiet_window_seconds = d.pop("idleZeroQuietWindowSeconds", UNSET)
+
         saturation_cooldown_seconds = d.pop("saturationCooldownSeconds", UNSET)
 
         pool_scale_up_policy = cls(
             mode=mode,
             cooldown_seconds=cooldown_seconds,
             idle_threshold_seconds=idle_threshold_seconds,
+            idle_zero_quiet_window_seconds=idle_zero_quiet_window_seconds,
             saturation_cooldown_seconds=saturation_cooldown_seconds,
         )
 

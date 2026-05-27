@@ -1181,6 +1181,11 @@ export interface components {
             idleThresholdSeconds?: number;
             /**
              * Format: int32
+             * @description Suppresses the proactive idleZero trigger when no Sandbox.Create has been observed for the Pool within this many seconds. Reactive scale-ups (queue length > 0 with no idle Pod) ignore this window. Set to 0 to disable the gate. Default 300.
+             */
+            idleZeroQuietWindowSeconds?: number;
+            /**
+             * Format: int32
              * @description How long a member stays marked saturated after a probe returned InsufficientResources / InvalidSpec. Default 60s.
              */
             saturationCooldownSeconds?: number;

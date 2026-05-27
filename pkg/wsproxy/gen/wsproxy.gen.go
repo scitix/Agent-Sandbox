@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/oapi-codegen/runtime"
 	strictgin "github.com/oapi-codegen/runtime/strictmiddleware/gin"
-
 	externalRef0 "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
 

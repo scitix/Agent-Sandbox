@@ -42,6 +42,22 @@ type PoolScaleUpPolicy struct {
 	// +kubebuilder:default=30
 	IdleThresholdSeconds int32 `json:"idleThresholdSeconds,omitempty"`
 
+	// IdleZeroQuietWindowSeconds suppresses the proactive idleZero
+	// scale-up trigger when no Sandbox.Create request has been observed
+	// for this Pool within the most recent window. Concretely: if
+	// `now - LastSandboxCreateTime > idleZeroQuietWindowSeconds` AND
+	// `IdleThresholdSeconds` has elapsed since `idleReplicas` last hit
+	// zero, the autoscaler will NOT fire a proactive scale-up. Reactive
+	// scale-ups (queue length > 0 with no idle Pod) ignore this window
+	// — a real waiter always wins. Set to 0 to disable the quiet-window
+	// gate (proactive scale-up fires the moment IdleThresholdSeconds
+	// elapses, restoring the pre-redesign behaviour).
+	// Defaults to 300 (5 minutes).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=300
+	IdleZeroQuietWindowSeconds int32 `json:"idleZeroQuietWindowSeconds,omitempty"`
+
 	// SaturationCooldownSeconds is the duration the Env autoscaler keeps
 	// a member marked saturated after a probe returned InsufficientResources
 	// (or InvalidSpec). Subsequent reconciles skip the member's expensive

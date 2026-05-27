@@ -360,6 +360,8 @@ type EnvAutoscalingSpec struct {
 
 // EnvAutoscalingGroup is one Env-level autoscaling unit, applied jointly to
 // every member referencing this group.
+//
+// +kubebuilder:validation:XValidation:rule="self.scaleUpPolicy.mode != 'Aggressive' || has(self.maxReplicas)",message="Aggressive scaleUpPolicy.mode requires maxReplicas to be set on the group — Aggressive doubles the replica count each cooldown and would otherwise grow without bound"
 type EnvAutoscalingGroup struct {
 	// Name matches EnvClusterMember.ScalingGroup. Required. The Env
 	// rejects groups whose Name does not match the ScalingGroup of at
@@ -374,24 +376,37 @@ type EnvAutoscalingGroup struct {
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled,omitempty"`
 
-	// MinReplicas is the lower bound for the aggregate (group) replica count.
+	// MinReplicas is the lower bound for the aggregate (group) replica
+	// count. Defaults to 0 — set explicitly so kubectl get sbe surfaces
+	// the floor instead of leaving it implicit.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=0
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 
-	// MaxReplicas is the upper bound for the aggregate (group) replica count.
-	// Phase 1 (single member) treats this as the member's effective ceiling.
+	// MaxReplicas is the upper bound for the aggregate (group) replica
+	// count. When unset, the group has NO ceiling and grows until each
+	// member's own MaxReplicas, the cluster's capacity, or external
+	// quotas stop it. Aggressive scaleUpPolicy.mode REQUIRES this field
+	// to be set (validated via CEL) because doubling each cooldown
+	// without an upper bound is unsafe.
 	// +optional
+	// +kubebuilder:validation:Minimum=0
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
-	// ScaleUpPolicy reuses the existing SandboxPool scale-up semantics
-	// (Conservative/Default/Aggressive modes, cooldown, idle-threshold).
+	// ScaleUpPolicy controls how scale-up decisions are evaluated. The
+	// API server fills every field with its declared default when the
+	// caller omits it, so the persisted CR always carries an explicit,
+	// inspectable value (no hidden code defaults).
 	// +optional
-	ScaleUpPolicy *PoolScaleUpPolicy `json:"scaleUpPolicy,omitempty"`
+	// +kubebuilder:default={}
+	ScaleUpPolicy PoolScaleUpPolicy `json:"scaleUpPolicy"`
 
-	// ScaleDownPolicy reuses the existing SandboxPool scale-down semantics.
+	// ScaleDownPolicy controls how scale-down decisions are evaluated.
+	// Same defaulting contract as ScaleUpPolicy.
 	// +optional
-	ScaleDownPolicy *PoolScaleDownPolicy `json:"scaleDownPolicy,omitempty"`
+	// +kubebuilder:default={}
+	ScaleDownPolicy PoolScaleDownPolicy `json:"scaleDownPolicy"`
 }
 
 // SandboxEnvStatus is the observed state of SandboxEnv.

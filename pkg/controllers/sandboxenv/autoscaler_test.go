@@ -49,7 +49,7 @@ func TestComputeScaleUpDelta_AcrossModes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			group := &agentsv1alpha1.EnvAutoscalingGroup{
-				ScaleUpPolicy: &agentsv1alpha1.PoolScaleUpPolicy{Mode: tt.mode},
+				ScaleUpPolicy: agentsv1alpha1.PoolScaleUpPolicy{Mode: tt.mode},
 			}
 			if got := computeScaleUpDelta(tt.aggregate, group, tt.maxR); got != tt.want {
 				t.Errorf("computeScaleUpDelta(%d, %s, max=%d) = %d, want %d",
@@ -101,7 +101,7 @@ func TestGroupViewsByScalingGroup(t *testing.T) {
 // SaturationCooldownSeconds knob plumbs through.
 func TestScaleUpPolicyOrDefault_ReadsSaturationCooldown(t *testing.T) {
 	g := &agentsv1alpha1.EnvAutoscalingGroup{
-		ScaleUpPolicy: &agentsv1alpha1.PoolScaleUpPolicy{
+		ScaleUpPolicy: agentsv1alpha1.PoolScaleUpPolicy{
 			CooldownSeconds:           20,
 			IdleThresholdSeconds:      15,
 			SaturationCooldownSeconds: 90,

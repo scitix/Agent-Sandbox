@@ -910,6 +910,11 @@ components:
           format: int32
           minimum: 0
           description: "Aggregate idleReplicas=0 must persist for this long before the proactive trigger fires. Zero disables proactive scale-up."
+        idleZeroQuietWindowSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Suppresses the proactive idleZero trigger when no Sandbox.Create has been observed for the Pool within this many seconds. Reactive scale-ups (queue length > 0 with no idle Pod) ignore this window. Set to 0 to disable the gate. Default 300."
         saturationCooldownSeconds:
           type: integer
           format: int32

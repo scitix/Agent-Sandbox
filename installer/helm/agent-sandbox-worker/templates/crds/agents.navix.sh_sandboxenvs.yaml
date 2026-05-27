@@ -94,15 +94,29 @@ spec:
                           type: boolean
                         maxReplicas:
                           description: 'MaxReplicas is the upper bound for the aggregate
-                            (group) replica count.
+                            (group) replica
 
-                            Phase 1 (single member) treats this as the member''s effective
-                            ceiling.'
+                            count. When unset, the group has NO ceiling and grows
+                            until each
+
+                            member''s own MaxReplicas, the cluster''s capacity, or
+                            external
+
+                            quotas stop it. Aggressive scaleUpPolicy.mode REQUIRES
+                            this field
+
+                            to be set (validated via CEL) because doubling each cooldown
+
+                            without an upper bound is unsafe.'
                           format: int32
+                          minimum: 0
                           type: integer
                         minReplicas:
-                          description: MinReplicas is the lower bound for the aggregate
-                            (group) replica count.
+                          default: 0
+                          description: "MinReplicas is the lower bound for the aggregate\
+                            \ (group) replica\ncount. Defaults to 0 \u2014 set explicitly\
+                            \ so kubectl get sbe surfaces\nthe floor instead of leaving\
+                            \ it implicit."
                           format: int32
                           minimum: 0
                           type: integer
@@ -114,8 +128,11 @@ spec:
                             \ the autoscaler's per-group iteration."
                           type: string
                         scaleDownPolicy:
-                          description: ScaleDownPolicy reuses the existing SandboxPool
-                            scale-down semantics.
+                          default: {}
+                          description: 'ScaleDownPolicy controls how scale-down decisions
+                            are evaluated.
+
+                            Same defaulting contract as ScaleUpPolicy.'
                           properties:
                             idleTimeoutSeconds:
                               default: 300
@@ -157,10 +174,17 @@ spec:
                               type: integer
                           type: object
                         scaleUpPolicy:
-                          description: 'ScaleUpPolicy reuses the existing SandboxPool
-                            scale-up semantics
+                          default: {}
+                          description: 'ScaleUpPolicy controls how scale-up decisions
+                            are evaluated. The
 
-                            (Conservative/Default/Aggressive modes, cooldown, idle-threshold).'
+                            API server fills every field with its declared default
+                            when the
+
+                            caller omits it, so the persisted CR always carries an
+                            explicit,
+
+                            inspectable value (no hidden code defaults).'
                           properties:
                             cooldownSeconds:
                               default: 30
@@ -183,6 +207,24 @@ spec:
                                 proactive scale-up.
 
                                 Defaults to 30.'
+                              format: int32
+                              minimum: 0
+                              type: integer
+                            idleZeroQuietWindowSeconds:
+                              default: 300
+                              description: "IdleZeroQuietWindowSeconds suppresses\
+                                \ the proactive idleZero\nscale-up trigger when no\
+                                \ Sandbox.Create request has been observed\nfor this\
+                                \ Pool within the most recent window. Concretely:\
+                                \ if\n`now - LastSandboxCreateTime > idleZeroQuietWindowSeconds`\
+                                \ AND\n`IdleThresholdSeconds` has elapsed since `idleReplicas`\
+                                \ last hit\nzero, the autoscaler will NOT fire a proactive\
+                                \ scale-up. Reactive\nscale-ups (queue length > 0\
+                                \ with no idle Pod) ignore this window\n\u2014 a real\
+                                \ waiter always wins. Set to 0 to disable the quiet-window\n\
+                                gate (proactive scale-up fires the moment IdleThresholdSeconds\n\
+                                elapses, restoring the pre-redesign behaviour).\n\
+                                Defaults to 300 (5 minutes)."
                               format: int32
                               minimum: 0
                               type: integer
@@ -224,6 +266,11 @@ spec:
                       required:
                       - name
                       type: object
+                      x-kubernetes-validations:
+                      - message: "Aggressive scaleUpPolicy.mode requires maxReplicas\
+                          \ to be set on the group \u2014 Aggressive doubles the replica\
+                          \ count each cooldown and would otherwise grow without bound"
+                        rule: self.scaleUpPolicy.mode != 'Aggressive' || has(self.maxReplicas)
                     type: array
                     x-kubernetes-list-map-keys:
                     - name

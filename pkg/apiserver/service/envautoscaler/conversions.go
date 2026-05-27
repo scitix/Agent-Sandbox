@@ -41,6 +41,10 @@ func SpecToGen(a *agentsv1alpha1.EnvAutoscalingSpec) *gen.EnvAutoscalingSpec {
 }
 
 // GroupToGen projects one CRD EnvAutoscalingGroup into the wire shape.
+// ScaleUpPolicy and ScaleDownPolicy are CRD value types after the
+// Pool-Centric Autoscaling redesign, so both always project to non-nil
+// wire pointers — the wire still uses pointers to preserve the
+// "field not sent" semantic, but the CR side has nothing to omit.
 func GroupToGen(g agentsv1alpha1.EnvAutoscalingGroup) gen.EnvAutoscalingGroup {
 	out := gen.EnvAutoscalingGroup{Name: g.Name, Enabled: ptr.To(g.Enabled)}
 	if g.MinReplicas != nil {
@@ -49,16 +53,17 @@ func GroupToGen(g agentsv1alpha1.EnvAutoscalingGroup) gen.EnvAutoscalingGroup {
 	if g.MaxReplicas != nil {
 		out.MaxReplicas = ptr.To(*g.MaxReplicas)
 	}
-	if g.ScaleUpPolicy != nil {
-		out.ScaleUpPolicy = scaleUpPolicyToGen(g.ScaleUpPolicy)
-	}
-	if g.ScaleDownPolicy != nil {
-		out.ScaleDownPolicy = scaleDownPolicyToGen(g.ScaleDownPolicy)
-	}
+	out.ScaleUpPolicy = scaleUpPolicyToGen(g.ScaleUpPolicy)
+	out.ScaleDownPolicy = scaleDownPolicyToGen(g.ScaleDownPolicy)
 	return out
 }
 
 // GroupFromGen converts a single wire group back into the CRD type.
+// When the wire side omits ScaleUpPolicy / ScaleDownPolicy, the CRD field
+// is left as its zero value; relying on the API server to apply the
+// kubebuilder defaults on the next Create/Update (every leaf field has
+// `json:",omitempty"` so zero values disappear from the patch body and
+// trigger defaulting on the server side).
 func GroupFromGen(g gen.EnvAutoscalingGroup) agentsv1alpha1.EnvAutoscalingGroup {
 	out := agentsv1alpha1.EnvAutoscalingGroup{Name: g.Name}
 	if g.Enabled != nil {
@@ -70,19 +75,12 @@ func GroupFromGen(g gen.EnvAutoscalingGroup) agentsv1alpha1.EnvAutoscalingGroup 
 	if g.MaxReplicas != nil {
 		out.MaxReplicas = ptr.To(*g.MaxReplicas)
 	}
-	if g.ScaleUpPolicy != nil {
-		out.ScaleUpPolicy = scaleUpPolicyFromGen(g.ScaleUpPolicy)
-	}
-	if g.ScaleDownPolicy != nil {
-		out.ScaleDownPolicy = scaleDownPolicyFromGen(g.ScaleDownPolicy)
-	}
+	out.ScaleUpPolicy = scaleUpPolicyFromGen(g.ScaleUpPolicy)
+	out.ScaleDownPolicy = scaleDownPolicyFromGen(g.ScaleDownPolicy)
 	return out
 }
 
-func scaleUpPolicyToGen(p *agentsv1alpha1.PoolScaleUpPolicy) *gen.PoolScaleUpPolicy {
-	if p == nil {
-		return nil
-	}
+func scaleUpPolicyToGen(p agentsv1alpha1.PoolScaleUpPolicy) *gen.PoolScaleUpPolicy {
 	out := &gen.PoolScaleUpPolicy{}
 	if p.Mode != "" {
 		mode := gen.PoolScaleUpPolicyMode(p.Mode)
@@ -94,16 +92,16 @@ func scaleUpPolicyToGen(p *agentsv1alpha1.PoolScaleUpPolicy) *gen.PoolScaleUpPol
 	if p.IdleThresholdSeconds > 0 {
 		out.IdleThresholdSeconds = ptr.To(p.IdleThresholdSeconds)
 	}
+	if p.IdleZeroQuietWindowSeconds > 0 {
+		out.IdleZeroQuietWindowSeconds = ptr.To(p.IdleZeroQuietWindowSeconds)
+	}
 	if p.SaturationCooldownSeconds > 0 {
 		out.SaturationCooldownSeconds = ptr.To(p.SaturationCooldownSeconds)
 	}
 	return out
 }
 
-func scaleDownPolicyToGen(p *agentsv1alpha1.PoolScaleDownPolicy) *gen.PoolScaleDownPolicy {
-	if p == nil {
-		return nil
-	}
+func scaleDownPolicyToGen(p agentsv1alpha1.PoolScaleDownPolicy) *gen.PoolScaleDownPolicy {
 	out := &gen.PoolScaleDownPolicy{}
 	if p.IdleTimeoutSeconds > 0 {
 		out.IdleTimeoutSeconds = ptr.To(p.IdleTimeoutSeconds)
@@ -117,11 +115,11 @@ func scaleDownPolicyToGen(p *agentsv1alpha1.PoolScaleDownPolicy) *gen.PoolScaleD
 	return out
 }
 
-func scaleUpPolicyFromGen(p *gen.PoolScaleUpPolicy) *agentsv1alpha1.PoolScaleUpPolicy {
+func scaleUpPolicyFromGen(p *gen.PoolScaleUpPolicy) agentsv1alpha1.PoolScaleUpPolicy {
+	out := agentsv1alpha1.PoolScaleUpPolicy{}
 	if p == nil {
-		return nil
+		return out
 	}
-	out := &agentsv1alpha1.PoolScaleUpPolicy{}
 	if p.Mode != nil {
 		out.Mode = agentsv1alpha1.PoolScaleUpMode(*p.Mode)
 	}
@@ -131,17 +129,20 @@ func scaleUpPolicyFromGen(p *gen.PoolScaleUpPolicy) *agentsv1alpha1.PoolScaleUpP
 	if p.IdleThresholdSeconds != nil {
 		out.IdleThresholdSeconds = *p.IdleThresholdSeconds
 	}
+	if p.IdleZeroQuietWindowSeconds != nil {
+		out.IdleZeroQuietWindowSeconds = *p.IdleZeroQuietWindowSeconds
+	}
 	if p.SaturationCooldownSeconds != nil {
 		out.SaturationCooldownSeconds = *p.SaturationCooldownSeconds
 	}
 	return out
 }
 
-func scaleDownPolicyFromGen(p *gen.PoolScaleDownPolicy) *agentsv1alpha1.PoolScaleDownPolicy {
+func scaleDownPolicyFromGen(p *gen.PoolScaleDownPolicy) agentsv1alpha1.PoolScaleDownPolicy {
+	out := agentsv1alpha1.PoolScaleDownPolicy{}
 	if p == nil {
-		return nil
+		return out
 	}
-	out := &agentsv1alpha1.PoolScaleDownPolicy{}
 	if p.IdleTimeoutSeconds != nil {
 		out.IdleTimeoutSeconds = *p.IdleTimeoutSeconds
 	}

@@ -840,37 +840,39 @@ func effectiveMinReplicas(group *agentsv1alpha1.EnvAutoscalingGroup) int32 {
 	return *group.MinReplicas
 }
 
+// scaleUpPolicyOrDefault used to fill in defaults when the user omitted
+// fields on the (then-pointer) ScaleUpPolicy. After S2 of the
+// Pool-Centric Autoscaling redesign the CRD declares value-type policies
+// with kubebuilder defaults on every leaf, so the persisted CR always
+// carries the explicit values and this function is a thin pass-through.
+//
+// It is preserved as the only call site that still translates the
+// int32 CRD value into a time.Duration; once the decision logic moves
+// to the Pool reconciler (S4/S5) this helper is removed along with the
+// Env autoscaler.
 func scaleUpPolicyOrDefault(group *agentsv1alpha1.EnvAutoscalingGroup) (cooldown time.Duration, idleThresholdSeconds int32, saturationCooldown time.Duration) {
-	cooldown = time.Duration(defaultScaleUpCooldownSeconds) * time.Second
-	idleThresholdSeconds = defaultScaleUpIdleThresholdSeconds
-	saturationCooldown = time.Duration(defaultSaturationCooldownSeconds) * time.Second
-	if group == nil || group.ScaleUpPolicy == nil {
+	if group == nil {
+		cooldown = time.Duration(defaultScaleUpCooldownSeconds) * time.Second
+		idleThresholdSeconds = defaultScaleUpIdleThresholdSeconds
+		saturationCooldown = time.Duration(defaultSaturationCooldownSeconds) * time.Second
 		return
 	}
-	if group.ScaleUpPolicy.CooldownSeconds > 0 {
-		cooldown = time.Duration(group.ScaleUpPolicy.CooldownSeconds) * time.Second
-	}
-	if group.ScaleUpPolicy.IdleThresholdSeconds >= 0 {
-		idleThresholdSeconds = group.ScaleUpPolicy.IdleThresholdSeconds
-	}
-	if group.ScaleUpPolicy.SaturationCooldownSeconds > 0 {
-		saturationCooldown = time.Duration(group.ScaleUpPolicy.SaturationCooldownSeconds) * time.Second
-	}
+	p := group.ScaleUpPolicy
+	cooldown = time.Duration(p.CooldownSeconds) * time.Second
+	idleThresholdSeconds = p.IdleThresholdSeconds
+	saturationCooldown = time.Duration(p.SaturationCooldownSeconds) * time.Second
 	return
 }
 
 func scaleDownPolicyOrDefault(group *agentsv1alpha1.EnvAutoscalingGroup) (idleTimeoutSeconds, stabilizationSeconds int32) {
-	idleTimeoutSeconds = defaultScaleDownIdleTimeoutSeconds
-	stabilizationSeconds = defaultScaleDownStabilizationSecond
-	if group == nil || group.ScaleDownPolicy == nil {
+	if group == nil {
+		idleTimeoutSeconds = defaultScaleDownIdleTimeoutSeconds
+		stabilizationSeconds = defaultScaleDownStabilizationSecond
 		return
 	}
-	if group.ScaleDownPolicy.IdleTimeoutSeconds > 0 {
-		idleTimeoutSeconds = group.ScaleDownPolicy.IdleTimeoutSeconds
-	}
-	if group.ScaleDownPolicy.StabilizationSeconds >= 0 {
-		stabilizationSeconds = group.ScaleDownPolicy.StabilizationSeconds
-	}
+	p := group.ScaleDownPolicy
+	idleTimeoutSeconds = p.IdleTimeoutSeconds
+	stabilizationSeconds = p.StabilizationSeconds
 	return
 }
 
@@ -884,7 +886,7 @@ func scaleDownPolicyOrDefault(group *agentsv1alpha1.EnvAutoscalingGroup) (idleTi
 // describes "how the Env grows", not "how each Pool grows".
 func computeScaleUpDelta(aggregateDesired int32, group *agentsv1alpha1.EnvAutoscalingGroup, maxR int32) int32 {
 	mode := agentsv1alpha1.PoolScaleUpModeDefault
-	if group != nil && group.ScaleUpPolicy != nil && group.ScaleUpPolicy.Mode != "" {
+	if group != nil && group.ScaleUpPolicy.Mode != "" {
 		mode = group.ScaleUpPolicy.Mode
 	}
 	cur := aggregateDesired
