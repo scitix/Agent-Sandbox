@@ -231,8 +231,8 @@ func envSyncTestSetup(t *testing.T, podImage string) (SandboxEnvService, *agents
 	return NewSandboxEnvService(cli, nil, nil, nil), env
 }
 
-func podTemplateWithImage(image string) *corev1.PodTemplateSpec {
-	return &corev1.PodTemplateSpec{
+func podTemplateWithImage(image string) corev1.PodTemplateSpec {
+	return corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "sandbox", Image: image}},
 		},
@@ -249,7 +249,7 @@ func TestSandboxEnvService_SyncTemplate_PatchesMemberPools(t *testing.T) {
 	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: "env-a-foo"}, pool); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if pool.Spec.Template == nil || pool.Spec.Template.Spec.Containers[0].Image != "ghcr.io/foo:override" {
+	if pool.Spec.Template.Spec.Containers[0].Image != "ghcr.io/foo:override" {
 		t.Errorf("expected overrides image applied via SyncTemplate, got %+v", pool.Spec.Template)
 	}
 	if pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] != "2.0.0" {

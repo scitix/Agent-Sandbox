@@ -42,7 +42,7 @@ func makeEmbeddedTmpl(image, cpuReq, memReq string) agentsv1alpha1.EmbeddedSandb
 		}
 	}
 	return agentsv1alpha1.EmbeddedSandboxTemplate{
-		Template: &corev1.PodTemplateSpec{
+		Template: corev1.PodTemplateSpec{
 			Spec: corev1.PodSpec{Containers: []corev1.Container{c}},
 		},
 	}
@@ -165,7 +165,7 @@ func TestApply_ImageAndInlineResources(t *testing.T) {
 
 func TestApply_InlineResourcesWithNoContainers(t *testing.T) {
 	tmpl := agentsv1alpha1.EmbeddedSandboxTemplate{
-		Template: &corev1.PodTemplateSpec{
+		Template: corev1.PodTemplateSpec{
 			Spec: corev1.PodSpec{Containers: []corev1.Container{}},
 		},
 	}
@@ -189,7 +189,7 @@ func TestApply_InvalidImageReference(t *testing.T) {
 
 func TestApply_ImageOverrideWithNoContainers(t *testing.T) {
 	tmpl := agentsv1alpha1.EmbeddedSandboxTemplate{
-		Template: &corev1.PodTemplateSpec{
+		Template: corev1.PodTemplateSpec{
 			Spec: corev1.PodSpec{Containers: []corev1.Container{}},
 		},
 	}

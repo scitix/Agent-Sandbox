@@ -63,8 +63,5 @@ func SumContainers(containers []corev1.Container) (cpu *resource.Quantity, memor
 // Returns raw Quantity strings (e.g. "8000m", "8Gi") suitable for API responses.
 // Callers can call .String() on the returned Quantities.
 func SumContainerResources(template *corev1.PodTemplateSpec) (cpu *resource.Quantity, memory *resource.Quantity, err error) {
-	if template == nil {
-		return nil, nil, fmt.Errorf("pod template is nil")
-	}
 	return SumContainers(template.Spec.Containers)
 }

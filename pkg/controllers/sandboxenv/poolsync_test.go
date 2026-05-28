@@ -149,7 +149,7 @@ func TestReconcilePools_StampsImagePullSecretWhenPresent(t *testing.T) {
 	// Reconciler's IPS stamper) have a place to inject the
 	// LocalObjectReference.
 	tmpl := testTemplate()
-	tmpl.Spec.Template = &corev1.PodTemplateSpec{
+	tmpl.Spec.Template = corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}}},
 	}
 	member := renderMemberForTest(t, envSkeleton, tmpl, "env-a-foo", nil)
@@ -172,7 +172,7 @@ func TestReconcilePools_StampsImagePullSecretWhenPresent(t *testing.T) {
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: env.Namespace, Name: "env-a-foo"}, got); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Spec.Template == nil || len(got.Spec.Template.Spec.ImagePullSecrets) != 1 ||
+	if len(got.Spec.Template.Spec.ImagePullSecrets) != 1 ||
 		got.Spec.Template.Spec.ImagePullSecrets[0].Name != secret.Name {
 		t.Errorf("expected pool.imagePullSecrets[0].name = %q, got %+v", secret.Name, got.Spec.Template)
 	}
@@ -184,7 +184,7 @@ func TestReconcilePools_NoSecretMeansNoStamp(t *testing.T) {
 	env := envWithMembers(agentsv1alpha1.EnvClusterMember{Name: "env-a-foo"})
 	env.UID = testEnvUID
 	tmpl := testTemplate()
-	tmpl.Spec.Template = &corev1.PodTemplateSpec{
+	tmpl.Spec.Template = corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}}},
 	}
 	r := newReconcileTestReconciler(t, env, tmpl)
@@ -195,7 +195,7 @@ func TestReconcilePools_NoSecretMeansNoStamp(t *testing.T) {
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: env.Namespace, Name: "env-a-foo"}, got); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Spec.Template != nil && len(got.Spec.Template.Spec.ImagePullSecrets) != 0 {
+	if len(got.Spec.Template.Spec.ImagePullSecrets) != 0 {
 		t.Errorf("expected no imagePullSecrets, got %+v", got.Spec.Template.Spec.ImagePullSecrets)
 	}
 }
@@ -412,7 +412,7 @@ func TestReconcilePools_OverridesChangeDoesNotPropagate(t *testing.T) {
 	envSkeleton := envWithMembers()
 	envSkeleton.UID = testEnvUID
 	tmpl := testTemplate()
-	tmpl.Spec.Template = &corev1.PodTemplateSpec{
+	tmpl.Spec.Template = corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}},
 		},
@@ -432,7 +432,7 @@ func TestReconcilePools_OverridesChangeDoesNotPropagate(t *testing.T) {
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "env-a-foo"}, got); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Spec.Template == nil || len(got.Spec.Template.Spec.Containers) == 0 {
+	if len(got.Spec.Template.Spec.Containers) == 0 {
 		t.Fatalf("expected rendered Template.Spec.Containers from Member.Spec")
 	}
 	if image := got.Spec.Template.Spec.Containers[0].Image; image != "base:v1" {

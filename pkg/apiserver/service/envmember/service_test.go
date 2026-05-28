@@ -64,7 +64,7 @@ func newTestTemplate() *agentsv1alpha1.SandboxTemplate {
 			Version: "1.0.0",
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}},
 					},
@@ -196,7 +196,7 @@ func TestAdd_CandidateCarriesEmbeddedTemplate(t *testing.T) {
 	if cand.Spec.IdleImage != "pause:3.10" {
 		t.Errorf("candidate.IdleImage missing (renderer didn't copy template); got %q", cand.Spec.IdleImage)
 	}
-	if cand.Spec.Template == nil || len(cand.Spec.Template.Spec.Containers) == 0 {
+	if len(cand.Spec.Template.Spec.Containers) == 0 {
 		t.Fatalf("candidate.Template empty — renderer didn't materialise pod spec for admission")
 	}
 	got := cand.Spec.Template.Spec.Containers[0].Resources

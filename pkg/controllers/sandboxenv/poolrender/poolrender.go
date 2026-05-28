@@ -162,7 +162,7 @@ func Validate(spec *agentsv1alpha1.SandboxPoolSpec) error {
 	if spec.IdleImage == "" {
 		return errors.New("idleImage is required")
 	}
-	if spec.Template != nil && len(spec.Template.Spec.Containers) > 0 {
+	if len(spec.Template.Spec.Containers) > 0 {
 		if spec.IdleImage == spec.Template.Spec.Containers[0].Image {
 			return fmt.Errorf("idleImage (%q) must differ from the container image (%q)",
 				spec.IdleImage, spec.Template.Spec.Containers[0].Image)
@@ -248,7 +248,7 @@ func ImagePullSecretExists(ctx context.Context, c client.Client, namespace, secr
 // stampImagePullSecretRef adds or removes a LocalObjectReference{Name: secretName}
 // on emb.Template.Spec.ImagePullSecrets based on exists. Idempotent.
 func stampImagePullSecretRef(emb *agentsv1alpha1.EmbeddedSandboxTemplate, secretName string, exists bool) {
-	if emb == nil || emb.Template == nil || secretName == "" {
+	if emb == nil || secretName == "" {
 		return
 	}
 	refs := emb.Template.Spec.ImagePullSecrets

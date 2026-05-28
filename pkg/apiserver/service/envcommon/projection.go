@@ -82,8 +82,8 @@ func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sandbo
 		SpecYaml:        ptr.To(specYaml),
 		CreatedAt:       &createdAt,
 	}
-	if pool.Spec.Template != nil {
-		cpu, memory, err := utilresource.SumContainerResources(pool.Spec.Template)
+	if len(pool.Spec.Template.Spec.Containers) > 0 {
+		cpu, memory, err := utilresource.SumContainerResources(&pool.Spec.Template)
 		if err != nil {
 			log.FromContext(ctx).V(1).Info("failed to compute pool resources", "pool", pool.Name, "error", err)
 		} else {
@@ -111,7 +111,7 @@ func embeddedTemplateToYAML(emb agentsv1alpha1.EmbeddedSandboxTemplate) string {
 	type diffable struct {
 		IdleImage string                              `json:"idleImage,omitempty"`
 		Runtimes  []agentsv1alpha1.SandboxRuntimeSpec `json:"runtimes,omitempty"`
-		Template  *corev1.PodTemplateSpec             `json:"template,omitempty"`
+		Template  corev1.PodTemplateSpec              `json:"template,omitempty"`
 	}
 	d := diffable{
 		IdleImage: emb.IdleImage,

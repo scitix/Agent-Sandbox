@@ -16,6 +16,7 @@ package sandboxpool
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"sort"
 	"time"
@@ -114,6 +115,15 @@ func SyncAnnotationsFromTemplate(dst, tmplAnnotations map[string]string) {
 
 // createPod creates a new Pod for the SandboxPool
 func (r *SandboxPoolReconciler) createPod(ctx context.Context, sandboxPool *agentsv1alpha1.SandboxPool) error {
+	// A Pool with no containers in its embedded template cannot
+	// materialise a Pod. This happens when an upstream writer (legacy
+	// migration, manual edit) emptied Spec.Template; surface a clear
+	// error so the Reconciler logs a typed failure and retries when the
+	// Env re-populates the Spec.
+	if len(sandboxPool.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("sandboxpool %s/%s has empty Spec.Template containers; cannot create pod (waiting for Env to repopulate)",
+			sandboxPool.Namespace, sandboxPool.Name)
+	}
 	// Create a new Pod from the template
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

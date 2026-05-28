@@ -117,7 +117,7 @@ var _ = Describe("SandboxPool Controller", func() {
 				Spec: agentsv1alpha1.SandboxPoolSpec{
 					Replicas: 3,
 					EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-						Template: &corev1.PodTemplateSpec{
+						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
 									{
@@ -193,7 +193,7 @@ var _ = Describe("SandboxPool Controller", func() {
 				Spec: agentsv1alpha1.SandboxPoolSpec{
 					Replicas: 4,
 					EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-						Template: &corev1.PodTemplateSpec{
+						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
 									{
@@ -278,7 +278,7 @@ var _ = Describe("SandboxPool Controller", func() {
 				Spec: agentsv1alpha1.SandboxPoolSpec{
 					Replicas: 5,
 					EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-						Template: &corev1.PodTemplateSpec{
+						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
 									{
@@ -425,7 +425,7 @@ var _ = Describe("SandboxPool Controller", func() {
 				Spec: agentsv1alpha1.SandboxPoolSpec{
 					Replicas: 3,
 					EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-						Template: &corev1.PodTemplateSpec{
+						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
 									{
@@ -552,7 +552,7 @@ var _ = Describe("SandboxPool Controller", func() {
 				Spec: agentsv1alpha1.SandboxPoolSpec{
 					Replicas: 2,
 					EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-						Template: &corev1.PodTemplateSpec{
+						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
 									{

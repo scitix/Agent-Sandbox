@@ -834,7 +834,7 @@ func TestSyncRestartedRunningPods_MatchingContainerID_NoRecycle(t *testing.T) {
 		Spec: agentsv1alpha1.SandboxPoolSpec{
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "sandbox", Image: "myapp:v1"}},
 					},
@@ -876,7 +876,7 @@ func TestSyncRestartedRunningPods_ChangedContainerID_Recycled(t *testing.T) {
 		Spec: agentsv1alpha1.SandboxPoolSpec{
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "sandbox", Image: "myapp:v1"}},
 					},
@@ -1565,7 +1565,7 @@ func TestCreatePod_PolicyPoolDefaultImage(t *testing.T) {
 			PodCreationImagePolicy: agentsv1alpha1.PodCreationImagePolicyPoolDefaultImage,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{Containers: []corev1.Container{
 						{Name: "sandbox", Image: "my-sandbox:latest"},
 					}},
@@ -1603,7 +1603,7 @@ func TestCreatePod_PolicyIdleImage(t *testing.T) {
 			PodCreationImagePolicy: agentsv1alpha1.PodCreationImagePolicyIdleImage,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{Containers: []corev1.Container{
 						{Name: "sandbox", Image: "my-sandbox:latest"},
 					}},
@@ -1639,7 +1639,7 @@ func TestCreatePod_PolicyIdleImageEmpty(t *testing.T) {
 			PodCreationImagePolicy: agentsv1alpha1.PodCreationImagePolicyIdleImage,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "", // empty — must not override
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{Containers: []corev1.Container{
 						{Name: "sandbox", Image: "my-sandbox:latest"},
 					}},
@@ -1732,7 +1732,7 @@ func makePoolForGuard(ns, name string, replicas int32) *agentsv1alpha1.SandboxPo
 		Spec: agentsv1alpha1.SandboxPoolSpec{
 			Replicas: replicas,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "c", Image: "img:latest"}},
 					},

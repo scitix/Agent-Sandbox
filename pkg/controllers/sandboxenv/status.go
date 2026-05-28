@@ -232,7 +232,7 @@ func effectiveResources(member agentsv1alpha1.EnvClusterMember, pool *agentsv1al
 	// For Phase 1 the closed-source plugin is expected to keep the Pool's
 	// resources in sync with the InstanceType, so reading the Pool is a
 	// good proxy.
-	if pool.Spec.Template != nil && len(pool.Spec.Template.Spec.Containers) > 0 {
+	if len(pool.Spec.Template.Spec.Containers) > 0 {
 		res := pool.Spec.Template.Spec.Containers[0].Resources
 		return res.DeepCopy()
 	}

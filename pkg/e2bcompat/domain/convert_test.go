@@ -36,7 +36,7 @@ func makeTestPool(name, namespace string, cpuMillis, memoryMiB int64) *agentsv1a
 		},
 		Spec: agentsv1alpha1.SandboxPoolSpec{
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{

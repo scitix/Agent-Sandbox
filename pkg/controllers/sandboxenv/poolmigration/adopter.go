@@ -12,24 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package poolmigration implements the transitional PoolAdoptionReconciler.
+// Package poolmigration owns the steady-state sync that keeps legacy
+// (same-name) SandboxPool ↔ SandboxEnv pairs aligned.
 //
-// During the SandboxEnv Phase 1 rollout, every existing SandboxPool must be
-// wrapped by a same-named SandboxEnv so that:
+// Two populations of SandboxPool coexist in the cluster:
 //
-//   - the Pool carries a non-controlling OwnerReference back to its Env
-//     (this is the authoritative signal the Pool Reconciler uses to gate its
-//     legacy autoscaler — see agentsv1alpha1.HasEnvOwner);
-//   - autoscaling decisions move from the Pool to the Env;
-//   - Sandbox.create requests can route through Env → Pool.
+//   - Legacy / orphan Pools: created directly as a SandboxPool CR (no
+//     owning SandboxEnv). This reconciler wraps each one in a same-name
+//     SandboxEnv and keeps the Env's local-cluster member entry consistent
+//     with the live Pool on every reconcile.
 //
-// This package owns ONLY that migration. Steady-state Env behaviour
-// (status aggregation + autoscaler) lives in the parent sandboxenv package.
+//   - Env-managed Pools: created by the SandboxEnv reconciler from a
+//     member entry. Their owning Env has a *different* name than the Pool
+//     (Phase-2 onwards). This reconciler intentionally leaves them alone —
+//     their Member.Spec is the post-PreCreatePool frozen snapshot and
+//     must not be re-derived here.
 //
-// Removal path: once we cut over to a flow where SandboxEnv is the user-facing
-// primary and the Pool is created by the Env (Phase 2+), this whole package
-// becomes dead code and can be deleted. The Pool Reconciler's HasEnvOwner gate
-// keeps working unchanged.
+// The legacy population is identified by the absence of any OwnerReference
+// to a different-named SandboxEnv. For each such Pool the reconciler:
+//
+//  1. Looks up — or creates — the same-name SandboxEnv.
+//  2. Builds a desired EnvClusterMember from the live Pool (and, when the
+//     Pool only carries TemplateName, by resolving that SandboxTemplate).
+//  3. Patches Member.Spec / Member.Config drift into the Env. Once a
+//     Member.Spec field is non-empty it is treated as frozen ("fill once")
+//     so SandboxTemplate upgrades do not auto-propagate to legacy Pools;
+//     adopter-owned Config fields (ScalingGroup / InstanceType / Multiplier
+//     / InlineResources) are re-derived on every pass.
+//  4. Stamps a non-controlling OwnerReference from the Pool to the Env.
+//
+// Removal path: once every legacy Pool has been migrated to a Phase-2
+// member, the reconciler becomes a no-op and this package can be deleted.
 package poolmigration
 
 import (
@@ -38,6 +51,7 @@ import (
 	"maps"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -60,9 +74,10 @@ import (
 // upward import cycle).
 const fallbackScalingGroup = "default"
 
-// PoolAdoptionReconciler ensures every SandboxPool is wrapped in a same-named
-// SandboxEnv. It watches SandboxPool only — Env updates do not enqueue work
-// here because adoption is a one-way Pool→Env state machine.
+// PoolAdoptionReconciler keeps every legacy same-name SandboxPool ↔
+// SandboxEnv pair in sync. It watches SandboxPool only — Env updates do
+// not enqueue work here because the desired Member is derived from the
+// Pool, not the Env.
 type PoolAdoptionReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -79,29 +94,26 @@ type PoolAdoptionReconciler struct {
 
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxenvs,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxtemplates,verbs=get;list;watch
 
-// Reconcile owns one Pool at a time: it makes sure the Pool's owning Env
-// exists, contains a matching member entry, and that the Pool itself carries
-// an OwnerReference back to that Env.
+// Reconcile owns one Pool at a time.
 //
-// Phases:
+// Steps:
 //
-//  1. Fast path — `poolFullyAdopted(pool)` returns true iff the Pool has an
-//     OwnerRef whose UID matches a live SandboxEnv. When true, return early
-//     without API calls beyond the GET that delivered us this Pool.
+//  1. Early-exit when the Pool is Env-managed (an OwnerReference points at
+//     a SandboxEnv whose name differs from the Pool's name). Phase-2 Pools
+//     do not participate in legacy adoption.
 //
-//  2. Slow path — call `adoptOrphanPool(pool)` which:
-//     a. Resolves the Pool's (InstanceType, Multiplier) when the catalog is
-//     enabled; otherwise sets member.InlineResources from the PodSpec.
-//     b. Looks up an existing SandboxEnv by Pool.Name; if absent, creates one
-//     using the source Pool's TemplateRef + autoscaling.
-//     c. Appends the Pool to env.Spec.Clusters[localClusterID].Members when
-//     missing.
-//     d. Patches the Pool with a non-controlling OwnerReference to the Env.
+//  2. Look up the same-name SandboxEnv; create it when missing.
 //
-// Steps (a)–(d) are independently idempotent so a Reconcile that crashes
-// mid-way (Env created but Pool ref not stamped) heals on the next pass —
-// this is **scenario B** in the test plan.
+//  3. Compose the desired Member from the live Pool (resolving the
+//     SandboxTemplate the first time the Member's Spec.Template is empty)
+//     and patch any drift back onto the Env.
+//
+//  4. Stamp the OwnerReference from Pool → Env.
+//
+// Steps (2)–(4) are independently idempotent so a Reconcile that crashes
+// mid-way heals on the next pass.
 func (r *PoolAdoptionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := r.Get(ctx, req.NamespacedName, pool); err != nil {
@@ -111,24 +123,36 @@ func (r *PoolAdoptionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	if ok, err := r.poolFullyAdopted(ctx, pool); err != nil {
-		return ctrl.Result{}, err
-	} else if ok {
-		// Backfill drift on already-adopted Pools: if member.ScalingGroup
-		// is empty / legacy "default" / disagrees with the value derived
-		// from the Pool's resources, patch it. Same for the
-		// InlineResources → InstanceType+Multiplier conversion when the
-		// catalog now matches a known entry.
-		if err := r.backfillMemberDrift(ctx, pool); err != nil {
-			if apierrors.IsConflict(err) {
+	// Phase-2 early-exit: Env-managed Pool (owned by a SandboxEnv with a
+	// different name). Adopter must not re-derive its Member snapshot.
+	if isEnvManagedPool(pool) {
+		return ctrl.Result{}, nil
+	}
+
+	envName := pool.Name
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: envName}, env); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		if err := r.createEnvForPool(ctx, pool); err != nil {
+			if apierrors.IsAlreadyExists(err) {
 				return ctrl.Result{Requeue: true}, nil
 			}
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		// Re-fetch on next pass so we work against the persisted Env (UID etc).
+		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if err := r.adoptOrphanPool(ctx, pool); err != nil {
+	if err := r.syncMember(ctx, pool, env); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ensureEnvOwnerReference(ctx, pool, env); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
 		}
@@ -191,173 +215,237 @@ func sameOwnerRefs(a, b []metav1.OwnerReference) bool {
 	return true
 }
 
-// poolFullyAdopted returns true when the Pool carries an OwnerReference to a
-// SandboxEnv whose UID still resolves on the API server.
+// isEnvManagedPool returns true when the Pool already has an
+// OwnerReference to a SandboxEnv whose name differs from the Pool's own
+// name — the unambiguous signal that the Pool was materialised by the
+// SandboxEnv reconciler from a member entry, not by direct CR creation.
 //
-// "Still resolves" guards against scenario D: the Env was deleted but the
-// stale OwnerReference lingers (Kubernetes GC removes dangling refs eventually
-// but we want migration to heal immediately when the user re-applies). On any
-// non-NotFound Get error we surface the failure so the controller-runtime
-// requeues with backoff — partial outages must not make us flap-stamp owners.
-func (r *PoolAdoptionReconciler) poolFullyAdopted(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (bool, error) {
+// Stale same-name owner refs (Env deleted) are treated as "still legacy"
+// and fall through to the normal adoption flow: the reconciler will
+// re-create the Env and re-stamp the ref.
+func isEnvManagedPool(pool *agentsv1alpha1.SandboxPool) bool {
 	for _, ref := range pool.OwnerReferences {
-		if ref.Kind != agentsv1alpha1.SandboxEnvOwnerKind {
-			continue
+		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind && ref.Name != pool.Name {
+			return true
 		}
-		env := &agentsv1alpha1.SandboxEnv{}
-		err := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: ref.Name}, env)
-		switch {
-		case apierrors.IsNotFound(err):
-			// Dangling reference — fall through and re-adopt below.
-			continue
-		case err != nil:
-			return false, err
-		}
-		if env.UID == ref.UID {
-			return true, nil
-		}
-		// UID mismatch ≈ same name, different object (Env was recreated). Treat
-		// as not-adopted so we re-stamp with the current UID.
 	}
-	return false, nil
+	return false
 }
 
-// adoptOrphanPool runs the slow path described in Reconcile's doc.
-//
-// Conflict errors from any of the writes are propagated; Reconcile maps them
-// to a Requeue so the next pass re-reads fresh objects.
-func (r *PoolAdoptionReconciler) adoptOrphanPool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) error {
-	log := klog.FromContext(ctx).WithValues("pool", pool.Namespace+"/"+pool.Name)
-
-	itName, multiplier, err := resolvePoolShape(ctx, r.InstanceTypes, pool)
+// createEnvForPool builds a new SandboxEnv that wraps the orphan Pool as
+// its sole local-cluster member. The Env is created in one shot so the
+// next reconcile sees a fully-populated object; a stale read on the next
+// pass triggers nothing because the desired member equals the one we just
+// persisted.
+func (r *PoolAdoptionReconciler) createEnvForPool(ctx context.Context, pool *agentsv1alpha1.SandboxPool) error {
+	member, _, err := r.composeDesiredMember(ctx, pool, nil)
 	if err != nil {
-		return fmt.Errorf("resolve pool shape: %w", err)
+		return fmt.Errorf("compose member: %w", err)
 	}
-	groupName := deriveScalingGroupName(r.InstanceTypes, pool)
-	member := buildMemberFromPool(pool, itName, multiplier, groupName)
-	envName := pool.Name // Phase 1: 1:1 same-name Env.
-
-	env := &agentsv1alpha1.SandboxEnv{}
-	getErr := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: envName}, env)
-	switch {
-	case apierrors.IsNotFound(getErr):
-		env = buildEnvFromPool(pool, itName, multiplier, member, r.LocalClusterID, groupName)
-		if err := r.Create(ctx, env); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				if err := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: envName}, env); err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		} else {
-			log.Info("Created SandboxEnv from orphan Pool", "env", env.Name)
-		}
-	case getErr != nil:
-		return getErr
-	}
-
-	// Ensure local cluster segment exists and contains this member.
-	if err := r.ensureMember(ctx, env, member); err != nil {
+	env := buildEnvFromPool(pool, member, r.LocalClusterID)
+	if err := r.Create(ctx, env); err != nil {
 		return err
 	}
-
-	// Stamp Pool with a non-controlling OwnerReference back to the Env.
-	return r.ensureEnvOwnerReference(ctx, pool, env)
-}
-
-// backfillMemberDrift reconciles an already-adopted Pool's EnvClusterMember
-// entry against the current InstanceType catalog + ResourceKey derivation:
-//
-//   - If member.ScalingGroup is empty or differs from the derived key, patch
-//     it. This migrates pre-2026.06 Envs that used the literal "default"
-//     fallback group.
-//   - If member.InstanceType is empty but the Pool's resources resolve to a
-//     known catalog entry, persist (InstanceType, Multiplier) on the member
-//     and clear member.InlineResources so future renders take the catalog
-//     path. Idempotent: when no drift is detected the call is a no-op.
-func (r *PoolAdoptionReconciler) backfillMemberDrift(ctx context.Context, pool *agentsv1alpha1.SandboxPool) error {
-	envName := ""
-	var envUID types.UID
-	for _, ref := range pool.OwnerReferences {
-		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind {
-			envName = ref.Name
-			envUID = ref.UID
-			break
-		}
-	}
-	if envName == "" {
-		return nil
-	}
-	env := &agentsv1alpha1.SandboxEnv{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: pool.Namespace, Name: envName}, env); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	if env.UID != envUID {
-		return nil // owner ref UID mismatch — handled by re-adoption path
-	}
-
-	itName, mul, err := resolvePoolShape(ctx, r.InstanceTypes, pool)
-	if err != nil {
-		return fmt.Errorf("resolve pool shape: %w", err)
-	}
-	derivedGroup := deriveScalingGroupName(r.InstanceTypes, pool)
-
-	base := env.DeepCopy()
-	changed := false
-	mutateLocalClusterSpec(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterSpec) {
-		for i := range local.Members {
-			m := &local.Members[i]
-			if m.Name != pool.Name {
-				continue
-			}
-			if m.Config.ScalingGroup != derivedGroup && derivedGroup != "" {
-				m.Config.ScalingGroup = derivedGroup
-				changed = true
-			}
-			// Convert InlineResources to (InstanceType, Multiplier) when
-			// the catalog matches. Leave InlineResources alone when the
-			// provider has nothing for these resources.
-			if m.Config.InstanceType == "" && itName != "" {
-				m.Config.InstanceType = itName
-				m.Config.Multiplier = mul
-				m.Config.InlineResources = nil
-				changed = true
-			}
-		}
-	})
-	if !changed {
-		return nil
-	}
-	return r.Patch(ctx, env, client.MergeFrom(base))
-}
-
-// ensureMember appends member into env.Spec.Clusters[local].Members when not
-// already present. Caller is the only writer of the local segment, so a
-// non-conflict result means the change is visible to everyone on the next
-// fetch.
-func (r *PoolAdoptionReconciler) ensureMember(ctx context.Context, env *agentsv1alpha1.SandboxEnv, member agentsv1alpha1.EnvClusterMember) error {
-	base := env.DeepCopy()
-	updated := false
-	mutateLocalClusterSpec(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterSpec) {
-		if memberIndex(local.Members, member.Name) < 0 {
-			local.Members = append(local.Members, member)
-			updated = true
-		}
-	})
-	if !updated {
-		return nil
-	}
-	if err := r.Patch(ctx, env, client.MergeFrom(base)); err != nil {
-		return err
-	}
-	klog.FromContext(ctx).Info("Appended Pool as member of SandboxEnv", "env", env.Name)
+	klog.FromContext(ctx).Info("Created SandboxEnv from orphan Pool",
+		"env", env.Namespace+"/"+env.Name)
 	return nil
 }
 
-// ensureEnvOwnerReference adds a non-controlling OwnerReference to env when
-// not already present. Existing refs (controlling or not) with matching UID
-// are left untouched.
+// syncMember computes the desired Member from the live Pool, patches the
+// Env when it differs from what's stored, and stamps the template-version
+// annotation onto the Pool the first time we resolve a SandboxTemplate to
+// fill the Member's Spec.Template.
+func (r *PoolAdoptionReconciler) syncMember(ctx context.Context, pool *agentsv1alpha1.SandboxPool, env *agentsv1alpha1.SandboxEnv) error {
+	existing := findMember(env, r.LocalClusterID, pool.Name)
+	desired, resolvedTmpl, err := r.composeDesiredMember(ctx, pool, existing)
+	if err != nil {
+		return err
+	}
+
+	if existing == nil || !equality.Semantic.DeepEqual(*existing, desired) {
+		base := env.DeepCopy()
+		mutateLocalClusterSpec(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterSpec) {
+			idx := memberIndex(local.Members, pool.Name)
+			if idx < 0 {
+				local.Members = append(local.Members, desired)
+			} else {
+				local.Members[idx] = desired
+			}
+		})
+		if err := r.Patch(ctx, env, client.MergeFrom(base)); err != nil {
+			return err
+		}
+		klog.FromContext(ctx).V(1).Info("Synced legacy member onto Env",
+			"env", env.Namespace+"/"+env.Name, "member", pool.Name)
+	}
+
+	// Stamp template-version provenance on the Pool the first time we
+	// resolved a SandboxTemplate to fill the Member.Spec.Template. This
+	// is the version anchor that keeps "Template upgrades do not
+	// auto-propagate" honest: once the annotation is set the next
+	// composeDesiredMember sees a non-empty Member.Spec.Template and
+	// short-circuits the sbt fetch, so a later sbt edit doesn't drift the
+	// Member.
+	if resolvedTmpl != nil {
+		if err := r.stampTemplateProvenance(ctx, pool, resolvedTmpl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// composeDesiredMember produces the EnvClusterMember the Env should carry
+// for this Pool. Mutation policy follows the two-bucket split:
+//
+//   - Member.Metadata + Member.Spec are *frozen snapshots*: a field is
+//     filled exactly once (when the Member is first created or when a
+//     pre-existing Member is observed to have it empty) and never
+//     overwritten afterwards. This is what makes "Template upgrades do
+//     not auto-propagate to legacy Pools" hold.
+//
+//   - Member.Config carries adopter-derived intent. ScalingGroup /
+//     InstanceType / Multiplier / InlineResources are re-derived every
+//     pass and overwrite the stored value when the derivation differs.
+//     User-supplied Config fields (Labels, Annotations, MaxReplicas,
+//     priorities) are preserved.
+//
+// When the Pool only carries TemplateName (no inline Template) and the
+// existing Member.Spec.Template is empty, the function fetches the
+// referenced SandboxTemplate and returns it as the second value so the
+// caller can stamp the template-version annotation onto the Pool. The
+// returned template is nil whenever no fetch happened (sbt unchanged or
+// not needed).
+func (r *PoolAdoptionReconciler) composeDesiredMember(
+	ctx context.Context,
+	pool *agentsv1alpha1.SandboxPool,
+	existing *agentsv1alpha1.EnvClusterMember,
+) (agentsv1alpha1.EnvClusterMember, *agentsv1alpha1.SandboxTemplate, error) {
+	firstTime := existing == nil
+
+	var desired agentsv1alpha1.EnvClusterMember
+	if existing != nil {
+		desired = *existing.DeepCopy()
+	}
+	desired.Name = pool.Name
+
+	// --- Metadata (fill once) ---
+	if len(desired.Metadata.Labels) == 0 && len(pool.Labels) > 0 {
+		desired.Metadata.Labels = cloneStringMap(pool.Labels)
+	}
+	if len(desired.Metadata.Annotations) == 0 && len(pool.Annotations) > 0 {
+		desired.Metadata.Annotations = cloneStringMap(pool.Annotations)
+	}
+
+	// --- Spec primitive fields (fill once) ---
+	if desired.Spec.PodCreationImagePolicy == "" {
+		desired.Spec.PodCreationImagePolicy = pool.Spec.PodCreationImagePolicy
+	}
+	if desired.Spec.DefaultStartupTimeout == nil && pool.Spec.DefaultStartupTimeout != nil {
+		desired.Spec.DefaultStartupTimeout = pool.Spec.DefaultStartupTimeout.DeepCopy()
+	}
+	if desired.Spec.DefaultIdleTimeout == nil && pool.Spec.DefaultIdleTimeout != nil {
+		desired.Spec.DefaultIdleTimeout = pool.Spec.DefaultIdleTimeout.DeepCopy()
+	}
+	if desired.Spec.TemplateName == "" {
+		desired.Spec.TemplateName = pool.Spec.TemplateName
+	}
+
+	// Replicas is owned by the autoscaler / user once the Member exists;
+	// only seed it on the very first sync from the live Pool.
+	if firstTime {
+		desired.Spec.Replicas = pool.Spec.Replicas
+	}
+
+	// --- EmbeddedSandboxTemplate (fill once) ---
+	//
+	// Three sources, in priority order:
+	//   1. existing Member already has a usable template → keep it.
+	//   2. Pool has containers inline → copy the embedded template.
+	//   3. Pool only has TemplateName → resolve the SandboxTemplate and
+	//      copy its EmbeddedSandboxTemplate.
+	//
+	// Once any of (1)-(3) yields a non-empty Containers list we never
+	// refresh it from the source — that's the "upgrade does not
+	// auto-propagate" invariant.
+	var resolvedTmpl *agentsv1alpha1.SandboxTemplate
+	if len(desired.Spec.Template.Spec.Containers) == 0 {
+		switch {
+		case len(pool.Spec.Template.Spec.Containers) > 0:
+			desired.Spec.EmbeddedSandboxTemplate = *pool.Spec.EmbeddedSandboxTemplate.DeepCopy()
+		case pool.Spec.TemplateName != "":
+			tmpl := &agentsv1alpha1.SandboxTemplate{}
+			if err := r.Get(ctx, types.NamespacedName{Name: pool.Spec.TemplateName}, tmpl); err != nil {
+				return desired, nil, fmt.Errorf("resolve SandboxTemplate %q: %w", pool.Spec.TemplateName, err)
+			}
+			desired.Spec.EmbeddedSandboxTemplate = *tmpl.Spec.EmbeddedSandboxTemplate.DeepCopy()
+			resolvedTmpl = tmpl
+		}
+	}
+
+	// --- Config (adopter-derived; overwrite on drift) ---
+	itName, multiplier, derr := resolvePoolShape(ctx, r.InstanceTypes, pool)
+	if derr != nil {
+		return desired, resolvedTmpl, derr
+	}
+	if itName != "" {
+		if desired.Config.InstanceType != itName {
+			desired.Config.InstanceType = itName
+		}
+		if desired.Config.Multiplier != multiplier {
+			desired.Config.Multiplier = multiplier
+		}
+		// Catalog match makes InlineResources redundant; drop it so the
+		// renderer uses the catalog path.
+		desired.Config.InlineResources = nil
+	} else if desired.Config.InlineResources == nil {
+		// No catalog entry: keep the legacy fallback. Only fill when
+		// empty — once a sizing source exists we leave it alone.
+		if res := firstContainerResources(pool); res != nil {
+			desired.Config.InlineResources = res.DeepCopy()
+		}
+	}
+
+	derivedGroup := deriveScalingGroupName(r.InstanceTypes, pool)
+	if derivedGroup != "" && desired.Config.ScalingGroup != derivedGroup {
+		desired.Config.ScalingGroup = derivedGroup
+	}
+
+	return desired, resolvedTmpl, nil
+}
+
+// stampTemplateProvenance writes the SandboxTemplate name + version onto
+// the Pool's annotations. Idempotent: when the annotation already matches
+// the resolved version we skip the patch entirely.
+func (r *PoolAdoptionReconciler) stampTemplateProvenance(
+	ctx context.Context,
+	pool *agentsv1alpha1.SandboxPool,
+	tmpl *agentsv1alpha1.SandboxTemplate,
+) error {
+	wantName := tmpl.Name
+	wantVersion := tmpl.Spec.Version
+	if wantName == "" && wantVersion == "" {
+		return nil
+	}
+	curName := pool.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey]
+	curVersion := pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey]
+	if curName == wantName && curVersion == wantVersion {
+		return nil
+	}
+	base := pool.DeepCopy()
+	if pool.Annotations == nil {
+		pool.Annotations = map[string]string{}
+	}
+	if wantName != "" {
+		pool.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = wantName
+	}
+	if wantVersion != "" {
+		pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] = wantVersion
+	}
+	return r.Patch(ctx, pool, client.MergeFrom(base))
+}
+
+// ensureEnvOwnerReference adds a controlling OwnerReference to env when
+// not already present. Existing refs with matching UID are left untouched.
 func (r *PoolAdoptionReconciler) ensureEnvOwnerReference(ctx context.Context, pool *agentsv1alpha1.SandboxPool, env *agentsv1alpha1.SandboxEnv) error {
 	if hasOwningEnvReference(pool.OwnerReferences, env) {
 		return nil
@@ -379,9 +467,7 @@ func hasOwningEnvReference(ownerRefs []metav1.OwnerReference, env *agentsv1alpha
 }
 
 // ownerReferenceForEnv builds a controlling OwnerReference so deleting the
-// Env cascades to its member Pools via Kubernetes garbage collection. Phase 1
-// adopter and Phase A1 Env Reconciler both stamp the same shape so the
-// cluster converges regardless of which path created the Pool.
+// Env cascades to its member Pools via Kubernetes garbage collection.
 func ownerReferenceForEnv(env *agentsv1alpha1.SandboxEnv) metav1.OwnerReference {
 	isController := true
 	blockOwnerDeletion := true
@@ -409,8 +495,6 @@ func resolvePoolShape(ctx context.Context, p instancetype.Provider, pool *agents
 	}
 	it, mul, derr := p.ResolveByResources(ctx, *res)
 	if derr != nil {
-		// derr.Cause carries the original error; preserve the wrap so callers
-		// see the context.
 		if derr.Cause != nil {
 			return "", 0, derr.Cause
 		}
@@ -422,19 +506,19 @@ func resolvePoolShape(ctx context.Context, p instancetype.Provider, pool *agents
 	return it.Name, mul, nil
 }
 
-// buildEnvFromPool constructs a fresh SandboxEnv that adopts the given Pool
-// as its sole member in the local cluster segment. groupName labels the
-// ScalingGroup associated with this Pool and is mirrored into the Env's
-// autoscaling.groups[0] entry so the autoscaler config and the member's
-// ScalingGroup field agree by construction.
+// buildEnvFromPool constructs a fresh SandboxEnv that adopts the given
+// Pool as its sole local-cluster member. The member is passed in
+// pre-composed so the Env is created with a consistent snapshot in one
+// shot.
 func buildEnvFromPool(
 	pool *agentsv1alpha1.SandboxPool,
-	itName string,
-	multiplier int32,
 	member agentsv1alpha1.EnvClusterMember,
 	localClusterID string,
-	groupName string,
 ) *agentsv1alpha1.SandboxEnv {
+	groupName := member.Config.ScalingGroup
+	if groupName == "" {
+		groupName = fallbackScalingGroup
+	}
 	env := &agentsv1alpha1.SandboxEnv{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pool.Name,
@@ -461,46 +545,13 @@ func buildEnvFromPool(
 			},
 		},
 	}
-	if itName != "" {
+	if member.Config.InstanceType != "" {
 		env.Spec.Defaults = &agentsv1alpha1.SandboxEnvDefaults{
-			InstanceType: itName,
-			Multiplier:   multiplier,
+			InstanceType: member.Config.InstanceType,
+			Multiplier:   member.Config.Multiplier,
 		}
 	}
 	return env
-}
-
-// buildMemberFromPool produces the EnvClusterMember entry that represents the
-// given Pool. The Member's Metadata + Spec are snapshots of the live Pool's
-// ObjectMeta (sans server-managed fields) + Spec — this preserves any plugin
-// admission side-effects that ran when the Pool was originally created. The
-// Config carries the round-tripped (InstanceType, Multiplier) when the
-// catalog supplied them; otherwise the Pool's first-container resources are
-// copied verbatim into Config.InlineResources.
-//
-// groupName is the resolved ScalingGroup name (typically derived from the
-// effective resources via the InstanceType provider).
-func buildMemberFromPool(pool *agentsv1alpha1.SandboxPool, itName string, multiplier int32, groupName string) agentsv1alpha1.EnvClusterMember {
-	m := agentsv1alpha1.EnvClusterMember{
-		Name: pool.Name,
-		Metadata: agentsv1alpha1.MemberMetadata{
-			Labels:      cloneStringMap(pool.Labels),
-			Annotations: cloneStringMap(pool.Annotations),
-		},
-		Spec: *pool.Spec.DeepCopy(),
-		Config: agentsv1alpha1.EnvClusterMemberConfig{
-			ScalingGroup: groupName,
-		},
-	}
-	if itName != "" {
-		m.Config.InstanceType = itName
-		m.Config.Multiplier = multiplier
-		return m
-	}
-	if res := firstContainerResources(pool); res != nil {
-		m.Config.InlineResources = res.DeepCopy()
-	}
-	return m
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -555,12 +606,32 @@ func envLabelsFromPool(pool *agentsv1alpha1.SandboxPool) map[string]string {
 // container's ResourceRequirements on the Pool's embedded template. Returns
 // nil when the embedded PodSpec has no containers.
 func firstContainerResources(pool *agentsv1alpha1.SandboxPool) *corev1.ResourceRequirements {
-	tmpl := pool.Spec.Template
-	if tmpl == nil || len(tmpl.Spec.Containers) == 0 {
+	containers := pool.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
 		return nil
 	}
-	res := tmpl.Spec.Containers[0].Resources
+	res := containers[0].Resources
 	return &res
+}
+
+// findMember returns a pointer to the matching member entry on env's
+// local cluster segment, or nil when the member is absent.
+func findMember(env *agentsv1alpha1.SandboxEnv, localClusterID, name string) *agentsv1alpha1.EnvClusterMember {
+	if env == nil {
+		return nil
+	}
+	for i := range env.Spec.Clusters {
+		if env.Spec.Clusters[i].ClusterID != localClusterID {
+			continue
+		}
+		ms := env.Spec.Clusters[i].Members
+		for j := range ms {
+			if ms[j].Name == name {
+				return &ms[j]
+			}
+		}
+	}
+	return nil
 }
 
 // memberIndex returns the position of a member by name, or -1 when absent.

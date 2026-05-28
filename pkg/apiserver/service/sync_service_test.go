@@ -259,7 +259,7 @@ func makeSyncTestTemplate(name string) *agentsv1alpha1.SandboxTemplate {
 			Description: "sync test template " + name,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "sandbox", Image: "busybox:latest"}},
 					},

@@ -77,7 +77,7 @@ type EmbeddedSandboxTemplate struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +kubebuilder:validation:Schemaless
 	// +optional
-	Template *corev1.PodTemplateSpec `json:"template,omitempty"`
+	Template corev1.PodTemplateSpec `json:"template,omitempty"`
 
 	// IdleImage is the image to use when Pods are in the idle state.
 	// If not specified, the image from Template.Spec.Containers[0].Image will be used.

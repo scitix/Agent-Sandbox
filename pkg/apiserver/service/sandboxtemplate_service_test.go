@@ -64,7 +64,7 @@ func makeSandboxTemplate(name, version string) *agentsv1alpha1.SandboxTemplate {
 			Description: "Test template " + name,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "busybox:1.36",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{Name: "sandbox", Image: "busybox:1.36"},
@@ -168,7 +168,7 @@ func TestSandboxTemplateService_Create_Success(t *testing.T) {
 			Description: "New template",
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "alpine:3.18",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{Name: "sandbox", Image: "alpine:3.18"},

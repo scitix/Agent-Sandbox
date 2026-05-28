@@ -182,6 +182,10 @@ func ReleaseSandboxPod(ctx context.Context, c client.Client, pod *corev1.Pod, po
 	}
 
 	idleImages := IdleContainerImages(pool)
+	if len(idleImages) == 0 {
+		return nil, fmt.Errorf("cannot resolve idle images for pool %s/%s: embedded template has no containers",
+			pool.Namespace, pool.Name)
+	}
 	if podImagesMatchTarget(pod, idleImages) {
 		klog.ErrorS(nil, "ReleaseSandboxPod: container images unchanged for pod, this is unexpected",
 			"namespace", pod.Namespace, "name", pod.Name)
@@ -204,9 +208,20 @@ func ReleaseSandboxPod(ctx context.Context, c client.Client, pod *corev1.Pod, po
 	return released, nil
 }
 
+// IdleContainerImages returns the per-container image map used to drive a
+// Pod back to its Idle state: every container keeps its template image
+// except the first, which is replaced by Spec.IdleImage when that is set.
+//
+// Returns an empty map when the pool has no containers in its embedded
+// template. Callers should treat that as an error — Release cannot do
+// anything useful without target images.
 func IdleContainerImages(pool *agentsv1alpha1.SandboxPool) map[string]string {
-	containerImages := make(map[string]string, len(pool.Spec.Template.Spec.Containers))
-	for i, container := range pool.Spec.Template.Spec.Containers {
+	if pool == nil {
+		return nil
+	}
+	containers := pool.Spec.Template.Spec.Containers
+	containerImages := make(map[string]string, len(containers))
+	for i, container := range containers {
 		image := container.Image
 		if i == 0 && pool.Spec.IdleImage != "" {
 			image = pool.Spec.IdleImage

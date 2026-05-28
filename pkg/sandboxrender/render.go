@@ -67,13 +67,13 @@ func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 		if err := ValidateContainerImage(opts.Image); err != nil {
 			return err
 		}
-		if emb.Template == nil || len(emb.Template.Spec.Containers) == 0 {
+		if len(emb.Template.Spec.Containers) == 0 {
 			return fmt.Errorf("image override requires at least one container in the template")
 		}
 		emb.Template.Spec.Containers[0].Image = opts.Image
 	}
 	if opts.InlineResources != nil {
-		if emb.Template == nil || len(emb.Template.Spec.Containers) == 0 {
+		if len(emb.Template.Spec.Containers) == 0 {
 			return fmt.Errorf("inlineResources requires at least one container in the template")
 		}
 		emb.Template.Spec.Containers[0].Resources = *opts.InlineResources.DeepCopy()

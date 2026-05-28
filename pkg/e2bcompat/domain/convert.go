@@ -236,10 +236,10 @@ func poolNameFromSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) stri
 // by summing resource requests (with fallback to limits) across all containers.
 // Returns 0,0 if not available.
 func extractResourcesFromPool(pool *agentsv1alpha1.SandboxPool) (cpuCount int32, memoryMB int64) {
-	if pool == nil || pool.Spec.Template == nil {
+	if pool == nil || len(pool.Spec.Template.Spec.Containers) == 0 {
 		return 0, 0
 	}
-	cpu, memory, err := utilresource.SumContainerResources(pool.Spec.Template)
+	cpu, memory, err := utilresource.SumContainerResources(&pool.Spec.Template)
 	if err != nil {
 		return 0, 0
 	}

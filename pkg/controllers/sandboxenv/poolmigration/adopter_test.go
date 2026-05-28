@@ -33,10 +33,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const (
 	testNamespace = "default"
 	testCluster   = "local"
@@ -44,7 +40,9 @@ const (
 	// testDerivedKey is the resource-key value derived from newPool()'s
 	// container resources (2 CPU / 4 GiB). Used as the expected
 	// ScalingGroup in adoption + migration tests.
-	testDerivedKey = "2c4Gi"
+	testDerivedKey   = "2c4Gi"
+	testTemplateName = "tmpl-1"
+	testTmplVer      = "v1.0.0"
 )
 
 func newScheme(t *testing.T) *runtime.Scheme {
@@ -61,7 +59,9 @@ func newScheme(t *testing.T) *runtime.Scheme {
 
 // newPool builds a SandboxPool with a single container that requests a known
 // resource shape (2 CPU / 4Gi mem) so adoption has something to put into
-// InlineResources or round-trip into (InstanceType, Multiplier).
+// InlineResources or round-trip into (InstanceType, Multiplier). The Pool
+// carries an inline template by default, so existing-Pool migration paths
+// exercise the "copy from Pool" branch.
 func newPool() *agentsv1alpha1.SandboxPool {
 	return &agentsv1alpha1.SandboxPool{
 		ObjectMeta: metav1.ObjectMeta{
@@ -74,13 +74,15 @@ func newPool() *agentsv1alpha1.SandboxPool {
 		},
 		Spec: agentsv1alpha1.SandboxPoolSpec{
 			Replicas:     3,
-			TemplateName: "tmpl-1",
+			TemplateName: testTemplateName,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				Template: &corev1.PodTemplateSpec{
+				IdleImage: "ghcr.io/idle:0",
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
-								Name: "sandbox",
+								Name:  "sandbox",
+								Image: "ghcr.io/runtime:base",
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("2"),
@@ -96,10 +98,37 @@ func newPool() *agentsv1alpha1.SandboxPool {
 	}
 }
 
-// newReconciler wires a PoolAdoptionReconciler around the supplied seed
-// objects using the Noop InstanceType provider. All current tests exercise the
-// InlineResources fallback path; if a future test needs a real provider, take
-// it as a parameter then.
+// newSandboxTemplate produces the cluster-scoped SandboxTemplate referenced
+// by newPool().TemplateName, with an EmbeddedSandboxTemplate the adopter
+// can copy onto a Pool whose inline template is missing.
+func newSandboxTemplate() *agentsv1alpha1.SandboxTemplate {
+	return &agentsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: testTemplateName},
+		Spec: agentsv1alpha1.SandboxTemplateSpec{
+			Version: testTmplVer,
+			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
+				IdleImage: "ghcr.io/idle:from-sbt",
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "sandbox",
+								Image: "ghcr.io/runtime:from-sbt",
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("2"),
+										corev1.ResourceMemory: resource.MustParse("4Gi"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func newReconciler(t *testing.T, seed ...client.Object) *PoolAdoptionReconciler {
 	t.Helper()
 	scheme := newScheme(t)
@@ -115,14 +144,39 @@ func newReconciler(t *testing.T, seed ...client.Object) *PoolAdoptionReconciler 
 	}
 }
 
-func reconcileOnce(t *testing.T, r *PoolAdoptionReconciler) {
+func reconcileOnce(t *testing.T, r *PoolAdoptionReconciler) (ctrl.Result, error) {
 	t.Helper()
-	_, err := r.Reconcile(context.Background(), ctrl.Request{
+	return r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: testPoolName},
 	})
-	if err != nil {
-		t.Fatalf("Reconcile error: %v", err)
+}
+
+// reconcileUntilStable runs Reconcile until two consecutive calls produce
+// the same Env ResourceVersion, mirroring the controller-runtime requeue
+// loop. Caps at maxSteps so a runaway diff terminates the test instead of
+// hanging.
+func reconcileUntilStable(t *testing.T, r *PoolAdoptionReconciler) {
+	t.Helper()
+	const maxSteps = 8
+	var lastRV string
+	for range maxSteps {
+		if _, err := reconcileOnce(t, r); err != nil {
+			t.Fatalf("Reconcile error: %v", err)
+		}
+		env := &agentsv1alpha1.SandboxEnv{}
+		err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, env)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("get env: %v", err)
+		}
+		if env.ResourceVersion == lastRV {
+			return
+		}
+		lastRV = env.ResourceVersion
 	}
+	t.Fatalf("reconcile did not stabilise after %d passes", maxSteps)
 }
 
 // ---------------------------------------------------------------------------
@@ -133,14 +187,14 @@ func TestReconcile_A_FreshAdoption(t *testing.T) {
 	pool := newPool()
 	r := newReconciler(t, pool)
 
-	reconcileOnce(t, r)
+	reconcileUntilStable(t, r)
 
 	env := &agentsv1alpha1.SandboxEnv{}
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, env); err != nil {
 		t.Fatalf("Env was not created: %v", err)
 	}
-	if env.Spec.TemplateRef.Name != "tmpl-1" {
-		t.Errorf("Env.Spec.TemplateRef.Name = %q, want tmpl-1", env.Spec.TemplateRef.Name)
+	if env.Spec.TemplateRef.Name != testTemplateName {
+		t.Errorf("Env.Spec.TemplateRef.Name = %q, want %q", env.Spec.TemplateRef.Name, testTemplateName)
 	}
 	if env.Spec.Mode != agentsv1alpha1.SandboxEnvModeWarmPool {
 		t.Errorf("Env.Spec.Mode = %q, want WarmPool", env.Spec.Mode)
@@ -154,8 +208,22 @@ func TestReconcile_A_FreshAdoption(t *testing.T) {
 	if len(env.Spec.Clusters[0].Members) != 1 || env.Spec.Clusters[0].Members[0].Name != testPoolName {
 		t.Fatalf("expected one member named %q, got %+v", testPoolName, env.Spec.Clusters[0].Members)
 	}
-	if env.Spec.Clusters[0].Members[0].Config.InlineResources == nil {
+	member := env.Spec.Clusters[0].Members[0]
+	if member.Config.InlineResources == nil {
 		t.Errorf("expected Config.InlineResources to be set (Noop provider), got nil")
+	}
+	if member.Config.ScalingGroup != testDerivedKey {
+		t.Errorf("Config.ScalingGroup = %q, want %q", member.Config.ScalingGroup, testDerivedKey)
+	}
+	if len(member.Spec.Template.Spec.Containers) == 0 ||
+		member.Spec.Template.Spec.Containers[0].Image != "ghcr.io/runtime:base" {
+		t.Errorf("Member.Spec.Template not copied from Pool: %+v", member.Spec.Template)
+	}
+	if member.Spec.TemplateName != testTemplateName {
+		t.Errorf("Member.Spec.TemplateName = %q, want %q", member.Spec.TemplateName, testTemplateName)
+	}
+	if member.Spec.Replicas != 3 {
+		t.Errorf("Member.Spec.Replicas = %d, want 3 (seeded from Pool)", member.Spec.Replicas)
 	}
 
 	freshPool := &agentsv1alpha1.SandboxPool{}
@@ -166,9 +234,10 @@ func TestReconcile_A_FreshAdoption(t *testing.T) {
 		t.Fatalf("expected pool to carry SandboxEnv OwnerReference, got %+v", freshPool.OwnerReferences)
 	}
 
-	// Idempotency: a second reconcile must be a no-op (no duplicate member, no
-	// duplicate owner ref).
-	reconcileOnce(t, r)
+	// Idempotency: a further reconcile must be a no-op.
+	if _, err := reconcileOnce(t, r); err != nil {
+		t.Fatalf("idempotency reconcile: %v", err)
+	}
 	envAfter := &agentsv1alpha1.SandboxEnv{}
 	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
 	if len(envAfter.Spec.Clusters[0].Members) != 1 {
@@ -195,13 +264,13 @@ func TestReconcile_B_PartialFailureRecovery(t *testing.T) {
 			UID:       "uid-pre-existing",
 		},
 		Spec: agentsv1alpha1.SandboxEnvSpec{
-			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "tmpl-1"},
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: testTemplateName},
 			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
 		},
 	}
 	r := newReconciler(t, pool, preExistingEnv)
 
-	reconcileOnce(t, r)
+	reconcileUntilStable(t, r)
 
 	envAfter := &agentsv1alpha1.SandboxEnv{}
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter); err != nil {
@@ -219,7 +288,6 @@ func TestReconcile_B_PartialFailureRecovery(t *testing.T) {
 	if !agentsv1alpha1.HasEnvOwner(poolAfter) {
 		t.Fatalf("expected owner ref on Pool after recovery, got %+v", poolAfter.OwnerReferences)
 	}
-	// And the ref UID must match the existing Env, not some new one.
 	matched := false
 	for _, ref := range poolAfter.OwnerReferences {
 		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind && ref.UID == preExistingEnv.UID {
@@ -232,12 +300,26 @@ func TestReconcile_B_PartialFailureRecovery(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario C: admin pre-created Env (with the Pool already listed as a
-// member) — adoption should be a pure no-op except for the OwnerReference.
+// Scenario C: admin pre-created Env with the Pool already listed as a
+// member, drift-free — adoption is a pure no-op except for the OwnerReference.
 // ---------------------------------------------------------------------------
 
 func TestReconcile_C_AdminPreCreatedEnv(t *testing.T) {
 	pool := newPool()
+	member := agentsv1alpha1.EnvClusterMember{
+		Name: testPoolName,
+		Metadata: agentsv1alpha1.MemberMetadata{
+			Labels: map[string]string{
+				agentsv1alpha1.LabelTeam: "t1",
+				agentsv1alpha1.LabelUser: "u1",
+			},
+		},
+		Spec: *pool.Spec.DeepCopy(),
+		Config: agentsv1alpha1.EnvClusterMemberConfig{
+			ScalingGroup:    testDerivedKey,
+			InlineResources: firstContainerResources(pool).DeepCopy(),
+		},
+	}
 	preExistingEnv := &agentsv1alpha1.SandboxEnv{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testPoolName,
@@ -245,23 +327,16 @@ func TestReconcile_C_AdminPreCreatedEnv(t *testing.T) {
 			UID:       "uid-admin",
 		},
 		Spec: agentsv1alpha1.SandboxEnvSpec{
-			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "tmpl-1"},
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: testTemplateName},
 			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
 			Clusters: []agentsv1alpha1.EnvClusterSpec{
-				{
-					ClusterID: testCluster,
-					Members: []agentsv1alpha1.EnvClusterMember{
-						// Stored with the derived group already — second
-						// reconcile then sees no drift and is a no-op.
-						{Name: testPoolName, Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: testDerivedKey}},
-					},
-				},
+				{ClusterID: testCluster, Members: []agentsv1alpha1.EnvClusterMember{member}},
 			},
 		},
 	}
 	r := newReconciler(t, pool, preExistingEnv)
 
-	reconcileOnce(t, r)
+	reconcileUntilStable(t, r)
 
 	envAfter := &agentsv1alpha1.SandboxEnv{}
 	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
@@ -274,21 +349,11 @@ func TestReconcile_C_AdminPreCreatedEnv(t *testing.T) {
 	if !agentsv1alpha1.HasEnvOwner(poolAfter) {
 		t.Fatalf("expected owner ref on Pool, got %+v", poolAfter.OwnerReferences)
 	}
-
-	// Second reconcile must be a pure no-op — Env is fully adopted and the
-	// stored ScalingGroup matches the value derived from the Pool's
-	// resources, so backfillMemberDrift has nothing to write.
-	reconcileOnce(t, r)
-	envAfter2 := &agentsv1alpha1.SandboxEnv{}
-	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter2)
-	if envAfter2.ResourceVersion != envAfter.ResourceVersion {
-		t.Errorf("env was modified on second reconcile (RV %s → %s)", envAfter.ResourceVersion, envAfter2.ResourceVersion)
-	}
 }
 
-// TestReconcile_BackfillsLegacyDefaultGroup confirms the adopter's
-// backfillMemberDrift path migrates a pre-2026.06 member whose ScalingGroup
-// is the literal "default" fallback to the derived resource-key form.
+// TestReconcile_BackfillsLegacyDefaultGroup confirms the adopter migrates a
+// pre-2026.06 member whose ScalingGroup is the literal "default" fallback
+// to the derived resource-key form on a subsequent reconcile.
 func TestReconcile_BackfillsLegacyDefaultGroup(t *testing.T) {
 	pool := newPool()
 	preExistingEnv := &agentsv1alpha1.SandboxEnv{
@@ -298,7 +363,7 @@ func TestReconcile_BackfillsLegacyDefaultGroup(t *testing.T) {
 			UID:       "uid-admin-legacy",
 		},
 		Spec: agentsv1alpha1.SandboxEnvSpec{
-			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "tmpl-1"},
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: testTemplateName},
 			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
 			Clusters: []agentsv1alpha1.EnvClusterSpec{
 				{
@@ -311,8 +376,7 @@ func TestReconcile_BackfillsLegacyDefaultGroup(t *testing.T) {
 		},
 	}
 	r := newReconciler(t, pool, preExistingEnv)
-	reconcileOnce(t, r) // adopt
-	reconcileOnce(t, r) // backfill drift
+	reconcileUntilStable(t, r)
 
 	envAfter := &agentsv1alpha1.SandboxEnv{}
 	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
@@ -339,13 +403,12 @@ func TestReconcile_D_StaleOwnerRefAfterEnvDeleted(t *testing.T) {
 	}
 	r := newReconciler(t, pool)
 
-	// Pre-condition sanity: Env does not exist.
 	env := &agentsv1alpha1.SandboxEnv{}
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, env); !apierrors.IsNotFound(err) {
 		t.Fatalf("expected Env to be absent at start, got err=%v", err)
 	}
 
-	reconcileOnce(t, r)
+	reconcileUntilStable(t, r)
 
 	if err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, env); err != nil {
 		t.Fatalf("Env was not re-created: %v", err)
@@ -356,10 +419,6 @@ func TestReconcile_D_StaleOwnerRefAfterEnvDeleted(t *testing.T) {
 
 	poolAfter := &agentsv1alpha1.SandboxPool{}
 	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, poolAfter)
-
-	// Both refs may briefly coexist (the adopter appends without removing
-	// stale refs — that's K8s GC's job). What matters is that AT LEAST one
-	// ref points at the new live Env.
 	matched := false
 	for _, ref := range poolAfter.OwnerReferences {
 		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind && ref.UID == env.UID {
@@ -372,68 +431,276 @@ func TestReconcile_D_StaleOwnerRefAfterEnvDeleted(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers / fast-path
+// Scenario E: Pool stripped of its inline template — Member.Spec was
+// truncated by an earlier-broken Env→Pool sync. Adopter must resolve the
+// SandboxTemplate, refill Member.Spec.Template, and stamp the
+// template-version annotation on the Pool.
 // ---------------------------------------------------------------------------
 
-func TestPoolFullyAdopted_LiveEnv(t *testing.T) {
-	env := &agentsv1alpha1.SandboxEnv{
+func TestReconcile_E_BrokenMemberRefillsFromSandboxTemplate(t *testing.T) {
+	pool := newPool()
+	pool.Spec.EmbeddedSandboxTemplate = agentsv1alpha1.EmbeddedSandboxTemplate{}
+	pool.Spec.TemplateName = testTemplateName
+	pool.OwnerReferences = []metav1.OwnerReference{
+		{
+			APIVersion: agentsv1alpha1.GroupVersion.String(),
+			Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
+			Name:       testPoolName,
+			UID:        "uid-existing",
+		},
+	}
+	preExistingEnv := &agentsv1alpha1.SandboxEnv{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testPoolName,
 			Namespace: testNamespace,
-			UID:       "uid-live",
+			UID:       "uid-existing",
+		},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: testTemplateName},
+			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
+			Clusters: []agentsv1alpha1.EnvClusterSpec{
+				{
+					ClusterID: testCluster,
+					Members: []agentsv1alpha1.EnvClusterMember{
+						{
+							Name: testPoolName,
+							Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 1},
+						},
+					},
+				},
+			},
 		},
 	}
+	sbt := newSandboxTemplate()
+	r := newReconciler(t, pool, preExistingEnv, sbt)
+	reconcileUntilStable(t, r)
+
+	envAfter := &agentsv1alpha1.SandboxEnv{}
+	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
+	m := envAfter.Spec.Clusters[0].Members[0]
+	if len(m.Spec.Template.Spec.Containers) == 0 {
+		t.Fatalf("Member.Spec.Template not refilled: %+v", m.Spec.Template)
+	}
+	if m.Spec.Template.Spec.Containers[0].Image != "ghcr.io/runtime:from-sbt" {
+		t.Errorf("Template image = %q, want value from SandboxTemplate", m.Spec.Template.Spec.Containers[0].Image)
+	}
+	if m.Spec.TemplateName != testTemplateName {
+		t.Errorf("TemplateName = %q, want %q", m.Spec.TemplateName, testTemplateName)
+	}
+	if m.Spec.Replicas != 1 {
+		t.Errorf("Replicas mutated: got %d, want 1 (preserved)", m.Spec.Replicas)
+	}
+
+	poolAfter := &agentsv1alpha1.SandboxPool{}
+	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, poolAfter)
+	if got := poolAfter.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey]; got != testTmplVer {
+		t.Errorf("template-version annotation = %q, want %q", got, testTmplVer)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scenario F: missing SandboxTemplate — Pool has TemplateName but the sbt
+// is absent. Adopter must surface an error.
+// ---------------------------------------------------------------------------
+
+func TestReconcile_F_MissingSandboxTemplateErrors(t *testing.T) {
+	pool := newPool()
+	pool.Spec.EmbeddedSandboxTemplate = agentsv1alpha1.EmbeddedSandboxTemplate{}
+	pool.Spec.TemplateName = "does-not-exist"
+	preExistingEnv := &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testPoolName,
+			Namespace: testNamespace,
+			UID:       "uid-exists",
+		},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "does-not-exist"},
+			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
+			Clusters: []agentsv1alpha1.EnvClusterSpec{
+				{
+					ClusterID: testCluster,
+					Members: []agentsv1alpha1.EnvClusterMember{
+						{Name: testPoolName},
+					},
+				},
+			},
+		},
+	}
+	r := newReconciler(t, pool, preExistingEnv)
+	if _, err := reconcileOnce(t, r); err == nil {
+		t.Fatalf("expected error when SandboxTemplate is missing, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scenario G: sbt upgrade does NOT auto-propagate to an already-populated
+// Member.Spec. Frozen-snapshot invariant.
+// ---------------------------------------------------------------------------
+
+func TestReconcile_G_TemplateUpgradeDoesNotPropagate(t *testing.T) {
 	pool := newPool()
 	pool.OwnerReferences = []metav1.OwnerReference{
 		{
 			APIVersion: agentsv1alpha1.GroupVersion.String(),
 			Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
 			Name:       testPoolName,
-			UID:        "uid-live",
+			UID:        "uid-anchored",
 		},
 	}
-	r := newReconciler(t, env, pool)
-
-	ok, err := r.poolFullyAdopted(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !ok {
-		t.Errorf("expected pool to be considered fully adopted")
-	}
-}
-
-func TestPoolFullyAdopted_UIDMismatch(t *testing.T) {
-	env := &agentsv1alpha1.SandboxEnv{
+	preExistingEnv := &agentsv1alpha1.SandboxEnv{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testPoolName,
 			Namespace: testNamespace,
-			UID:       "uid-current",
+			UID:       "uid-anchored",
+		},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: testTemplateName, Version: testTmplVer},
+			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
+			Clusters: []agentsv1alpha1.EnvClusterSpec{
+				{
+					ClusterID: testCluster,
+					Members: []agentsv1alpha1.EnvClusterMember{
+						{
+							Name: testPoolName,
+							Spec: *pool.Spec.DeepCopy(),
+							Config: agentsv1alpha1.EnvClusterMemberConfig{
+								ScalingGroup:    testDerivedKey,
+								InlineResources: firstContainerResources(pool).DeepCopy(),
+							},
+						},
+					},
+				},
+			},
 		},
 	}
+	upgradedSbt := newSandboxTemplate()
+	upgradedSbt.Spec.Version = "v2.0.0"
+	upgradedSbt.Spec.Template.Spec.Containers[0].Image = "ghcr.io/runtime:from-sbt-upgraded"
+	r := newReconciler(t, pool, preExistingEnv, upgradedSbt)
+
+	reconcileUntilStable(t, r)
+
+	envAfter := &agentsv1alpha1.SandboxEnv{}
+	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
+	gotImage := envAfter.Spec.Clusters[0].Members[0].Spec.Template.Spec.Containers[0].Image
+	if gotImage != "ghcr.io/runtime:base" {
+		t.Errorf("Template auto-propagated from upgraded sbt: image = %q, want %q (frozen)",
+			gotImage, "ghcr.io/runtime:base")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scenario H: Phase-2 Pool (Pool.Name != owning Env.Name) — adopter must
+// not touch it.
+// ---------------------------------------------------------------------------
+
+func TestReconcile_H_Phase2PoolEarlyExit(t *testing.T) {
+	pool := newPool()
+	pool.OwnerReferences = []metav1.OwnerReference{
+		{
+			APIVersion: agentsv1alpha1.GroupVersion.String(),
+			Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
+			Name:       "env-different",
+			UID:        "uid-phase2-env",
+		},
+	}
+	phase2Env := &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "env-different",
+			Namespace: testNamespace,
+			UID:       "uid-phase2-env",
+		},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: testTemplateName},
+			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
+		},
+	}
+	r := newReconciler(t, pool, phase2Env)
+	if _, err := reconcileOnce(t, r); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	envAfter := &agentsv1alpha1.SandboxEnv{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: "env-different"}, envAfter); err != nil {
+		t.Fatalf("get phase-2 env: %v", err)
+	}
+	if len(envAfter.Spec.Clusters) != 0 {
+		t.Errorf("Phase-2 Env was modified by adopter: clusters=%+v", envAfter.Spec.Clusters)
+	}
+	sameNameEnv := &agentsv1alpha1.SandboxEnv{}
+	err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, sameNameEnv)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("adopter created a same-name Env for a Phase-2 Pool: err=%v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scenario I: Member.Spec.Replicas owned by autoscaler/user — adopter must
+// not overwrite it on subsequent reconciles.
+// ---------------------------------------------------------------------------
+
+func TestReconcile_I_PreservesUserReplicas(t *testing.T) {
 	pool := newPool()
 	pool.OwnerReferences = []metav1.OwnerReference{
 		{
 			APIVersion: agentsv1alpha1.GroupVersion.String(),
 			Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
 			Name:       testPoolName,
-			UID:        "uid-stale",
+			UID:        "uid-user-replicas",
 		},
 	}
-	r := newReconciler(t, env, pool)
-
-	ok, err := r.poolFullyAdopted(context.Background(), pool)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	preExistingEnv := &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testPoolName,
+			Namespace: testNamespace,
+			UID:       "uid-user-replicas",
+		},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: testTemplateName},
+			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
+			Clusters: []agentsv1alpha1.EnvClusterSpec{
+				{
+					ClusterID: testCluster,
+					Members: []agentsv1alpha1.EnvClusterMember{
+						{
+							Name: testPoolName,
+							Spec: agentsv1alpha1.SandboxPoolSpec{
+								Replicas:                7,
+								TemplateName:            testTemplateName,
+								EmbeddedSandboxTemplate: *pool.Spec.EmbeddedSandboxTemplate.DeepCopy(),
+							},
+							Config: agentsv1alpha1.EnvClusterMemberConfig{
+								ScalingGroup:    testDerivedKey,
+								InlineResources: firstContainerResources(pool).DeepCopy(),
+							},
+						},
+					},
+				},
+			},
+		},
 	}
-	if ok {
-		t.Errorf("expected pool NOT to be considered fully adopted on UID mismatch")
+	r := newReconciler(t, pool, preExistingEnv)
+	reconcileUntilStable(t, r)
+
+	envAfter := &agentsv1alpha1.SandboxEnv{}
+	_ = r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: testPoolName}, envAfter)
+	got := envAfter.Spec.Clusters[0].Members[0].Spec.Replicas
+	if got != 7 {
+		t.Errorf("Replicas overwritten: got %d, want 7 (user-edited, preserved)", got)
 	}
 }
 
-func TestBuildMemberFromPool_InlineFallback(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Helper tests
+// ---------------------------------------------------------------------------
+
+func TestComposeDesiredMember_InlineFallback(t *testing.T) {
+	r := newReconciler(t)
 	pool := newPool()
-	m := buildMemberFromPool(pool, "", 0, testDerivedKey)
+	m, _, err := r.composeDesiredMember(context.Background(), pool, nil)
+	if err != nil {
+		t.Fatalf("composeDesiredMember: %v", err)
+	}
 	if m.Config.InstanceType != "" || m.Config.Multiplier != 0 {
 		t.Errorf("unexpected catalog metadata: %+v", m.Config)
 	}
@@ -449,22 +716,7 @@ func TestBuildMemberFromPool_InlineFallback(t *testing.T) {
 	}
 }
 
-func TestBuildMemberFromPool_CatalogMatch(t *testing.T) {
-	pool := newPool()
-	m := buildMemberFromPool(pool, "sci.c2", 1, "sci.c2")
-	if m.Config.InstanceType != "sci.c2" || m.Config.Multiplier != 1 {
-		t.Errorf("instance metadata not set: %+v", m.Config)
-	}
-	if m.Config.ScalingGroup != "sci.c2" {
-		t.Errorf("ScalingGroup = %q, want %q", m.Config.ScalingGroup, "sci.c2")
-	}
-	if m.Config.InlineResources != nil {
-		t.Errorf("expected Config.InlineResources empty when catalog matched, got %+v", m.Config.InlineResources)
-	}
-}
-
 func TestDeriveScalingGroupName_ProviderDerives(t *testing.T) {
-	// Real Noop provider returns testDerivedKey for the newPool resources.
 	pool := newPool()
 	name := deriveScalingGroupName(instancetype.NewNoop(), pool)
 	if name != testDerivedKey {
@@ -495,5 +747,25 @@ func TestEnvLabelsFromPool_EmptyReturnsNil(t *testing.T) {
 	pool.Labels = nil
 	if got := envLabelsFromPool(pool); got != nil {
 		t.Errorf("expected nil, got %v", got)
+	}
+}
+
+func TestIsEnvManagedPool(t *testing.T) {
+	pool := newPool()
+	if isEnvManagedPool(pool) {
+		t.Errorf("orphan pool flagged as Env-managed")
+	}
+	pool.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: agentsv1alpha1.GroupVersion.String(),
+		Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
+		Name:       testPoolName,
+		UID:        "uid-same",
+	}}
+	if isEnvManagedPool(pool) {
+		t.Errorf("same-name Env owner flagged as Env-managed (should be legacy)")
+	}
+	pool.OwnerReferences[0].Name = "env-different"
+	if !isEnvManagedPool(pool) {
+		t.Errorf("different-name Env owner NOT flagged as Env-managed")
 	}
 }

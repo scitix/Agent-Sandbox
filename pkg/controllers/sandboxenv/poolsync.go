@@ -209,7 +209,16 @@ func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 		current.Spec.DefaultStartupTimeout = want.Spec.DefaultStartupTimeout
 		current.Spec.DefaultIdleTimeout = want.Spec.DefaultIdleTimeout
 		current.Spec.Replicas = want.Spec.Replicas
-		current.Spec.EmbeddedSandboxTemplate = *want.Spec.EmbeddedSandboxTemplate.DeepCopy()
+		// Defensive: never overwrite a live Pod template that has
+		// containers with a desired snapshot whose template has none. An
+		// empty Member.Spec snapshot would otherwise wipe out the live
+		// Pool's containers, breaking every code path that iterates
+		// Pool.Spec.Template.Spec.Containers (release, idle-image lookup,
+		// pod creation). The Pool stays on its previous spec until
+		// poolmigration's syncMember repopulates the Member snapshot.
+		if len(want.Spec.Template.Spec.Containers) > 0 || len(current.Spec.Template.Spec.Containers) == 0 {
+			current.Spec.EmbeddedSandboxTemplate = *want.Spec.EmbeddedSandboxTemplate.DeepCopy()
+		}
 		return r.Patch(ctx, current, client.MergeFrom(base))
 	})
 }

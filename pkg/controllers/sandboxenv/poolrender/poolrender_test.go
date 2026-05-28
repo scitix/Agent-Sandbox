@@ -61,7 +61,7 @@ func newTestTemplate() *agentsv1alpha1.SandboxTemplate {
 			Version: testTemplateVer,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "sandbox", Image: "base:v1"}},
 					},
@@ -94,7 +94,7 @@ func TestRenderSandboxPool_BasicShape(t *testing.T) {
 	if pool.Spec.IdleImage != "pause:3.10" {
 		t.Errorf("EmbeddedSandboxTemplate not copied: IdleImage=%q", pool.Spec.IdleImage)
 	}
-	if pool.Spec.Template == nil || pool.Spec.Template.Spec.Containers[0].Image != "base:v1" {
+	if pool.Spec.Template.Spec.Containers[0].Image != "base:v1" {
 		t.Errorf("Template body not copied: %+v", pool.Spec.Template)
 	}
 }
@@ -313,7 +313,7 @@ func TestValidate_RejectsEqualIdleAndContainerImage(t *testing.T) {
 	spec := &agentsv1alpha1.SandboxPoolSpec{
 		EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 			IdleImage: "same:v1",
-			Template: &corev1.PodTemplateSpec{
+			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{Containers: []corev1.Container{{Image: "same:v1"}}},
 			},
 		},

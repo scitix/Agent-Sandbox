@@ -296,8 +296,8 @@ func templateFromCRD(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) 
 		Docs:        ptr.To(tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]),
 		CreatedAt:   &createdAt,
 	}
-	if tmpl.Spec.Template != nil {
-		cpu, memory, err := utilresource.SumContainerResources(tmpl.Spec.Template)
+	if len(tmpl.Spec.Template.Spec.Containers) > 0 {
+		cpu, memory, err := utilresource.SumContainerResources(&tmpl.Spec.Template)
 		if err != nil {
 			log.FromContext(ctx).V(1).Info("failed to compute template resources", "template", tmpl.Name, "error", err)
 		} else {

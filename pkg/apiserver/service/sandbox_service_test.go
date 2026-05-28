@@ -100,7 +100,7 @@ func makePool(name, namespace string) *agentsv1alpha1.SandboxPool {
 			Replicas: 2,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "sandbox", Image: "busybox:1.36"}},
 					},
@@ -654,7 +654,7 @@ func makePoolWithRuntimes(name, namespace string) *agentsv1alpha1.SandboxPool {
 			Replicas: 2,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{Name: "sandbox", Image: "busybox:1.36"}},
 					},
@@ -1056,7 +1056,7 @@ func TestIsReady_NoReadinessProbe_DefaultsReady(t *testing.T) {
 			Replicas: 1,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "sandbox", Image: "busybox:latest"}}},
 				},
 				Runtimes: []agentsv1alpha1.SandboxRuntimeSpec{

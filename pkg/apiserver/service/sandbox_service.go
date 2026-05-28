@@ -871,7 +871,7 @@ func (s *k8sSandboxService) resolveContainerImages(pool *agentsv1alpha1.SandboxP
 		containerImages = map[string]string{}
 	}
 
-	if pool.Spec.Template == nil || len(pool.Spec.Template.Spec.Containers) == 0 {
+	if len(pool.Spec.Template.Spec.Containers) == 0 {
 		return nil, fmt.Errorf("sandbox pool %s/%s has no containers", pool.Namespace, pool.Name)
 	}
 
@@ -1294,10 +1294,10 @@ func (s *k8sSandboxService) SetTimeout(ctx context.Context, namespace, sandboxID
 // computePoolResources calculates CPU and Memory string values from pool spec.
 // Returns ("", "") if the pool has no template or the computation fails.
 func computePoolResources(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (cpu, memory string) {
-	if pool == nil || pool.Spec.Template == nil {
+	if pool == nil || len(pool.Spec.Template.Spec.Containers) == 0 {
 		return "", ""
 	}
-	cpuQ, memQ, err := utilresource.SumContainerResources(pool.Spec.Template)
+	cpuQ, memQ, err := utilresource.SumContainerResources(&pool.Spec.Template)
 	if err != nil {
 		log.FromContext(ctx).V(1).Info("failed to compute sandbox resources", "pool", pool.Name, "error", err)
 		return "", ""

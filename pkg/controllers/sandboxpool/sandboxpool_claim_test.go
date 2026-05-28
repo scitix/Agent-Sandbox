@@ -35,7 +35,7 @@ func TestReleaseSandboxPod(t *testing.T) {
 			Replicas: 1,
 			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
 				IdleImage: "pause:3.10",
-				Template: &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{
+				Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{
 					{Name: "sandbox", Image: "myapp:v1"},
 				}}},
 			},
