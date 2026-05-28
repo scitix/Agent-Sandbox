@@ -98,7 +98,7 @@ func (m *Manager) Route(ctx context.Context, envKey types.NamespacedName, req *s
 	// Single local member — fast path. Multi-member ranking lives in routeMulti.
 	if len(entry.members) == 1 && entry.members[0].isLocal {
 		m0 := entry.members[0]
-		pool := m.pools.GetOrCreateScheduler(envKey.Namespace, m0.poolName, "", "")
+		pool := m.pools.GetOrCreateScheduler(envKey.Namespace, m0.poolName, "", "", envKey.Name)
 		if pool == nil {
 			return RouteResult{Kind: RouteNotFound}
 		}

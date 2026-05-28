@@ -16,15 +16,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - events
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-- apiGroups:
-  - ""
-  resources:
   - namespaces
   verbs:
   - list
@@ -63,6 +54,17 @@ rules:
   - patch
   - update
 - apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
   - agents.navix.sh
   resources:
   - sandboxenvs
@@ -94,10 +96,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - create
-  - patch

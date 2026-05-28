@@ -36,7 +36,7 @@ func (m *Manager) routeMulti(_ context.Context, envKey types.NamespacedName, ent
 	}
 	ranked, _ := m.framework.Rank(cands)
 	for _, c := range ranked {
-		pool := m.pools.GetOrCreateScheduler(envKey.Namespace, c.Member.poolName, "", "")
+		pool := m.pools.GetOrCreateScheduler(envKey.Namespace, c.Member.poolName, "", "", envKey.Name)
 		if pool == nil {
 			continue
 		}

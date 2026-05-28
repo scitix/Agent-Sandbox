@@ -179,8 +179,8 @@ func (s *k8sSandboxService) GetScheduler(ns, poolName string) *schedule.PoolSche
 // getOrCreateScheduler with public access; team/user labels are forwarded
 // for metrics. Exported method on the *service* type for the router to
 // share the same scheduler registry without re-keying.
-func (s *k8sSandboxService) GetOrCreateScheduler(ns, poolName, team, user string) *schedule.PoolScheduler {
-	return s.getOrCreateScheduler(ns, poolName, team, user)
+func (s *k8sSandboxService) GetOrCreateScheduler(ns, poolName, team, user, env string) *schedule.PoolScheduler {
+	return s.getOrCreateScheduler(ns, poolName, team, user, env)
 }
 
 const defaultCreateStartupTimeout = 2 * time.Minute
@@ -214,7 +214,7 @@ func NewSandboxService(c client.Client, cs kubernetes.Interface, restCfg *rest.C
 // getOrCreateScheduler returns the per-pool scheduler for the given pool,
 // creating and starting one on first use. The goroutine is permanent and is
 // only stopped by Shutdown().
-func (s *k8sSandboxService) getOrCreateScheduler(ns, name, team, user string) *schedule.PoolScheduler {
+func (s *k8sSandboxService) getOrCreateScheduler(ns, name, team, user, env string) *schedule.PoolScheduler {
 	key := ns + "/" + name
 
 	// Fast path: read lock only.
@@ -236,6 +236,7 @@ func (s *k8sSandboxService) getOrCreateScheduler(ns, name, team, user string) *s
 		name,
 		team,
 		user,
+		env,
 		s.client,
 	)
 	s.schedulers[key] = sched
@@ -369,19 +370,28 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		}
 	}
 
+	// envName is populated once the Pool is fetched; the pool-fetch error path
+	// observes the metric with sandbox_env="" since no Pool object is available.
+	var envName string
+	mkCreateLabels := func(result string) prometheus.Labels {
+		return prometheus.Labels{
+			"namespace":   input.Namespace,
+			"pool":        input.PoolName,
+			"team":        input.Labels[agentsv1alpha1.LabelTeam],
+			"user":        input.Labels[agentsv1alpha1.LabelUser],
+			"sandbox_env": envName,
+			"result":      result,
+		}
+	}
+
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: input.Namespace, Name: input.PoolName}, pool); err != nil {
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "error",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		appErr := domain.NewNotFound(fmt.Sprintf("sandbox pool %s/%s not found", input.Namespace, input.PoolName))
 		appErr.Detail = s.buildAvailablePoolsDetail(ctx, input.Namespace, input.Labels[agentsv1alpha1.LabelTeam], input.Labels[agentsv1alpha1.LabelUser])
 		return nil, appErr
 	}
+	envName = pool.Labels[agentsv1alpha1.LabelEnv]
 
 	// Record this Create on the in-process LastCreateTracker so the Pool
 	// autoscaler's quiet-window gate sees fresh activity. Bump is O(1)
@@ -395,13 +405,7 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 
 	containerImages, err := s.resolveContainerImages(pool, input)
 	if err != nil {
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "error",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewBadRequest(err.Error())
 	}
 
@@ -409,13 +413,7 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 
 	sandboxUUID, err := uuid.NewV7()
 	if err != nil {
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "error",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewInternal(fmt.Sprintf("failed to generate sandbox UUID: %v", err), err)
 	}
 	sandboxID := sandboxUUID.String()
@@ -446,13 +444,7 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	if len(input.Metadata) > 0 {
 		encodedMetadata, encErr := json.Marshal(input.Metadata)
 		if encErr != nil {
-			pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-				"namespace": input.Namespace,
-				"pool":      input.PoolName,
-				"team":      input.Labels[agentsv1alpha1.LabelTeam],
-				"user":      input.Labels[agentsv1alpha1.LabelUser],
-				"result":    "error",
-			}).Inc()
+			pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 			return nil, domain.NewBadRequest(fmt.Sprintf("failed to encode metadata: %v", encErr))
 		}
 		annotations[agentsv1alpha1.SandboxMetadataAnnotationKey] = string(encodedMetadata)
@@ -476,24 +468,12 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	sort.Strings(userLabelKeys)
 	managedLabelKeys, encErr := json.Marshal(userLabelKeys)
 	if encErr != nil {
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "error",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewBadRequest(fmt.Sprintf("failed to encode managed labels: %v", encErr))
 	}
 	managedAnnotationKeys, encErr := json.Marshal(sortedKeys(input.Annotations))
 	if encErr != nil {
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "error",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewBadRequest(fmt.Sprintf("failed to encode managed annotations: %v", encErr))
 	}
 	annotations[agentsv1alpha1.SandboxManagedLabelKeysAnnotationKey] = string(managedLabelKeys)
@@ -506,11 +486,12 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	claimOutcome := "error" // default; overwritten on success / specific failures
 	defer func() {
 		pkgmetrics.SandboxClaimDuration.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"outcome":   claimOutcome,
+			"namespace":   input.Namespace,
+			"pool":        input.PoolName,
+			"team":        input.Labels[agentsv1alpha1.LabelTeam],
+			"user":        input.Labels[agentsv1alpha1.LabelUser],
+			"sandbox_env": envName,
+			"outcome":     claimOutcome,
 		}).Observe(time.Since(claimStart).Seconds())
 	}()
 	resultCh := make(chan schedule.ClaimResult, 1)
@@ -532,15 +513,10 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		input.PoolName,
 		input.Labels[agentsv1alpha1.LabelTeam],
 		input.Labels[agentsv1alpha1.LabelUser],
+		envName,
 	)
 	if !sched.Enqueue(req) {
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "no_idle",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("no_idle")).Inc()
 		return nil, domain.NewTooManyRequests("scheduler queue is full, try again later", nil, nil)
 	}
 
@@ -550,25 +526,13 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		if res.Err != nil {
 			if errors.Is(res.Err, inplaceupdate.ErrNoIdlePodsAvailable) {
 				claimOutcome = "no_idle"
-				pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-					"namespace": input.Namespace,
-					"pool":      input.PoolName,
-					"team":      input.Labels[agentsv1alpha1.LabelTeam],
-					"user":      input.Labels[agentsv1alpha1.LabelUser],
-					"result":    "no_idle",
-				}).Inc()
+				pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("no_idle")).Inc()
 				appErr := domain.NewTooManyRequests("no idle sandboxes available in the pool", res.Err, nil)
 				appErr.Detail = buildPoolStatusDetail(ctx, s.client, pool)
 				return nil, appErr
 			}
 			// claimOutcome stays "error" (the default)
-			pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-				"namespace": input.Namespace,
-				"pool":      input.PoolName,
-				"team":      input.Labels[agentsv1alpha1.LabelTeam],
-				"user":      input.Labels[agentsv1alpha1.LabelUser],
-				"result":    "error",
-			}).Inc()
+			pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 			return nil, domain.NewInternal(res.Err.Error(), res.Err)
 		}
 		claimOutcome = "success"
@@ -621,23 +585,11 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		}
 
 		claimOutcome = "timeout"
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "error",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewInternal("request canceled by client", ctx.Err())
 	}
 
-	pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-		"namespace": input.Namespace,
-		"pool":      input.PoolName,
-		"team":      input.Labels[agentsv1alpha1.LabelTeam],
-		"user":      input.Labels[agentsv1alpha1.LabelUser],
-		"result":    "success",
-	}).Inc()
+	pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("success")).Inc()
 
 	result := sandboxFromPod(pod)
 	// When the caller explicitly targeted a cluster (cross-cluster request),
@@ -680,13 +632,7 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 			klog.InfoS("Create: released sandbox due to context cancellation during route propagation",
 				"namespace", input.Namespace, "pool", input.PoolName, "sandboxID", sandboxID)
 		}
-		pkgmetrics.SandboxCreateTotal.With(prometheus.Labels{
-			"namespace": input.Namespace,
-			"pool":      input.PoolName,
-			"team":      input.Labels[agentsv1alpha1.LabelTeam],
-			"user":      input.Labels[agentsv1alpha1.LabelUser],
-			"result":    "error",
-		}).Inc()
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewInternal("request canceled by client", ctx.Err())
 	}
 

@@ -126,7 +126,7 @@ export default function QuotaPage() {
   const { t } = useTranslation()
 
   return (
-    <div className="flex flex-1 flex-col overflow-auto">
+    <div className="min-h-screen overflow-auto">
       <PageHeader title={t("quota.title")} />
 
       <div className="p-6">

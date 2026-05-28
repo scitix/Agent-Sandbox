@@ -285,7 +285,7 @@ func TestScheduler_StressStorm(t *testing.T) {
 		objs = append(objs, newIdlePod("ns", "p", "pod-"+itoa(i)))
 	}
 	c := newFakeClient(t, objs...)
-	s := NewPoolScheduler("ns", "p", "", "", c)
+	s := NewPoolScheduler("ns", "p", "", "", "", c)
 	go s.Run(context.Background())
 
 	var enqueued, rejected atomic.Int64
@@ -376,7 +376,7 @@ func TestScheduler_ConcurrentEnqueueAndShutdown(t *testing.T) {
 	enqueuers := scaleInt(32)
 
 	c := newFakeClient(t /* no pods → all requests sit in reqCh */)
-	s := NewPoolScheduler("ns", "p", "", "", c)
+	s := NewPoolScheduler("ns", "p", "", "", "", c)
 	go s.Run(context.Background())
 
 	var wg sync.WaitGroup

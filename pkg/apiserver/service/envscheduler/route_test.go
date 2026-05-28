@@ -63,7 +63,7 @@ func TestRouteMulti_PrefersLowerPriority(t *testing.T) {
 
 	// Pre-create both schedulers; load pri-low to be busier than pri-high to
 	// prove priority overrides load.
-	pri := pools.GetOrCreateScheduler("ns", "pri-low", "", "")
+	pri := pools.GetOrCreateScheduler("ns", "pri-low", "", "", "")
 	loadSchedulerN(t, pri, 3)
 
 	req := makeReq()
@@ -91,9 +91,9 @@ func TestRouteMulti_BreaksTieByLowerQueue(t *testing.T) {
 	mgr.OnEnvUpsert(env)
 
 	// Pre-load "a" so "b" looks better by QueueLen.
-	loadSchedulerN(t, pools.GetOrCreateScheduler("ns", "a", "", ""), 5)
+	loadSchedulerN(t, pools.GetOrCreateScheduler("ns", "a", "", "", ""), 5)
 	// "b" gets one preload too so both exist; but fewer than "a".
-	loadSchedulerN(t, pools.GetOrCreateScheduler("ns", "b", "", ""), 1)
+	loadSchedulerN(t, pools.GetOrCreateScheduler("ns", "b", "", "", ""), 1)
 
 	req := makeReq()
 	mgr.Route(context.Background(), types.NamespacedName{Namespace: "ns", Name: "e"}, req)

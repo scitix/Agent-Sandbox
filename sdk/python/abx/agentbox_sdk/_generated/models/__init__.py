@@ -47,6 +47,7 @@ from .env_cluster_member_config_labels import EnvClusterMemberConfigLabels
 from .env_cluster_spec import EnvClusterSpec
 from .env_cluster_status import EnvClusterStatus
 from .env_condition import EnvCondition
+from .env_event import EnvEvent
 from .env_observed_member import EnvObservedMember
 from .env_observed_member_state import EnvObservedMemberState
 from .env_overrides import EnvOverrides
@@ -62,6 +63,7 @@ from .instance_type_item import InstanceTypeItem
 from .instance_type_item_extensions import InstanceTypeItemExtensions
 from .list_clusters_result import ListClustersResult
 from .list_env_autoscaling_groups_result import ListEnvAutoscalingGroupsResult
+from .list_env_events_result import ListEnvEventsResult
 from .list_instance_types_result import ListInstanceTypesResult
 from .list_quotas_result import ListQuotasResult
 from .list_sandbox_envs_result import ListSandboxEnvsResult
@@ -175,6 +177,7 @@ __all__ = (
     "EnvClusterSpec",
     "EnvClusterStatus",
     "EnvCondition",
+    "EnvEvent",
     "EnvObservedMember",
     "EnvObservedMemberState",
     "EnvOverrides",
@@ -190,6 +193,7 @@ __all__ = (
     "InstanceTypeItemExtensions",
     "ListClustersResult",
     "ListEnvAutoscalingGroupsResult",
+    "ListEnvEventsResult",
     "ListInstanceTypesResult",
     "ListQuotasResult",
     "ListSandboxEnvsResult",

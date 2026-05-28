@@ -197,6 +197,7 @@ type PoolScheduler struct {
 	poolName string
 	team     string
 	user     string
+	env      string
 
 	k8sClient client.Client
 
@@ -245,17 +246,19 @@ func (s *PoolScheduler) Snapshot() Snapshot {
 }
 
 // NewPoolScheduler allocates a scheduler without starting its goroutine.
-// team/user identify the owning pool for metrics labelling. k8sClient may
-// be nil; in that case the background status writer that mirrors the
-// in-memory queue length onto SandboxPool.Status.PendingRequests is
-// skipped (useful for unit tests that exercise only the in-process
-// dispatch path).
-func NewPoolScheduler(ns, name, team, user string, k8sClient client.Client) *PoolScheduler {
+// team/user/env identify the owning pool for metrics labelling — env is the
+// owning SandboxEnv name read from the Pool's LabelEnv (empty string for
+// legacy Pools that pre-date Env adoption). k8sClient may be nil; in that
+// case the background status writer that mirrors the in-memory queue length
+// onto SandboxPool.Status.PendingRequests is skipped (useful for unit tests
+// that exercise only the in-process dispatch path).
+func NewPoolScheduler(ns, name, team, user, env string, k8sClient client.Client) *PoolScheduler {
 	return &PoolScheduler{
 		poolNS:      ns,
 		poolName:    name,
 		team:        team,
 		user:        user,
+		env:         env,
 		k8sClient:   k8sClient,
 		reqCh:       make(chan *ClaimRequest, reqChanCap),
 		triggerCh:   make(chan struct{}, 1),
@@ -874,13 +877,15 @@ func patchPoolPendingRequests(ctx context.Context, c client.Client, ns, name str
 	})
 }
 
-// plabels returns the {namespace, pool} label set reused across metrics.
+// plabels returns the {namespace, pool, team, user, sandbox_env} label set
+// reused across metrics.
 func (s *PoolScheduler) plabels() prometheus.Labels {
 	return prometheus.Labels{
-		"namespace": s.poolNS,
-		"pool":      s.poolName,
-		"team":      s.team,
-		"user":      s.user,
+		"namespace":   s.poolNS,
+		"pool":        s.poolName,
+		"team":        s.team,
+		"user":        s.user,
+		"sandbox_env": s.env,
 	}
 }
 

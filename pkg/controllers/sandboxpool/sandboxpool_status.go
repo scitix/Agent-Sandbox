@@ -31,12 +31,13 @@ import (
 // runningInfoKey is a comparable struct used as a map key to track which
 // sandbox-running-info metric label-sets are currently active.
 type runningInfoKey struct {
-	namespace string
-	pool      string
-	pod       string
-	sandboxID string
-	team      string
-	user      string
+	namespace  string
+	pool       string
+	pod        string
+	sandboxID  string
+	team       string
+	user       string
+	sandboxEnv string
 }
 
 // calculatePodStatus computes the current SandboxPoolStatus from a pod slice.
@@ -58,21 +59,23 @@ func (r *SandboxPoolReconciler) calculatePodStatus(poolKey string, pods []corev1
 		// regardless of phase — we need the label set to clean up stale entries.
 		if sandboxID := pod.Labels[agentsv1alpha1.SandboxIDLabelKey]; sandboxID != "" {
 			infoLabels := prometheus.Labels{
-				"namespace":  pod.Namespace,
-				"pool":       pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
-				"pod":        pod.Name,
-				"sandbox_id": sandboxID,
-				"team":       pod.Labels[agentsv1alpha1.LabelTeam],
-				"user":       pod.Labels[agentsv1alpha1.LabelUser],
+				"namespace":   pod.Namespace,
+				"pool":        pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
+				"pod":         pod.Name,
+				"sandbox_id":  sandboxID,
+				"team":        pod.Labels[agentsv1alpha1.LabelTeam],
+				"user":        pod.Labels[agentsv1alpha1.LabelUser],
+				"sandbox_env": pod.Labels[agentsv1alpha1.LabelEnv],
 			}
 			if phase == agentsv1alpha1.SandboxPhaseRunning {
 				key := runningInfoKey{
-					namespace: pod.Namespace,
-					pool:      pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
-					pod:       pod.Name,
-					sandboxID: sandboxID,
-					team:      pod.Labels[agentsv1alpha1.LabelTeam],
-					user:      pod.Labels[agentsv1alpha1.LabelUser],
+					namespace:  pod.Namespace,
+					pool:       pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
+					pod:        pod.Name,
+					sandboxID:  sandboxID,
+					team:       pod.Labels[agentsv1alpha1.LabelTeam],
+					user:       pod.Labels[agentsv1alpha1.LabelUser],
+					sandboxEnv: pod.Labels[agentsv1alpha1.LabelEnv],
 				}
 				currentRunning[key] = infoLabels
 			}

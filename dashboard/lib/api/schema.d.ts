@@ -321,6 +321,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/envs/{name}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List recent K8s Events for a SandboxEnv and its member SandboxPools, newest first.
+         * @description Returns the K8s Events emitted against the named SandboxEnv and every
+         *     member SandboxPool the Env owns in the caller's namespace, merged and
+         *     sorted descending by lastTimestamp. Used by the dashboard to render an
+         *     activity timeline (scaling decisions, phase transitions, autoscaler
+         *     actions). Reads come straight from the apiserver — no Prometheus
+         *     round-trip — so the latest event is visible as soon as the controllers
+         *     emit it.
+         */
+        get: operations["ListEnvEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/envs/{name}/sandboxpools/{poolName}": {
         parameters: {
             query?: never;
@@ -1197,6 +1223,38 @@ export interface components {
             limit: number;
             /** @description Number of items skipped before this page. */
             offset: number;
+        };
+        EnvEvent: {
+            /** @description Kind of the K8s object this event was emitted against. One of SandboxEnv | SandboxPool. */
+            involvedKind: string;
+            /** @description metadata.name of the involved object. */
+            involvedName: string;
+            /** @description Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDown / SandboxPoolPhase*. */
+            reason: string;
+            /** @description Event action (machine-readable). Sometimes absent on older events. */
+            action?: string;
+            /** @description Human-readable message body. */
+            message: string;
+            /** @description Normal | Warning */
+            type: string;
+            /** @description Number of times this event has fired. K8s coalesces repeated identical events and bumps this counter. */
+            count: number;
+            /**
+             * Format: date-time
+             * @description First time this event was observed (RFC3339).
+             */
+            firstTimestamp?: string;
+            /**
+             * Format: date-time
+             * @description Most recent time this event was observed (RFC3339).
+             */
+            lastTimestamp?: string;
+        };
+        ListEnvEventsResult: {
+            /** @description Events scoped to this Env and its member Pools, sorted descending by lastTimestamp. */
+            items: components["schemas"]["EnvEvent"][];
+            /** @description Total number of events returned. */
+            total: number;
         };
         /** @description Scale-up behaviour for a scaling group (mode + cooldown + idle threshold + saturation cooldown). */
         PoolScaleUpPolicy: {
@@ -3518,6 +3576,58 @@ export interface operations {
             };
             /** @description Server misconfigured (LOCAL_CLUSTER_ID not set) */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ListEnvEvents: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of events to return. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListEnvEventsResult"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Env not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

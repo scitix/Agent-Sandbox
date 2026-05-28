@@ -44,13 +44,13 @@ func (f *fakePools) GetScheduler(ns, poolName string) *schedule.PoolScheduler {
 	return f.schedulers[ns+"/"+poolName]
 }
 
-func (f *fakePools) GetOrCreateScheduler(ns, poolName, _, _ string) *schedule.PoolScheduler {
+func (f *fakePools) GetOrCreateScheduler(ns, poolName, _, _, _ string) *schedule.PoolScheduler {
 	key := ns + "/" + poolName
 	if s := f.schedulers[key]; s != nil {
 		return s
 	}
 	// k8sClient nil — tests never start Run(), so the status writer never fires.
-	s := schedule.NewPoolScheduler(ns, poolName, "", "", nil)
+	s := schedule.NewPoolScheduler(ns, poolName, "", "", "", nil)
 	f.schedulers[key] = s
 	return s
 }

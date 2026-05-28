@@ -917,6 +917,53 @@ components:
           type: integer
           description: "Number of items skipped before this page."
 
+    EnvEvent:
+      type: object
+      required: [involvedKind, involvedName, reason, message, type, count]
+      properties:
+        involvedKind:
+          type: string
+          description: "Kind of the K8s object this event was emitted against. One of SandboxEnv | SandboxPool."
+        involvedName:
+          type: string
+          description: "metadata.name of the involved object."
+        reason:
+          type: string
+          description: "Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDown / SandboxPoolPhase*."
+        action:
+          type: string
+          description: "Event action (machine-readable). Sometimes absent on older events."
+        message:
+          type: string
+          description: "Human-readable message body."
+        type:
+          type: string
+          description: "Normal | Warning"
+        count:
+          type: integer
+          description: "Number of times this event has fired. K8s coalesces repeated identical events and bumps this counter."
+        firstTimestamp:
+          type: string
+          format: date-time
+          description: "First time this event was observed (RFC3339)."
+        lastTimestamp:
+          type: string
+          format: date-time
+          description: "Most recent time this event was observed (RFC3339)."
+
+    ListEnvEventsResult:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          description: "Events scoped to this Env and its member Pools, sorted descending by lastTimestamp."
+          items:
+            $ref: "#/components/schemas/EnvEvent"
+        total:
+          type: integer
+          description: "Total number of events returned."
+
     # =========================================================
     # SandboxEnv
     #
@@ -3199,6 +3246,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListSandboxPoolsResult"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Env not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /envs/{name}/events:
+    get:
+      operationId: ListEnvEvents
+      summary: List recent K8s Events for a SandboxEnv and its member SandboxPools, newest first.
+      description: |
+        Returns the K8s Events emitted against the named SandboxEnv and every
+        member SandboxPool the Env owns in the caller's namespace, merged and
+        sorted descending by lastTimestamp. Used by the dashboard to render an
+        activity timeline (scaling decisions, phase transitions, autoscaler
+        actions). Reads come straight from the apiserver — no Prometheus
+        round-trip — so the latest event is visible as soon as the controllers
+        emit it.
+      tags: [envs]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          description: "Maximum number of events to return."
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEnvEventsResult"
         "401":
           description: Unauthorized
           content:

@@ -38,6 +38,7 @@ func emitSandboxStopMetrics(pod *corev1.Pod, stopReason, claimedAt, startedAt, t
 		"pool":        pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
 		"team":        pod.Labels[agentsv1alpha1.LabelTeam],
 		"user":        pod.Labels[agentsv1alpha1.LabelUser],
+		"sandbox_env": pod.Labels[agentsv1alpha1.LabelEnv],
 		"stop_reason": stopReason,
 	}
 	pkgmetrics.SandboxDeleteTotal.With(labels).Inc()
@@ -55,11 +56,12 @@ func emitSandboxStopMetrics(pod *corev1.Pod, stopReason, claimedAt, startedAt, t
 			if claimedTs, err := time.Parse(time.RFC3339, claimedAt); err == nil {
 				if endT, err := time.Parse(time.RFC3339, endTs); err == nil {
 					pkgmetrics.SandboxStartingDuration.With(prometheus.Labels{
-						"namespace": pod.Namespace,
-						"pool":      pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
-						"team":      pod.Labels[agentsv1alpha1.LabelTeam],
-						"user":      pod.Labels[agentsv1alpha1.LabelUser],
-						"outcome":   startingOutcome,
+						"namespace":   pod.Namespace,
+						"pool":        pod.Labels[agentsv1alpha1.SandboxPoolLabelKey],
+						"team":        pod.Labels[agentsv1alpha1.LabelTeam],
+						"user":        pod.Labels[agentsv1alpha1.LabelUser],
+						"sandbox_env": pod.Labels[agentsv1alpha1.LabelEnv],
+						"outcome":     startingOutcome,
 					}).Observe(endT.Sub(claimedTs).Seconds())
 				}
 			}

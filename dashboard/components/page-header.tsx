@@ -29,10 +29,9 @@ import { concurrentSandboxesAtom, authAtom } from "@/lib/atoms"
 
 interface PageHeaderProps {
   title: string
-  children?: React.ReactNode
 }
 
-export function PageHeader({ title, children }: PageHeaderProps) {
+export function PageHeader({ title }: PageHeaderProps) {
   const auth = useAtomValue(authAtom)
   const setRunningCount = useSetAtom(concurrentSandboxesAtom)
   const { isMobile, toggleSidebar } = useSidebar()
@@ -49,8 +48,8 @@ export function PageHeader({ title, children }: PageHeaderProps) {
   }, [statsData, setRunningCount])
 
   return (
-    <div className="flex flex-col">
-      <div className="flex items-center justify-between px-6 pt-5 pb-0">
+    <div className="border-border flex flex-col border-b h-13 overflow-hidden">
+      <div className="flex items-center justify-between px-6 pt-2 pb-0">
         <div className="flex items-center gap-1">
           {isMobile && (
             <Button
@@ -63,17 +62,13 @@ export function PageHeader({ title, children }: PageHeaderProps) {
               <PanelLeft className="h-5 w-5" />
             </Button>
           )}
-          <h1 className="font-mono text-xl font-bold tracking-tight uppercase">{title}</h1>
+          <h1 className="font-mono font-bold tracking-tight uppercase">{title}</h1>
         </div>
         <div className="flex items-center gap-3" hidden={isMobile}>
           <LiveBadge />
         </div>
       </div>
-      {children ? (
-        <div className="flex items-center gap-4 px-6">{children}</div>
-      ) : (
-        <div className="pb-5" />
-      )}
+      <div className="pb-2" />
     </div>
   )
 }

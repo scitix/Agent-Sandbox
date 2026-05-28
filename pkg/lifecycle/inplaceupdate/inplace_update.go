@@ -184,6 +184,7 @@ func TriggerUpdateWithOptions(ctx context.Context, c client.Client, pod *corev1.
 		opts.TargetPodPhase,
 		pod.Labels[agentsv1alpha1.LabelUser],
 		pod.Labels[agentsv1alpha1.LabelTeam],
+		pod.Labels[agentsv1alpha1.LabelEnv],
 		result,
 	).Inc()
 

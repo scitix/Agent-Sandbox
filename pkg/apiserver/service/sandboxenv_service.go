@@ -70,6 +70,10 @@ type EnvShellService interface {
 	// underlying Template — Env-level overrides edits propagate
 	// automatically via Update().
 	SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
+	// ListEvents returns recent K8s Events emitted against the Env and its
+	// member SandboxPools, merged and sorted descending by lastTimestamp.
+	// Drives the activity timeline on the Env detail page in the dashboard.
+	ListEvents(ctx context.Context, namespace, name string, limit int) ([]gen.EnvEvent, *domain.AppError)
 }
 
 // SandboxEnvService is the business-layer surface for SandboxEnv resources.

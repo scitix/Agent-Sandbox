@@ -125,7 +125,7 @@ export default function OverviewPage() {
   const showFallback = promResolved && !prometheusConfigured
 
   return (
-    <div className="flex flex-1 flex-col overflow-auto">
+    <div className="min-h-screen overflow-auto">
       <PageHeader title={t("overview.title")} />
 
       {/* Sub-header: only shown in fallback mode (Prometheus not configured) */}

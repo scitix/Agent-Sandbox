@@ -11,32 +11,34 @@ All custom metrics are registered to the `controller-runtime` shared registry an
 
 | Metric Name | Type | Labels | Description |
 |--------|------|------|------|
-| `agentbox_sandboxpool_replicas_desired` | Gauge | namespace, pool, team, user | Desired replica count |
-| `agentbox_sandboxpool_replicas_idle` | Gauge | namespace, pool, team, user | Idle replica count |
-| `agentbox_sandboxpool_replicas_running` | Gauge | namespace, pool, team, user | Running replica count |
-| `agentbox_sandboxpool_replicas_starting` | Gauge | namespace, pool, team, user | Starting replica count |
-| `agentbox_sandboxpool_replicas_stopping` | Gauge | namespace, pool, team, user | Stopping (recycling) replica count |
-| `agentbox_sandboxpool_replicas_failed` | Gauge | namespace, pool, team, user | Failed replica count |
-| `agentbox_sandbox_claim_duration_seconds` | Histogram | namespace, pool, team, user, outcome | Time spent in ClaimIdlePod; outcome: success/no_idle/timeout/error |
-| `agentbox_sandbox_starting_duration_seconds` | Histogram | namespace, pool, team, user, outcome | Sandbox startup duration; outcome=success: claimedAt→startedAt; outcome=canceled: claimedAt→terminatedAt (user canceled before Running) |
-| `agentbox_sandbox_running_duration_seconds` | Histogram | namespace, pool, team, user, stop_reason | Actual sandbox running duration (startedAt → terminatedAt) |
-| `agentbox_sandbox_recycle_duration_seconds` | Histogram | namespace, pool, team, user | Sandbox recycle duration (terminatedAt → recycledAt, i.e. Stopping→Idle image restore) |
-| `agentbox_sandbox_running_info` | Gauge (always 1) | namespace, pool, pod, sandbox_id, team, user | Mapping of Running Sandbox → Pod; exists only while the Sandbox is Running, used for PromQL joins with kube metrics |
-| `agentbox_sandbox_create_total` | Counter | namespace, pool, team, user, result | Creation request count; result: success/no_idle/error |
-| `agentbox_sandbox_delete_total` | Counter | namespace, pool, team, user, stop_reason | Deletion count; stop_reason: Completed/Canceled/Released/Failed (includes all paths: API stop, idle timeout, OOM/Crash recycling, eviction cleanup) |
-| `agentbox_inplace_update_total` | Counter | namespace, pool, target, user, team, result | In-place update attempt count; target: TargetPodPhase (running/idle); result: success/conflict/error (conflict covers k8s version conflicts and phase mismatches) |
+| `agentbox_sandboxpool_replicas_desired` | Gauge | namespace, pool, team, user, sandbox_env | Desired replica count |
+| `agentbox_sandboxpool_replicas_idle` | Gauge | namespace, pool, team, user, sandbox_env | Idle replica count |
+| `agentbox_sandboxpool_replicas_running` | Gauge | namespace, pool, team, user, sandbox_env | Running replica count |
+| `agentbox_sandboxpool_replicas_starting` | Gauge | namespace, pool, team, user, sandbox_env | Starting replica count |
+| `agentbox_sandboxpool_replicas_stopping` | Gauge | namespace, pool, team, user, sandbox_env | Stopping (recycling) replica count |
+| `agentbox_sandboxpool_replicas_failed` | Gauge | namespace, pool, team, user, sandbox_env | Failed replica count |
+| `agentbox_sandbox_claim_duration_seconds` | Histogram | namespace, pool, team, user, sandbox_env, outcome | Time spent in ClaimIdlePod; outcome: success/no_idle/timeout/error |
+| `agentbox_sandbox_starting_duration_seconds` | Histogram | namespace, pool, team, user, sandbox_env, outcome | Sandbox startup duration; outcome=success: claimedAt→startedAt; outcome=canceled: claimedAt→terminatedAt (user canceled before Running) |
+| `agentbox_sandbox_running_duration_seconds` | Histogram | namespace, pool, team, user, sandbox_env, stop_reason | Actual sandbox running duration (startedAt → terminatedAt) |
+| `agentbox_sandbox_recycle_duration_seconds` | Histogram | namespace, pool, team, user, sandbox_env | Sandbox recycle duration (terminatedAt → recycledAt, i.e. Stopping→Idle image restore) |
+| `agentbox_sandbox_running_info` | Gauge (always 1) | namespace, pool, pod, sandbox_id, team, user, sandbox_env | Mapping of Running Sandbox → Pod; exists only while the Sandbox is Running, used for PromQL joins with kube metrics |
+| `agentbox_sandbox_create_total` | Counter | namespace, pool, team, user, sandbox_env, result | Creation request count; result: success/no_idle/error |
+| `agentbox_sandbox_delete_total` | Counter | namespace, pool, team, user, sandbox_env, stop_reason | Deletion count; stop_reason: Completed/Canceled/Released/Failed (includes all paths: API stop, idle timeout, OOM/Crash recycling, eviction cleanup) |
+| `agentbox_inplace_update_total` | Counter | namespace, pool, target, user, team, sandbox_env, result | In-place update attempt count; target: TargetPodPhase (running/idle); result: success/conflict/error (conflict covers k8s version conflicts and phase mismatches) |
 | `agentbox_http_requests_total` | Counter | method, path, status_code, api | HTTP request count; api: native/e2b |
 | `agentbox_http_request_duration_seconds` | Histogram | method, path, status_code, api | HTTP request latency |
-| `agentbox_schedule_ready_queue_size` | Gauge | namespace, pool, team, user | Current number of idle pods in the per-pool scheduler ready queue (known to the scheduler, not yet dispatched) |
-| `agentbox_schedule_reservations_size` | Gauge | namespace, pool, team, user | Current number of inflight reservations (pods being CAS'd or recently claimed within TTL window) |
-| `agentbox_schedule_cas_outcome_total` | Counter | namespace, pool, team, user, outcome | TriggerUpdateWithOptions outcomes from the streaming scheduler; outcome: success/retriable (phase mismatch or k8s conflict)/hard (other errors) |
-| `agentbox_schedule_dispatch_latency_seconds` | Histogram | namespace, pool, team, user | Time from request enqueue to CAS goroutine start (scheduler responsiveness) |
-| `agentbox_schedule_refresh_total` | Counter | namespace, pool, team, user, outcome | Per-pool ready-queue refresh attempts; outcome: ok/throttled/error |
-| `agentbox_schedule_reservation_ttl_expired_total` | Counter | namespace, pool, team, user | Reservations removed by TTL sweep (not explicitly released by the CAS outcome handler) |
-| `agentbox_schedule_skipped_scale_down_protected_total` | Counter | namespace, pool, team, user | Pods skipped during refresh because they carry the scale-down-protected annotation |
-| `agentbox_schedule_ready_queue_evicted_total` | Counter | namespace, pool, team, user | Pods discarded from the ready queue at dispatch time because they were absent from the informer cache or no longer Idle (e.g. deleted during scale-down) |
+| `agentbox_schedule_ready_queue_size` | Gauge | namespace, pool, team, user, sandbox_env | Current number of idle pods in the per-pool scheduler ready queue (known to the scheduler, not yet dispatched) |
+| `agentbox_schedule_reservations_size` | Gauge | namespace, pool, team, user, sandbox_env | Current number of inflight reservations (pods being CAS'd or recently claimed within TTL window) |
+| `agentbox_schedule_cas_outcome_total` | Counter | namespace, pool, team, user, sandbox_env, outcome | TriggerUpdateWithOptions outcomes from the streaming scheduler; outcome: success/retriable (phase mismatch or k8s conflict)/hard (other errors) |
+| `agentbox_schedule_dispatch_latency_seconds` | Histogram | namespace, pool, team, user, sandbox_env | Time from request enqueue to CAS goroutine start (scheduler responsiveness) |
+| `agentbox_schedule_refresh_total` | Counter | namespace, pool, team, user, sandbox_env, outcome | Per-pool ready-queue refresh attempts; outcome: ok/throttled/error |
+| `agentbox_schedule_reservation_ttl_expired_total` | Counter | namespace, pool, team, user, sandbox_env | Reservations removed by TTL sweep (not explicitly released by the CAS outcome handler) |
+| `agentbox_schedule_skipped_scale_down_protected_total` | Counter | namespace, pool, team, user, sandbox_env | Pods skipped during refresh because they carry the scale-down-protected annotation |
+| `agentbox_schedule_ready_queue_evicted_total` | Counter | namespace, pool, team, user, sandbox_env | Pods discarded from the ready queue at dispatch time because they were absent from the informer cache or no longer Idle (e.g. deleted during scale-down) |
 
 > The `team`/`user` labels are derived from `SandboxPool.Labels["scheduling.navix.sh/team"]` and `["scheduling.navix.sh/user"]`, which are passed by the caller via the API.
+>
+> The `sandbox_env` label is derived from `SandboxPool.Labels["agentbox.navix.sh/env"]` and identifies the owning `SandboxEnv`. It is stamped onto every member Pool by the SandboxEnv reconciler and inherited by pods at creation time, so all per-Pool / per-Sandbox metrics carry it. Pools that pre-date Env adoption may briefly emit with an empty `sandbox_env` until the next reconcile.
 >
 > The HTTP path label uses `c.FullPath()` (the route template, e.g., `/v1/sandboxes/:id`) to prevent high cardinality issues caused by specific parameter values.
 

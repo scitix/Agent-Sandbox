@@ -190,8 +190,8 @@ export function AppSidebar({ }: AppSidebarProps) {
 
   return (
     <Sidebar collapsible="icon" className="border-sidebar-border border-r">
-      <SidebarHeader className="px-3 py-3">
-        <div className="flex items-center justify-between">
+      <SidebarHeader className="h-13 border-border border-b">
+        <div className="flex items-center h-full justify-between">
           {/* Logo: when collapsed acts as toggle, when expanded is a Home link */}
           {isCollapsed ? (
             <button
@@ -204,7 +204,7 @@ export function AppSidebar({ }: AppSidebarProps) {
           ) : (
             <div className="flex items-center gap-2">
               <AgentBoxIcon className="text-brand size-6" />
-              <span className="text-base font-bold tracking-tight">Agent Sandbox</span>
+              <span className="text-base font-bold tracking-tight truncate">Agent Sandbox</span>
             </div>
           )}
           <Button
@@ -218,20 +218,18 @@ export function AppSidebar({ }: AppSidebarProps) {
             <span className="sr-only">{t("nav.toggleSidebar")}</span>
           </Button>
         </div>
-        <div className="mt-2 group-data-[collapsible=icon]:hidden">
+      </SidebarHeader>
+
+      <SidebarContent>
+        <div className="mt-2 px-2 group-data-[collapsible=icon]:hidden">
           {/* Cluster Switcher (multi-cluster mode only) */}
           <ClusterSwitcher />
         </div>
         {isActualAdmin && (
-          <div className="mt-2 group-data-[collapsible=icon]:hidden">
+          <div className="mt-2 px-2 group-data-[collapsible=icon]:hidden">
             <ImpersonationSelector />
           </div>
         )}
-      </SidebarHeader>
-
-      <SidebarSeparator className="mx-0 border-t px-0" />
-
-      <SidebarContent>
         {navSectionDefs
           .filter((section) => {
             if (section.adminOnly) return isAdmin

@@ -368,8 +368,8 @@ export const TableContent = <TData,>({
           </div>
         )}
 
-        <div className={cn("min-h-0 flex-1 px-6", toolbarConfig ? "" : "mt-0")}>
-          <div className="relative h-full overflow-hidden border rounded-md p-0">
+        <div className={cn("min-h-0 flex-1", toolbarConfig ? "" : "mt-0")}>
+          <div className="relative h-full overflow-hidden border-y p-0">
             <CardContent className="h-full p-0">
               <ScrollArea className="h-full">
                 {renderTableContent()}

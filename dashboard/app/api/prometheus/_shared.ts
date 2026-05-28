@@ -97,15 +97,18 @@ export function buildClusterMatcher(clusterID: string): string {
 
 /**
  * Build a Prometheus label selector string from structured filters.
- * cluster uses the configured matcher (see buildClusterMatcher); team/user/pool
- * use regex match (=~) to support multi-value selection like "team1|team2" or
- * ".*" for all.
+ * cluster uses the configured matcher (see buildClusterMatcher); the other
+ * label filters use exact match — every caller passes a single concrete
+ * value (Combobox single-select on the UI side, single JWT claim on the
+ * tenant path, single URL param on the admin path). Empty filters are
+ * skipped so "all" is the default.
  */
 export function buildSelector(filters: SandboxFilters): string {
   const parts: string[] = [buildClusterMatcher(filters.cluster)]
-  if (filters.team) parts.push(`team=~"${filters.team}"`)
-  if (filters.user) parts.push(`user=~"${filters.user}"`)
-  if (filters.pool) parts.push(`pool=~"${filters.pool}"`)
+  if (filters.team) parts.push(`team="${filters.team}"`)
+  if (filters.user) parts.push(`user="${filters.user}"`)
+  if (filters.pool) parts.push(`pool="${filters.pool}"`)
+  if (filters.sandboxEnv) parts.push(`sandbox_env="${filters.sandboxEnv}"`)
   return parts.join(",")
 }
 
@@ -119,6 +122,7 @@ export function parseSandboxFilters(searchParams: URLSearchParams): SandboxFilte
     team: searchParams.get("team") ?? undefined,
     user: searchParams.get("user") ?? undefined,
     pool: searchParams.get("pool") ?? undefined,
+    sandboxEnv: searchParams.get("sandbox_env") ?? undefined,
   }
 }
 
@@ -142,6 +146,7 @@ export function resolveFilters(
       team: payload.team,
       user: payload.user,
       pool: searchParams.get("pool") ?? undefined,
+      sandboxEnv: searchParams.get("sandbox_env") ?? undefined,
     }
   }
 
@@ -151,6 +156,7 @@ export function resolveFilters(
     team: searchParams.get("team") ?? undefined,
     user: searchParams.get("user") ?? undefined,
     pool: searchParams.get("pool") ?? undefined,
+    sandboxEnv: searchParams.get("sandbox_env") ?? undefined,
   }
 }
 

@@ -276,10 +276,11 @@ func (r *SandboxPoolReconciler) syncInplaceUpdatePhases(ctx context.Context, san
 
 				if record.TerminatedAt != nil {
 					pkgmetrics.SandboxRecycleDuration.With(prometheus.Labels{
-						"namespace": podSnap.Namespace,
-						"pool":      podSnap.Labels[agentsv1alpha1.SandboxPoolLabelKey],
-						"team":      podSnap.Labels[agentsv1alpha1.LabelTeam],
-						"user":      podSnap.Labels[agentsv1alpha1.LabelUser],
+						"namespace":   podSnap.Namespace,
+						"pool":        podSnap.Labels[agentsv1alpha1.SandboxPoolLabelKey],
+						"team":        podSnap.Labels[agentsv1alpha1.LabelTeam],
+						"user":        podSnap.Labels[agentsv1alpha1.LabelUser],
+						"sandbox_env": podSnap.Labels[agentsv1alpha1.LabelEnv],
 					}).Observe(recycledAt.Sub(*record.TerminatedAt).Seconds())
 				}
 

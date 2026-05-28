@@ -91,7 +91,7 @@ export default function EnvsPage() {
           queryOptions={queryOptions}
           toolbarConfig={{ globalSearch: { placeholder: t("envs.searchAll") } }}
           externalState={tableState}
-          className="table-layout-fixed h-[calc(100vh-104px)]"
+          className="table-layout-fixed h-[calc(100vh-51px)]"
         >
           {toolbar}
         </QueryTable>

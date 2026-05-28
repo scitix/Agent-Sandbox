@@ -30,6 +30,10 @@ import {
   EnvPoolsSection,
   SpecSection,
 } from "@/components/envs/env-detail-sections"
+import { EnvCapacitySection } from "@/components/envs/env-capacity-section"
+import { EnvPoolSparklinesSection } from "@/components/envs/env-pool-sparklines-section"
+import { EnvEventsTimelineSection } from "@/components/envs/env-events-timeline-section"
+import { envPoolsQueryOptions } from "@/lib/queries"
 import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
 import { UpsertPoolSheet } from "@/components/envs/upsert-pool-sheet"
@@ -61,6 +65,7 @@ export default function EnvDetailPage({ params }: PageProps) {
   const { t } = useTranslation()
   const { data, isLoading, isError } = useQuery(envQueryOptions(name))
   const env = data?.env
+  const { data: memberPools = [] } = useQuery(envPoolsQueryOptions(name))
 
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -186,6 +191,16 @@ export default function EnvDetailPage({ params }: PageProps) {
               onEdit={(g) => setEditAutoscalingTarget(g)}
               onDelete={(g) => setDeleteAutoscalingTarget(g)}
             />
+            <Separator />
+            <EnvCapacitySection envName={env.name} />
+            <Separator />
+            <EnvPoolSparklinesSection
+              envName={env.name}
+              pools={memberPools}
+              onPoolClick={(pool) => setMetricsTarget(pool)}
+            />
+            <Separator />
+            <EnvEventsTimelineSection envName={env.name} />
           </div>
         )}
       </div>

@@ -136,8 +136,8 @@ type SandboxPoolReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups=core,resources=pods/exec,verbs=create
-// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch;get;list
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch;get;list;watch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch;get;list;watch
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;delete;patch;update
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
@@ -286,10 +286,11 @@ func (r *SandboxPoolReconciler) handleDeletion(ctx context.Context, sandboxPool 
 	// GaugeVec retains the last Set() value indefinitely until the process restarts,
 	// so we must explicitly delete the label set here.
 	poolMetricLabels := prometheus.Labels{
-		"namespace": sandboxPool.Namespace,
-		"pool":      sandboxPool.Name,
-		"team":      sandboxPool.Labels[agentsv1alpha1.LabelTeam],
-		"user":      sandboxPool.Labels[agentsv1alpha1.LabelUser],
+		"namespace":   sandboxPool.Namespace,
+		"pool":        sandboxPool.Name,
+		"team":        sandboxPool.Labels[agentsv1alpha1.LabelTeam],
+		"user":        sandboxPool.Labels[agentsv1alpha1.LabelUser],
+		"sandbox_env": sandboxPool.Labels[agentsv1alpha1.LabelEnv],
 	}
 	pkgmetrics.PoolReplicasDesired.Delete(poolMetricLabels)
 	pkgmetrics.PoolReplicasIdle.Delete(poolMetricLabels)
@@ -410,10 +411,11 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 
 	// Update Pool replica gauges.
 	poolMetricLabels := prometheus.Labels{
-		"namespace": sandboxPool.Namespace,
-		"pool":      sandboxPool.Name,
-		"team":      sandboxPool.Labels[agentsv1alpha1.LabelTeam],
-		"user":      sandboxPool.Labels[agentsv1alpha1.LabelUser],
+		"namespace":   sandboxPool.Namespace,
+		"pool":        sandboxPool.Name,
+		"team":        sandboxPool.Labels[agentsv1alpha1.LabelTeam],
+		"user":        sandboxPool.Labels[agentsv1alpha1.LabelUser],
+		"sandbox_env": sandboxPool.Labels[agentsv1alpha1.LabelEnv],
 	}
 	pkgmetrics.PoolReplicasDesired.With(poolMetricLabels).Set(float64(sandboxPool.Spec.Replicas))
 	pkgmetrics.PoolReplicasIdle.With(poolMetricLabels).Set(float64(status.IdleReplicas))

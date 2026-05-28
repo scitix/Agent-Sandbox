@@ -120,7 +120,7 @@ var (
 )
 
 func init() {
-	poolLabels := []string{"namespace", "pool", "team", "user"}
+	poolLabels := []string{"namespace", "pool", "team", "user", "sandbox_env"}
 
 	PoolReplicasDesired = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "agentbox_sandboxpool_replicas_desired",
@@ -181,7 +181,7 @@ func init() {
 	SandboxRunningInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "agentbox_sandbox_running_info",
 		Help: "Running sandbox to pod mapping (value always 1). Present only while sandbox is Running. Join with kube metrics via namespace+pod.",
-	}, []string{"namespace", "pool", "pod", "sandbox_id", "team", "user"})
+	}, []string{"namespace", "pool", "pod", "sandbox_id", "team", "user", "sandbox_env"})
 
 	SandboxCreateTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentbox_sandbox_create_total",
@@ -199,7 +199,7 @@ func init() {
 			"result: success/conflict/error. " +
 			"conflict covers both k8s resource version conflicts and phase mismatches. " +
 			"target: TargetPodPhase (e.g. running/idle).",
-	}, []string{"namespace", "pool", "target", "user", "team", "result"})
+	}, []string{"namespace", "pool", "target", "user", "team", "sandbox_env", "result"})
 
 	HTTPRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "agentbox_http_requests_total",
@@ -212,7 +212,7 @@ func init() {
 		Buckets: prometheus.ExponentialBuckets(0.01, 2, 17),
 	}, []string{"method", "path", "status_code", "api"})
 
-	scheduleLabels := []string{"namespace", "pool", "team", "user"}
+	scheduleLabels := []string{"namespace", "pool", "team", "user", "sandbox_env"}
 
 	ScheduleReadyQSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "agentbox_schedule_ready_queue_size",

@@ -123,7 +123,7 @@ export default function AdminApiKeysPage() {
           columns={columns}
           idFn={(row) => row.keyId}
           toolbarConfig={toolbarConfig}
-          className="table-layout-fixed h-[calc(100vh-76px)]"
+          className="table-layout-fixed h-[calc(100vh-51px)]"
         >
           {toolbarActions}
         </QueryTable>

@@ -690,6 +690,31 @@ func (s *Server) SyncSandboxEnvTemplate(ctx context.Context, req gen.SyncSandbox
 }
 
 // ---------------------------------------------------------------------------
+// SandboxEnv events
+// ---------------------------------------------------------------------------
+
+func (s *Server) ListEnvEvents(ctx context.Context, req gen.ListEnvEventsRequestObject) (gen.ListEnvEventsResponseObject, error) {
+	auth := authFrom(ctx)
+	limit := 0
+	if req.Params.Limit != nil {
+		limit = *req.Params.Limit
+	}
+	items, appErr := s.env.ListEvents(ctx, auth.Namespace, req.Name, limit)
+	if appErr != nil {
+		switch appErr.Code {
+		case domain.ErrCodeNotFound:
+			return gen.ListEnvEvents404JSONResponse(errResp(ctx, appErr)), nil
+		default:
+			return gen.ListEnvEvents500JSONResponse(errResp(ctx, appErr)), nil
+		}
+	}
+	return gen.ListEnvEvents200JSONResponse{
+		Items: items,
+		Total: len(items),
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
 // Env-scoped SandboxPools
 // ---------------------------------------------------------------------------
 

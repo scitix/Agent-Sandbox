@@ -197,7 +197,7 @@ export default function SandboxesPage() {
           toolbarConfig={toolbarConfig}
           multipleHandlers={multipleHandlers}
           externalState={tableState}
-          className="table-layout-fixed h-[calc(100vh-76px)]"
+          className="table-layout-fixed h-[calc(100vh-51px)]"
         >
           {toolbarActions}
         </QueryTable>

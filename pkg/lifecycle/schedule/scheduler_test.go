@@ -137,7 +137,7 @@ func mkReq() (*ClaimRequest, chan ClaimResult) {
 // startScheduler returns a running scheduler + stop func.
 func startScheduler(t *testing.T, c client.Client, ns, name string) (*PoolScheduler, func()) { //nolint:unparam
 	t.Helper()
-	s := NewPoolScheduler(ns, name, "", "", c)
+	s := NewPoolScheduler(ns, name, "", "", "", c)
 	go s.Run(context.Background())
 	return s, func() { s.Shutdown() }
 }
@@ -487,7 +487,7 @@ func TestScheduler_ExpiredDeadlineRejected(t *testing.T) {
 func TestScheduler_ShutdownDrainsPending(t *testing.T) {
 	t.Parallel()
 	c := newFakeClient(t /* no pods */)
-	s := NewPoolScheduler("ns", "p", "", "", c)
+	s := NewPoolScheduler("ns", "p", "", "", "", c)
 	go s.Run(context.Background())
 
 	const n = 10
@@ -531,7 +531,7 @@ func TestScheduler_ReenqueueFullChannel(t *testing.T) {
 // called many times without the scheduler consuming idleCh.
 func TestScheduler_NotifyIdleNonBlocking(t *testing.T) {
 	t.Parallel()
-	s := NewPoolScheduler("ns", "p", "", "", nil)
+	s := NewPoolScheduler("ns", "p", "", "", "", nil)
 	done := make(chan struct{})
 	go func() {
 		for range 1000 {
@@ -574,7 +574,7 @@ func TestScheduler_Snapshot_ReflectsState(t *testing.T) {
 	t.Parallel()
 
 	c := newFakeClient(t)
-	s := NewPoolScheduler("ns", "p", "", "", c)
+	s := NewPoolScheduler("ns", "p", "", "", "", c)
 	// Don't start Run() — we drive state explicitly so the snapshot
 	// observations are deterministic.
 
@@ -669,7 +669,7 @@ func TestPatchPoolPendingRequests_UpdatesStatus(t *testing.T) {
 // by atomic-load + channel-len + len() on the ready queue, no locks.
 func BenchmarkPoolScheduler_Snapshot(b *testing.B) {
 	c := newFakeClient(&testing.T{})
-	s := NewPoolScheduler("ns", "p", "", "", c)
+	s := NewPoolScheduler("ns", "p", "", "", "", c)
 	// Populate so the counters aren't all empty.
 	s.lastDispatch.Store(time.Now().UnixNano())
 	req, _ := mkReq()

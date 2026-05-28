@@ -145,19 +145,21 @@ export interface TimeSeriesData extends PrometheusConfigStatus {
 // ─── Filter & Time Range Types ──────────────────────────────────────────────
 
 /**
- * Label filters for sandbox pool metrics.
- * `cluster` is required to prevent cross-cluster data mixing.
- * Optional fields support multi-value regex matching (e.g. "team1|team2" or ".*" for all).
+ * Label filters for sandbox pool metrics. `cluster` is required to prevent
+ * cross-cluster data mixing. The optional fields are exact-match against the
+ * metric label of the same name; omitting one means "all".
  */
 export interface SandboxFilters {
   /** Cluster ID matching clusters.yaml, e.g. "cluster1" */
   cluster: string
-  /** Optional team filter (regex, omit for all teams) */
+  /** Optional team filter (omit for all teams). */
   team?: string
-  /** Optional user filter (regex, omit for all users) */
+  /** Optional user filter (omit for all users). */
   user?: string
-  /** Optional pool filter (regex, omit for all pools) */
+  /** Optional pool filter (omit for all pools). */
   pool?: string
+  /** Optional SandboxEnv filter (omit for all envs). */
+  sandboxEnv?: string
 }
 
 /** Preset time range options for chart selectors */

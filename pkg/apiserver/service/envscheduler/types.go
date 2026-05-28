@@ -49,7 +49,7 @@ type SchedulerLookup interface {
 	GetScheduler(ns, poolName string) *schedule.PoolScheduler
 	// GetOrCreateScheduler returns the running PoolScheduler for the named
 	// pool, starting one on first use. Used on the dispatch path.
-	GetOrCreateScheduler(ns, poolName, team, user string) *schedule.PoolScheduler
+	GetOrCreateScheduler(ns, poolName, team, user, env string) *schedule.PoolScheduler
 }
 
 // EnvGetter is the read-only handle the router uses to look at the current

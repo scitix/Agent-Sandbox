@@ -39,6 +39,22 @@ export const envQueryOptions = (name: string) =>
     params: { path: { name } },
   })
 
+/**
+ * Recent K8s Events for the Env and its member SandboxPools, sorted newest
+ * first. Drives the activity timeline on the Env detail page.
+ */
+export const envEventsQueryOptions = (name: string, limit = 100) =>
+  currentApiClient().queryOptions(
+    "get",
+    "/envs/{name}/events",
+    {
+      params: { path: { name }, query: { limit } },
+    },
+    {
+      select: (data) => data.items ?? [],
+    },
+  )
+
 // ─── Mutations ─────────────────────────────────────────────────────────────────
 
 /**
