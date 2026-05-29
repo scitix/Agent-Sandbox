@@ -47,7 +47,7 @@ export const C = {
   tx: "#14b8a6",
 
   // Replica / sandbox states
-  prewarmed: "#6366f1",
+  desired: "#6366f1",
   running: "#22c55e",
   starting: "#f59e0b",
   stopping: "#f97316",

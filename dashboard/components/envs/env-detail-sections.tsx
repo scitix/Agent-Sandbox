@@ -85,12 +85,14 @@ export function EnvPoolsSection({
   onEditPool,
   onDeletePool,
   onViewMetrics,
+  fixed = false,
 }: {
   env: AgentSandboxEnv
   onCreatePool: () => void
   onEditPool: (pool: AgentSandboxPool) => void
   onDeletePool: (pool: AgentSandboxPool) => void
   onViewMetrics: (pool: AgentSandboxPool) => void
+  fixed?: boolean
 }) {
   const { t } = useTranslation()
 
@@ -129,6 +131,26 @@ export function EnvPoolsSection({
 
   const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
 
+  const createButton = (
+    <Button onClick={onCreatePool} size="sm" className="h-9 gap-1 px-2 text-xs" variant="secondary">
+      <Plus className="h-3 w-3" /> {t("envs.poolForm.createAction")}
+    </Button>
+  )
+
+  if (fixed) {
+    return (
+      <QueryTable
+        columns={columns}
+        idFn={(row: AgentSandboxPool) => row.name}
+        queryOptions={queryOptions}
+        toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
+        className="table-layout-fixed h-full"
+      >
+        {createButton}
+      </QueryTable>
+    )
+  }
+
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
@@ -147,9 +169,7 @@ export function EnvPoolsSection({
         queryOptions={queryOptions}
         toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
       >
-        <Button onClick={onCreatePool} size="sm" className="h-9 gap-1 px-2 text-xs" variant="secondary">
-          <Plus className="h-3 w-3" /> {t("envs.poolForm.createAction")}
-        </Button>
+        {createButton}
       </QueryTable>
     </section>
   )
@@ -159,12 +179,10 @@ export function EnvPoolsSection({
 
 export function AutoscalingSection({
   env,
-  onCreate,
   onEdit,
   onDelete,
 }: {
   env: AgentSandboxEnv
-  onCreate: () => void
   onEdit: (group: AgentEnvAutoscalingGroup) => void
   onDelete: (group: AgentEnvAutoscalingGroup) => void
 }) {
@@ -274,16 +292,7 @@ export function AutoscalingSection({
         columns={columns}
         idFn={(row: AgentEnvAutoscalingGroup) => row.name}
         toolbarConfig={{ globalSearch: { placeholder: t("common.search") } }}
-      >
-        <Button
-          onClick={onCreate}
-          size="sm"
-          className="h-9 gap-1 px-2 text-xs"
-          variant="secondary"
-        >
-          <Plus className="h-3 w-3" /> {t("envs.upsertAutoscaling.createAction")}
-        </Button>
-      </DataTable>
+      />
     </section>
   )
 }

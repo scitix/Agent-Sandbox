@@ -21,7 +21,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
 import { CheckCheck, Copy, KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { PageHeader } from "@/components/page-header"
 import { KeyRevealModal, type KeyRevealResult } from "@/components/api-keys/key-reveal-modal"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -296,8 +295,6 @@ export default function ApiKeysPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      <PageHeader title={t("apiKeys.title")} />
-
       <div className="p-6">
         <div className="mb-6 flex items-center justify-between">
           <div>
@@ -384,14 +381,12 @@ export default function ApiKeysPage() {
                       <div className="flex flex-wrap items-center gap-4">
                         {key.team && (
                           <span className="text-muted-foreground font-mono text-[12px]">
-                            team:{" "}
-                            <span className="text-foreground font-semibold">{key.team}</span>
+                            team: <span className="text-foreground font-semibold">{key.team}</span>
                           </span>
                         )}
                         {key.user && (
                           <span className="text-muted-foreground font-mono text-[12px]">
-                            user:{" "}
-                            <span className="text-foreground font-semibold">{key.user}</span>
+                            user: <span className="text-foreground font-semibold">{key.user}</span>
                           </span>
                         )}
                       </div>
@@ -410,13 +405,13 @@ export default function ApiKeysPage() {
                     {/* Row 5: dates */}
                     <div className="flex flex-wrap items-center gap-4">
                       <span className="text-muted-foreground font-mono text-[11px]">
-                        <span className="uppercase tracking-wide">{t("apiKeys.col.issuedAt")}</span>
+                        <span className="tracking-wide uppercase">{t("apiKeys.col.issuedAt")}</span>
                         {" · "}
                         {formatDate(key.issuedAt)}
                       </span>
                       {key.expiresAt && (
                         <span className="text-muted-foreground font-mono text-[11px]">
-                          <span className="uppercase tracking-wide">
+                          <span className="tracking-wide uppercase">
                             {t("apiKeys.col.expiresAt")}
                           </span>
                           {" · "}

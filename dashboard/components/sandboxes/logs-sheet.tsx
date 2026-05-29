@@ -18,10 +18,7 @@
 
 import { useRef, useEffect, useState, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { parseAsString, useQueryState } from "nuqs"
-import { ScrollText, Search, X, ChevronUp, ChevronDown, Download } from "lucide-react"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
-import { SandboxSheetHeader } from "@/components/sandboxes/sandbox-sheet-header"
+import { Search, X, ChevronUp, ChevronDown, Download } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
   Select,
@@ -36,10 +33,6 @@ import { store, impersonationAtom } from "@/lib/atoms"
 import { useTranslation } from "@/lib/i18n"
 import { useExternalLogsConfigured } from "@/hooks/use-external-logs"
 import { useClusterID } from "@/hooks/use-cluster-id"
-
-// ─── nuqs URL param names ──────────────────────────────────────────────────────
-
-export const LOGS_SANDBOX_ID_PARAM = "logsFor"
 
 // ─── Lines selector ───────────────────────────────────────────────────────────
 
@@ -129,7 +122,10 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
   const sandbox = sandboxEnvelope?.sandbox
   const sandboxStatus = sandbox?.status ?? ""
   const isTerminated =
-    sandboxStatus === "Completed" || sandboxStatus === "Failed" || sandboxStatus === "Canceled" || sandboxStatus === "Released"
+    sandboxStatus === "Completed" ||
+    sandboxStatus === "Failed" ||
+    sandboxStatus === "Canceled" ||
+    sandboxStatus === "Released"
 
   // ── xterm initialization ──────────────────────────────────────────────────
   useEffect(() => {
@@ -559,16 +555,19 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
           {metaInfo?.source && (
             <Badge
               variant="outline"
-              className={`font-mono text-xs uppercase ${metaInfo.source === "live"
-                ? "border-green-500/30 bg-green-500/10 text-green-400"
-                : metaInfo.source === "runtime"
-                  ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
-                  : metaInfo.source === "external-logs"
-                    ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
-                    : "border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
-                }`}
+              className={`font-mono text-xs uppercase ${
+                metaInfo.source === "live"
+                  ? "border-green-500/30 bg-green-500/10 text-green-400"
+                  : metaInfo.source === "runtime"
+                    ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
+                    : metaInfo.source === "external-logs"
+                      ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
+                      : "border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
+              }`}
             >
-              {metaInfo.source === "external-logs" ? t("sandboxes.externalLogsSource") : metaInfo.source}
+              {metaInfo.source === "external-logs"
+                ? t("sandboxes.externalLogsSource")
+                : metaInfo.source}
             </Badge>
           )}
 
@@ -595,12 +594,13 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
               Pulses while the stream is open; goes solid green once complete. */}
           <span
             title={isStreaming ? t("sandboxes.streamActive") : t("sandboxes.streamComplete")}
-            className={`inline-flex h-2 w-2 shrink-0 rounded-full ${isStreaming
-              ? "animate-pulse bg-green-400"
-              : metaInfo
-                ? "bg-green-600/60"
-                : "bg-muted-foreground/30"
-              }`}
+            className={`inline-flex h-2 w-2 shrink-0 rounded-full ${
+              isStreaming
+                ? "animate-pulse bg-green-400"
+                : metaInfo
+                  ? "bg-green-600/60"
+                  : "bg-muted-foreground/30"
+            }`}
           />
         </div>
       </div>
@@ -616,49 +616,13 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
 // ─── Public LogsSheet component ───────────────────────────────────────────────
 
 /**
- * LogsSheet — URL-bound Sheet that shows sandbox logs.
- *
- * The `logsFor` URL query param drives the open state:
- *   - absent / empty  → sheet closed
- *   - <sandboxId>     → sheet open, fetching logs for that sandbox
+ * Live log viewer for the sandbox detail page's "Logs" tab. LogViewer aborts
+ * its own in-flight NDJSON / tail -f stream on unmount, so the panel only has
+ * to own the shared abort ref.
  */
-export function LogsSheet() {
-  const { t } = useTranslation()
+export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
   const clusterID = useClusterID()
-
-  // Shared abort ref: hoisted here so handleOpenChange can immediately cancel
-  // the in-flight stream when the sheet is closed, without waiting for the
-  // LogViewer component to go through its React unmount cycle.
   const abortRef = useRef<AbortController | null>(null)
 
-  const [sandboxId, setSandboxId] = useQueryState(
-    LOGS_SANDBOX_ID_PARAM,
-    parseAsString.withOptions({ scroll: false, shallow: true }),
-  )
-
-  const isOpen = !!sandboxId
-
-  const handleOpenChange = (open: boolean) => {
-    if (!open) {
-      // Immediately abort the stream — don't wait for LogViewer to unmount.
-      // This is the fastest path to cancelling the backend tail -f / K8s log stream.
-      abortRef.current?.abort()
-      void setSandboxId(null)
-    }
-  }
-
-  return (
-    <Sheet open={isOpen} onOpenChange={handleOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-2xl data-[side=right]:sm:max-w-5xl"
-      >
-        <SandboxSheetHeader icon={ScrollText} title={t("sandboxes.logs")} sandboxId={sandboxId} />
-
-        {isOpen && sandboxId && (
-          <LogViewer sandboxId={sandboxId} clusterID={clusterID} abortRef={abortRef} />
-        )}
-      </SheetContent>
-    </Sheet>
-  )
+  return <LogViewer sandboxId={sandboxId} clusterID={clusterID} abortRef={abortRef} />
 }

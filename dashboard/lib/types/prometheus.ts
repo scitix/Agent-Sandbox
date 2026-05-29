@@ -374,7 +374,7 @@ export const REFRESH_INTERVAL_LABELS: Record<RefreshInterval, string> = {
 /**
  * GET /api/prometheus/user-summary
  * Returns sandbox counts grouped by team and by user, including replica state
- * breakdown (prewarmed, starting, running, stopping, failed).
+ * breakdown (desired, starting, running, stopping, failed).
  * Data sources: agentbox_sandbox_running_info + agentbox_sandboxpool_replicas_*
  */
 /**
@@ -424,7 +424,7 @@ export interface EnvoyBandwidthData extends PrometheusConfigStatus {
  * GET /api/prometheus/sandbox-user-stats
  * Returns sandbox lifecycle stats for the authenticated user (or filtered scope).
  * Combines cumulative counters (increase over selected window) for Created/Completed/Released/Failed
- * and instant gauge values for Prewarmed/Running.
+ * and instant gauge values for Desired/Running.
  * Accessible by all authenticated users.
  */
 export interface SandboxUserStatsData extends PrometheusConfigStatus {
@@ -438,7 +438,7 @@ export interface SandboxUserStatsData extends PrometheusConfigStatus {
     /** Sandboxes deleted with stop_reason=Failed in the window */
     deleteFailed: number | null
     /** Current pre-warmed capacity (desired replicas, point-in-time) */
-    prewarmed: number | null
+    desired: number | null
     /** Currently running sandboxes (point-in-time) */
     running: number | null
   }
@@ -447,7 +447,7 @@ export interface SandboxUserStatsData extends PrometheusConfigStatus {
 export interface UserSummaryRow {
   team: string
   user?: string
-  prewarmed: number
+  desired: number
   starting: number
   running: number
   stopping: number

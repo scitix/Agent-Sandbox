@@ -24,15 +24,7 @@ import { toast } from "sonner"
 import { Save } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox"
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -45,12 +37,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import type { AgentEnvAutoscalingGroup, AgentSandboxEnv } from "@/lib/api/client"
-import { useAddEnvAutoscalingGroup, useUpdateEnvAutoscalingGroup } from "@/lib/queries"
+import { useUpdateEnvAutoscalingGroup } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 
 interface Props {
   env: AgentSandboxEnv
-  group: AgentEnvAutoscalingGroup | null // null = create
+  // Group to edit. null keeps the sheet closed (groups are created
+  // automatically when a member declaring the ScalingGroup is added, so
+  // there is no create mode here — only tuning an existing group).
+  group: AgentEnvAutoscalingGroup | null
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -61,7 +56,6 @@ const optionalSeconds = z.preprocess(
 )
 
 const formSchema = z.object({
-  name: z.string().optional(),
   enabled: z.boolean(),
   minReplicas: optionalSeconds,
   maxReplicas: optionalSeconds,
@@ -78,10 +72,11 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>
 
 // crdDefaults mirrors the kubebuilder `+kubebuilder:default=` markers on
-// PoolScaleUpPolicy / PoolScaleDownPolicy / EnvAutoscalingGroup. The
-// Create form prefills these so the user sees the same explicit values
-// the API server would otherwise stamp on admission. Keep this table in
-// lockstep with api/v1alpha1/autoscaler_types.go and sandboxenv_types.go.
+// PoolScaleUpPolicy / PoolScaleDownPolicy / EnvAutoscalingGroup. Used as the
+// fallback when a group field the server has not yet stamped reads back as
+// undefined, so the form always shows the value the API server would apply.
+// Keep this table in lockstep with api/v1alpha1/autoscaler_types.go and
+// sandboxenv_types.go.
 const crdDefaults = {
   enabled: true,
   minReplicas: 0,
@@ -103,7 +98,7 @@ export function UpsertAutoscalingGroupSheet({ env, group, open, onOpenChange }: 
         side="right"
         className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-xl"
       >
-        {open && (
+        {open && group && (
           <UpsertInner env={env} group={group} onClose={() => onOpenChange(false)} />
         )}
       </SheetContent>
@@ -117,35 +112,12 @@ function UpsertInner({
   onClose,
 }: {
   env: AgentSandboxEnv
-  group: AgentEnvAutoscalingGroup | null
+  group: AgentEnvAutoscalingGroup
   onClose: () => void
 }) {
   const { t } = useTranslation()
-  const isEdit = !!group
 
-  const addGroupMutation = useAddEnvAutoscalingGroup(env.name)
   const updateGroupMutation = useUpdateEnvAutoscalingGroup(env.name)
-
-  // Available scaling groups for create mode: every distinct ScalingGroup
-  // referenced by an EnvClusterMember minus those that already have a rule.
-  // Server requires the name to match an existing member's ScalingGroup so
-  // free-text would be silently rejected — Combobox enforces the constraint.
-  const availableGroups = useMemo<string[]>(() => {
-    if (isEdit) return []
-    const taken = new Set((env.spec.autoscaling?.groups ?? []).map((g) => g.name))
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const cluster of env.spec.clusters ?? []) {
-      for (const m of cluster.members ?? []) {
-        const sg = m.config?.scalingGroup
-        if (!sg) continue
-        if (taken.has(sg) || seen.has(sg)) continue
-        seen.add(sg)
-        out.push(sg)
-      }
-    }
-    return out
-  }, [env, isEdit])
 
   const defaults = useMemo<FormValues>(() => extractGroupForForm(group), [group])
 
@@ -153,7 +125,7 @@ function UpsertInner({
     control,
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: defaults,
@@ -162,23 +134,12 @@ function UpsertInner({
   const onSubmit = handleSubmit(async (values) => {
     try {
       const groupBody = { enabled: values.enabled, ...buildGroupBody(values) }
-      if (isEdit) {
+      {
         await runMutation(updateGroupMutation, {
           params: { path: { name: env.name, groupName: group!.name } },
           body: groupBody,
         })
-        toast.success(t("envs.poolAutoscaling.toast", { group: group!.name }))
-      } else {
-        const name = values.name?.trim()
-        if (!name) {
-          toast.error(t("envs.upsertAutoscaling.errors.nameRequired"))
-          return
-        }
-        await runMutation(addGroupMutation, {
-          params: { path: { name: env.name } },
-          body: { name, ...groupBody },
-        })
-        toast.success(t("envs.upsertAutoscaling.createdToast", { group: name }))
+        toast.success(t("envs.poolAutoscaling.toast", { group: group.name }))
       }
       onClose()
     } catch (err: unknown) {
@@ -190,42 +151,13 @@ function UpsertInner({
     <Fragment>
       <SheetHeader className="px-6 py-4">
         <SheetTitle className="font-mono text-sm tracking-wider uppercase">
-          {isEdit
-            ? t("envs.upsertAutoscaling.editTitle", { group: group!.name })
-            : t("envs.upsertAutoscaling.createTitle")}
+          {t("envs.upsertAutoscaling.editTitle", { group: group.name })}
         </SheetTitle>
       </SheetHeader>
       <Separator />
 
       <form onSubmit={onSubmit} className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
-          {/* ScalingGroup picker (create only) */}
-          {!isEdit && (
-            <Field>
-              <FieldLabel>{t("envs.upsertAutoscaling.field.scalingGroup")}</FieldLabel>
-              <Controller
-                control={control}
-                name="name"
-                render={({ field, fieldState }) => (
-                  <ScalingGroupCombobox
-                    items={availableGroups}
-                    value={field.value ?? null}
-                    onChange={field.onChange}
-                    invalid={fieldState.invalid}
-                  />
-                )}
-              />
-              {availableGroups.length === 0 ? (
-                <FieldError>{t("envs.upsertAutoscaling.errors.noAvailableGroups")}</FieldError>
-              ) : (
-                <FieldDescription>
-                  {t("envs.upsertAutoscaling.field.scalingGroupHint")}
-                </FieldDescription>
-              )}
-              {errors.name && <FieldError>{String(errors.name.message)}</FieldError>}
-            </Field>
-          )}
-
           <Controller
             control={control}
             name="enabled"
@@ -352,51 +284,13 @@ function UpsertInner({
           <Button type="button" variant="ghost" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button
-            type="submit"
-            disabled={isSubmitting || (!isEdit && availableGroups.length === 0)}
-            className="gap-1.5"
-          >
+          <Button type="submit" disabled={isSubmitting} className="gap-1.5">
             <Save className="h-3.5 w-3.5" />
-            {isEdit ? t("common.save") : t("common.create")}
+            {t("common.save")}
           </Button>
         </div>
       </form>
     </Fragment>
-  )
-}
-
-function ScalingGroupCombobox({
-  items,
-  value,
-  onChange,
-  invalid,
-}: {
-  items: string[]
-  value: string | null
-  onChange: (v: string | undefined) => void
-  invalid?: boolean
-}) {
-  const selected = items.find((i) => i === value) ?? null
-  return (
-    <Combobox
-      items={items}
-      itemToStringLabel={(item) => item}
-      value={selected}
-      onValueChange={(v) => onChange(v ?? undefined)}
-    >
-      <ComboboxInput aria-invalid={invalid} placeholder="—" />
-      <ComboboxContent>
-        <ComboboxList>
-          {(item: string) => (
-            <ComboboxItem key={item} value={item}>
-              <span className="font-mono text-xs">{item}</span>
-            </ComboboxItem>
-          )}
-        </ComboboxList>
-        <ComboboxEmpty />
-      </ComboboxContent>
-    </Combobox>
   )
 }
 
@@ -419,21 +313,12 @@ const SecondsField = ((
   name: string
 }) => React.ReactElement
 
-// extractGroupForForm produces the react-hook-form defaultValues.
-//
-//   - Create (group == null): seed every field with the CRD's
-//     kubebuilder default, so the user sees the values the API server
-//     would have stamped anyway. No more "what does empty mean" guessing.
-//   - Update (group != null): seed every field with the current CR
-//     value. Fields the server has filled in via kubebuilder defaults
-//     come back as concrete numbers and round-trip through the form
-//     without surprise.
-function extractGroupForForm(group: AgentEnvAutoscalingGroup | null): FormValues {
-  if (group === null) {
-    return { ...crdDefaults, name: undefined }
-  }
+// extractGroupForForm produces the react-hook-form defaultValues for the
+// group being edited. Every field is seeded with the current CR value;
+// fields the server filled in via kubebuilder defaults come back as concrete
+// numbers and round-trip through the form without surprise.
+function extractGroupForForm(group: AgentEnvAutoscalingGroup): FormValues {
   return {
-    name: group.name,
     enabled: group.enabled ?? crdDefaults.enabled,
     minReplicas: group.minReplicas ?? crdDefaults.minReplicas,
     maxReplicas: group.maxReplicas,

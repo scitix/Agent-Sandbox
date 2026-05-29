@@ -18,23 +18,39 @@
 
 import { useEffect } from "react"
 import React from "react"
+import Link from "next/link"
 import { useAtomValue, useSetAtom } from "jotai"
-import { LiveBadge } from "@/components/live-badge"
 import { PanelLeft } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { useSidebar } from "@/components/ui/sidebar"
 import { useQuery } from "@tanstack/react-query"
+import { LiveBadge } from "@/components/live-badge"
+import { ClusterSwitcher } from "@/components/cluster-switcher"
+import { Button } from "@/components/ui/button"
+import {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
+import { useSidebar } from "@/components/ui/sidebar"
+import { useBreadcrumbs } from "@/hooks/use-breadcrumbs"
 import { userSandboxStatsQueryOptions } from "@/lib/queries"
 import { concurrentSandboxesAtom, authAtom } from "@/lib/atoms"
 
-interface PageHeaderProps {
-  title: string
-}
-
-export function PageHeader({ title }: PageHeaderProps) {
+/**
+ * The single, route-driven header rendered once by the cluster layout. The left
+ * side is a breadcrumb whose trailing crumb doubles as the page title; the right
+ * side carries the cluster switcher and the live concurrent-sandbox badge.
+ *
+ * It also owns the running-count poll that feeds `concurrentSandboxesAtom` (read
+ * by LiveBadge) — mounting it here keeps that count fresh on every page.
+ */
+export function PageHeader() {
   const auth = useAtomValue(authAtom)
   const setRunningCount = useSetAtom(concurrentSandboxesAtom)
   const { isMobile, toggleSidebar } = useSidebar()
+  const crumbs = useBreadcrumbs()
 
   const { data: statsData } = useQuery({
     ...userSandboxStatsQueryOptions(),
@@ -48,27 +64,47 @@ export function PageHeader({ title }: PageHeaderProps) {
   }, [statsData, setRunningCount])
 
   return (
-    <div className="border-border flex flex-col border-b h-13 overflow-hidden">
-      <div className="flex items-center justify-between px-6 pt-2 pb-0">
-        <div className="flex items-center gap-1">
-          {isMobile && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={toggleSidebar}
-              className="text-muted-foreground hover:text-foreground -ml-2"
-              aria-label="Open sidebar"
-            >
-              <PanelLeft className="h-5 w-5" />
-            </Button>
-          )}
-          <h1 className="font-mono font-bold tracking-tight uppercase">{title}</h1>
-        </div>
-        <div className="flex items-center gap-3" hidden={isMobile}>
-          <LiveBadge />
-        </div>
+    <div className="border-border flex h-13 shrink-0 items-center justify-between border-b px-6">
+      <div className="flex min-w-0 items-center gap-2">
+        {isMobile && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={toggleSidebar}
+            className="text-muted-foreground hover:text-foreground -ml-2"
+            aria-label="Open sidebar"
+          >
+            <PanelLeft className="h-5 w-5" />
+          </Button>
+        )}
+        <Breadcrumb>
+          <BreadcrumbList>
+            {crumbs.map((crumb, i) => (
+              <React.Fragment key={`${crumb.label}-${i}`}>
+                {i > 0 && <BreadcrumbSeparator />}
+                <BreadcrumbItem className="min-w-0">
+                  {crumb.isCurrent || !crumb.href ? (
+                    <BreadcrumbPage className="truncate font-mono font-bold tracking-tight uppercase select-none">
+                      {crumb.label}
+                    </BreadcrumbPage>
+                  ) : (
+                    <BreadcrumbLink
+                      render={<Link href={crumb.href} />}
+                      className="font-mono tracking-tight uppercase select-none"
+                    >
+                      {crumb.label}
+                    </BreadcrumbLink>
+                  )}
+                </BreadcrumbItem>
+              </React.Fragment>
+            ))}
+          </BreadcrumbList>
+        </Breadcrumb>
       </div>
-      <div className="pb-2" />
+      <div className="flex shrink-0 items-center gap-3" hidden={isMobile}>
+        <ClusterSwitcher compact />
+        <LiveBadge />
+      </div>
     </div>
   )
 }

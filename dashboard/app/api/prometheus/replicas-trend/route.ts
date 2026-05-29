@@ -26,7 +26,7 @@
  *   preset=1h|6h|24h|7d  (default: 1h)
  *
  * Response: TimeSeriesData
- *   series[0] = "Prewarmed"
+ *   series[0] = "Desired"
  *   series[1] = "Running"
  *   series[2] = "Starting"
  *   series[3] = "Stopping"
@@ -43,7 +43,7 @@ export const GET = withPrometheusRoute(
     const { start, end, step } = timeRange
     const queries = [
       {
-        name: "Prewarmed",
+        name: "Desired",
         query: `sum(agentbox_sandboxpool_replicas_desired{${sel}})`,
       },
       {

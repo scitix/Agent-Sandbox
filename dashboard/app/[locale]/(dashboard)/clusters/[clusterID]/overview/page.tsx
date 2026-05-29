@@ -20,7 +20,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { useAtomValue } from "jotai"
 import { LayoutDashboard, Box, RefreshCw } from "lucide-react"
-import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
   userSandboxStatsQueryOptions,
@@ -125,9 +124,7 @@ export default function OverviewPage() {
   const showFallback = promResolved && !prometheusConfigured
 
   return (
-    <div className="min-h-screen overflow-auto">
-      <PageHeader title={t("overview.title")} />
-
+    <div className="overflow-y-auto">
       {/* Sub-header: only shown in fallback mode (Prometheus not configured) */}
       {showFallback && (
         <div className="border-border flex items-center gap-4 border-b px-6">
@@ -158,7 +155,7 @@ export default function OverviewPage() {
 
       {/* Loading state: wait for both probe and stats */}
       {!promResolved || loading ? (
-        <div className="flex flex-1 items-center justify-center">
+        <div className="flex h-[calc(100vh-51px)] items-center justify-center">
           <div className="flex flex-col items-center gap-2">
             <div className="bg-brand h-1 w-24 animate-pulse" />
             <span className="text-muted-foreground font-mono text-xs tracking-wider uppercase">
@@ -257,7 +254,6 @@ export default function OverviewPage() {
                   </div>
                 </div>
               )}
-
             </>
           )}
 

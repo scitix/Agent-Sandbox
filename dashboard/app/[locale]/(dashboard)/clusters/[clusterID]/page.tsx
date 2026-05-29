@@ -21,12 +21,14 @@ import { useRouter } from "next/navigation"
 import { useAtomValue } from "jotai"
 import { authAtom } from "@/lib/atoms"
 import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
 
 export default function ClusterHomePage() {
   const auth = useAtomValue(authAtom)
   const router = useRouter()
   const clusterID = useClusterID()
+  const locale = useLocale()
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
@@ -38,11 +40,11 @@ export default function ClusterHomePage() {
     if (!hydrated) return
     if (!auth) return // AuthGuard in layout will handle redirect to /login
     if (auth.role === "admin") {
-      router.replace(clusterPath(clusterID, "sandboxes"))
+      router.replace(clusterPath(clusterID, "sandboxes", locale))
     } else {
-      router.replace(clusterPath(clusterID, "overview"))
+      router.replace(clusterPath(clusterID, "overview", locale))
     }
-  }, [hydrated, auth, router, clusterID])
+  }, [hydrated, auth, router, clusterID, locale])
 
   return (
     <div className="bg-background flex min-h-screen items-center justify-center">

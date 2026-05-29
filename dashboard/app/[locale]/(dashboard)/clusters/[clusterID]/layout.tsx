@@ -14,10 +14,19 @@
  * limitations under the License.
  */
 
-// Thin layout for cluster-scoped pages.
-// Auth guard and shell (Sidebar, StatusBar, etc.) are provided by the
-// parent (dashboard)/layout.tsx — nothing extra is needed here.
+// Cluster-scoped layout. Auth guard and shell (Sidebar, etc.) come from the
+// parent (dashboard)/layout.tsx; this layer renders the single, route-driven
+// PageHeader once so every cluster page inherits it without rendering its own.
+
+"use client"
+
+import { PageHeader } from "@/components/page-header"
 
 export default function ClusterLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>
+  return (
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <PageHeader />
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+    </div>
+  )
 }

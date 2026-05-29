@@ -16,16 +16,11 @@
 
 "use client"
 
-import { PageHeader } from "@/components/page-header"
 import { ChangelogPageContent } from "@/components/changelog/changelog-content"
-import { useTranslation } from "@/lib/i18n"
 
 export default function ChangelogPage() {
-  const { t } = useTranslation()
-
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader title={t("nav.changelog")} />
       <div className="flex-1 overflow-auto">
         <ChangelogPageContent />
       </div>

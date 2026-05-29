@@ -18,7 +18,7 @@
  * GET /api/prometheus/user-summary
  *
  * Returns sandbox counts aggregated by team and by user, including replica
- * state breakdown (prewarmed/desired, starting, running, stopping, failed).
+ * state breakdown (desired/desired, starting, running, stopping, failed).
  * Data sources:
  *   - agentbox_sandbox_running_info  → per-sandbox running count
  *   - agentbox_sandboxpool_replicas_* → pool-level replica state counts
@@ -61,8 +61,8 @@ export const GET = withPrometheusRoute(
     const queries = {
       runningByTeam: `count by (team) (agentbox_sandbox_running_info{${sel}})`,
       runningByUser: `count by (team, user) (agentbox_sandbox_running_info{${sel}})`,
-      prewarmedByTeam: `sum by (team) (agentbox_sandboxpool_replicas_desired{${sel}})`,
-      prewarmedByUser: `sum by (team, user) (agentbox_sandboxpool_replicas_desired{${sel}})`,
+      desiredByTeam: `sum by (team) (agentbox_sandboxpool_replicas_desired{${sel}})`,
+      desiredByUser: `sum by (team, user) (agentbox_sandboxpool_replicas_desired{${sel}})`,
       startingByTeam: `sum by (team) (agentbox_sandboxpool_replicas_starting{${sel}})`,
       startingByUser: `sum by (team, user) (agentbox_sandboxpool_replicas_starting{${sel}})`,
       stoppingByTeam: `sum by (team) (agentbox_sandboxpool_replicas_stopping{${sel}})`,
@@ -74,8 +74,8 @@ export const GET = withPrometheusRoute(
     const [
       runningByTeamResult,
       runningByUserResult,
-      prewarmedByTeamResult,
-      prewarmedByUserResult,
+      desiredByTeamResult,
+      desiredByUserResult,
       startingByTeamResult,
       startingByUserResult,
       stoppingByTeamResult,
@@ -89,8 +89,8 @@ export const GET = withPrometheusRoute(
     // Build lookup maps keyed by "team" or "team|user"
     const runningTeamMap = parseInstantToMap(runningByTeamResult, ["team"])
     const runningUserMap = parseInstantToMap(runningByUserResult, ["team", "user"])
-    const prewarmedTeamMap = parseInstantToMap(prewarmedByTeamResult, ["team"])
-    const prewarmedUserMap = parseInstantToMap(prewarmedByUserResult, ["team", "user"])
+    const desiredTeamMap = parseInstantToMap(desiredByTeamResult, ["team"])
+    const desiredUserMap = parseInstantToMap(desiredByUserResult, ["team", "user"])
     const startingTeamMap = parseInstantToMap(startingByTeamResult, ["team"])
     const startingUserMap = parseInstantToMap(startingByUserResult, ["team", "user"])
     const stoppingTeamMap = parseInstantToMap(stoppingByTeamResult, ["team"])
@@ -101,7 +101,7 @@ export const GET = withPrometheusRoute(
     // Collect all unique teams
     const allTeams = new Set<string>([
       ...runningTeamMap.keys(),
-      ...prewarmedTeamMap.keys(),
+      ...desiredTeamMap.keys(),
       ...startingTeamMap.keys(),
       ...stoppingTeamMap.keys(),
       ...failedTeamMap.keys(),
@@ -109,7 +109,7 @@ export const GET = withPrometheusRoute(
 
     const byTeam = Array.from(allTeams).map((team) => ({
       team,
-      prewarmed: prewarmedTeamMap.get(team) ?? 0,
+      desired: desiredTeamMap.get(team) ?? 0,
       starting: startingTeamMap.get(team) ?? 0,
       running: runningTeamMap.get(team) ?? 0,
       stopping: stoppingTeamMap.get(team) ?? 0,
@@ -119,7 +119,7 @@ export const GET = withPrometheusRoute(
     // Collect all unique team|user combos
     const allUserKeys = new Set<string>([
       ...runningUserMap.keys(),
-      ...prewarmedUserMap.keys(),
+      ...desiredUserMap.keys(),
       ...startingUserMap.keys(),
       ...stoppingUserMap.keys(),
       ...failedUserMap.keys(),
@@ -130,7 +130,7 @@ export const GET = withPrometheusRoute(
       return {
         team,
         user,
-        prewarmed: prewarmedUserMap.get(key) ?? 0,
+        desired: desiredUserMap.get(key) ?? 0,
         starting: startingUserMap.get(key) ?? 0,
         running: runningUserMap.get(key) ?? 0,
         stopping: stoppingUserMap.get(key) ?? 0,

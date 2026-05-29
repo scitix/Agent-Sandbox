@@ -25,7 +25,7 @@ import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { useTranslation } from "@/lib/i18n"
 
-export function ClusterSwitcher() {
+export function ClusterSwitcher({ compact = false }: { compact?: boolean }) {
   const router = useRouter()
   const pathname = usePathname()
   const auth = useAtomValue(authAtom)
@@ -61,6 +61,17 @@ export function ClusterSwitcher() {
         `${loginPath(locale)}?cluster=${encodeURIComponent(clusterId)}&next=${encodeURIComponent(destination)}`,
       )
     }
+  }
+
+  if (compact) {
+    return (
+      <ClusterCombobox
+        clusters={clusters}
+        value={currentClusterID}
+        onValueChange={handleSwitch}
+        inputClassName="h-8 w-[200px] font-mono text-xs"
+      />
+    )
   }
 
   return (

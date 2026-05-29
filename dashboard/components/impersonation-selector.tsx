@@ -112,15 +112,6 @@ export function ImpersonationSelector() {
           </Combobox>
         </div>
       </div>
-
-      {isActive && (
-        <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-600 dark:text-amber-400">
-          <Users className="size-3 shrink-0" />
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">
-            {team} / {user}
-          </span>
-        </div>
-      )}
     </div>
   )
 }

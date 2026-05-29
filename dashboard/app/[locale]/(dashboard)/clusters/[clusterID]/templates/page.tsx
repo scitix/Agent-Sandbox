@@ -18,36 +18,32 @@
 
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { useRouter } from "next/navigation"
 import { useAtomValue } from "jotai"
-import { parseAsString, useQueryState } from "nuqs"
 import { Search, Plus, Layers } from "lucide-react"
-import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { TemplateCard } from "@/components/templates/template-card"
-import { TemplateDetailSheet, TEMPLATE_DETAIL_PARAM } from "@/components/templates/detail-sheet"
 import { CreateTemplateDialog } from "@/components/templates/create-dialog"
 import { DeleteTemplateDialog } from "@/components/templates/delete-dialog"
-import { UpsertTemplateSheet } from "@/components/templates/upsert-sheet"
-import type { AgentSandboxTemplate, AgentSandboxTemplateSummary } from "@/lib/api/client"
+import type { AgentSandboxTemplateSummary } from "@/lib/api/client"
 import { isAdminAtom } from "@/lib/atoms"
 import { templatesQueryOptions } from "@/lib/queries"
+import { clusterPath } from "@/lib/cluster-path"
+import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import { useTranslation } from "@/lib/i18n"
 
 export default function TemplatesPage() {
   const isAdmin = useAtomValue(isAdminAtom)
   const { t } = useTranslation()
+  const router = useRouter()
+  const clusterID = useClusterID()
+  const locale = useLocale()
 
   const [search, setSearch] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AgentSandboxTemplateSummary | null>(null)
-  const [editTarget, setEditTarget] = useState<AgentSandboxTemplate | null>(null)
-
-  // nuqs — used to open the detail sheet by setting ?template=<name>
-  const [, setDetailName] = useQueryState(
-    TEMPLATE_DETAIL_PARAM,
-    parseAsString.withOptions({ scroll: false, shallow: true }),
-  )
 
   const { data: templates = [] } = useQuery(templatesQueryOptions())
 
@@ -63,13 +59,11 @@ export default function TemplatesPage() {
   }, [templates, search])
 
   const handleCardClick = (tpl: AgentSandboxTemplateSummary) => {
-    void setDetailName(tpl.name)
+    router.push(`${clusterPath(clusterID, "templates", locale)}/${encodeURIComponent(tpl.name)}`)
   }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader title={t("templates.title")} />
-
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {/* Toolbar */}
         <div className="border-border border-b px-6 py-3">
@@ -124,13 +118,6 @@ export default function TemplatesPage() {
         </div>
       </div>
 
-      {/* Detail sheet — managed by nuqs URL state */}
-      <TemplateDetailSheet
-        onEdit={(tmpl) => setEditTarget(tmpl)}
-        onDelete={(tmpl) => setDeleteTarget(tmpl)}
-        isAdmin={isAdmin}
-      />
-
       {/* Admin dialogs */}
       {isAdmin && <CreateTemplateDialog open={createOpen} onOpenChange={setCreateOpen} />}
       {isAdmin && (
@@ -138,15 +125,6 @@ export default function TemplatesPage() {
           template={deleteTarget}
           onOpenChange={(open) => {
             if (!open) setDeleteTarget(null)
-          }}
-        />
-      )}
-      {isAdmin && (
-        <UpsertTemplateSheet
-          template={editTarget}
-          open={!!editTarget}
-          onOpenChange={(open) => {
-            if (!open) setEditTarget(null)
           }}
         />
       )}

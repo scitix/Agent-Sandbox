@@ -56,7 +56,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { clearSessionData, isAdminAtom, isActualAdminAtom } from "@/lib/atoms"
-import { ClusterSwitcher } from "@/components/cluster-switcher"
 import { ImpersonationSelector } from "@/components/impersonation-selector"
 import AgentBoxIcon from "./icons/agentbox-icon"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -190,8 +189,8 @@ export function AppSidebar({ }: AppSidebarProps) {
 
   return (
     <Sidebar collapsible="icon" className="border-sidebar-border border-r">
-      <SidebarHeader className="h-13 border-border border-b">
-        <div className="flex items-center h-full justify-between">
+      <SidebarHeader className="border-border h-13 border-b">
+        <div className="flex h-full items-center justify-between">
           {/* Logo: when collapsed acts as toggle, when expanded is a Home link */}
           {isCollapsed ? (
             <button
@@ -204,7 +203,7 @@ export function AppSidebar({ }: AppSidebarProps) {
           ) : (
             <div className="flex items-center gap-2">
               <AgentBoxIcon className="text-brand size-6" />
-              <span className="text-base font-bold tracking-tight truncate">Agent Sandbox</span>
+              <span className="truncate text-base font-bold tracking-tight">Agent Sandbox</span>
             </div>
           )}
           <Button
@@ -221,10 +220,6 @@ export function AppSidebar({ }: AppSidebarProps) {
       </SidebarHeader>
 
       <SidebarContent>
-        <div className="mt-2 px-2 group-data-[collapsible=icon]:hidden">
-          {/* Cluster Switcher (multi-cluster mode only) */}
-          <ClusterSwitcher />
-        </div>
         {isActualAdmin && (
           <div className="mt-2 px-2 group-data-[collapsible=icon]:hidden">
             <ImpersonationSelector />
@@ -254,7 +249,11 @@ export function AppSidebar({ }: AppSidebarProps) {
           <SidebarMenuItem>
             <SidebarMenuButton
               render={
-                <a href="https://github.com/scitix/agent-sandbox" target="_blank" rel="noopener noreferrer" />
+                <a
+                  href="https://github.com/scitix/agent-sandbox"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
               }
               tooltip={t("nav.github")}
             >
@@ -279,7 +278,6 @@ export function AppSidebar({ }: AppSidebarProps) {
               <ExternalLink className="text-muted-foreground ml-auto h-3 w-3" />
             </SidebarMenuButton>
           </SidebarMenuItem>
-          <ChangelogTrigger />
         </SidebarMenu>
 
         <Separator className="my-1" />

@@ -19,7 +19,6 @@
 import { useMemo, useState } from "react"
 import { useAtomValue } from "jotai"
 import { KeyRound, Plus, Upload } from "lucide-react"
-import { PageHeader } from "@/components/page-header"
 import { CreateApiKeyDialog } from "@/components/api-keys/create-dialog"
 import { RevokeApiKeyDialog } from "@/components/api-keys/revoke-dialog"
 import { ImportSecretDialog } from "@/components/api-keys/import-secret-dialog"
@@ -54,7 +53,6 @@ export default function AdminApiKeysPage() {
   if (!isAdmin) {
     return (
       <div className="flex flex-1 flex-col overflow-auto">
-        <PageHeader title={t("admin.adminApiKeys")} />
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
             <KeyRound className="text-muted-foreground mx-auto mb-3 h-10 w-10" />
@@ -115,15 +113,13 @@ export default function AdminApiKeysPage() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <PageHeader title={t("admin.adminApiKeys")} />
-
       <div className="flex min-h-0 flex-1 flex-col">
         <QueryTable
           queryOptions={apiKeysQueryOptions()}
           columns={columns}
           idFn={(row) => row.keyId}
           toolbarConfig={toolbarConfig}
-          className="table-layout-fixed h-[calc(100vh-51px)]"
+          className="table-layout-fixed h-full"
         >
           {toolbarActions}
         </QueryTable>
@@ -146,4 +142,3 @@ export default function AdminApiKeysPage() {
     </div>
   )
 }
-

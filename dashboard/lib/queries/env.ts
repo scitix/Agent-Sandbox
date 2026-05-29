@@ -59,8 +59,9 @@ export const envEventsQueryOptions = (name: string, limit = 100) =>
 
 /**
  * Create a new SandboxEnv shell — TemplateRef + Overrides + optional
- * ImagePullSecret only. Members are added via `useCreateEnvPool` and
- * autoscaling groups via `useAddEnvAutoscalingGroup` after the env exists.
+ * ImagePullSecret only. Members are added via `useCreateEnvPool` after the
+ * env exists; the matching autoscaling group is created automatically per
+ * member and tuned via `useUpdateEnvAutoscalingGroup`.
  */
 export function useCreateEnv() {
   const qc = useQueryClient()

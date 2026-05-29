@@ -21,7 +21,6 @@
   "nav.toggleSidebar": "切換側邊欄",
   "nav.toggleTheme": "切換佈景主題",
   "nav.signOut": "登出",
-
   "common.create": "建立",
   "common.delete": "刪除",
   "common.cancel": "取消",
@@ -47,7 +46,6 @@
   "common.searchAll": "搜尋全部...",
   "common.enabled": "已啟用",
   "common.disabled": "已停用",
-
   "auth.authenticating": "驗證中...",
   "auth.impersonate": "模擬身分",
   "auth.actAsUser": "以使用者身分執行",
@@ -59,7 +57,6 @@
   "auth.noClustersTitle": "找不到叢集配置",
   "auth.noClustersDescription": "請確認 Dashboard 的叢集配置是否正確。",
   "auth.retry": "重試",
-
   "status.live": "上線",
   "status.concurrentSandboxes": "並行沙箱數",
   "status.running": "執行中",
@@ -72,11 +69,9 @@
   "status.admin": "管理員",
   "status.tenant": "租戶",
   "status.new": "新",
-
   "commandPalette.goTo": "跳轉至",
   "commandPalette.navigateToPage": "導覽至頁面",
   "commandPalette.searchPages": "搜尋頁面...",
-
   "errors.errorDetails": "錯誤詳情",
   "errors.occurredAt": "發生時間",
   "errors.anErrorOccurred": "發生了錯誤",
@@ -90,7 +85,6 @@
   "errors.sending": "傳送中...",
   "errors.sent": "已傳送",
   "errors.sendReport": "傳送報告",
-
   "login.title": "AgentBox",
   "login.subtitle": "AI 沙箱維運平台",
   "login.signIn": "登入",
@@ -119,7 +113,6 @@
   "login.oidc.invalidIssuer": "驗證失敗：發行者驗證失敗",
   "login.oidc.missingClaims": "驗證失敗：ID Token 聲明遺失",
   "login.oidc.failed": "驗證失敗：請重試",
-
   "sandboxes.title": "沙箱",
   "sandboxes.newSandbox": "新增沙箱",
   "sandboxes.createTitle": "建立沙箱",
@@ -136,6 +129,8 @@
   "sandboxes.searchById": "按 ID 搜尋...",
   "sandboxes.col.id": "ID",
   "sandboxes.col.idTooltip": "沙箱唯一識別碼。點擊即可複製。",
+  "sandboxes.col.env": "環境",
+  "sandboxes.col.envTooltip": "擁有此沙箱所屬預熱池的 SandboxEnv。點擊查看環境詳情。",
   "sandboxes.col.pool": "預熱池",
   "sandboxes.col.poolTooltip": "此沙箱所屬的 SandboxPool。",
   "sandboxes.col.status": "狀態",
@@ -185,12 +180,7 @@
   "sandboxes.form.startupTimeout": "啟動逾時",
   "sandboxes.form.startupTimeoutDesc": "等待沙箱排程成功並進入執行狀態的最長時間。未設定時使用伺服器預設值。支援時長字串，例如 30s、2m、1h。",
   "sandboxes.form.idleTimeoutDesc": "未設定時，沙箱不會因閒置而自動終止。設定後，沙箱將在閒置達指定時長後被終止。",
-  "sandboxes.endpoints": "端點",
-  "sandboxes.availableEndpoints": "可用端點",
-  "sandboxes.noEndpointsAvailable": "目前尚無可用端點。沙箱可能仍在啟動中。",
-  "sandboxes.codeExamples": "程式碼範例",
-  "sandboxes.apiKey": "API 金鑰",
-  "sandboxes.noApiKey": "無 API 金鑰 — 請於 API 金鑰頁面建立",
+  "sandboxes.tab.overview": "概覽",
   "sandboxes.logs": "日誌",
   "sandboxes.sandboxLogs": "沙箱：{{sandboxId}}",
   "sandboxes.connecting": "連線中...",
@@ -213,10 +203,6 @@
   "sandboxes.metrics": "指標",
   "sandboxes.runtime": "執行環境",
   "sandboxes.bash": "bash",
-  "sandboxes.curl": "cURL",
-  "sandboxes.python": "Python",
-  "sandboxes.typescript": "TypeScript",
-
   "pools.title": "沙箱預熱池",
   "pools.newPool": "新增預熱池",
   "pools.deleteTitle": "刪除預熱池",
@@ -364,7 +350,6 @@
   "pools.validation.replicasAboveMax": "副本數 ({replicas}) 不能大於最大副本數 ({max})",
   "pools.col.autoscalingEnabled": "已開啟自動擴縮容 · 最小: {{min}} / 最大: {{max}}",
   "pools.metricsFor": "資源池：{{name}}",
-
   "templates.title": "沙箱範本",
   "templates.newTemplate": "新增範本",
   "templates.createTitle": "建立範本",
@@ -407,7 +392,7 @@
   "templates.col.quotaTooltip": "啟用後，從此範本建立的沙箱將計入使用者的資源配額。",
   "templates.col.required": "必填",
   "templates.col.runtimes": "執行環境",
-  "templates.col.runtimesTooltip": "沙箱內暴露的具名服務端點（例如 jupyter:8888）。可透過端點面板進行存取。",
+  "templates.col.runtimesTooltip": "沙箱內暴露的具名服務端點（例如 jupyter:8888）。",
   "templates.col.defaultCpuTooltip": "從此範本建立之每個沙箱的預設 CPU 限制。",
   "templates.col.defaultMemoryTooltip": "從此範本建立之每個沙箱的預設記憶體限制。",
   "templates.form.basicInfo": "基本資訊",
@@ -458,7 +443,6 @@
   "templates.importYaml": "匯入 YAML",
   "templates.exportYaml": "匯出 YAML",
   "templates.pasteCompleteYaml": "貼上完整的 SandboxTemplate YAML。所有的表單欄位將被覆寫。",
-
   "apiKeys.title": "API 金鑰",
   "apiKeys.createTitle": "建立 API 金鑰",
   "apiKeys.globalKeyDesc": "此金鑰可用於所有叢集的認證。",
@@ -504,10 +488,9 @@
   "apiKeys.importCount": "匯入 {{count}} 把金鑰",
   "apiKeys.importing": "匯入中...",
   "apiKeys.parse": "解析",
-
   "overview.title": "儀表板",
-  "overview.prewarmed": "已預熱",
-  "overview.prewarmedTooltip": "目前所有預熱池中已分配的預熱沙箱插槽總數。包含閒置、啟動中和停止中的沙箱。",
+  "overview.desired": "已預熱",
+  "overview.desiredTooltip": "目前所有預熱池中已分配的預熱沙箱插槽總數。包含閒置、啟動中和停止中的沙箱。",
   "overview.runningTooltip": "目前正在被 AI Agent 使用的沙箱。",
   "overview.idleTooltip": "在預熱池中處於預熱狀態的沙箱，可立即取得，幾乎零啟動延遲。",
   "overview.startingTooltip": "正在初始化的沙箱。尚未開放取得。",
@@ -545,23 +528,19 @@
   "overview.viewingAs": "目前檢視身分：{{user}}",
   "overview.mySandboxes": "我的沙箱",
   "overview.sandboxReplicasByUser": "使用者沙箱副本分布",
-
   "general.title": "一般設定",
   "general.account": "帳戶",
   "general.currentSession": "您目前的工作階段資訊。",
   "general.session": "工作階段",
   "general.signOutDesc": "登出以清除工作階段。您的 API 金鑰仍會保持有效。",
   "general.signOut": "登出",
-
   "general.language": "語言",
   "general.languageDesc": "選擇儀表板的顯示語言。",
   "general.languageCurrent": "目前：{{language}}",
-
   "general.about": "關於",
   "general.aboutDesc": "儀表板與伺服器版本資訊。",
   "general.dashboardVersion": "儀表板版本",
   "general.serverVersion": "伺服器版本",
-
   "admin.title": "管理統計",
   "admin.accessRequired": "需要管理員權限",
   "admin.onlyAdmins": "只有管理員可以管理 API 金鑰。",
@@ -571,7 +550,6 @@
   "admin.overview": "總覽",
   "admin.sandboxes": "沙箱",
   "admin.byNamespace": "按命名空間",
-
   "quota.title": "配額",
   "quota.noQuotasAvailable": "目前尚無可用配額。",
   "quota.noResourceData": "此配額目前尚無可用的資源資料。",
@@ -579,14 +557,12 @@
   "quota.used": "已使用",
   "quota.reserved": "已保留",
   "quota.free": "可用",
-
   "changelog.title": "更新日誌",
   "changelog.whatsNewInVersion": "v{{version}} 更新內容",
   "changelog.heresWhatChanged": "以下是最新版本的更新內容。",
   "changelog.dontShowAgain": "不再顯示",
   "changelog.fullHistory": "完整歷程記錄",
   "changelog.gotIt": "我知道了",
-
   "prometheus.sandboxMetrics": "沙箱指標",
   "prometheus.allTeams": "所有團隊",
   "prometheus.allUsers": "所有使用者",
@@ -646,9 +622,9 @@
   "common.noData": "無資料",
   "prometheus.refreshNow": "立即重新整理",
   "prometheus.metrics": "指標",
-  "prometheus.prewarmed": "已預熱",
-  "prometheus.prewarmedSub": "目前預熱容量",
-  "prometheus.prewarmedTooltip": "目前所有預熱池中已分配的預熱沙箱插槽總數。包含閒置、啟動中和停止中的沙箱。",
+  "prometheus.desired": "已預熱",
+  "prometheus.desiredSub": "目前預熱容量",
+  "prometheus.desiredTooltip": "目前所有預熱池中已分配的預熱沙箱插槽總數。包含閒置、啟動中和停止中的沙箱。",
   "prometheus.running": "執行中",
   "prometheus.runningSub": "目前活躍沙箱",
   "prometheus.runningTooltip": "目前正在被 AI Agent 使用的沙箱。",
@@ -743,7 +719,6 @@
   "prometheus.legendMean": "平均值",
   "prometheus.legendMax": "最大值",
   "prometheus.legendMin": "最小值",
-
   "table.id": "ID",
   "table.name": "名稱",
   "table.team": "團隊",
@@ -777,14 +752,10 @@
   "table.clearFilters": "清除篩選",
   "table.visibility": "可見性",
   "table.selectColumnsToDisplay": "選擇要顯示的欄位",
-
   "cluster.searchCluster": "搜尋叢集...",
   "cluster.noClustersFound": "找不到叢集",
-
   "changelog.newVersionAvailable": "v{{version}} 現已推出",
-
   "common.revoke": "撤銷",
-
   "apiKeys.form.namespaceDesc": "此金鑰所屬的命名空間。",
   "apiKeys.form.selectTeam": "選擇團隊...",
   "apiKeys.form.selectUser": "選擇使用者...",
@@ -807,14 +778,12 @@
   "apiKeys.promoteSuccess": "API Key 已提升為全域",
   "apiKeys.promoteConfirm": "確認提升",
   "common.advanced": "進階",
-
   "envs.docs": "文件",
   "envs.envDocsSheet.title": "Env 文件",
   "envs.noEnvDocs": "此 Env 暫無文件。",
   "envs.apiKeyRequired.title": "需要 API 金鑰",
   "envs.apiKeyRequired.envDocsDescription": "您目前的 API 金鑰為舊版本（平台未保存完整金鑰內容），無法用於渲染文件中的範例程式碼。請前往 API 金鑰頁面建立一個新金鑰，即可正常檢視 Env 使用文件。",
   "envs.apiKeyRequired.goToApiKeys": "前往 API 金鑰頁面",
-
   "prometheus.expandChart": "展開圖表",
   "prometheus.copyPromql": "複製 PromQL 查詢",
   "prometheus.copiedPromql": "已複製！",
@@ -826,7 +795,6 @@
   "prometheus.envoyRxBytesTooltip": "所選時間視窗內 Envoy 上游連線累計接收的位元組數（envoy_cluster_upstream_cx_rx_bytes_total）。",
   "prometheus.envoyBandwidthRate": "Envoy 頻寬速率（TX / RX）",
   "prometheus.envoyBandwidthRateTooltip": "Envoy 上游連線的即時頻寬吞吐量（bytes/s），TX 為傳送速率，RX 為接收速率。持續高位可能表示上游流量壓力過大。",
-
   "datasets.title": "資料集",
   "datasets.searchPlaceholder": "搜尋資料集和映像檔...",
   "datasets.filterByCategory": "分類",
@@ -849,7 +817,6 @@
   "datasets.tagSweAgent": "SWE-Agent",
   "datasets.tagCodegen": "程式碼生成",
   "datasets.tagBenchmark": "基準測試",
-
   "envs.newEnv": "新增環境",
   "envs.searchAll": "搜尋環境…",
   "envs.action.edit": "編輯",
@@ -935,6 +902,11 @@
   "envs.autoscalingDisabled": "未啟用",
   "envs.action.viewDetails": "查看詳情",
   "envs.action.editAutoscaling": "編輯自動擴縮容",
+  "envs.tab.overview": "概覽",
+  "envs.tab.pools": "資源池",
+  "envs.tab.autoscaling": "擴縮容",
+  "envs.tab.metrics": "指標與事件",
+  "envs.detail.field.members": "成員",
   "envs.detail.title": "環境詳情 — {{name}}",
   "envs.detail.section.spec": "規格",
   "envs.detail.section.autoscaling": "自動擴縮容",

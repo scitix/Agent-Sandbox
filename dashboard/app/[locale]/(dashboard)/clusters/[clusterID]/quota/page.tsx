@@ -18,7 +18,6 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { quotasQueryOptions } from "@/lib/queries"
-import { PageHeader } from "@/components/page-header"
 import { DotPattern } from "@/components/patterns"
 import { cn } from "@/lib/utils"
 import type { QuotaItem } from "@/lib/api/client"
@@ -126,9 +125,7 @@ export default function QuotaPage() {
   const { t } = useTranslation()
 
   return (
-    <div className="min-h-screen overflow-auto">
-      <PageHeader title={t("quota.title")} />
-
+    <div className="overflow-y-auto">
       <div className="p-6">
         {isPending ? (
           <div className="text-muted-foreground flex flex-col items-center justify-center py-20 text-center">
@@ -186,6 +183,6 @@ export default function QuotaPage() {
           </div>
         )}
       </div>
-    </div>
+    </div >
   )
 }

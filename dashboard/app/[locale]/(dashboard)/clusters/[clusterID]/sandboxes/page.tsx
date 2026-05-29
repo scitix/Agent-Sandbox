@@ -18,16 +18,13 @@
 
 import { useMemo, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
+import { useRouter } from "next/navigation"
 import { Plus, Trash2 } from "lucide-react"
 import { parseAsString, useQueryState } from "nuqs"
 import { useTranslation } from "@/lib/i18n"
-import { PageHeader } from "@/components/page-header"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
 import { createSandboxColumns } from "@/components/sandboxes/columns"
-import { EndpointSheet } from "@/components/sandboxes/endpoint-sheet"
-import { LogsSheet, LOGS_SANDBOX_ID_PARAM } from "@/components/sandboxes/logs-sheet"
 import { TerminalDialog, TERMINAL_SANDBOX_ID_PARAM } from "@/components/sandboxes/terminal-dialog"
-import { SandboxMetricsSheet } from "@/components/prometheus/sandbox-metrics-sheet"
 import { CreateSandboxDialog } from "@/components/sandboxes/create-dialog"
 import { DeleteSandboxDialog } from "@/components/sandboxes/delete-dialog"
 import { sandboxesQueryOptions, deleteSandboxImperative } from "@/lib/queries"
@@ -41,10 +38,14 @@ import { useTableSearchParams, type FilterColumnDef } from "@/hooks/use-table-se
 import { useAtomValue } from "jotai"
 import { isActualAdminAtom } from "@/lib/atoms"
 import type { TranslationKey } from "@/lib/i18n"
+import { clusterPath } from "@/lib/cluster-path"
+import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import { useExternalLogsConfigured } from "@/hooks/use-external-logs"
 
 const sandboxFilterColumns: FilterColumnDef[] = [
   { id: "sandboxId", type: "string" },
+  { id: "envName", type: "faceted" },
   { id: "poolName", type: "faceted" },
   { id: "status", type: "faceted" },
   { id: "cpu", type: "number-range" },
@@ -53,16 +54,13 @@ const sandboxFilterColumns: FilterColumnDef[] = [
 
 export default function SandboxesPage() {
   const { t } = useTranslation()
+  const router = useRouter()
+  const clusterID = useClusterID()
+  const locale = useLocale()
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AgentSandbox | null>(null)
-  const [endpointTarget, setEndpointTarget] = useState<AgentSandbox | null>(null)
-  const [metricsTarget, setMetricsTarget] = useState<AgentSandbox | null>(null)
   const [, setTerminalForId] = useQueryState(
     TERMINAL_SANDBOX_ID_PARAM,
-    parseAsString.withOptions({ scroll: false, shallow: true }),
-  )
-  const [, setLogsForId] = useQueryState(
-    LOGS_SANDBOX_ID_PARAM,
     parseAsString.withOptions({ scroll: false, shallow: true }),
   )
   const qc = useQueryClient()
@@ -72,21 +70,28 @@ export default function SandboxesPage() {
   const isActualAdmin = useAtomValue(isActualAdminAtom)
   const isExternalLogsConfigured = useExternalLogsConfigured()
 
+  // The view actions deep-link into the consolidated detail page's tabs;
+  // Terminal stays an in-place dialog and Delete an in-place confirm.
+  const goToDetail = (sandbox: AgentSandbox, tab?: string) => {
+    const base = `${clusterPath(clusterID, "sandboxes", locale)}/${encodeURIComponent(sandbox.sandboxId)}`
+    router.push(tab ? `${base}?tab=${tab}` : base)
+  }
+
   const columns = useMemo(
     () =>
       createSandboxColumns(
         t,
         (sandbox) => setDeleteTarget(sandbox),
-        (sandbox) => setEndpointTarget(sandbox),
         (sandbox) => void setTerminalForId(sandbox.sandboxId),
-        (sandbox) => void setLogsForId(sandbox.sandboxId),
+        (sandbox) => goToDetail(sandbox, "logs"),
         {
           isActualAdmin,
           isExternalLogsConfigured,
         },
-        (sandbox) => setMetricsTarget(sandbox),
+        (sandbox) => goToDetail(sandbox, "metrics"),
       ),
-    [t, setTerminalForId, setLogsForId, isActualAdmin, isExternalLogsConfigured],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t, setTerminalForId, isActualAdmin, isExternalLogsConfigured, clusterID, locale],
   )
 
   const multipleHandlers: MultipleHandler<AgentSandbox>[] = [
@@ -150,11 +155,13 @@ export default function SandboxesPage() {
           return map[key] ? t(map[key]) : value
         },
       },
+      { columnKey: "envName", title: t("sandboxes.col.env") },
       { columnKey: "poolName", title: t("sandboxes.col.pool") },
     ] as const,
     getHeader: (key) => {
       const headers: Record<string, string> = {
         sandboxId: t("sandboxes.col.id"),
+        envName: t("sandboxes.col.env"),
         poolName: t("sandboxes.col.pool"),
         status: t("sandboxes.col.status"),
         claimedAt: t("sandboxes.col.claimedAt"),
@@ -169,7 +176,7 @@ export default function SandboxesPage() {
       }
       return headers[key] || key
     },
-    hiddenColumns: ["recycledAt", "images", "nodeName", "containerId", "durationSeconds"],
+    hiddenColumns: ["poolName", "podName", "recycledAt", "images", "nodeName", "containerId", "durationSeconds"],
   }
 
   const toolbarActions = (
@@ -187,8 +194,6 @@ export default function SandboxesPage() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <PageHeader title={t("sandboxes.title")} />
-
       <div className="flex min-h-0 flex-1 flex-col">
         <QueryTable
           idFn={(row) => row.sandboxId}
@@ -197,7 +202,7 @@ export default function SandboxesPage() {
           toolbarConfig={toolbarConfig}
           multipleHandlers={multipleHandlers}
           externalState={tableState}
-          className="table-layout-fixed h-[calc(100vh-51px)]"
+          className="table-layout-fixed h-full"
         >
           {toolbarActions}
         </QueryTable>
@@ -210,20 +215,7 @@ export default function SandboxesPage() {
           if (!open) setDeleteTarget(null)
         }}
       />
-      <EndpointSheet
-        sandbox={endpointTarget}
-        onOpenChange={(open) => {
-          if (!open) setEndpointTarget(null)
-        }}
-      />
-      <LogsSheet />
       <TerminalDialog />
-      <SandboxMetricsSheet
-        sandbox={metricsTarget}
-        onOpenChange={(open) => {
-          if (!open) setMetricsTarget(null)
-        }}
-      />
     </div>
   )
 }

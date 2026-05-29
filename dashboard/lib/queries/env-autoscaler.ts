@@ -43,17 +43,10 @@ export const envAutoscalingGroupsQueryOptions = (envName: string) =>
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
-/** Add a new autoscaling group. */
-export function useAddEnvAutoscalingGroup(envName: string) {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("post", "/envs/{name}/autoscaling/groups", {
-    onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/envs/{name}/autoscaling/groups", { params: { path: { name: envName } } }])
-      delayedInvalidate(qc, ["get", "/envs/{name}/autoscaling", { params: { path: { name: envName } } }])
-      delayedInvalidate(qc, ["get", "/envs/{name}"])
-    },
-  })
-}
+// Groups are created automatically when a member declaring the matching
+// ScalingGroup is added (POST /envs/{name}/sandboxpools) and garbage-collected
+// by the Env reconciler once unreferenced — there is no standalone "add group"
+// mutation. Only update / delete are exposed here.
 
 /** Patch an existing autoscaling group. Policy objects are REPLACED wholesale. */
 export function useUpdateEnvAutoscalingGroup(envName: string) {

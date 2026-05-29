@@ -73,7 +73,7 @@ function InlineCopyButton({ value }: { value: string }) {
   return (
     <button
       onClick={handleCopy}
-      className={`text-muted-foreground hover:text-foreground rounded p-0.5 transition-colors${copied ? " text-green-500 hover:text-green-500" : ""}`}
+      className={`text-muted-foreground hover:text-foreground rounded p-0.5 transition-colors${copied ? "text-green-500 hover:text-green-500" : ""}`}
       title={copied ? "Copied!" : "Copy name"}
     >
       {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -83,7 +83,7 @@ function InlineCopyButton({ value }: { value: string }) {
 
 // ─── Inner content (only mounted when sheet is open → triggers fetch) ──────────
 
-function TemplateDetailContent({
+export function TemplateDetailContent({
   templateName,
   onEdit,
   onDelete,

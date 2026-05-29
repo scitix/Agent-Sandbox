@@ -27,7 +27,7 @@
  *       deleteReleased  — sandboxes deleted with stop_reason="Released"
  *       deleteFailed    — sandboxes deleted with stop_reason="Failed"
  *   - Instant gauge queries (point-in-time at end of range):
- *       prewarmed — agentbox_sandboxpool_replicas_desired (Idle+Starting+Stopping)
+ *       desired — agentbox_sandboxpool_replicas_desired (Idle+Starting+Stopping)
  *       running   — agentbox_sandboxpool_replicas_running
  *
  * Query params:
@@ -79,16 +79,16 @@ export const GET = withPrometheusRoute(
     const qDeleteCompleted = `sum(increase(agentbox_sandbox_delete_total{${sel},stop_reason="Completed"}[${windowStr}]))`
     const qDeleteReleased = `sum(increase(agentbox_sandbox_delete_total{${sel},stop_reason="Released"}[${windowStr}]))`
     const qDeleteFailed = `sum(increase(agentbox_sandbox_delete_total{${sel},stop_reason="Failed"}[${windowStr}]))`
-    const qPrewarmed = `sum(agentbox_sandboxpool_replicas_desired{${sel}})`
+    const qDesired = `sum(agentbox_sandboxpool_replicas_desired{${sel}})`
     const qRunning = `sum(agentbox_sandboxpool_replicas_running{${sel}})`
 
-    const [createSuccess, deleteCompleted, deleteReleased, deleteFailed, prewarmed, running] =
+    const [createSuccess, deleteCompleted, deleteReleased, deleteFailed, desired, running] =
       await Promise.all([
         fetchPrometheusInstant(config, qCreateSuccess, endTime).catch(() => null),
         fetchPrometheusInstant(config, qDeleteCompleted, endTime).catch(() => null),
         fetchPrometheusInstant(config, qDeleteReleased, endTime).catch(() => null),
         fetchPrometheusInstant(config, qDeleteFailed, endTime).catch(() => null),
-        fetchPrometheusInstant(config, qPrewarmed, endTime).catch(() => null),
+        fetchPrometheusInstant(config, qDesired, endTime).catch(() => null),
         fetchPrometheusInstant(config, qRunning, endTime).catch(() => null),
       ])
 
@@ -100,14 +100,14 @@ export const GET = withPrometheusRoute(
       deleteCompleted: toInt(deleteCompleted ? extractScalar(deleteCompleted) : null),
       deleteReleased: toInt(deleteReleased ? extractScalar(deleteReleased) : null),
       deleteFailed: toInt(deleteFailed ? extractScalar(deleteFailed) : null),
-      prewarmed: prewarmed ? extractScalar(prewarmed) : null,
+      desired: desired ? extractScalar(desired) : null,
       running: running ? extractScalar(running) : null,
       _promql: [
         qCreateSuccess,
         qDeleteCompleted,
         qDeleteReleased,
         qDeleteFailed,
-        qPrewarmed,
+        qDesired,
         qRunning,
       ],
     }

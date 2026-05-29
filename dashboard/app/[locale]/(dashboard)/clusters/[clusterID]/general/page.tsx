@@ -19,7 +19,6 @@
 import { useRouter } from "next/navigation"
 import { useAtomValue } from "jotai"
 import { useQuery } from "@tanstack/react-query"
-import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
@@ -67,8 +66,6 @@ export default function GeneralPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      <PageHeader title={t("general.title")} />
-
       <div className="max-w-2xl p-6">
         <div className="flex flex-col gap-6">
           {/* Account Info */}
@@ -119,7 +116,7 @@ export default function GeneralPage() {
               {t("general.about")}
             </h3>
             <p className="text-muted-foreground mb-3 text-xs">{t("general.aboutDesc")}</p>
-            <div className="border-border bg-secondary flex flex-col gap-0 divide-y divide-border border">
+            <div className="border-border bg-secondary divide-border flex flex-col gap-0 divide-y border">
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-muted-foreground font-mono text-xs">
                   {t("general.dashboardVersion")}

@@ -20,7 +20,7 @@
  * PoolMetricsSheet — Replica Trend monitoring for a specific SandboxPool.
  *
  * Opens as a right-side Sheet from the pool Actions dropdown.
- * Shows Prewarmed vs Running replica counts over time, filtered to the specific pool.
+ * Shows Desired vs Running replica counts over time, filtered to the specific pool.
  *
  * Smart time-range defaults:
  * - Pool created < 1 day ago: absolute range from createdAt to now (adjustable), auto-refresh 30s
@@ -171,7 +171,7 @@ function PoolMetricsSheetContent({ pool }: { pool: AgentSandboxPool }) {
             title={t("prometheus.replicaTrend")}
             description={t("prometheus.replicaTrendTooltip")}
             series={[
-              { name: "Prewarmed", color: C.prewarmed },
+              { name: "Desired", color: C.desired },
               { name: "Running", color: C.running },
               { name: "Starting", color: C.starting },
               { name: "Stopping", color: C.stopping },

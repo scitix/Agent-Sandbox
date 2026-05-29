@@ -20,7 +20,6 @@ import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Plus } from "lucide-react"
 
-import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
 import { createEnvColumns } from "@/components/envs/columns"
@@ -30,6 +29,7 @@ import { envsQueryOptions } from "@/lib/queries"
 import type { AgentSandboxEnv } from "@/lib/api/client"
 import { clusterPath } from "@/lib/cluster-path"
 import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import { useTableSearchParams, type FilterColumnDef } from "@/hooks/use-table-search-params"
 import { useTranslation } from "@/lib/i18n"
 
@@ -43,6 +43,7 @@ export default function EnvsPage() {
   const { t } = useTranslation()
   const router = useRouter()
   const clusterID = useClusterID()
+  const locale = useLocale()
   const [createOpen, setCreateOpen] = useState(false)
   const [editEnvTarget, setEditEnvTarget] = useState<AgentSandboxEnv | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AgentSandboxEnv | null>(null)
@@ -52,7 +53,7 @@ export default function EnvsPage() {
   // Name clicks navigate to the 3-level detail page so the URL is
   // shareable and the browser back-stack works as users expect.
   const goToDetail = (env: AgentSandboxEnv) => {
-    router.push(`${clusterPath(clusterID, "envs")}/${encodeURIComponent(env.name)}`)
+    router.push(`${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(env.name)}`)
   }
 
   const columns = useMemo(
@@ -82,8 +83,6 @@ export default function EnvsPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader title={t("envs.title")} />
-
       <div className="flex min-h-0 flex-1 flex-col">
         <QueryTable
           columns={columns}
@@ -91,7 +90,7 @@ export default function EnvsPage() {
           queryOptions={queryOptions}
           toolbarConfig={{ globalSearch: { placeholder: t("envs.searchAll") } }}
           externalState={tableState}
-          className="table-layout-fixed h-[calc(100vh-51px)]"
+          className="table-layout-fixed h-full"
         >
           {toolbar}
         </QueryTable>

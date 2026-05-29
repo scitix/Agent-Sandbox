@@ -85,7 +85,7 @@ function iconFor(reason: string): { Icon: LucideIcon; color: string } {
     return { Icon: AlertTriangle, color: C.error }
   }
   if (reason === "RefreshMember" || reason === "SyncTemplate") {
-    return { Icon: RefreshCw, color: C.prewarmed }
+    return { Icon: RefreshCw, color: C.desired }
   }
   return { Icon: Circle, color: C.idle }
 }

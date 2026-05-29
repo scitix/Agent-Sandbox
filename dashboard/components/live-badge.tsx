@@ -25,11 +25,11 @@ export function LiveBadge() {
   const { t } = useTranslation()
 
   return (
-    <div className="border-border rounded-md bg-card text-card-foreground flex items-center gap-3 border px-3 py-1.5">
+    <div className="border-border hidden xl:flex h-8 rounded-md bg-card text-card-foreground items-center gap-3 border px-3">
       <span className="flex items-center gap-1.5">
         <span className="relative flex h-2 w-2">
-          <span className="bg-success absolute inline-flex h-full w-full animate-ping opacity-75" />
-          <span className="bg-success relative inline-flex h-2 w-2" />
+          <span className="bg-success absolute inline-flex h-full w-full animate-ping opacity-75 rounded-full" />
+          <span className="bg-success relative inline-flex h-2 w-2 rounded-full" />
         </span>
         <span className="text-success text-xs font-bold tracking-wider">{t("status.live")}</span>
       </span>

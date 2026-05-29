@@ -18,14 +18,12 @@
 
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { useRouter } from "next/navigation"
 import { useAtomValue } from "jotai"
-import { parseAsString, useQueryState } from "nuqs"
-import { ExternalLink, Search, HardDrive, Plus, Pencil, Trash2, Copy, Check } from "lucide-react"
+import { Search, HardDrive, Plus, Pencil, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import {
   Dialog,
   DialogContent,
@@ -35,33 +33,14 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
+import { clusterPath } from "@/lib/cluster-path"
 import { useTranslation } from "@/lib/i18n"
 import { isActualAdminAtom } from "@/lib/atoms"
 import { imagesCatalogQueryOptions, useDeleteImageDataset } from "@/lib/queries/images"
 import type { ImageDataset } from "@/components/images/data"
-import { MarkdownRenderer } from "@/components/markdown-renderer"
 import { UpsertImageDialog } from "@/components/images/upsert-dialog"
 import { cn } from "@/lib/utils"
-
-// ---------------------------------------------------------------------------
-// Copy-page button
-// ---------------------------------------------------------------------------
-
-function CopyPageButton({ content }: { content: string }) {
-  const { t } = useTranslation()
-  const [copied, setCopied] = useState(false)
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(content)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-  return (
-    <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleCopy}>
-      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-      {copied ? t("common.copied") : t("common.copyPage")}
-    </Button>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Image Card
@@ -159,93 +138,6 @@ function ImageCard({
 }
 
 // ---------------------------------------------------------------------------
-// Usage Sheet
-// ---------------------------------------------------------------------------
-
-function UsageSheet({
-  dataset,
-  open,
-  onOpenChange,
-  clusterID,
-  onEdit,
-  isAdmin,
-}: {
-  dataset: ImageDataset | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  clusterID: string
-  onEdit?: (d: ImageDataset) => void
-  isAdmin: boolean
-}) {
-  const { t } = useTranslation()
-
-  if (!dataset) return null
-
-  const docContent = dataset.clusterDocs[clusterID]
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-6xl"
-      >
-        <SheetHeader className="border-border border-b px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-muted flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-              <HardDrive className="h-4 w-4" />
-            </div>
-            <div>
-              <SheetTitle className="text-base font-semibold">
-                {t("datasets.usageTitle", { name: dataset.name })}
-              </SheetTitle>
-              <p className="text-muted-foreground mt-0.5 font-mono text-xs">
-                {t("datasets.imageCount", { count: dataset.imageCount })}
-              </p>
-            </div>
-          </div>
-        </SheetHeader>
-
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {/* Action buttons at top of content */}
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            {docContent && <CopyPageButton content={docContent} />}
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 text-xs"
-              onClick={() => window.open(dataset.huggingFaceUrl, "_blank", "noopener,noreferrer")}
-            >
-              <ExternalLink className="h-3 w-3" />
-              HuggingFace
-            </Button>
-            {isAdmin && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => {
-                  onOpenChange(false)
-                  onEdit?.(dataset)
-                }}
-              >
-                <Pencil className="h-3 w-3" />
-                {t("common.edit")}
-              </Button>
-            )}
-          </div>
-
-          {docContent ? (
-            <MarkdownRenderer content={docContent} />
-          ) : (
-            <p className="text-muted-foreground text-sm">{t("datasets.usageNoClusterDocs")}</p>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Delete Confirm Dialog
 // ---------------------------------------------------------------------------
 
@@ -300,13 +192,11 @@ function DeleteImageDialog({
 export default function ImagesPage() {
   const { t } = useTranslation()
   const clusterID = useClusterID()
+  const locale = useLocale()
+  const router = useRouter()
   const isAdmin = useAtomValue(isActualAdminAtom)
 
   const [search, setSearch] = useState("")
-  const [selectedImageId, setSelectedImageId] = useQueryState(
-    "image",
-    parseAsString.withOptions({ scroll: false, shallow: true }),
-  )
   const [upsertOpen, setUpsertOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<ImageDataset | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ImageDataset | null>(null)
@@ -330,14 +220,8 @@ export default function ImagesPage() {
     )
   }, [availableDatasets, search])
 
-  const isSheetOpen = !!selectedImageId
-  const selectedDataset = useMemo(
-    () => availableDatasets.find((d) => d.id === selectedImageId) ?? null,
-    [availableDatasets, selectedImageId],
-  )
-
   const handleViewUsage = (dataset: ImageDataset) => {
-    void setSelectedImageId(dataset.id)
+    router.push(`${clusterPath(clusterID, "datasets", locale)}/${encodeURIComponent(dataset.id)}`)
   }
 
   const handleEdit = (dataset: ImageDataset) => {
@@ -352,8 +236,6 @@ export default function ImagesPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader title={t("datasets.title")} />
-
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {/* Toolbar */}
         <div className="border-border border-b px-6 py-3">
@@ -407,17 +289,6 @@ export default function ImagesPage() {
           )}
         </div>
       </div>
-
-      <UsageSheet
-        dataset={selectedDataset}
-        open={isSheetOpen}
-        onOpenChange={(open) => {
-          if (!open) void setSelectedImageId(null)
-        }}
-        clusterID={clusterID}
-        onEdit={handleEdit}
-        isAdmin={isAdmin}
-      />
 
       <UpsertImageDialog
         open={upsertOpen}

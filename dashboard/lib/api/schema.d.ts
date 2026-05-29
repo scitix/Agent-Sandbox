@@ -196,7 +196,7 @@ export interface paths {
         /** List SandboxEnvs visible to the caller */
         get: operations["ListSandboxEnvs"];
         put?: never;
-        /** Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; autoscaling groups through `POST /envs/{name}/autoscaling/groups`. */
+        /** Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; the matching autoscaling group is created automatically per member and tuned through `PUT /envs/{name}/autoscaling/groups/{groupName}`. */
         post: operations["CreateSandboxEnv"];
         delete?: never;
         options?: never;
@@ -276,8 +276,7 @@ export interface paths {
         /** List autoscaling groups on the env. */
         get: operations["ListEnvAutoscalingGroups"];
         put?: never;
-        /** Add a new autoscaling group to the env. */
-        post: operations["AddEnvAutoscalingGroup"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -777,6 +776,8 @@ export interface components {
             namespace: string;
             /** @description Name of the SandboxPool this sandbox was allocated from. */
             poolName: string;
+            /** @description Name of the SandboxEnv that owns the pool this sandbox was allocated from (from pod label agentbox.navix.sh/env). */
+            envName?: string;
             /** @description Name of the Kubernetes Pod backing this sandbox. */
             podName: string;
             /**
@@ -1122,6 +1123,8 @@ export interface components {
             team?: string;
             /** @description User label of the pool owner (from CRD label) */
             user?: string;
+            /** @description Scaling group this pool belongs to (from the agentbox.navix.sh/scaling-group label). Members in the same group share an autoscaling policy. Empty when the pool is excluded from autoscaling. */
+            scalingGroup?: string;
             /** @description Version of the source SandboxTemplate at last sync (from annotation) */
             templateVersion?: string;
             overrides?: components["schemas"]["PoolTemplateOverrides"];
@@ -1422,7 +1425,7 @@ export interface components {
             members?: components["schemas"]["EnvClusterMember"][];
         };
         EnvAutoscalingGroup: {
-            /** @description ScalingGroup identifier this policy applies to. Must match the EnvClusterMember.scalingGroup of at least one member declared on the env — empty-group policies are rejected at AddAutoscalingGroup time. */
+            /** @description ScalingGroup identifier this policy applies to. Matches the EnvClusterMember.scalingGroup of at least one member declared on the env — the group is created automatically when a member with this ScalingGroup is added, and garbage-collected by the Env reconciler once no member references it. */
             name: string;
             /** @description Per-group master switch. When false, this group's members keep manual Pool replicas; the autoscaler skips it. Each group is independent — other groups continue to run if Enabled=true. */
             enabled?: boolean;
@@ -3204,77 +3207,6 @@ export interface operations {
             };
             /** @description Env Not Found */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    AddEnvAutoscalingGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EnvAutoscalingGroup"];
-            };
-        };
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EnvAutoscalingGroupEnvelope"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Env Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Group name already exists */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };

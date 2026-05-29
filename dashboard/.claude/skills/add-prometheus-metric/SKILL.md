@@ -366,7 +366,7 @@ Color token cheatsheet (see `colors.ts` for the full list):
 | `C.p99` `C.p95` `C.p90` `C.p50`       | Latency percentiles (red→blue)      |
 | `C.success` `C.warning` `C.error`     | Outcome / health                    |
 | `C.tx` `C.rx`                         | Network direction                   |
-| `C.prewarmed` `C.running` `C.starting` `C.stopping` `C.idle` | Replica / sandbox states |
+| `C.desired` `C.running` `C.starting` `C.stopping` `C.idle` | Replica / sandbox states |
 | `C.green` `C.blue` `C.indigo` `C.orange` `C.purple` … | Generic palette     |
 
 No `mergeChartSeries` import, no `promqlQueries` prop — both are handled inside

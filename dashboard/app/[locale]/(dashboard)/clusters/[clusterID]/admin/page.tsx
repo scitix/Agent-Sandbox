@@ -20,7 +20,6 @@ import { useAtomValue } from "jotai"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { BarChart3, RefreshCw, Users, Box } from "lucide-react"
-import { PageHeader } from "@/components/page-header"
 import { isAdminAtom } from "@/lib/atoms"
 import { sandboxStatsQueryOptions, replicasOverviewQueryOptions } from "@/lib/queries"
 import { Button } from "@/components/ui/button"
@@ -28,6 +27,7 @@ import { PrometheusSection } from "@/components/prometheus/prometheus-section"
 import { useRouter } from "next/navigation"
 import { useEffect } from "react"
 import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
 import { useTranslation } from "@/lib/i18n"
 
@@ -67,13 +67,14 @@ export default function AdminPage() {
   const { t } = useTranslation()
   const router = useRouter()
   const clusterID = useClusterID()
+  const locale = useLocale()
   const qc = useQueryClient()
 
   useEffect(() => {
     if (!isAdmin) {
-      router.replace(clusterPath(clusterID, "sandboxes"))
+      router.replace(clusterPath(clusterID, "sandboxes", locale))
     }
-  }, [isAdmin, router, clusterID])
+  }, [isAdmin, router, clusterID, locale])
 
   // Probe Prometheus config first — gates whether fallback stats are shown
   const prometheusFilters = useMemo(() => ({ cluster: clusterID }), [clusterID])
@@ -103,8 +104,6 @@ export default function AdminPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      <PageHeader title={t("admin.title")} />
-
       {/* Sub-header with refresh: only shown in fallback mode */}
       {showFallback && (
         <div className="border-border flex items-center gap-4 border-b px-6">

@@ -61,10 +61,12 @@ export function mergeChartSeries(series: ChartSeries[]): RechartsDataPoint[] {
  * Examples: 512 → "512 B", 1536 → "1.5 KB", 1073741824 → "1 GB"
  */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B"
+  if (bytes === null || bytes === undefined || isNaN(bytes) || bytes === 0) {
+    return "0 B";
+  }
   const units = ["B", "KB", "MB", "GB", "TB"]
   const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024))
-  const clamped = Math.min(i, units.length - 1)
+  const clamped = Math.max(0, Math.min(i, units.length - 1))
   const value = bytes / Math.pow(1024, clamped)
   return `${value % 1 === 0 ? value : value.toFixed(1)} ${units[clamped]}`
 }

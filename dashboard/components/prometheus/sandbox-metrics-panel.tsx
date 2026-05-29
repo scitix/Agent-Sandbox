@@ -34,18 +34,12 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react"
 import { useTranslation } from "@/lib/i18n"
-import { AlertCircle, Activity } from "lucide-react"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
-import { SandboxSheetHeader } from "@/components/sandboxes/sandbox-sheet-header"
+import { AlertCircle } from "lucide-react"
 import { MetricsChart } from "@/components/prometheus/metrics-chart"
 import { C } from "./colors"
 import { GrafanaTimePicker } from "@/components/prometheus/grafana-time-picker"
 import { usePodCpu, usePodMemory, usePodNetwork, usePodDiskIo } from "@/lib/queries"
-import {
-  formatBytes,
-  formatCores,
-  formatDuration,
-} from "@/lib/prometheus/transform"
+import { formatBytes, formatCores, formatDuration } from "@/lib/prometheus/transform"
 import { sandboxLifetimeBounds } from "@/lib/prometheus/sandbox-lifetime"
 import {
   type TimeRangeValue,
@@ -69,7 +63,7 @@ function formatDurationLabel(startSec: number, endSec: number): string {
 
 // ─── Inner form (only mounted when open) ─────────────────────────────────
 
-function MetricsSheetContent({ sandbox }: { sandbox: AgentSandbox }) {
+export function SandboxMetricsPanel({ sandbox }: { sandbox: AgentSandbox }) {
   const { t } = useTranslation()
   const clusterID = useClusterID()
   const queryClient = useQueryClient()
@@ -177,7 +171,7 @@ function MetricsSheetContent({ sandbox }: { sandbox: AgentSandbox }) {
   }, [isTerminated, hasLifetime, bounds.start, bounds.end, t])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
       {/* Time range controls */}
       <GrafanaTimePicker
         value={timeRange}
@@ -197,107 +191,79 @@ function MetricsSheetContent({ sandbox }: { sandbox: AgentSandbox }) {
           <span>{t("prometheus.prometheusNotConfigured")}</span>
         </div>
       ) : (
-        <div className="space-y-5">
-          {/* CPU chart */}
-          <MetricsChart
-            title={t("prometheus.cpuUsage")}
-            series={[{ name: "CPU", color: C.orange }]}
-            response={cpuData}
-            isLoading={cpuLoading}
-            isFetching={cpuFetching}
-            valueFormatter={formatCores}
-            yAxisLabel="cores"
-            height={180}
-            emptyMessage={t("prometheus.noCpuData")}
-            xStart={start}
-            xEnd={end}
-            onTimeRangeSelect={setTimeRange}
-          />
+        <div className="min-h-0 flex-1">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {/* CPU chart */}
+            <MetricsChart
+              title={t("prometheus.cpuUsage")}
+              series={[{ name: "CPU", color: C.orange }]}
+              response={cpuData}
+              isLoading={cpuLoading}
+              isFetching={cpuFetching}
+              valueFormatter={formatCores}
+              yAxisLabel="cores"
+              height={180}
+              emptyMessage={t("prometheus.noCpuData")}
+              xStart={start}
+              xEnd={end}
+              onTimeRangeSelect={setTimeRange}
+            />
 
-          {/* Memory chart */}
-          <MetricsChart
-            title={t("prometheus.memoryWorkingSet")}
-            series={[{ name: "Memory", color: C.indigo }]}
-            response={memData}
-            isLoading={memLoading}
-            isFetching={memFetching}
-            valueFormatter={formatBytes}
-            height={180}
-            emptyMessage={t("prometheus.noMemoryData")}
-            xStart={start}
-            xEnd={end}
-            onTimeRangeSelect={setTimeRange}
-          />
+            {/* Memory chart */}
+            <MetricsChart
+              title={t("prometheus.memoryWorkingSet")}
+              series={[{ name: "Memory", color: C.indigo }]}
+              response={memData}
+              isLoading={memLoading}
+              isFetching={memFetching}
+              valueFormatter={formatBytes}
+              height={180}
+              emptyMessage={t("prometheus.noMemoryData")}
+              xStart={start}
+              xEnd={end}
+              onTimeRangeSelect={setTimeRange}
+            />
 
-          {/* Network chart */}
-          <MetricsChart
-            title={t("prometheus.networkBandwidth")}
-            series={[
-              { name: "RX", color: C.rx },
-              { name: "TX", color: C.tx },
-            ]}
-            response={netData}
-            isLoading={netLoading}
-            isFetching={netFetching}
-            valueFormatter={formatBytes}
-            yAxisLabel="B/s"
-            height={180}
-            emptyMessage={t("prometheus.noNetworkData")}
-            xStart={start}
-            xEnd={end}
-            onTimeRangeSelect={setTimeRange}
-          />
+            {/* Network chart */}
+            <MetricsChart
+              title={t("prometheus.networkBandwidth")}
+              series={[
+                { name: "RX", color: C.rx },
+                { name: "TX", color: C.tx },
+              ]}
+              response={netData}
+              isLoading={netLoading}
+              isFetching={netFetching}
+              valueFormatter={formatBytes}
+              yAxisLabel="B/s"
+              height={180}
+              emptyMessage={t("prometheus.noNetworkData")}
+              xStart={start}
+              xEnd={end}
+              onTimeRangeSelect={setTimeRange}
+            />
 
-          {/* Disk I/O chart */}
-          <MetricsChart
-            title={t("prometheus.diskIO")}
-            series={[
-              { name: "Read", color: C.indigo },
-              { name: "Write", color: C.orange },
-            ]}
-            response={diskData}
-            isLoading={diskLoading}
-            isFetching={diskFetching}
-            valueFormatter={formatBytes}
-            yAxisLabel="B/s"
-            height={180}
-            emptyMessage={t("prometheus.noDiskData")}
-            xStart={start}
-            xEnd={end}
-            onTimeRangeSelect={setTimeRange}
-          />
+            {/* Disk I/O chart */}
+            <MetricsChart
+              title={t("prometheus.diskIO")}
+              series={[
+                { name: "Read", color: C.indigo },
+                { name: "Write", color: C.orange },
+              ]}
+              response={diskData}
+              isLoading={diskLoading}
+              isFetching={diskFetching}
+              valueFormatter={formatBytes}
+              yAxisLabel="B/s"
+              height={180}
+              emptyMessage={t("prometheus.noDiskData")}
+              xStart={start}
+              xEnd={end}
+              onTimeRangeSelect={setTimeRange}
+            />
+          </div>
         </div>
       )}
     </div>
-  )
-}
-
-// ─── Shell (controls open/close) ─────────────────────────────────────────
-
-export interface SandboxMetricsSheetProps {
-  sandbox: AgentSandbox | null
-  onOpenChange: (open: boolean) => void
-}
-
-export function SandboxMetricsSheet({ sandbox, onOpenChange }: SandboxMetricsSheetProps) {
-  const { t } = useTranslation()
-  const open = sandbox !== null
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex flex-col gap-0 p-0 sm:max-w-xl data-[side=right]:sm:max-w-3xl"
-      >
-        <SandboxSheetHeader
-          icon={Activity}
-          title={t("prometheus.metrics")}
-          sandboxId={sandbox?.sandboxId}
-        />
-
-        {/* Only mount inner form when open — ensures hooks reset properly */}
-        {open && sandbox && <MetricsSheetContent sandbox={sandbox} />}
-      </SheetContent>
-    </Sheet>
   )
 }

@@ -17,36 +17,25 @@
 "use client"
 
 /**
- * EnvCapacitySection — Capacity waterfall for a SandboxEnv.
+ * EnvCapacitySection — Capacity trend for a SandboxEnv.
  *
- * Renders a stacked-area Recharts chart showing each member Pool's current
- * Running (claimed) and Idle (pre-warmed) replica counts over time, summed
- * by phase across the Env's pools. A "Desired" line is overlaid as the
- * target ceiling. Data comes from `env-capacity-waterfall` which returns
- * series named "<phase>/<pool>"; we aggregate phase totals client-side so
- * the route can also feed the per-pool sparkline grid without a second
- * round-trip.
+ * Renders a MetricsChart (line) showing each phase's replica count summed
+ * across all member Pools over time. Running/Idle/Starting/Stopping are
+ * independent parallel series (not stacked); Desired is their approximate
+ * ceiling. Data comes from `env-capacity-waterfall` which returns series
+ * named "<phase>/<pool>"; we aggregate phase totals client-side so the
+ * route can also feed the per-pool sparkline grid without a second round-trip.
  */
 
 import { useMemo, useState, useCallback } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  Line,
-} from "recharts"
-import { AlertCircle, Loader2 } from "lucide-react"
+import { AlertCircle } from "lucide-react"
 
 import { useTranslation } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useRefreshCountdown } from "@/hooks/use-refresh-countdown"
 import { GrafanaTimePicker } from "@/components/prometheus/grafana-time-picker"
+import { MetricsChart } from "@/components/prometheus/metrics-chart"
 import { C } from "@/components/prometheus/colors"
 import {
   envCapacityWaterfallQueryOptions,
@@ -60,17 +49,17 @@ import {
 } from "@/lib/types/prometheus"
 import { mergeChartSeries } from "@/lib/prometheus/transform"
 
-const STACK_PHASES = [
-  { key: "Running", color: C.running },
-  { key: "Idle", color: C.idle },
-  { key: "Starting", color: C.starting },
-  { key: "Stopping", color: C.stopping },
-] as const
+const PHASE_SERIES = [
+  { name: "Running", color: C.running },
+  { name: "Idle", color: C.idle },
+  { name: "Starting", color: C.starting },
+  { name: "Stopping", color: C.stopping },
+  { name: "Desired", color: C.desired },
+]
 
 /**
  * Sum the per-pool series into a single series per phase. Input names look
- * like "<phase>/<pool>"; output names are bare phase labels so the stacked
- * AreaChart can ride the standard Recharts dataKey contract.
+ * like "<phase>/<pool>"; output names are bare phase labels.
  */
 function aggregateByPhase(series: ChartSeries[]): ChartSeries[] {
   const buckets = new Map<string, Map<number, number>>()
@@ -120,11 +109,11 @@ export function EnvCapacitySection({ envName }: EnvCapacitySectionProps) {
     () =>
       (isAbsolute
         ? envCapacityWaterfallAbsoluteQueryOptions(filters, start, end, step, {
-            refetchInterval: effectiveRefetch,
-          })
+          refetchInterval: effectiveRefetch,
+        })
         : envCapacityWaterfallQueryOptions(filters, preset, {
-            refetchInterval: effectiveRefetch,
-          })) as ReturnType<typeof envCapacityWaterfallAbsoluteQueryOptions>,
+          refetchInterval: effectiveRefetch,
+        })) as ReturnType<typeof envCapacityWaterfallAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, preset, effectiveRefetch],
   )
 
@@ -137,98 +126,40 @@ export function EnvCapacitySection({ envName }: EnvCapacitySectionProps) {
 
   const aggregated = useMemo(
     () => (data?.data?.series ? aggregateByPhase(data.data.series) : []),
-    [data?.data?.series],
+    [data],
   )
   const merged = useMemo(() => mergeChartSeries(aggregated), [aggregated])
-  const hasData = merged.length > 0
   const promUnavailable = data && !data.configured
 
   return (
-    <section>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
-          {t("envs.detail.section.capacity")}
-        </h3>
-        {isFetching && !isLoading ? (
-          <Loader2 className="text-muted-foreground h-3.5 w-3.5 animate-spin" />
-        ) : null}
-      </div>
-
-      <div className="space-y-3">
-        <GrafanaTimePicker
-          value={timeRange}
-          onValueChange={setTimeRange}
-          refreshInterval={refreshInterval}
-          onRefreshIntervalChange={setRefreshInterval}
-          onRefresh={handleRefresh}
-          countdown={countdown}
+    <section className="space-y-2">
+      <GrafanaTimePicker
+        value={timeRange}
+        onValueChange={setTimeRange}
+        refreshInterval={refreshInterval}
+        onRefreshIntervalChange={setRefreshInterval}
+        onRefresh={handleRefresh}
+        countdown={countdown}
+      />
+      {promUnavailable ? (
+        <div className="border-border text-muted-foreground flex items-center gap-2 rounded border border-dashed p-4 font-mono text-xs">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{t("prometheus.prometheusNotConfigured")}</span>
+        </div>
+      ) : (
+        <MetricsChart
+          title={t("envs.detail.section.capacity")}
+          series={PHASE_SERIES}
+          data={merged}
+          isLoading={isLoading}
+          isFetching={isFetching}
+          valueFormatter={(v) => Math.round(v).toString()}
+          yAxisLabel="replicas"
+          xStart={start}
+          xEnd={end}
+          onTimeRangeSelect={setTimeRange}
         />
-
-        {promUnavailable ? (
-          <div className="border-border text-muted-foreground flex items-center gap-2 rounded border border-dashed p-4 font-mono text-xs">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{t("prometheus.prometheusNotConfigured")}</span>
-          </div>
-        ) : !hasData && !isLoading ? (
-          <div className="border-border text-muted-foreground flex items-center justify-center rounded border border-dashed p-8 font-mono text-xs">
-            {t("prometheus.noData")}
-          </div>
-        ) : (
-          <div className="border-border bg-background rounded border p-3">
-            <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={merged} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                <XAxis
-                  dataKey="time"
-                  type="number"
-                  domain={[start * 1000, end * 1000]}
-                  tickFormatter={(v) => new Date(v).toLocaleTimeString()}
-                  tick={{ fontSize: 11 }}
-                  stroke="currentColor"
-                  className="text-muted-foreground"
-                />
-                <YAxis
-                  tick={{ fontSize: 11 }}
-                  allowDecimals={false}
-                  stroke="currentColor"
-                  className="text-muted-foreground"
-                />
-                <Tooltip
-                  contentStyle={{
-                    fontSize: 12,
-                    fontFamily: "var(--font-mono)",
-                  }}
-                  labelFormatter={(v) => new Date(v as number).toLocaleString()}
-                />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                {STACK_PHASES.map((p) => (
-                  <Area
-                    key={p.key}
-                    type="monotone"
-                    dataKey={p.key}
-                    stackId="capacity"
-                    name={p.key}
-                    stroke={p.color}
-                    fill={p.color}
-                    fillOpacity={0.45}
-                    isAnimationActive={false}
-                  />
-                ))}
-                <Line
-                  type="monotone"
-                  dataKey="Desired"
-                  name="Desired"
-                  stroke={C.prewarmed}
-                  strokeWidth={2}
-                  strokeDasharray="4 2"
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
+      )}
     </section>
   )
 }

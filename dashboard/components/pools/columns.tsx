@@ -18,14 +18,7 @@
 
 import { type ColumnDef } from "@tanstack/react-table"
 import { type AgentEnvObservedMember, type AgentSandboxPool } from "@/lib/api/client"
-import {
-  MoreVertical,
-  ArrowUpRight,
-  Activity,
-  AlertTriangle,
-  Pencil,
-  Trash2,
-} from "lucide-react"
+import { MoreVertical, ArrowUpRight, Activity, AlertTriangle, Pencil, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -40,6 +33,7 @@ import { RelativeTime } from "@/components/custom/relative-time"
 import { parseCpuToCore, parseMemoryToMiB, formatCores, formatMiB } from "@/lib/resources"
 import { StatusBadge, type StatusBadgeColorMap } from "@/components/custom/status-badge"
 import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
 import Link from "next/link"
 import type { TranslationKey } from "@/messages/_schema"
@@ -70,6 +64,7 @@ function StatusLinkCell({
   warningTooltip?: string
 }) {
   const clusterID = useClusterID()
+  const locale = useLocale()
 
   if (value == null) return <span className="text-muted-foreground text-xs">---</span>
 
@@ -82,7 +77,7 @@ function StatusLinkCell({
       (() => {
         const params = new URLSearchParams({ poolName })
         if (status) params.set("status", status)
-        const href = `${clusterPath(clusterID, "sandboxes")}?${params.toString()}`
+        const href = `${clusterPath(clusterID, "sandboxes", locale)}?${params.toString()}`
         return (
           <Button
             variant="ghost"
@@ -120,8 +115,9 @@ function StatusLinkCell({
 // adoption (no owning Env) show "—".
 function OwningEnvCell({ envName }: { envName?: string }) {
   const clusterID = useClusterID()
+  const locale = useLocale()
   if (!envName) return <span className="text-muted-foreground text-xs">—</span>
-  const href = `${clusterPath(clusterID, "envs")}/${encodeURIComponent(envName)}`
+  const href = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}`
   return (
     <Button
       variant="ghost"
@@ -132,27 +128,6 @@ function OwningEnvCell({ envName }: { envName?: string }) {
     >
       {envName}
     </Button>
-  )
-}
-
-function TemplateNameCell({ name, version }: { name: string; version?: string }) {
-  const clusterID = useClusterID()
-  const href = `${clusterPath(clusterID, "templates")}?template=${encodeURIComponent(name)}`
-  return (
-    <div className="flex flex-col items-start justify-center gap-0.5">
-      <Button
-        variant="ghost"
-        size="sm"
-        nativeButton={false}
-        className="text-muted-foreground hover:text-foreground h-auto gap-1 px-0 py-0 font-mono text-xs hover:bg-transparent"
-        render={<Link href={href} />}
-      >
-        {name}
-      </Button>
-      {version && (
-        <span className="text-muted-foreground font-mono text-[11px] opacity-70">{version}</span>
-      )}
-    </div>
   )
 }
 
@@ -237,7 +212,8 @@ export function createPoolColumns(
     ),
     cell: ({ row }) => {
       const observed = options?.envObservedByPool?.get(row.original.name)
-      const group = options?.scalingGroupByPool?.get(row.original.name) ?? ""
+      const group =
+        options?.scalingGroupByPool?.get(row.original.name) ?? row.original.scalingGroup ?? ""
       const state = observed?.state ?? ""
       const saturatedUntil = observed?.saturatedUntil
       const lastResult = row.original.status?.autoscaling?.lastScaleUpAttemptResult
@@ -252,9 +228,8 @@ export function createPoolColumns(
             </Badge>
           )}
           {saturatedUntil && (
-            <span className="text-amber-600 text-[10px]">
-              {t("envs.detail.members.col.saturatedUntil")}:{" "}
-              <RelativeTime date={saturatedUntil} />
+            <span className="text-[10px] text-amber-600">
+              {t("envs.detail.members.col.saturatedUntil")}: <RelativeTime date={saturatedUntil} />
             </span>
           )}
           {lastResult && lastResult !== "Enough" && (
@@ -322,24 +297,6 @@ export function createPoolColumns(
             hoverContent={hoverContent}
           />
         )
-      },
-    },
-    {
-      id: "templateName",
-      accessorFn: (row) => row.spec?.templateName ?? "",
-      header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t("pools.col.template")}
-          tooltip={t("pools.col.templateTooltip")}
-          includesStringFilterOptions={{ placeholder: t("pools.col.searchByTemplate") }}
-        />
-      ),
-      cell: ({ row }) => {
-        const name = row.original.spec?.templateName
-        const version = row.original.templateVersion
-        if (!name) return <span className="text-muted-foreground text-xs">---</span>
-        return <TemplateNameCell name={name} version={version} />
       },
     },
     ...(options?.hideOwningEnv

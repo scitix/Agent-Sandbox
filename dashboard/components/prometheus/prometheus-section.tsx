@@ -438,7 +438,7 @@ export function PrometheusSection({
   const userStats = userStatsData?.data
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       {/* Section header with optional admin filters + time range picker */}
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-muted-foreground flex items-center gap-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
@@ -512,7 +512,7 @@ export function PrometheusSection({
       </div>
 
       {/* Lifecycle stat cards — cumulative + instant */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
         <StatCard
           label={t("prometheus.created")}
           value={userStats?.createSuccess != null ? userStats.createSuccess.toLocaleString() : "—"}
@@ -534,12 +534,12 @@ export function PrometheusSection({
           isLoading={userStatsLoading && !userStats}
         />
         <StatCard
-          label={t("prometheus.prewarmed")}
-          value={userStats?.prewarmed != null ? Math.round(userStats.prewarmed) : "—"}
-          sub={t("prometheus.prewarmedSub")}
+          label={t("prometheus.desired")}
+          value={userStats?.desired != null ? Math.round(userStats.desired) : "—"}
+          sub={t("prometheus.desiredSub")}
           icon={Server}
           color="text-indigo-600 dark:text-indigo-400"
-          tooltip={t("prometheus.prewarmedTooltip")}
+          tooltip={t("prometheus.desiredTooltip")}
           isLoading={userStatsLoading && !userStats}
         />
         <StatCard
@@ -574,7 +574,7 @@ export function PrometheusSection({
       </div>
 
       {/* Rate & peak cards */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <StatCard
           label={t("prometheus.startRate")}
           value={startRate !== null ? formatRate(startRate) : "—"}
@@ -607,7 +607,7 @@ export function PrometheusSection({
           title={t("prometheus.replicaTrend")}
           description={t("prometheus.replicaTrendTooltip")}
           series={[
-            { name: "Prewarmed", color: C.prewarmed },
+            { name: "Desired", color: C.desired },
             { name: "Running", color: C.running },
             { name: "Starting", color: C.starting },
             { name: "Stopping", color: C.stopping },
@@ -802,7 +802,7 @@ export function PrometheusSection({
                     {t("prometheus.user")}
                   </th>
                   <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.prewarmed")}
+                    {t("prometheus.desired")}
                   </th>
                   <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
                     {t("prometheus.starting")}
@@ -832,7 +832,7 @@ export function PrometheusSection({
                       {row.user ?? "—"}
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono text-sm text-indigo-600 dark:text-indigo-400">
-                      {row.prewarmed}
+                      {row.desired}
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono text-sm text-yellow-600 dark:text-yellow-400">
                       {row.starting}

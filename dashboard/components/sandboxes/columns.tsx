@@ -19,7 +19,7 @@
 import * as React from "react"
 import { type ColumnDef } from "@tanstack/react-table"
 import { type AgentSandbox } from "@/lib/api/client"
-import { Trash2, TerminalSquare, MoreVertical, Network, ScrollText, Activity } from "lucide-react"
+import { Trash2, TerminalSquare, MoreVertical, Activity, FileTextIcon } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +36,7 @@ import TooltipButton from "@/components/custom/button/tooltip-button"
 import { StatusBadge, type StatusBadgeColorMap } from "@/components/custom/status-badge"
 import type { TranslationKey } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
 import Link from "next/link"
 
@@ -138,14 +139,49 @@ function SandboxStatusBadge({
   )
 }
 
-// Sandbox → Pool reverse link. The standalone /pools page is gone, so we
-// jump to the Envs list — the user can drill into the owning Env from there.
-// (We can't deep-link straight to the Env detail page because Sandbox doesn't
-// carry the owning Env name yet.)
+// Sandbox id → detail page. Shows the short (last-segment) id but links to the
+// full consolidated detail route.
+function SandboxIdCell({ id }: { id: string }) {
+  const clusterID = useClusterID()
+  const locale = useLocale()
+  const shortId = id.length > 12 ? id.slice(-12) : id
+  const href = `${clusterPath(clusterID, "sandboxes", locale)}/${encodeURIComponent(id)}`
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      nativeButton={false}
+      className="text-foreground hover:text-brand h-auto px-0 py-0 font-mono text-xs hover:bg-transparent hover:underline"
+      render={<Link href={href} />}
+    >
+      {shortId}
+    </Button>
+  )
+}
+
+function EnvNameCell({ envName }: { envName: string | undefined }) {
+  const clusterID = useClusterID()
+  const locale = useLocale()
+  if (!envName) return <span className="text-muted-foreground text-xs">---</span>
+  const href = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}`
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      nativeButton={false}
+      className="text-foreground hover:text-brand h-auto gap-1 px-0 py-0 font-mono text-xs hover:bg-transparent hover:underline"
+      render={<Link href={href} />}
+    >
+      {envName}
+    </Button>
+  )
+}
+
 function PoolNameCell({ poolName }: { poolName: string | undefined }) {
   const clusterID = useClusterID()
+  const locale = useLocale()
   if (!poolName) return <span className="text-muted-foreground text-xs">---</span>
-  const href = clusterPath(clusterID, "envs")
+  const href = clusterPath(clusterID, "envs", locale)
   return (
     <Button
       variant="ghost"
@@ -162,7 +198,6 @@ function PoolNameCell({ poolName }: { poolName: string | undefined }) {
 export function createSandboxColumns(
   t: (key: TranslationKey, params?: Record<string, string | number>) => string,
   onDelete: (sandbox: AgentSandbox) => void,
-  onViewEndpoints: (sandbox: AgentSandbox) => void,
   onOpenTerminal?: (sandbox: AgentSandbox) => void,
   onViewLogs?: (sandbox: AgentSandbox) => void,
   options?: { isActualAdmin?: boolean; isExternalLogsConfigured?: boolean },
@@ -195,7 +230,6 @@ export function createSandboxColumns(
       const isLogsDisabled = options?.isExternalLogsConfigured ? isCanceled : isTerminal
       const isCompleted = isTerminal
       const isRunning = row.original.status === "Running"
-      const hasEndpoints = row.original.endpoints && Object.keys(row.original.endpoints).length > 0
 
       if (actionsWithDropdownMenu) {
         return (
@@ -209,15 +243,6 @@ export function createSandboxColumns(
               <span className="sr-only">{t("common.actions")}</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem
-                onClick={() => onViewEndpoints(row.original)}
-                disabled={!hasEndpoints}
-                hidden
-                className="cursor-pointer font-mono text-xs"
-              >
-                <Network className="mr-2 h-3.5 w-3.5" />
-                {t("sandboxes.endpoints")}
-              </DropdownMenuItem>
               {onOpenTerminal && (
                 <DropdownMenuItem
                   onClick={() => onOpenTerminal(row.original)}
@@ -234,7 +259,7 @@ export function createSandboxColumns(
                   disabled={isLogsDisabled}
                   className="cursor-pointer font-mono text-xs"
                 >
-                  <ScrollText className="mr-2 h-3.5 w-3.5" />
+                  <FileTextIcon className="mr-2 h-3.5 w-3.5" />
                   {t("sandboxes.logs")}
                 </DropdownMenuItem>
               )}
@@ -291,7 +316,7 @@ export function createSandboxColumns(
               disabled={isLogsDisabled}
               className="text-muted-foreground h-7 w-7 disabled:opacity-30"
             >
-              <ScrollText className="h-3.5 w-3.5" />
+              <FileTextIcon className="h-3.5 w-3.5" />
             </TooltipButton>
           )}
           {onViewMetrics && (
@@ -351,7 +376,12 @@ export function createSandboxColumns(
           {Object.entries(images).map(([name, image]) => {
             const shortImage = image.includes("/") ? (image.split("/").pop() ?? image) : image
             return (
-              <CopyableText value={image} label={shortImage} className="font-mono text-xs" key={name} />
+              <CopyableText
+                value={image}
+                label={shortImage}
+                className="font-mono text-xs"
+                key={name}
+              />
             )
           })}
         </div>
@@ -435,16 +465,26 @@ export function createSandboxColumns(
           includesStringFilterOptions={{ placeholder: t("sandboxes.searchById") }}
         />
       ),
-      cell: ({ row }) => {
-        const id = row.original.sandboxId
-        // UUID v7 encodes timestamp in the first 48 bits — the prefix is highly repetitive.
-        // Use the last 12 hex chars (final segment of the UUID) as the short display ID.
-        const shortId = id.length > 12 ? id.slice(-12) : id
-        return <CopyableText value={id} label={shortId} />
+      cell: ({ row }) => <SandboxIdCell id={row.original.sandboxId} />,
+    },
+    {
+      accessorKey: "envName",
+      header: ({ column }) => (
+        <DataTableColumnHeader
+          column={column}
+          title={t("sandboxes.col.env")}
+          tooltip={t("sandboxes.col.envTooltip")}
+        />
+      ),
+      cell: ({ row }) => <EnvNameCell envName={row.original.envName ?? undefined} />,
+      filterFn: (row, _columnId, filterValue: string[]) => {
+        if (!filterValue || filterValue.length === 0) return true
+        return filterValue.includes(row.original.envName ?? "")
       },
     },
     {
       accessorKey: "poolName",
+      enableHiding: true,
       header: ({ column }) => (
         <DataTableColumnHeader
           column={column}
