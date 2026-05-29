@@ -210,6 +210,10 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 			}
 		}
 		envcommon.SetLocalClusterMembers(&current.Spec, localClusterID, append(members, member))
+		// Materialise the matching autoscaling group alongside the member so
+		// the two stay in lockstep. A freshly added group is disabled; the
+		// Env reconciler GCs groups once no member references them.
+		ensureScalingGroup(&current.Spec, member.Config.ScalingGroup)
 		return s.client.Patch(ctx, current, client.MergeFrom(base))
 	}); err != nil {
 		if appErr, ok := err.(*domain.AppError); ok {

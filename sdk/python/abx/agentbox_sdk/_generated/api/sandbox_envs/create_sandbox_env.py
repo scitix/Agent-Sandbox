@@ -113,8 +113,9 @@ def sync_detailed(
     body: CreateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
-    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; the
+    matching autoscaling group is created automatically per member and tuned through `PUT
+    /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
         body (CreateSandboxEnvRequest):
@@ -145,8 +146,9 @@ def sync(
     body: CreateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
-    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; the
+    matching autoscaling group is created automatically per member and tuned through `PUT
+    /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
         body (CreateSandboxEnvRequest):
@@ -172,8 +174,9 @@ async def asyncio_detailed(
     body: CreateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
-    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; the
+    matching autoscaling group is created automatically per member and tuned through `PUT
+    /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
         body (CreateSandboxEnvRequest):
@@ -204,8 +207,9 @@ async def asyncio(
     body: CreateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`;
-    autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
+    """ Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; the
+    matching autoscaling group is created automatically per member and tuned through `PUT
+    /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
         body (CreateSandboxEnvRequest):

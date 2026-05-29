@@ -78,6 +78,7 @@ func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sandbo
 		Status:          status,
 		Team:            ptr.To(pool.Labels[agentsv1alpha1.LabelTeam]),
 		User:            ptr.To(pool.Labels[agentsv1alpha1.LabelUser]),
+		ScalingGroup:    ptr.To(pool.Labels[agentsv1alpha1.LabelScalingGroup]),
 		TemplateVersion: ptr.To(pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey]),
 		SpecYaml:        ptr.To(specYaml),
 		CreatedAt:       &createdAt,

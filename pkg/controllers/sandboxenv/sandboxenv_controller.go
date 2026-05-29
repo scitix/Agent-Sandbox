@@ -150,6 +150,14 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		log.V(3).Info("Env contains foreign cluster segments; local Reconciler will only touch the local segment")
 	}
 
+	// Keep autoscaling groups in lockstep with the ScalingGroups members
+	// reference: create any missing group, garbage-collect any orphan. Runs
+	// before Pool materialisation so status aggregation sees the converged
+	// group set in the same reconcile pass.
+	if err := r.reconcileScalingGroups(ctx, env); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Materialise / reconcile member Pools from spec.Clusters[local].Members.
 	// An Env with no declared local members reconciles to zero Pools — the
 	// shell exists, but members must be added explicitly through the

@@ -52,8 +52,8 @@ type EnvShellService interface {
 	Get(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
 	// Create posts a new SandboxEnv shell. The body carries TemplateRef +
 	// Overrides + optional ImagePullSecret only — Members are added via
-	// AddMember (from the embedded MemberPoolService) and autoscaling
-	// groups via AddAutoscalingGroup (from the embedded AutoscalerService).
+	// AddMember (from the embedded MemberPoolService), which also
+	// materialises the matching autoscaling group automatically.
 	Create(ctx context.Context, input CreateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError)
 	// Update patches Overrides / ImagePullSecret on an existing Env.
 	// Members and autoscaling groups are intentionally not part of this

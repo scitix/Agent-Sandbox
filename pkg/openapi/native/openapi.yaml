@@ -334,6 +334,9 @@ components:
         poolName:
           type: string
           description: "Name of the SandboxPool this sandbox was allocated from."
+        envName:
+          type: string
+          description: "Name of the SandboxEnv that owns the pool this sandbox was allocated from (from pod label agentbox.navix.sh/env)."
         podName:
           type: string
           description: "Name of the Kubernetes Pod backing this sandbox."
@@ -759,6 +762,9 @@ components:
         user:
           type: string
           description: "User label of the pool owner (from CRD label)"
+        scalingGroup:
+          type: string
+          description: "Scaling group this pool belongs to (from the agentbox.navix.sh/scaling-group label). Members in the same group share an autoscaling policy. Empty when the pool is excluded from autoscaling."
         templateVersion:
           type: string
           description: "Version of the source SandboxTemplate at last sync (from annotation)"
@@ -1178,7 +1184,7 @@ components:
       properties:
         name:
           type: string
-          description: "ScalingGroup identifier this policy applies to. Must match the EnvClusterMember.scalingGroup of at least one member declared on the env — empty-group policies are rejected at AddAutoscalingGroup time."
+          description: "ScalingGroup identifier this policy applies to. Matches the EnvClusterMember.scalingGroup of at least one member declared on the env — the group is created automatically when a member with this ScalingGroup is added, and garbage-collected by the Env reconciler once no member references it."
         enabled:
           type: boolean
           description: "Per-group master switch. When false, this group's members keep manual Pool replicas; the autoscaler skips it. Each group is independent — other groups continue to run if Enabled=true."
@@ -2680,7 +2686,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: CreateSandboxEnv
-      summary: Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; autoscaling groups through `POST /envs/{name}/autoscaling/groups`.
+      summary: Create a new SandboxEnv shell. Members are added through `POST /envs/{name}/sandboxpools`; the matching autoscaling group is created automatically per member and tuned through `PUT /envs/{name}/autoscaling/groups/{groupName}`.
       tags: [sandbox-envs]
       requestBody:
         required: true
@@ -2965,59 +2971,6 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Env Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    post:
-      operationId: AddEnvAutoscalingGroup
-      summary: Add a new autoscaling group to the env.
-      tags: [sandbox-envs]
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EnvAutoscalingGroup"
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EnvAutoscalingGroupEnvelope"
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Env Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: Group name already exists
           content:
             application/json:
               schema:

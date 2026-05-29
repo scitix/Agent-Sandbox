@@ -63,6 +63,8 @@ class Sandbox:
             pod_name (str): Name of the Kubernetes Pod backing this sandbox.
             status (SandboxStatus): Current lifecycle phase of the sandbox.
             claimed_at (datetime.datetime): RFC 3339 timestamp when the sandbox was claimed by a user.
+            env_name (str | Unset): Name of the SandboxEnv that owns the pool this sandbox was allocated from (from pod
+                label agentbox.navix.sh/env).
             started_at (datetime.datetime | Unset): RFC 3339 timestamp when the sandbox transitioned to Running.
             container_images (SandboxContainerImages | Unset): Map of container name to image URI for each container in the
                 sandbox pod.
@@ -98,6 +100,7 @@ class Sandbox:
     pod_name: str
     status: SandboxStatus
     claimed_at: datetime.datetime
+    env_name: str | Unset = UNSET
     started_at: datetime.datetime | Unset = UNSET
     container_images: SandboxContainerImages | Unset = UNSET
     metadata: SandboxMetadata | Unset = UNSET
@@ -137,6 +140,8 @@ class Sandbox:
         status = self.status.value
 
         claimed_at = self.claimed_at.isoformat()
+
+        env_name = self.env_name
 
         started_at: str | Unset = UNSET
         if not isinstance(self.started_at, Unset):
@@ -197,6 +202,8 @@ class Sandbox:
             "status": status,
             "claimedAt": claimed_at,
         })
+        if env_name is not UNSET:
+            field_dict["envName"] = env_name
         if started_at is not UNSET:
             field_dict["startedAt"] = started_at
         if container_images is not UNSET:
@@ -260,6 +267,8 @@ class Sandbox:
 
 
 
+
+        env_name = d.pop("envName", UNSET)
 
         _started_at = d.pop("startedAt", UNSET)
         started_at: datetime.datetime | Unset
@@ -358,6 +367,7 @@ class Sandbox:
             pod_name=pod_name,
             status=status,
             claimed_at=claimed_at,
+            env_name=env_name,
             started_at=started_at,
             container_images=container_images,
             metadata=metadata,

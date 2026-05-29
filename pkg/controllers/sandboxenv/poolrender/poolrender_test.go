@@ -389,3 +389,29 @@ func TestMaterializeFromMember_PropagatesIdentityLabels(t *testing.T) {
 		t.Errorf("materialised pool unexpectedly carries finalizers: %v", pool.Finalizers)
 	}
 }
+
+// TestMaterializeFromMember_StampsScalingGroupLabel asserts the member's
+// Config.ScalingGroup lands on the Pool as LabelScalingGroup so PoolToGen can
+// surface it on the wire shape and dashboards can group Pools without
+// re-reading the Env spec. An empty ScalingGroup leaves the label off.
+func TestMaterializeFromMember_StampsScalingGroupLabel(t *testing.T) {
+	env := newTestEnv()
+	withGroup := agentsv1alpha1.EnvClusterMember{
+		Name:   "env-a-2c8gi",
+		Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "2c8gi"},
+		Spec:   agentsv1alpha1.SandboxPoolSpec{EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{IdleImage: "pause:3.10"}},
+	}
+	pool := poolrender.MaterializeFromMember(env, withGroup, false)
+	if got := pool.Labels[agentsv1alpha1.LabelScalingGroup]; got != "2c8gi" {
+		t.Errorf("LabelScalingGroup = %q, want %q (labels: %+v)", got, "2c8gi", pool.Labels)
+	}
+
+	noGroup := agentsv1alpha1.EnvClusterMember{
+		Name: "env-a-bare",
+		Spec: agentsv1alpha1.SandboxPoolSpec{EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{IdleImage: "pause:3.10"}},
+	}
+	bare := poolrender.MaterializeFromMember(env, noGroup, false)
+	if _, ok := bare.Labels[agentsv1alpha1.LabelScalingGroup]; ok {
+		t.Errorf("expected no scaling-group label when ScalingGroup empty, got %+v", bare.Labels)
+	}
+}

@@ -94,6 +94,14 @@ const (
 	// sibling Pools sharing the same Env without walking ownerReferences.
 	LabelEnv = "agentbox.navix.sh/env"
 
+	// LabelScalingGroup is stamped onto every member SandboxPool by the
+	// SandboxEnv reconciler at materialisation time, carrying the member's
+	// EnvClusterMember.Config.ScalingGroup. Members sharing a value belong to
+	// the same Env autoscaling group. Surfaced on the gen.SandboxPool wire
+	// shape so the dashboard can group Pools without re-reading the Env spec.
+	// Absent when the member is excluded from autoscaling (empty ScalingGroup).
+	LabelScalingGroup = "agentbox.navix.sh/scaling-group"
+
 	// SandboxTemplateDocsAnnotationKey stores Markdown documentation for the template.
 	// Read by the dashboard to display a documentation sheet.
 	SandboxTemplateDocsAnnotationKey = "agentbox.navix.sh/docs"

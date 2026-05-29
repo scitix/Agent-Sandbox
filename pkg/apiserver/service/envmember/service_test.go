@@ -423,6 +423,66 @@ func TestAdd_RejectsExceedingGroupMax(t *testing.T) {
 	}
 }
 
+// TestAdd_CreatesScalingGroup asserts AddMember materialises the matching
+// autoscaling group inline so the member's ScalingGroup always has a
+// corresponding group entry. The fresh group starts disabled (manual mode).
+func TestAdd_CreatesScalingGroup(t *testing.T) {
+	cli := newClient(t, newEnvForPoolOps(), newTestTemplate())
+	svc := envmember.New(cli, nil, nil, nil)
+
+	if _, err := svc.AddMember(context.Background(), envTestNamespace, testEnvName, envLocalCluster, memberWithResources(1)); err != nil {
+		t.Fatalf("Add: %+v", err)
+	}
+
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: testEnvName}, env); err != nil {
+		t.Fatalf("get env: %v", err)
+	}
+	if env.Spec.Autoscaling == nil || len(env.Spec.Autoscaling.Groups) != 1 {
+		t.Fatalf("expected exactly one autoscaling group, got %+v", env.Spec.Autoscaling)
+	}
+	g := env.Spec.Autoscaling.Groups[0]
+	if g.Name != "2c8gi" {
+		t.Fatalf("expected group %q, got %q", "2c8gi", g.Name)
+	}
+	if g.Enabled {
+		t.Fatalf("expected auto-created group to start disabled, got enabled")
+	}
+}
+
+// TestAdd_PreservesExistingScalingGroup asserts AddMember does not duplicate
+// or clobber a group that already exists for the member's ScalingGroup —
+// the user's min/enabled config survives.
+func TestAdd_PreservesExistingScalingGroup(t *testing.T) {
+	env := newEnvForPoolOps()
+	min := int32(3)
+	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
+		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{
+			Name:        "2c8gi",
+			Enabled:     true,
+			MinReplicas: &min,
+		}},
+	}
+	cli := newClient(t, env, newTestTemplate())
+	svc := envmember.New(cli, nil, nil, nil)
+
+	if _, err := svc.AddMember(context.Background(), envTestNamespace, testEnvName, envLocalCluster, memberWithResources(0)); err != nil {
+		t.Fatalf("Add: %+v", err)
+	}
+
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: testEnvName}, got); err != nil {
+		t.Fatalf("get env: %v", err)
+	}
+	if got.Spec.Autoscaling == nil || len(got.Spec.Autoscaling.Groups) != 1 {
+		t.Fatalf("expected exactly one group (no duplicate), got %+v", got.Spec.Autoscaling)
+	}
+	g := got.Spec.Autoscaling.Groups[0]
+	if !g.Enabled || g.MinReplicas == nil || *g.MinReplicas != 3 {
+		t.Fatalf("expected existing group config preserved (enabled, min=3), got %+v", g)
+	}
+}
+
 func TestUpdate_NotFound_404(t *testing.T) {
 	svc := newService(t, newEnvForPoolOps())
 

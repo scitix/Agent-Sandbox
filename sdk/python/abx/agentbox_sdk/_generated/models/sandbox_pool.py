@@ -57,6 +57,8 @@ class SandboxPool:
             memory (str | Unset): Memory resource per pod in the pool (Kubernetes resource quantity, e.g. "16Gi", "512Mi").
             team (str | Unset): Team label of the pool owner (from CRD label)
             user (str | Unset): User label of the pool owner (from CRD label)
+            scaling_group (str | Unset): Scaling group this pool belongs to (from the agentbox.navix.sh/scaling-group
+                label). Members in the same group share an autoscaling policy. Empty when the pool is excluded from autoscaling.
             template_version (str | Unset): Version of the source SandboxTemplate at last sync (from annotation)
             overrides (PoolTemplateOverrides | Unset): Legacy pool-create overrides. Image-only — per-Pool resource sizing
                 flows through EnvClusterMember.{instanceType,multiplier,inlineResources} now.
@@ -76,6 +78,7 @@ class SandboxPool:
     memory: str | Unset = UNSET
     team: str | Unset = UNSET
     user: str | Unset = UNSET
+    scaling_group: str | Unset = UNSET
     template_version: str | Unset = UNSET
     overrides: PoolTemplateOverrides | Unset = UNSET
     spec_yaml: str | Unset = UNSET
@@ -106,6 +109,8 @@ class SandboxPool:
         team = self.team
 
         user = self.user
+
+        scaling_group = self.scaling_group
 
         template_version = self.template_version
 
@@ -138,6 +143,8 @@ class SandboxPool:
             field_dict["team"] = team
         if user is not UNSET:
             field_dict["user"] = user
+        if scaling_group is not UNSET:
+            field_dict["scalingGroup"] = scaling_group
         if template_version is not UNSET:
             field_dict["templateVersion"] = template_version
         if overrides is not UNSET:
@@ -181,6 +188,8 @@ class SandboxPool:
 
         user = d.pop("user", UNSET)
 
+        scaling_group = d.pop("scalingGroup", UNSET)
+
         template_version = d.pop("templateVersion", UNSET)
 
         _overrides = d.pop("overrides", UNSET)
@@ -216,6 +225,7 @@ class SandboxPool:
             memory=memory,
             team=team,
             user=user,
+            scaling_group=scaling_group,
             template_version=template_version,
             overrides=overrides,
             spec_yaml=spec_yaml,

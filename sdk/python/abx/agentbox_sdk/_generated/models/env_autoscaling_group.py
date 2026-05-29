@@ -41,8 +41,9 @@ T = TypeVar("T", bound="EnvAutoscalingGroup")
 class EnvAutoscalingGroup:
     """ 
         Attributes:
-            name (str): ScalingGroup identifier this policy applies to. Must match the EnvClusterMember.scalingGroup of at
-                least one member declared on the env — empty-group policies are rejected at AddAutoscalingGroup time.
+            name (str): ScalingGroup identifier this policy applies to. Matches the EnvClusterMember.scalingGroup of at
+                least one member declared on the env — the group is created automatically when a member with this ScalingGroup
+                is added, and garbage-collected by the Env reconciler once no member references it.
             enabled (bool | Unset): Per-group master switch. When false, this group's members keep manual Pool replicas; the
                 autoscaler skips it. Each group is independent — other groups continue to run if Enabled=true.
             min_replicas (int | Unset): Lower bound on the group's aggregate desired replicas.

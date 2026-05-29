@@ -63,6 +63,9 @@ func SandboxBaseFromPod(pod *corev1.Pod) gen.Sandbox {
 	if v := pod.Spec.NodeName; v != "" {
 		sb.NodeName = ptr.To(v)
 	}
+	if v := pod.Labels[agentsv1alpha1.LabelEnv]; v != "" {
+		sb.EnvName = ptr.To(v)
+	}
 	if v := pod.Labels[agentsv1alpha1.LabelTeam]; v != "" {
 		sb.Team = ptr.To(v)
 	}

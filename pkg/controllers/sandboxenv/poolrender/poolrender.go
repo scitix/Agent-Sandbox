@@ -192,6 +192,9 @@ func Validate(spec *agentsv1alpha1.SandboxPoolSpec) error {
 func MaterializeFromMember(env *agentsv1alpha1.SandboxEnv, member agentsv1alpha1.EnvClusterMember, ipsExists bool) *agentsv1alpha1.SandboxPool {
 	labels := copyMapNonNil(member.Metadata.Labels)
 	labels[agentsv1alpha1.LabelEnv] = env.Name
+	if member.Config.ScalingGroup != "" {
+		labels[agentsv1alpha1.LabelScalingGroup] = member.Config.ScalingGroup
+	}
 	pool := &agentsv1alpha1.SandboxPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            member.Name,

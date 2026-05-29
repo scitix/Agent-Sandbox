@@ -145,6 +145,32 @@ func findEnabledScalingGroup(env *agentsv1alpha1.SandboxEnv, groupName string) *
 	return nil
 }
 
+// ensureScalingGroup appends a minimal EnvAutoscalingGroup named groupName
+// to spec when none exists yet, so every member's ScalingGroup always has a
+// matching group entry. The group starts disabled (manual replicas); its
+// MinReplicas/MaxReplicas and policy fields are filled by the K8s API
+// server's CRD defaulting when the Env is patched, so no code defaults are
+// hidden here. Empty groupName is a no-op (member excluded from
+// autoscaling). Returns true when a group was added.
+//
+// The Env reconciler's group GC (reconcileScalingGroups) is the counterpart
+// that removes groups once no member references them.
+func ensureScalingGroup(spec *agentsv1alpha1.SandboxEnvSpec, groupName string) bool {
+	if spec == nil || groupName == "" {
+		return false
+	}
+	if spec.Autoscaling == nil {
+		spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{}
+	}
+	for i := range spec.Autoscaling.Groups {
+		if spec.Autoscaling.Groups[i].Name == groupName {
+			return false
+		}
+	}
+	spec.Autoscaling.Groups = append(spec.Autoscaling.Groups, agentsv1alpha1.EnvAutoscalingGroup{Name: groupName})
+	return true
+}
+
 // sumGroupReplicas adds up the spec.replicas of every member in
 // localClusterID whose Config.ScalingGroup matches groupName, excluding
 // the member whose name equals excludeName (used to omit self when

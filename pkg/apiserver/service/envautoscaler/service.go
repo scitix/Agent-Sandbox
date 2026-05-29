@@ -16,9 +16,11 @@
 // surface. Routes onto `/v1/sandboxenvs/{name}/autoscaling/*`.
 //
 // Mirrors the envmember package shape: the autoscaler config lives on the
-// SandboxEnv spec, this service exposes per-group CRUD plus a top-level
-// SetEnabled toggle, and the SandboxEnvReconciler picks up changes via its
-// regular Watch.
+// SandboxEnv spec and the SandboxEnvReconciler picks up changes via its
+// regular Watch. Group lifecycle is member-driven — a group is created when
+// a member declaring its ScalingGroup is added and garbage-collected by the
+// reconciler once unreferenced — so this service exposes read/update/delete
+// of groups but no standalone create.
 //
 // Method names carry an Autoscaling / AutoscalingGroup suffix so the
 // interface can be embedded into SandboxEnvService alongside MemberPool
@@ -51,12 +53,11 @@ type AutoscalerService interface {
 	// .groups without nil-checks.
 	GetAutoscaling(ctx context.Context, namespace, envName string) (*gen.EnvAutoscalingSpec, *domain.AppError)
 
-	// AddAutoscalingGroup appends a new EnvAutoscalingGroup. group.Name
-	// must be non-empty, unique within the env's existing groups, AND
-	// match the ScalingGroup of at least one member declared under
-	// env.Spec.Clusters[].Members. Empty-group policies are rejected (400)
-	// so the autoscaler never iterates over groups with no members.
-	AddAutoscalingGroup(ctx context.Context, namespace, envName string, group *gen.EnvAutoscalingGroup) (*gen.EnvAutoscalingGroup, *domain.AppError)
+	// Groups are created automatically when a member declaring the matching
+	// ScalingGroup is added (see envmember.AddMember) and garbage-collected
+	// by the Env reconciler once no member references them; there is no
+	// standalone "add group" entry point.
+	//
 	// UpdateAutoscalingGroup applies a patch to the named group. Only the
 	// non-nil patch fields are mutated; policy fields are replaced
 	// wholesale when supplied. Returns 404 if no group matches name.
@@ -109,62 +110,6 @@ func (s *k8sService) GetAutoscaling(ctx context.Context, namespace, envName stri
 		out = &gen.EnvAutoscalingSpec{}
 	}
 	return out, nil
-}
-
-func (s *k8sService) AddAutoscalingGroup(ctx context.Context, namespace, envName string, group *gen.EnvAutoscalingGroup) (*gen.EnvAutoscalingGroup, *domain.AppError) {
-	if group == nil {
-		return nil, domain.NewBadRequest("group body is required")
-	}
-	if group.Name == "" {
-		return nil, domain.NewBadRequest("group.name is required")
-	}
-	if appErr := validatePolicy(group.ScaleUpPolicy); appErr != nil {
-		return nil, appErr
-	}
-	added := GroupFromGen(*group)
-	if appErr := s.patchSpec(ctx, namespace, envName, func(spec *agentsv1alpha1.SandboxEnvSpec) *domain.AppError {
-		// A group only makes sense when at least one member already
-		// declares it as its ScalingGroup — otherwise the autoscaler
-		// would iterate the policy with no Pool to act on. This guard
-		// catches typos (e.g. user typed "1c2gi" instead of "1c2Gi")
-		// and prevents "ghost" groups from accumulating in spec.
-		if !envHasMemberInScalingGroup(spec, added.Name) {
-			return domain.NewBadRequest(fmt.Sprintf(
-				"autoscaling group %q has no matching member.scalingGroup in env %q — add a member with this ScalingGroup first",
-				added.Name, envName))
-		}
-		if spec.Autoscaling == nil {
-			spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{}
-		}
-		for _, g := range spec.Autoscaling.Groups {
-			if g.Name == added.Name {
-				return domain.NewConflict(fmt.Sprintf("autoscaling group %q already exists in env %q", added.Name, envName))
-			}
-		}
-		spec.Autoscaling.Groups = append(spec.Autoscaling.Groups, added)
-		return nil
-	}); appErr != nil {
-		return nil, appErr
-	}
-	out := GroupToGen(added)
-	return &out, nil
-}
-
-// envHasMemberInScalingGroup reports whether any member in any cluster
-// segment of spec declares ScalingGroup == groupName. Used by AddGroup to
-// reject ghost groups.
-func envHasMemberInScalingGroup(spec *agentsv1alpha1.SandboxEnvSpec, groupName string) bool {
-	if spec == nil || groupName == "" {
-		return false
-	}
-	for _, c := range spec.Clusters {
-		for _, m := range c.Members {
-			if m.Config.ScalingGroup == groupName {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (s *k8sService) UpdateAutoscalingGroup(ctx context.Context, namespace, envName, groupName string, patch GroupPatch) (*gen.EnvAutoscalingGroup, *domain.AppError) {

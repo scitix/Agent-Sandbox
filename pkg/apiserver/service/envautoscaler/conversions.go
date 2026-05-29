@@ -58,28 +58,6 @@ func GroupToGen(g agentsv1alpha1.EnvAutoscalingGroup) gen.EnvAutoscalingGroup {
 	return out
 }
 
-// GroupFromGen converts a single wire group back into the CRD type.
-// When the wire side omits ScaleUpPolicy / ScaleDownPolicy, the CRD field
-// is left as its zero value; relying on the API server to apply the
-// kubebuilder defaults on the next Create/Update (every leaf field has
-// `json:",omitempty"` so zero values disappear from the patch body and
-// trigger defaulting on the server side).
-func GroupFromGen(g gen.EnvAutoscalingGroup) agentsv1alpha1.EnvAutoscalingGroup {
-	out := agentsv1alpha1.EnvAutoscalingGroup{Name: g.Name}
-	if g.Enabled != nil {
-		out.Enabled = *g.Enabled
-	}
-	if g.MinReplicas != nil {
-		out.MinReplicas = ptr.To(*g.MinReplicas)
-	}
-	if g.MaxReplicas != nil {
-		out.MaxReplicas = ptr.To(*g.MaxReplicas)
-	}
-	out.ScaleUpPolicy = scaleUpPolicyFromGen(g.ScaleUpPolicy)
-	out.ScaleDownPolicy = scaleDownPolicyFromGen(g.ScaleDownPolicy)
-	return out
-}
-
 func scaleUpPolicyToGen(p agentsv1alpha1.PoolScaleUpPolicy) *gen.PoolScaleUpPolicy {
 	out := &gen.PoolScaleUpPolicy{}
 	if p.Mode != "" {

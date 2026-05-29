@@ -892,27 +892,6 @@ func (s *Server) ListEnvAutoscalingGroups(ctx context.Context, req gen.ListEnvAu
 	return gen.ListEnvAutoscalingGroups200JSONResponse{Items: items, Total: len(items)}, nil
 }
 
-func (s *Server) AddEnvAutoscalingGroup(ctx context.Context, req gen.AddEnvAutoscalingGroupRequestObject) (gen.AddEnvAutoscalingGroupResponseObject, error) {
-	if req.Body == nil {
-		return gen.AddEnvAutoscalingGroup400JSONResponse{Error: "request body is required"}, nil
-	}
-	auth := authFrom(ctx)
-	result, appErr := s.env.AddAutoscalingGroup(ctx, auth.Namespace, req.Name, req.Body)
-	if appErr != nil {
-		switch appErr.Code {
-		case domain.ErrCodeBadRequest:
-			return gen.AddEnvAutoscalingGroup400JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeNotFound:
-			return gen.AddEnvAutoscalingGroup404JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeConflict:
-			return gen.AddEnvAutoscalingGroup409JSONResponse(errResp(ctx, appErr)), nil
-		default:
-			return gen.AddEnvAutoscalingGroup500JSONResponse(errResp(ctx, appErr)), nil
-		}
-	}
-	return gen.AddEnvAutoscalingGroup201JSONResponse{Group: *result}, nil
-}
-
 func (s *Server) GetEnvAutoscalingGroup(ctx context.Context, req gen.GetEnvAutoscalingGroupRequestObject) (gen.GetEnvAutoscalingGroupResponseObject, error) {
 	auth := authFrom(ctx)
 	result, appErr := s.env.GetAutoscalingGroup(ctx, auth.Namespace, req.Name, req.GroupName)
