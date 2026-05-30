@@ -166,6 +166,23 @@
   color: var(--shiki-dark);
 }
 
+/*
+ * Disable programming ligatures inside code.
+ * Geist Mono renders `==`, `>=`, `<=`, `!=`, `-->` as single ligature glyphs
+ * whose advance width does not match the cells they replace, so the glyph
+ * overlaps the preceding character. Turning off `liga` + `calt` keeps every
+ * operator as discrete monospace cells.
+ */
+pre,
+code,
+.shiki,
+.shiki span {
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
+}
+
 @layer base {}
 
 .bg-dot-pattern {

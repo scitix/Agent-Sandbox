@@ -1,0 +1,189 @@
+/**
+ * Copyright 2026 ScitiX
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+"use client"
+
+import { use, useState } from "react"
+import Link from "next/link"
+import { useQuery } from "@tanstack/react-query"
+import {
+  ActivityIcon,
+  Boxes,
+  DatabaseIcon,
+  InfoIcon,
+  KeyRound,
+  Loader2,
+  Pencil,
+  RefreshCw,
+  TrendingUp,
+  Trash2,
+} from "lucide-react"
+import { toast } from "sonner"
+
+import { Button } from "@/components/ui/button"
+import { DetailHeader } from "@/components/custom/detail-header"
+import { DetailTabsNav } from "@/components/custom/detail-tabs-nav"
+import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
+import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
+import { envQueryOptions, useSyncEnvTemplate } from "@/lib/queries"
+import { useTranslation } from "@/lib/i18n"
+import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
+import { clusterPath } from "@/lib/cluster-path"
+
+interface LayoutProps {
+  children: React.ReactNode
+  params: Promise<{ clusterID: string; name: string; locale: string }>
+}
+
+/**
+ * Shared shell for the Env detail sub-routes. Renders the persistent header and
+ * tab bar once; each tab (overview / pools / autoscaling / metrics) is a child
+ * page rendered into {children}. Loading / error / API-key states gate the body
+ * here so every sub-page can assume the Env is present.
+ */
+export default function EnvDetailLayout({ children, params }: LayoutProps) {
+  const { name } = use(params)
+  const { t } = useTranslation()
+  const clusterID = useClusterID()
+  const locale = useLocale()
+
+  const { data, isLoading, isError, error } = useQuery(envQueryOptions(name))
+  const env = data?.env
+
+  const isApiKeyRequired =
+    (error as { errorCode?: string } | null)?.errorCode === "API_KEY_REQUIRED"
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+
+  const syncTemplate = useSyncEnvTemplate()
+
+  const handleSync = () => {
+    syncTemplate.mutate(
+      { params: { path: { name } } },
+      {
+        onSuccess: () => toast.success(t("envs.detail.actions.syncTemplateToast", { name })),
+        onError: (err) => toast.error(err?.error ?? String(err)),
+      },
+    )
+  }
+
+  const basePath = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(name)}`
+  const tabs = [
+    { value: "", label: t("envs.tab.overview"), icon: InfoIcon },
+    { value: "pools", label: t("envs.tab.pools"), icon: DatabaseIcon },
+    { value: "autoscaling", label: t("envs.tab.autoscaling"), icon: TrendingUp },
+    { value: "metrics", label: t("envs.tab.metrics"), icon: ActivityIcon },
+  ]
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Header — always shown; title comes from the URL param */}
+      <DetailHeader
+        icon={Boxes}
+        title={name}
+        copyValue={name}
+        kind="SandboxEnv"
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!env || syncTemplate.isPending}
+              onClick={handleSync}
+              className="h-8 gap-1 text-xs"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t("envs.detail.actions.syncTemplate")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!env}
+              onClick={() => setEditOpen(true)}
+              className="h-8 gap-1 text-xs"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              {t("envs.action.edit")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!env}
+              onClick={() => setDeleteOpen(true)}
+              className="text-destructive hover:text-destructive h-8 gap-1 text-xs"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t("envs.action.delete")}
+            </Button>
+          </>
+        }
+      />
+
+      <DetailTabsNav basePath={basePath} tabs={tabs} />
+
+      {/* Body — sub-page content, gated on load/error/api-key state */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {isLoading ? (
+          <div className="flex flex-1 items-center justify-center">
+            <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
+          </div>
+        ) : isApiKeyRequired ? (
+          <ApiKeyRequiredNotice />
+        ) : isError || !env ? (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-muted-foreground text-sm">{t("envs.empty")}</p>
+          </div>
+        ) : (
+          children
+        )}
+      </div>
+
+      {/* Env-level sheets & dialogs */}
+      <UpsertEnvSheet env={env ?? null} open={editOpen} onOpenChange={setEditOpen} />
+      <DeleteEnvDialog
+        env={deleteOpen ? (env ?? null) : null}
+        onOpenChange={(open) => setDeleteOpen(open)}
+      />
+    </div>
+  )
+}
+
+// ─── API Key Required notice ───────────────────────────────────────────────────
+
+function ApiKeyRequiredNotice() {
+  const { t } = useTranslation()
+  const clusterID = useClusterID()
+  const locale = useLocale()
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
+      <div className="bg-muted flex h-12 w-12 items-center justify-center rounded-full">
+        <KeyRound className="text-muted-foreground h-6 w-6" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-sm font-semibold">{t("envs.apiKeyRequired.title")}</p>
+        <p className="text-muted-foreground max-w-md text-xs">
+          {t("envs.apiKeyRequired.envDocsDescription")}
+        </p>
+      </div>
+      <Button size="sm" render={<Link href={clusterPath(clusterID, "api-keys", locale)} />}>
+        {t("envs.apiKeyRequired.goToApiKeys")}
+      </Button>
+    </div>
+  )
+}

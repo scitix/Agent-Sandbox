@@ -84,12 +84,16 @@ export function useBreadcrumbs(): Crumb[] {
   ]
 
   if (hasDetail) {
-    // The detail id/name is the last segment; intermediate segments (rare) are
-    // surfaced verbatim too.
+    // The trailing segment is the current view; intermediate segments (e.g. the
+    // resource name above a tab sub-route) link to their own cumulative path so
+    // they stay navigable.
+    let acc = clusterPath(clusterID, page, locale)
     for (let i = 1; i < segments.length; i++) {
+      acc = `${acc}/${segments[i]}`
       const last = i === segments.length - 1
       crumbs.push({
         label: decodeURIComponent(segments[i]),
+        href: last ? undefined : acc,
         isCurrent: last,
       })
     }

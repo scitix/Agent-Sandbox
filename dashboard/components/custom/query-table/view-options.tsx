@@ -50,7 +50,13 @@ export function DataTableViewOptions<TData>({
   useEffect(() => {
     if (initializedRef.current) return
     if (hiddenColumns && hiddenColumns.length > 0) {
+      // Only touch columns that actually exist for this table — the set of
+      // columns can vary at runtime (e.g. admin-only columns), and TanStack's
+      // getColumn() logs a console error for unknown ids before returning
+      // undefined, so guard against that by checking the live column set first.
+      const existingColumnIds = new Set(table.getAllColumns().map((column) => column.id))
       hiddenColumns.forEach((columnId) => {
+        if (!existingColumnIds.has(columnId)) return
         const column = table.getColumn(columnId)
         if (column && column.getIsVisible()) {
           column.toggleVisibility(false)

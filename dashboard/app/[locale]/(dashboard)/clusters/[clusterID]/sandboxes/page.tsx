@@ -70,11 +70,13 @@ export default function SandboxesPage() {
   const isActualAdmin = useAtomValue(isActualAdminAtom)
   const isExternalLogsConfigured = useExternalLogsConfigured()
 
-  // The view actions deep-link into the consolidated detail page's tabs;
-  // Terminal stays an in-place dialog and Delete an in-place confirm.
+  // The view actions deep-link into the detail page; Terminal stays an in-place
+  // dialog and Delete an in-place confirm. Overview is the detail index (the
+  // bare `…/{id}` URL) and hosts the metrics charts, so only "logs" gets a
+  // sub-route segment.
   const goToDetail = (sandbox: AgentSandbox, tab?: string) => {
     const base = `${clusterPath(clusterID, "sandboxes", locale)}/${encodeURIComponent(sandbox.sandboxId)}`
-    router.push(tab ? `${base}?tab=${tab}` : base)
+    router.push(tab === "logs" ? `${base}/logs` : base)
   }
 
   const columns = useMemo(
@@ -176,7 +178,15 @@ export default function SandboxesPage() {
       }
       return headers[key] || key
     },
-    hiddenColumns: ["poolName", "podName", "recycledAt", "images", "nodeName", "containerId", "durationSeconds"],
+    hiddenColumns: [
+      "poolName",
+      "podName",
+      "recycledAt",
+      "images",
+      "nodeName",
+      "containerId",
+      "durationSeconds",
+    ],
   }
 
   const toolbarActions = (
