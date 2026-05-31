@@ -83,9 +83,9 @@ There are **two distinct query client types**:
 **① OpenAPI client** — typed against `schema.d.ts`, used for all per-cluster resources:
 
 ```ts
-export function currentApiClient()   // openapi-react-query: .queryOptions(), .useMutation()
+export function currentApiClient() // openapi-react-query: .queryOptions(), .useMutation()
 export function currentFetchClient() // openapi-fetch: imperative calls (batch deletes, etc.)
-export function getApiClient(clusterID)   // named-cluster variant
+export function getApiClient(clusterID) // named-cluster variant
 export function getFetchClient(clusterID) // named-cluster variant
 ```
 
@@ -94,9 +94,9 @@ The middleware auto-injects Bearer token, handles 401 redirect, and shows toast 
 **② BFF raw fetch** — plain `fetch()` against Next.js API routes, used for cross-cluster / control-plane operations (no per-cluster routing):
 
 ```ts
-export async function getClusters()    // cluster list — no auth required
-export async function login(input)     // password login
-export async function iamLogin(input)  // IAM/SSO login
+export async function getClusters() // cluster list — no auth required
+export async function login(input) // password login
+export async function iamLogin(input) // IAM/SSO login
 ```
 
 `global-apikey.ts` and `global-template.ts` also use raw BFF fetch (routed through ws-proxy) — they are NOT on the OpenAPI client.
@@ -105,21 +105,21 @@ export async function iamLogin(input)  // IAM/SSO login
 
 Separated into files by resource type, and uniformly re-exported from `lib/queries/index.ts`:
 
-| File | Content |
-| --- | --- |
-| `pool.ts` | `poolsQueryOptions`, `poolQueryOptions`, `useCreatePool`, `useUpdatePool`, `useDeletePool`, `deletePoolImperative` |
-| `sandbox.ts` | `sandboxesQueryOptions`, `sandboxQueryOptions`, `adminSandboxesQueryOptions`, `useCreateSandbox`, `useDeleteSandbox`, `deleteSandboxImperative` |
-| `template.ts` | `templatesQueryOptions`, `templateQueryOptions` (Reads use per-cluster); `useCreateTemplate`, `useUpdateTemplate`, `useDeleteTemplate`, `deleteTemplateImperative` (Writes are re-exported from `global-template.ts`, going through BFF → ws-proxy) |
-| `apikey.ts` | `apiKeysQueryOptions`, `useCreateApiKey`, `useDeleteApiKey` (admin per-cluster) |
-| `global-apikey.ts` | `globalApiKeysQueryOptions`, `useCreateGlobalApiKey`, `useDeleteGlobalApiKey` (BFF raw fetch, used for API Keys page) |
-| `global-template.ts` | `useCreateGlobalTemplate`, `useUpdateGlobalTemplate`, `useDeleteGlobalTemplate`, `deleteGlobalTemplateImperative` (BFF raw fetch → ws-proxy internal API) |
-| `stats.ts` | `sandboxStatsQueryOptions`, `poolStatsQueryOptions`, `userSandboxStatsQueryOptions` |
-| `cluster.ts` | `clustersQueryOptions` (BFF, standard queryOptions wrapper) |
-| `organization.ts` | `adminTeamsQueryOptions`, `adminUsersByTeamQueryOptions`, `adminNamespacesQueryOptions` |
-| `auth.ts` | `useLogin`, `useIamLogin` (Standard useMutation, no invalidate) |
-| `misc.ts` | `quotasQueryOptions`, `oidcConfigQueryOptions` |
-| `index.ts` | Unified re-exports + `useInvalidate()` helper function |
-| `utils.ts` | Delayed invalidate utility functions |
+| File                 | Content                                                                                                                                                                                                                                             |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pool.ts`            | `poolsQueryOptions`, `poolQueryOptions`, `useCreatePool`, `useUpdatePool`, `useDeletePool`, `deletePoolImperative`                                                                                                                                  |
+| `sandbox.ts`         | `sandboxesQueryOptions`, `sandboxQueryOptions`, `adminSandboxesQueryOptions`, `useCreateSandbox`, `useDeleteSandbox`, `deleteSandboxImperative`                                                                                                     |
+| `template.ts`        | `templatesQueryOptions`, `templateQueryOptions` (Reads use per-cluster); `useCreateTemplate`, `useUpdateTemplate`, `useDeleteTemplate`, `deleteTemplateImperative` (Writes are re-exported from `global-template.ts`, going through BFF → ws-proxy) |
+| `apikey.ts`          | `apiKeysQueryOptions`, `useCreateApiKey`, `useDeleteApiKey` (admin per-cluster)                                                                                                                                                                     |
+| `global-apikey.ts`   | `globalApiKeysQueryOptions`, `useCreateGlobalApiKey`, `useDeleteGlobalApiKey` (BFF raw fetch, used for API Keys page)                                                                                                                               |
+| `global-template.ts` | `useCreateGlobalTemplate`, `useUpdateGlobalTemplate`, `useDeleteGlobalTemplate`, `deleteGlobalTemplateImperative` (BFF raw fetch → ws-proxy internal API)                                                                                           |
+| `stats.ts`           | `sandboxStatsQueryOptions`, `poolStatsQueryOptions`, `userSandboxStatsQueryOptions`                                                                                                                                                                 |
+| `cluster.ts`         | `clustersQueryOptions` (BFF, standard queryOptions wrapper)                                                                                                                                                                                         |
+| `organization.ts`    | `adminTeamsQueryOptions`, `adminUsersByTeamQueryOptions`, `adminNamespacesQueryOptions`                                                                                                                                                             |
+| `auth.ts`            | `useLogin`, `useIamLogin` (Standard useMutation, no invalidate)                                                                                                                                                                                     |
+| `misc.ts`            | `quotasQueryOptions`, `oidcConfigQueryOptions`                                                                                                                                                                                                      |
+| `index.ts`           | Unified re-exports + `useInvalidate()` helper function                                                                                                                                                                                              |
+| `utils.ts`           | Delayed invalidate utility functions                                                                                                                                                                                                                |
 
 **Query key structure** (auto-generated by openapi-react-query): `["get", "/sandboxpools"]`, `["get", "/sandboxpools", { params: ... }]`
 
@@ -182,15 +182,16 @@ Any dialog that needs to fetch data **MUST** be split into a "Shell + Inner Form
 
 **See the canonical example**: [`components/sandboxes/create-dialog.tsx`](./components/sandboxes/create-dialog.tsx)
 
-| What to look at | Location |
-| --- | --- |
-| Zod schema definition | Line 56 — `const schema = z.object({...})` |
-| Inner form + `useQuery` mount | Line 79 — `function CreateSandboxForm` |
-| Object Combobox in `Controller` | Line 142 — `poolName` field |
-| Plain `register` input | Line 181 — `image` field |
-| Dialog shell (`{open && ...}`) | Line 277 — `export function CreateSandboxDialog` |
+| What to look at                 | Location                                         |
+| ------------------------------- | ------------------------------------------------ |
+| Zod schema definition           | Line 56 — `const schema = z.object({...})`       |
+| Inner form + `useQuery` mount   | Line 79 — `function CreateSandboxForm`           |
+| Object Combobox in `Controller` | Line 142 — `poolName` field                      |
+| Plain `register` input          | Line 181 — `image` field                         |
+| Dialog shell (`{open && ...}`)  | Line 277 — `export function CreateSandboxDialog` |
 
 Key rules:
+
 - Never pass fetched data (e.g., `templates`) as props from the page into the dialog — always fetch inside the inner form.
 - Use `react-hook-form` + `zodResolver` + `Controller` for every field.
 - `Field` / `FieldLabel` / `FieldError` / `FieldDescription` are the standard field wrappers.
@@ -280,36 +281,36 @@ pnpm i18n:validate
 
 Flat dot-namespaced format, organized by module:
 
-| Prefix | Purpose |
-| --- | --- |
-| `nav.*` | Navigation / Sidebar labels |
-| `common.*` | Common actions (Create, Delete, Cancel, etc.) |
-| `status.*` | Status labels (Running, Idle, Failed, etc.) |
-| `login.*` | Login page |
-| `sandboxes.*` | Sandbox module (incl. `.col.*` columns, `.form.*` forms) |
-| `pools.*` | Resource pool module |
-| `templates.*` | Template module |
-| `apiKeys.*` | API Keys module |
-| `overview.*` | Overview page |
-| `admin.*` | Admin page |
-| `prometheus.*` | Metrics charts |
-| `table.*` | Common table components |
-| `errors.*` | Error report dialogs |
+| Prefix         | Purpose                                                  |
+| -------------- | -------------------------------------------------------- |
+| `nav.*`        | Navigation / Sidebar labels                              |
+| `common.*`     | Common actions (Create, Delete, Cancel, etc.)            |
+| `status.*`     | Status labels (Running, Idle, Failed, etc.)              |
+| `login.*`      | Login page                                               |
+| `sandboxes.*`  | Sandbox module (incl. `.col.*` columns, `.form.*` forms) |
+| `pools.*`      | Resource pool module                                     |
+| `templates.*`  | Template module                                          |
+| `apiKeys.*`    | API Keys module                                          |
+| `overview.*`   | Overview page                                            |
+| `admin.*`      | Admin page                                               |
+| `prometheus.*` | Metrics charts                                           |
+| `table.*`      | Common table components                                  |
+| `errors.*`     | Error report dialogs                                     |
 
 ### Key Files
 
-| File | Responsibility |
-| --- | --- |
-| `messages/en.json` | English translation (Single Source of Truth) |
-| `messages/zh-Hans.json` | Simplified Chinese translation |
-| `messages/_schema.ts` | Auto-generated `TranslationKey` type (derived from `en.json`) |
-| `lib/i18n/context.tsx` | `I18nProvider` + `useTranslation()` hook |
-| `lib/i18n/config.ts` | Locale configuration (`"en" \| "zh"`) |
-| `lib/i18n/atoms.ts` | `localeAtom` (Jotai) |
-| `proxy.ts` | URL locale detection + redirect (Next.js 16 proxy file convention) |
-| `hooks/use-locale.ts` | Reads current locale from the URL `[locale]` segment |
-| `components/locale-switcher.tsx` | EN/ZH language switcher button |
-| `scripts/i18n-*.ts` | Scripts for extraction / translation / validation / type generation |
+| File                             | Responsibility                                                      |
+| -------------------------------- | ------------------------------------------------------------------- |
+| `messages/en.json`               | English translation (Single Source of Truth)                        |
+| `messages/zh-Hans.json`          | Simplified Chinese translation                                      |
+| `messages/_schema.ts`            | Auto-generated `TranslationKey` type (derived from `en.json`)       |
+| `lib/i18n/context.tsx`           | `I18nProvider` + `useTranslation()` hook                            |
+| `lib/i18n/config.ts`             | Locale configuration (`"en" \| "zh"`)                               |
+| `lib/i18n/atoms.ts`              | `localeAtom` (Jotai)                                                |
+| `proxy.ts`                       | URL locale detection + redirect (Next.js 16 proxy file convention)  |
+| `hooks/use-locale.ts`            | Reads current locale from the URL `[locale]` segment                |
+| `components/locale-switcher.tsx` | EN/ZH language switcher button                                      |
+| `scripts/i18n-*.ts`              | Scripts for extraction / translation / validation / type generation |
 
 ---
 

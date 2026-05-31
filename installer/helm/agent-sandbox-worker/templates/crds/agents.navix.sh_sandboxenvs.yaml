@@ -24,12 +24,21 @@ spec:
     - jsonPath: .spec.mode
       name: Mode
       type: string
-    - jsonPath: .status.localMemberCount
+    - jsonPath: .spec.templateRef.name
+      name: Template
+      type: string
+    - jsonPath: .status.memberCount
       name: Members
       type: integer
-    - jsonPath: .status.pendingRequests
-      name: Pending
+    - jsonPath: .status.runningReplicas
+      name: Running
       type: integer
+    - jsonPath: .status.idleReplicas
+      name: Idle
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -1328,21 +1337,39 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              localMemberCount:
-                description: 'LocalMemberCount caches the length of the local cluster''s
-                  Members for
+              desiredReplicas:
+                description: 'DesiredReplicas, RunningReplicas, IdleReplicas are env-wide
+                  rollups of
 
-                  use in printer columns (which can''t easily evaluate nested arrays).'
+                  the per-member counts, summed across every observed member. They
+                  back
+
+                  the printer columns (which cannot sum nested arrays) and give a
+                  single
+
+                  at-a-glance view of capacity vs. utilisation.'
                 format: int32
                 type: integer
-              pendingRequests:
-                description: 'PendingRequests is the number of Sandbox.create requests
-                  held by
+              idleReplicas:
+                format: int32
+                type: integer
+              memberCount:
+                description: 'MemberCount is the total number of member Pools, summed
+                  across every
 
-                  EnvScheduler when no member could accept them (typically because
-                  all
+                  cluster segment. It exists because printer columns cannot evaluate
+                  the
 
-                  members hit Saturated). Drives the EnvScaleUpPending signal.'
+                  nested clusters[].members[] array. Today only the local segment
+                  is
+
+                  observed, so it equals the local member count; once foreign segments
+                  are
+
+                  populated it reflects the cross-cluster total.'
+                format: int32
+                type: integer
+              runningReplicas:
                 format: int32
                 type: integer
               scalingGroups:

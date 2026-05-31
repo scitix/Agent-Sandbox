@@ -44,10 +44,12 @@ import (
 // from three orthogonal contracts (env shell + member CRUD + autoscaler
 // CRUD) without method-name collisions.
 type EnvShellService interface {
-	// List returns the SandboxEnvs in namespace visible to the caller.
-	// When team/user are non-empty the result is filtered by the standard
-	// scheduling.navix.sh/{team,user} labels (matching the Pool model).
-	List(ctx context.Context, namespace, team, user string) ([]gen.SandboxEnv, *domain.AppError)
+	// List returns a lightweight summary of the SandboxEnvs in namespace
+	// visible to the caller. When team/user are non-empty the result is
+	// filtered by the standard scheduling.navix.sh/{team,user} labels
+	// (matching the Pool model). Callers needing the full spec/status fetch
+	// each Env via Get.
+	List(ctx context.Context, namespace, team, user string) ([]gen.SandboxEnvSummary, *domain.AppError)
 	// Get returns a single Env or NotFound.
 	Get(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
 	// Create posts a new SandboxEnv shell. The body carries TemplateRef +
@@ -156,7 +158,7 @@ func NewSandboxEnvService(c client.Client, pm *plugins.PluginManager, instProv i
 
 // List enumerates Envs in the namespace, filtered by team/user labels when
 // supplied. Sorted by name for deterministic test output.
-func (s *k8sSandboxEnvService) List(ctx context.Context, namespace, team, user string) ([]gen.SandboxEnv, *domain.AppError) {
+func (s *k8sSandboxEnvService) List(ctx context.Context, namespace, team, user string) ([]gen.SandboxEnvSummary, *domain.AppError) {
 	listOpts := []client.ListOption{client.InNamespace(namespace)}
 	if team != "" && user != "" {
 		listOpts = append(listOpts, client.MatchingLabels{
@@ -168,9 +170,9 @@ func (s *k8sSandboxEnvService) List(ctx context.Context, namespace, team, user s
 	if err := s.client.List(ctx, envList, listOpts...); err != nil {
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	items := make([]gen.SandboxEnv, 0, len(envList.Items))
+	items := make([]gen.SandboxEnvSummary, 0, len(envList.Items))
 	for i := range envList.Items {
-		items = append(items, envToGen(&envList.Items[i]))
+		items = append(items, envToSummary(&envList.Items[i]))
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Name < items[j].Name
@@ -519,6 +521,67 @@ func envToGen(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnv {
 	return result
 }
 
+// envToSummary projects a SandboxEnv onto the lightweight List shape. It
+// carries only what the list table and its row links need — identity, the
+// bound template name, mode, the env-wide replica rollups, autoscaling group
+// counts, and a Ready flag — deliberately omitting the autoscaling policies,
+// per-member config, and detailed status that only the detail page (Get)
+// requires.
+func envToSummary(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnvSummary {
+	createdAt := env.CreationTimestamp.UTC()
+	out := gen.SandboxEnvSummary{
+		Name:         env.Name,
+		Namespace:    ptr.To(env.Namespace),
+		TemplateName: ptr.To(env.Spec.TemplateRef.Name),
+		Mode:         ptr.To(gen.SandboxEnvSummaryMode(env.Spec.Mode)),
+		Team:         ptr.To(env.Labels[agentsv1alpha1.LabelTeam]),
+		User:         ptr.To(env.Labels[agentsv1alpha1.LabelUser]),
+		CreatedAt:    &createdAt,
+	}
+
+	st := &env.Status
+	if st.MemberCount > 0 {
+		out.MemberCount = ptr.To(st.MemberCount)
+	}
+	if st.DesiredReplicas > 0 {
+		out.DesiredReplicas = ptr.To(st.DesiredReplicas)
+	}
+	if st.RunningReplicas > 0 {
+		out.RunningReplicas = ptr.To(st.RunningReplicas)
+	}
+	if st.IdleReplicas > 0 {
+		out.IdleReplicas = ptr.To(st.IdleReplicas)
+	}
+
+	// Autoscaling is toggled per group — there is no Env-level switch — so the
+	// list surfaces the enabled/total group counts rather than a single bit.
+	if env.Spec.Autoscaling != nil && len(env.Spec.Autoscaling.Groups) > 0 {
+		groups := env.Spec.Autoscaling.Groups
+		enabled := 0
+		for i := range groups {
+			if groups[i].Enabled {
+				enabled++
+			}
+		}
+		out.ScalingGroupCount = ptr.To(int32(len(groups)))
+		out.AutoscalingEnabledGroupCount = ptr.To(int32(enabled))
+	}
+
+	out.Ready = ptr.To(envReady(env))
+	return out
+}
+
+// envReady reports whether the Env's Ready condition is currently True.
+func envReady(env *agentsv1alpha1.SandboxEnv) bool {
+	for i := range env.Status.Conditions {
+		c := &env.Status.Conditions[i]
+		if c.Type == agentsv1alpha1.SandboxEnvConditionReady {
+			return c.Status == metav1.ConditionTrue
+		}
+	}
+	return false
+}
+
 func envSpecToGen(spec *agentsv1alpha1.SandboxEnvSpec) gen.SandboxEnvSpec {
 	out := gen.SandboxEnvSpec{
 		TemplateRef: gen.SandboxEnvTemplateRef{Name: spec.TemplateRef.Name},
@@ -682,11 +745,17 @@ func envStatusToGen(status *agentsv1alpha1.SandboxEnvStatus) *gen.SandboxEnvStat
 		return nil
 	}
 	out := &gen.SandboxEnvStatus{}
-	if status.PendingRequests > 0 {
-		out.PendingRequests = ptr.To(status.PendingRequests)
+	if status.MemberCount > 0 {
+		out.MemberCount = ptr.To(status.MemberCount)
 	}
-	if status.LocalMemberCount > 0 {
-		out.LocalMemberCount = ptr.To(status.LocalMemberCount)
+	if status.DesiredReplicas > 0 {
+		out.DesiredReplicas = ptr.To(status.DesiredReplicas)
+	}
+	if status.RunningReplicas > 0 {
+		out.RunningReplicas = ptr.To(status.RunningReplicas)
+	}
+	if status.IdleReplicas > 0 {
+		out.IdleReplicas = ptr.To(status.IdleReplicas)
 	}
 	if len(status.Conditions) > 0 {
 		conds := make([]gen.EnvCondition, 0, len(status.Conditions))

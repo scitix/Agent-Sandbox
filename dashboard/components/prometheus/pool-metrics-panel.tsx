@@ -17,10 +17,8 @@
 "use client"
 
 /**
- * PoolMetricsSheet — Replica Trend monitoring for a specific SandboxPool.
- *
- * Opens as a right-side Sheet from the pool Actions dropdown.
- * Shows Desired vs Running replica counts over time, filtered to the specific pool.
+ * PoolMetricsPanel — Replica Trend + schedule queue monitoring for a single
+ * SandboxPool. Rendered as the Metrics tab of the pool detail page.
  *
  * Smart time-range defaults:
  * - Pool created < 1 day ago: absolute range from createdAt to now (adjustable), auto-refresh 30s
@@ -29,34 +27,29 @@
  */
 
 import { useState, useMemo, useCallback, useEffect } from "react"
+import { AlertCircle } from "lucide-react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+
 import { useTranslation } from "@/lib/i18n"
-import { AlertCircle, Activity } from "lucide-react"
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet"
 import { MetricsChart } from "@/components/prometheus/metrics-chart"
 import { C } from "./colors"
 import { GrafanaTimePicker } from "@/components/prometheus/grafana-time-picker"
-import { replicasTrendQueryOptions, replicasTrendAbsoluteQueryOptions, scheduleReadyQueueQueryOptions, scheduleReadyQueueAbsoluteQueryOptions } from "@/lib/queries"
+import {
+  replicasTrendQueryOptions,
+  replicasTrendAbsoluteQueryOptions,
+  scheduleReadyQueueQueryOptions,
+  scheduleReadyQueueAbsoluteQueryOptions,
+} from "@/lib/queries"
 import { type TimeRangeValue, type RefreshInterval, resolveTimeRange } from "@/lib/types/prometheus"
 import type { AgentSandboxPool } from "@/lib/api/client"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useRefreshCountdown } from "@/hooks/use-refresh-countdown"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function toUnixSeconds(iso: string): number {
   return Math.floor(new Date(iso).getTime() / 1000)
 }
 
-// ─── Inner form (only mounted when open) ─────────────────────────────────────
-
-function PoolMetricsSheetContent({ pool }: { pool: AgentSandboxPool }) {
+export function PoolMetricsPanel({ pool }: { pool: AgentSandboxPool }) {
   const { t } = useTranslation()
   const clusterID = useClusterID()
   const queryClient = useQueryClient()
@@ -106,11 +99,11 @@ function PoolMetricsSheetContent({ pool }: { pool: AgentSandboxPool }) {
     () =>
       (isAbsolute
         ? replicasTrendAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : replicasTrendQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof replicasTrendAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof replicasTrendAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -118,11 +111,11 @@ function PoolMetricsSheetContent({ pool }: { pool: AgentSandboxPool }) {
     () =>
       (isAbsolute
         ? scheduleReadyQueueAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : scheduleReadyQueueQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof scheduleReadyQueueAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof scheduleReadyQueueAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -148,7 +141,7 @@ function PoolMetricsSheetContent({ pool }: { pool: AgentSandboxPool }) {
   }, [queryClient])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-6">
       {/* Time range controls */}
       <GrafanaTimePicker
         value={timeRange}
@@ -206,39 +199,5 @@ function PoolMetricsSheetContent({ pool }: { pool: AgentSandboxPool }) {
         </>
       )}
     </div>
-  )
-}
-
-// ─── Shell (controls open/close) ─────────────────────────────────────────────
-
-export interface PoolMetricsSheetProps {
-  pool: AgentSandboxPool | null
-  onOpenChange: (open: boolean) => void
-}
-
-export function PoolMetricsSheet({ pool, onOpenChange }: PoolMetricsSheetProps) {
-  const { t } = useTranslation()
-  const open = pool !== null
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex flex-col gap-0 p-0 sm:max-w-xl data-[side=right]:sm:max-w-2xl"
-      >
-        <SheetHeader className="border-border border-b px-6 py-4">
-          <SheetTitle className="flex items-center gap-2 font-mono text-sm tracking-wide uppercase">
-            <Activity className="text-brand h-4 w-4" />
-            {t("prometheus.metrics")}
-          </SheetTitle>
-          <SheetDescription className="text-muted-foreground font-mono text-xs">
-            {t("pools.metricsFor", { name: pool?.name ?? "—" })}
-          </SheetDescription>
-        </SheetHeader>
-
-        {/* Only mount inner form when open — ensures hooks reset properly */}
-        {open && pool && <PoolMetricsSheetContent pool={pool} />}
-      </SheetContent>
-    </Sheet>
   )
 }

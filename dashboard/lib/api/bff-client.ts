@@ -57,8 +57,7 @@ const afterResponse: AfterResponseHook = async ({ response }) => {
   if (response.status === 401) {
     clearSessionData()
     const locale = getLocaleFromPath(window.location.pathname)
-    const localeLoginPath =
-      locale === "en" ? `${basePath}/login` : `${basePath}/${locale}/login`
+    const localeLoginPath = locale === "en" ? `${basePath}/login` : `${basePath}/${locale}/login`
     if (!window.location.pathname.includes("/login")) {
       const fullPath = window.location.pathname + window.location.search
       const appPath =

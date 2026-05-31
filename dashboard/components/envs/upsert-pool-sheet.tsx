@@ -145,9 +145,7 @@ export function UpsertPoolSheet({ env, pool, open, onOpenChange }: Props) {
         side="right"
         className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-xl"
       >
-        {open && (
-          <UpsertPoolInner env={env} pool={pool} onClose={() => onOpenChange(false)} />
-        )}
+        {open && <UpsertPoolInner env={env} pool={pool} onClose={() => onOpenChange(false)} />}
       </SheetContent>
     </Sheet>
   )
@@ -189,8 +187,7 @@ function UpsertPoolInner({
   const mode = useWatch({ control, name: "resourceMode" }) ?? "manual"
   const watchedInstance = useWatch({ control, name: "instanceType" })
   const watchedMultiplier = useWatch({ control, name: "multiplier" })
-  const selectedInstanceType =
-    instanceTypes.find((it) => it.name === watchedInstance) ?? null
+  const selectedInstanceType = instanceTypes.find((it) => it.name === watchedInstance) ?? null
   const preview = computeInstanceTypePreview(selectedInstanceType, watchedMultiplier)
 
   // Member's scaling group only matters for the autoscaling-vs-replicas
@@ -278,7 +275,7 @@ function UpsertPoolInner({
           {/* Resource mode */}
           {gates.instanceType && !isEdit && (
             <div className="flex flex-col gap-1">
-              <span className="font-mono text-[11px] text-muted-foreground">
+              <span className="text-muted-foreground font-mono text-[11px]">
                 {t("envs.poolForm.resourceMode")}
               </span>
               <Controller
@@ -336,8 +333,8 @@ function UpsertPoolInner({
                 </Field>
               </div>
               {preview && (
-                <div className="rounded border bg-background px-3 py-2 font-mono text-[11px] text-muted-foreground">
-                  <span className="mr-1 uppercase tracking-wider">
+                <div className="bg-background text-muted-foreground rounded border px-3 py-2 font-mono text-[11px]">
+                  <span className="mr-1 tracking-wider uppercase">
                     {t("envs.poolForm.preview")}
                   </span>
                   <span className="text-foreground">
@@ -362,9 +359,7 @@ function UpsertPoolInner({
                   disabled={isEdit}
                   {...register("cpuCores")}
                 />
-                {errors.cpuCores && (
-                  <FieldError>{t(errors.cpuCores.message as never)}</FieldError>
-                )}
+                {errors.cpuCores && <FieldError>{t(errors.cpuCores.message as never)}</FieldError>}
               </Field>
               <Field>
                 <FieldLabel>{t("envs.poolForm.memoryGiB")}</FieldLabel>
@@ -400,12 +395,7 @@ function UpsertPoolInner({
             </Field>
             <Field>
               <FieldLabel>{t("envs.poolForm.maxReplicas")}</FieldLabel>
-              <Input
-                type="number"
-                min={0}
-                placeholder="—"
-                {...register("maxReplicas")}
-              />
+              <Input type="number" min={0} placeholder="—" {...register("maxReplicas")} />
             </Field>
           </div>
         </div>
@@ -437,7 +427,7 @@ function ModeToggle<T extends string>({
   options: Array<{ value: T; label: string }>
 }) {
   return (
-    <div className="inline-flex h-9 w-fit overflow-hidden rounded-md border bg-background font-mono text-[11px]">
+    <div className="bg-background inline-flex h-9 w-fit overflow-hidden rounded-md border font-mono text-[11px]">
       {options.map((opt) => (
         <button
           key={opt.value}
@@ -555,9 +545,7 @@ function InstanceTypeCombobox({
               <ComboboxItem key={item.name} value={item}>
                 <div className="flex flex-col">
                   <span className="font-mono text-xs">{item.showName || item.name}</span>
-                  {meta && (
-                    <span className="text-[10px] text-muted-foreground">{meta}</span>
-                  )}
+                  {meta && <span className="text-muted-foreground text-[10px]">{meta}</span>}
                 </div>
               </ComboboxItem>
             )

@@ -41,14 +41,13 @@ export default function EnvAutoscalingPage({ params }: PageProps) {
   if (!env) return null
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="p-6">
-        <AutoscalingSection
-          env={env}
-          onEdit={(g) => setEditTarget(g)}
-          onDelete={(g) => setDeleteTarget(g)}
-        />
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <AutoscalingSection
+        env={env}
+        onEdit={(g) => setEditTarget(g)}
+        onDelete={(g) => setDeleteTarget(g)}
+        fixed
+      />
 
       <UpsertAutoscalingGroupSheet
         env={env}

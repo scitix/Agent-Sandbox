@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
+import { ResourceLink } from "@/components/custom/resource-link"
 import { RelativeTime } from "@/components/custom/relative-time"
 import { parseCpuToCore, parseMemoryToMiB, formatCores, formatMiB } from "@/lib/resources"
 import { StatusBadge, type StatusBadgeColorMap } from "@/components/custom/status-badge"
@@ -38,7 +39,7 @@ import { clusterPath } from "@/lib/cluster-path"
 import Link from "next/link"
 import type { TranslationKey } from "@/messages/_schema"
 
-const POOL_PHASE_COLORS: StatusBadgeColorMap = {
+export const POOL_PHASE_COLORS: StatusBadgeColorMap = {
   ready: "bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30",
   degraded: "bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30",
   scalingup: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 border-yellow-500/30",
@@ -118,17 +119,18 @@ function OwningEnvCell({ envName }: { envName?: string }) {
   const locale = useLocale()
   if (!envName) return <span className="text-muted-foreground text-xs">—</span>
   const href = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}`
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      nativeButton={false}
-      className="text-muted-foreground hover:text-foreground h-auto gap-1 px-0 py-0 font-mono text-xs hover:bg-transparent"
-      render={<Link href={href} />}
-    >
-      {envName}
-    </Button>
-  )
+  return <ResourceLink value={envName} href={href} tone="muted" />
+}
+
+// Pool name → the pool's detail page, nested under its owning Env. Pools not
+// yet adopted by an Env (no owningEnv) fall back to a copy-only label.
+function PoolNameCell({ pool }: { pool: AgentSandboxPool }) {
+  const clusterID = useClusterID()
+  const locale = useLocale()
+  const href = pool.owningEnv
+    ? `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/pools/${encodeURIComponent(pool.name)}`
+    : undefined
+  return <ResourceLink value={pool.name} href={href} />
 }
 
 export interface PoolColumnsOptions {
@@ -261,9 +263,7 @@ export function createPoolColumns(
           includesStringFilterOptions={{ placeholder: t("pools.col.searchByName") }}
         />
       ),
-      cell: ({ row }) => (
-        <span className="text-foreground font-mono text-xs">{row.original.name}</span>
-      ),
+      cell: ({ row }) => <PoolNameCell pool={row.original} />,
     },
     ...(options?.showOwner ? [ownerColumn] : []),
     {

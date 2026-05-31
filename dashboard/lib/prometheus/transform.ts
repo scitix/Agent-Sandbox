@@ -62,7 +62,7 @@ export function mergeChartSeries(series: ChartSeries[]): RechartsDataPoint[] {
  */
 export function formatBytes(bytes: number): string {
   if (bytes === null || bytes === undefined || isNaN(bytes) || bytes === 0) {
-    return "0 B";
+    return "0 B"
   }
   const units = ["B", "KB", "MB", "GB", "TB"]
   const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024))

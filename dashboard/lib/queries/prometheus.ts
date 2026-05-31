@@ -1659,13 +1659,7 @@ export const envCapacityWaterfallAbsoluteQueryOptions = (
   options?: { refetchInterval?: number },
 ) =>
   queryOptions({
-    queryKey: [
-      "prometheus",
-      "env-capacity-waterfall",
-      ...filterKey(filters),
-      start,
-      end,
-    ],
+    queryKey: ["prometheus", "env-capacity-waterfall", ...filterKey(filters), start, end],
     queryFn: () =>
       prometheusGet<TimeSeriesData>("env-capacity-waterfall", {
         cluster: filters.cluster,

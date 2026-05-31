@@ -81,22 +81,20 @@ function EnvOverview({
   env: AgentSandboxEnv
   t: (key: TranslationKey, params?: Record<string, string | number>) => string
 }) {
-  let memberCount = 0
-  let localCluster: string | undefined
-  for (const cluster of env.spec.clusters ?? []) {
-    if (cluster.members && cluster.members.length > 0 && !localCluster) {
-      localCluster = cluster.clusterID
-    }
-    for (const _m of cluster.members ?? []) {
-      memberCount++
-    }
-  }
+  const memberCount =
+    env.status?.memberCount ??
+    (env.spec.clusters ?? []).reduce((acc, c) => acc + (c.members?.length ?? 0), 0)
+  const groups = env.spec.autoscaling?.groups ?? []
+  const enabledGroups = groups.filter((g) => g.enabled).length
 
   const cells: { label: string; value: React.ReactNode }[] = [
     { label: t("envs.detail.field.template"), value: env.spec.templateRef.name },
     { label: t("envs.detail.field.mode"), value: env.spec.mode },
     { label: t("envs.detail.field.members"), value: memberCount },
-    { label: t("envs.detail.field.localCluster"), value: localCluster ?? "—" },
+    {
+      label: t("envs.detail.field.autoscaling"),
+      value: groups.length > 0 ? `${enabledGroups}/${groups.length}` : "—",
+    },
     ...(env.spec.defaults
       ? [
           {

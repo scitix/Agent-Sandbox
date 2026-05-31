@@ -805,6 +805,47 @@ components:
         template:
           $ref: "#/components/schemas/SandboxPool"
 
+    SandboxPoolSummary:
+      type: object
+      description: "Lightweight shape returned by the pool List endpoint: the full SandboxPool minus the heavy specYaml (full pod-template YAML) and overrides, neither of which list consumers read. Fetch GET /envs/{name}/sandboxpools/{poolName} for the full body (incl. specYaml for the diff view)."
+      required: [name, namespace, spec, status]
+      properties:
+        name:
+          type: string
+          description: "Name of the SandboxPool (RFC 1123 DNS label)."
+        namespace:
+          type: string
+          description: "Kubernetes namespace the pool is deployed in."
+        spec:
+          $ref: "#/components/schemas/SandboxPoolSpec"
+        status:
+          $ref: "#/components/schemas/SandboxPoolStatus"
+        cpu:
+          type: string
+          description: 'CPU resource per pod in the pool (Kubernetes resource quantity, e.g. "1", "100m").'
+        memory:
+          type: string
+          description: 'Memory resource per pod in the pool (Kubernetes resource quantity, e.g. "16Gi", "512Mi").'
+        team:
+          type: string
+          description: "Team label of the pool owner (from CRD label)."
+        user:
+          type: string
+          description: "User label of the pool owner (from CRD label)."
+        scalingGroup:
+          type: string
+          description: "Scaling group this pool belongs to. Members in the same group share an autoscaling policy. Empty when excluded from autoscaling."
+        templateVersion:
+          type: string
+          description: "Version of the source SandboxTemplate at last sync (from annotation)."
+        createdAt:
+          type: string
+          format: date-time
+          description: "Creation time of the pool (from metadata.creationTimestamp)."
+        owningEnv:
+          type: string
+          description: "Name of the SandboxEnv that owns this pool (resolved from OwnerReferences)."
+
     CreateEnvSandboxPoolRequest:
       type: object
       description: |
@@ -910,9 +951,9 @@ components:
       properties:
         items:
           type: array
-          description: "Page of SandboxPool objects."
+          description: "Page of SandboxPool summaries."
           items:
-            $ref: "#/components/schemas/SandboxPool"
+            $ref: "#/components/schemas/SandboxPoolSummary"
         total:
           type: integer
           description: "Total number of pools matching the query (before pagination)."
@@ -1332,12 +1373,22 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EnvScalingGroupStatus"
-        pendingRequests:
+        memberCount:
           type: integer
           format: int32
-        localMemberCount:
+          description: "Total member Pools across all cluster segments (today: the local segment only). Exists because printer columns cannot evaluate the nested clusters[].members[] array."
+        desiredReplicas:
           type: integer
           format: int32
+          description: "Env-wide sum of every member Pool's desired replicas."
+        runningReplicas:
+          type: integer
+          format: int32
+          description: "Env-wide sum of every member Pool's running replicas."
+        idleReplicas:
+          type: integer
+          format: int32
+          description: "Env-wide sum of every member Pool's idle replicas."
 
     SandboxEnv:
       type: object
@@ -1373,6 +1424,59 @@ components:
         env:
           $ref: "#/components/schemas/SandboxEnv"
 
+    SandboxEnvSummary:
+      type: object
+      description: "Lightweight summary returned by the List endpoint — omits the full spec (autoscaling policies, per-member config) and detailed per-member status. Fetch GET /envs/{name} for the complete SandboxEnv."
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Name of the SandboxEnv (RFC 1123 DNS label, unique within its namespace)."
+        namespace:
+          type: string
+        team:
+          type: string
+        user:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: "RFC 3339 timestamp when the Env was created."
+        templateName:
+          type: string
+          description: "The bound SandboxTemplate name (from spec.templateRef.name)."
+        mode:
+          type: string
+          enum: [WarmPool, OnDemandJob]
+          description: "How the Env satisfies sandbox-create requests."
+        memberCount:
+          type: integer
+          format: int32
+          description: "Total member Pools across all cluster segments."
+        desiredReplicas:
+          type: integer
+          format: int32
+          description: "Env-wide sum of every member Pool's desired replicas."
+        runningReplicas:
+          type: integer
+          format: int32
+          description: "Env-wide sum of every member Pool's running replicas."
+        idleReplicas:
+          type: integer
+          format: int32
+          description: "Env-wide sum of every member Pool's idle replicas."
+        scalingGroupCount:
+          type: integer
+          format: int32
+          description: "Total number of autoscaling groups declared on the Env."
+        autoscalingEnabledGroupCount:
+          type: integer
+          format: int32
+          description: "Number of autoscaling groups with enabled=true. There is no Env-level autoscaling switch; autoscaling is toggled per group."
+        ready:
+          type: boolean
+          description: "True when the Env's Ready condition is True (all members Active)."
+
     ListSandboxEnvsResult:
       type: object
       required: [items]
@@ -1380,7 +1484,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/SandboxEnv"
+            $ref: "#/components/schemas/SandboxEnvSummary"
 
     UpdateSandboxEnvRequest:
       type: object

@@ -183,6 +183,6 @@ export default function QuotaPage() {
           </div>
         )}
       </div>
-    </div >
+    </div>
   )
 }

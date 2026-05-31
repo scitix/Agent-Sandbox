@@ -29,7 +29,16 @@
 import { useMemo } from "react"
 import { useTranslation } from "@/lib/i18n"
 import { useQuery } from "@tanstack/react-query"
-import { Activity, TrendingUp, Zap, AlertTriangle, Clock, ArrowUpRight, Globe, Cpu } from "lucide-react"
+import {
+  Activity,
+  TrendingUp,
+  Zap,
+  AlertTriangle,
+  Clock,
+  ArrowUpRight,
+  Globe,
+  Cpu,
+} from "lucide-react"
 import { MetricsChart } from "@/components/prometheus/metrics-chart"
 import { C } from "./colors"
 import {
@@ -103,11 +112,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? httpRequestRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : httpRequestRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof httpRequestRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof httpRequestRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -115,11 +124,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? httpRequestDurationNativeAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : httpRequestDurationNativeQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof httpRequestDurationNativeAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof httpRequestDurationNativeAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -127,11 +136,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? httpRequestDurationE2bAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : httpRequestDurationE2bQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof httpRequestDurationE2bAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof httpRequestDurationE2bAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -139,11 +148,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? sandboxCumulativeStatsAbsoluteQueryOptions(filters, start, end, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : sandboxCumulativeStatsQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof sandboxCumulativeStatsAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof sandboxCumulativeStatsAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, resolvedPreset, effectiveRefetch],
   )
 
@@ -151,11 +160,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? envoyUpstreamRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : envoyUpstreamRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof envoyUpstreamRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof envoyUpstreamRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -163,11 +172,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? envoyErrorRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : envoyErrorRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof envoyErrorRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof envoyErrorRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -175,11 +184,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? envoyLatencyAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : envoyLatencyQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof envoyLatencyAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof envoyLatencyAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -187,11 +196,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? sandboxCreateErrorRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : sandboxCreateErrorRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof sandboxCreateErrorRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof sandboxCreateErrorRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -199,11 +208,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? sandboxDeleteFailRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : sandboxDeleteFailRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof sandboxDeleteFailRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof sandboxDeleteFailRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -211,11 +220,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? envoyBandwidthAbsoluteQueryOptions(filters, start, end, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : envoyBandwidthQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof envoyBandwidthAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof envoyBandwidthAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, resolvedPreset, effectiveRefetch],
   )
 
@@ -223,11 +232,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? envoyBandwidthRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : envoyBandwidthRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof envoyBandwidthRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof envoyBandwidthRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -235,11 +244,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? scheduleCasOutcomeAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : scheduleCasOutcomeQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof scheduleCasOutcomeAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof scheduleCasOutcomeAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -247,11 +256,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? scheduleRefreshRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : scheduleRefreshRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof scheduleRefreshRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof scheduleRefreshRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -259,11 +268,11 @@ export function AdminMetricsSection({
     () =>
       (isAbsolute
         ? scheduleInternalCountersAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : scheduleInternalCountersQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof scheduleInternalCountersAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof scheduleInternalCountersAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 

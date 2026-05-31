@@ -221,7 +221,10 @@ export function DataTablePagination<TData>({
                   <AlertDialogTitle>
                     {multipleHandler.title(table.getFilteredSelectedRowModel().rows)}
                   </AlertDialogTitle>
-                  <AlertDialogDescription className="overflow-auto">
+                  {/* Render as a div: handler descriptions contain block-level
+                      content (lists of selected rows), which is invalid nested
+                      inside the default <p> element. */}
+                  <AlertDialogDescription className="overflow-auto" render={<div />}>
                     {multipleHandler.description(table.getFilteredSelectedRowModel().rows)}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
@@ -312,20 +315,20 @@ export function DataTablePagination<TData>({
                 {refetchInterval === false
                   ? t("table.autoRefreshOff")
                   : (() => {
-                    const timeStr = new Date(dataUpdatedAt).toLocaleString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    })
-                    const parts = t("table.updatedAt", { time: "\x00" }).split("\x00")
-                    return (
-                      <>
-                        {parts[0]}
-                        <span className="font-mono tabular-nums">{timeStr}</span>
-                        {parts[1]}
-                      </>
-                    )
-                  })()}
+                      const timeStr = new Date(dataUpdatedAt).toLocaleString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })
+                      const parts = t("table.updatedAt", { time: "\x00" }).split("\x00")
+                      return (
+                        <>
+                          {parts[0]}
+                          <span className="font-mono tabular-nums">{timeStr}</span>
+                          {parts[1]}
+                        </>
+                      )
+                    })()}
               </>
             )}
           </span>
@@ -340,8 +343,8 @@ export function DataTablePagination<TData>({
                     {preset === false
                       ? t("table.autoRefreshOff")
                       : t("table.autoRefreshInterval", {
-                        interval: `${preset / 1000}s`,
-                      })}
+                          interval: `${preset / 1000}s`,
+                        })}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -432,16 +432,24 @@ type SandboxEnvStatus struct {
 	// +listMapKey=name
 	ScalingGroups []EnvScalingGroupStatus `json:"scalingGroups,omitempty"`
 
-	// PendingRequests is the number of Sandbox.create requests held by
-	// EnvScheduler when no member could accept them (typically because all
-	// members hit Saturated). Drives the EnvScaleUpPending signal.
+	// MemberCount is the total number of member Pools, summed across every
+	// cluster segment. It exists because printer columns cannot evaluate the
+	// nested clusters[].members[] array. Today only the local segment is
+	// observed, so it equals the local member count; once foreign segments are
+	// populated it reflects the cross-cluster total.
 	// +optional
-	PendingRequests int32 `json:"pendingRequests,omitempty"`
+	MemberCount int32 `json:"memberCount,omitempty"`
 
-	// LocalMemberCount caches the length of the local cluster's Members for
-	// use in printer columns (which can't easily evaluate nested arrays).
+	// DesiredReplicas, RunningReplicas, IdleReplicas are env-wide rollups of
+	// the per-member counts, summed across every observed member. They back
+	// the printer columns (which cannot sum nested arrays) and give a single
+	// at-a-glance view of capacity vs. utilisation.
 	// +optional
-	LocalMemberCount int32 `json:"localMemberCount,omitempty"`
+	DesiredReplicas int32 `json:"desiredReplicas,omitempty"`
+	// +optional
+	RunningReplicas int32 `json:"runningReplicas,omitempty"`
+	// +optional
+	IdleReplicas int32 `json:"idleReplicas,omitempty"`
 }
 
 // EnvClusterStatus is the per-cluster observed state.
@@ -559,8 +567,11 @@ const (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=sbe
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
-// +kubebuilder:printcolumn:name="Members",type=integer,JSONPath=`.status.localMemberCount`
-// +kubebuilder:printcolumn:name="Pending",type=integer,JSONPath=`.status.pendingRequests`
+// +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.spec.templateRef.name`
+// +kubebuilder:printcolumn:name="Members",type=integer,JSONPath=`.status.memberCount`
+// +kubebuilder:printcolumn:name="Running",type=integer,JSONPath=`.status.runningReplicas`
+// +kubebuilder:printcolumn:name="Idle",type=integer,JSONPath=`.status.idleReplicas`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // SandboxEnv is the Schema for the sandboxenvs API.

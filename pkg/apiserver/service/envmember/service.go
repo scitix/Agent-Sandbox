@@ -77,7 +77,7 @@ type MemberPoolService interface {
 	DeleteMember(ctx context.Context, namespace, envName, poolName, localClusterID string) (*gen.DeleteSandboxPoolResult, *domain.AppError)
 	// List enumerates SandboxPool CRs owned by envName (matched on
 	// OwnerReferences).
-	ListMembers(ctx context.Context, namespace, envName string) ([]gen.SandboxPool, *domain.AppError)
+	ListMembers(ctx context.Context, namespace, envName string) ([]gen.SandboxPoolSummary, *domain.AppError)
 	// Get fetches one SandboxPool CR and verifies it is owned by envName
 	// before projecting it.
 	GetMember(ctx context.Context, namespace, envName, poolName string) (*gen.SandboxPool, *domain.AppError)
@@ -403,7 +403,7 @@ func (s *k8sService) DeleteMember(ctx context.Context, namespace, envName, poolN
 	}, nil
 }
 
-func (s *k8sService) ListMembers(ctx context.Context, namespace, envName string) ([]gen.SandboxPool, *domain.AppError) {
+func (s *k8sService) ListMembers(ctx context.Context, namespace, envName string) ([]gen.SandboxPoolSummary, *domain.AppError) {
 	env := &agentsv1alpha1.SandboxEnv{}
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: envName}, env); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -415,13 +415,13 @@ func (s *k8sService) ListMembers(ctx context.Context, namespace, envName string)
 	if err := s.client.List(ctx, pools, client.InNamespace(namespace)); err != nil {
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	items := make([]gen.SandboxPool, 0)
+	items := make([]gen.SandboxPoolSummary, 0)
 	for i := range pools.Items {
 		p := &pools.Items[i]
 		if envcommon.EnvNameFromOwnerRefs(p.OwnerReferences) != envName {
 			continue
 		}
-		items = append(items, envcommon.PoolToGen(ctx, p))
+		items = append(items, envcommon.PoolToSummary(ctx, p))
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 	return items, nil

@@ -19,18 +19,22 @@
 // Pool lives under an Env and is reached via /v1/envs/{name}/sandboxpools.
 
 import { useQueryClient } from "@tanstack/react-query"
-import { currentApiClient } from "@/lib/api/client"
+import { currentApiClient, currentFetchClient } from "@/lib/api/client"
 import { delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
 
 export const envPoolsQueryOptions = (envName: string) =>
-  currentApiClient().queryOptions("get", "/envs/{name}/sandboxpools", {
-    params: { path: { name: envName } },
-  }, {
-    select: (data) =>
-      (data.items ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)),
-  })
+  currentApiClient().queryOptions(
+    "get",
+    "/envs/{name}/sandboxpools",
+    {
+      params: { path: { name: envName } },
+    },
+    {
+      select: (data) => (data.items ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)),
+    },
+  )
 
 export const envPoolQueryOptions = (envName: string, poolName: string) =>
   currentApiClient().queryOptions("get", "/envs/{name}/sandboxpools/{poolName}", {
@@ -43,7 +47,11 @@ export function useCreateEnvPool(envName: string) {
   const qc = useQueryClient()
   return currentApiClient().useMutation("post", "/envs/{name}/sandboxpools", {
     onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, [
+        "get",
+        "/envs/{name}/sandboxpools",
+        { params: { path: { name: envName } } },
+      ])
       delayedInvalidate(qc, ["get", "/envs"])
     },
   })
@@ -53,7 +61,11 @@ export function useUpdateEnvPool(envName: string) {
   const qc = useQueryClient()
   return currentApiClient().useMutation("put", "/envs/{name}/sandboxpools/{poolName}", {
     onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, [
+        "get",
+        "/envs/{name}/sandboxpools",
+        { params: { path: { name: envName } } },
+      ])
       delayedInvalidate(qc, ["get", "/envs"])
     },
   })
@@ -63,8 +75,24 @@ export function useDeleteEnvPool(envName: string) {
   const qc = useQueryClient()
   return currentApiClient().useMutation("delete", "/envs/{name}/sandboxpools/{poolName}", {
     onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, [
+        "get",
+        "/envs/{name}/sandboxpools",
+        { params: { path: { name: envName } } },
+      ])
       delayedInvalidate(qc, ["get", "/envs"])
     },
   })
+}
+
+/**
+ * Imperative member-pool delete for the multi-select batch toolbar. Mirrors
+ * `deleteSandboxImperative`; the caller invalidates the pool list afterwards.
+ */
+export async function deleteEnvPoolImperative(envName: string, poolName: string): Promise<void> {
+  const client = currentFetchClient()
+  const { error } = await client.DELETE("/envs/{name}/sandboxpools/{poolName}", {
+    params: { path: { name: envName, poolName } },
+  })
+  if (error) throw error
 }

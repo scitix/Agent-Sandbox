@@ -75,8 +75,7 @@ export function getPrometheusConfig(): PrometheusConfig | null {
  * installations). Falls back to "agentbox-system" when unset so existing
  * single-namespace deployments keep working.
  */
-export const AGENTBOX_NAMESPACE =
-  process.env.AGENTBOX_NAMESPACE || "agentbox-system"
+export const AGENTBOX_NAMESPACE = process.env.AGENTBOX_NAMESPACE || "agentbox-system"
 
 // ─── PromQL building ───────────────────────────────────────────────────────
 

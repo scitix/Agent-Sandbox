@@ -142,7 +142,7 @@ export function createAdminApiKeyColumns(
               tooltip={t("apiKeys.promoteTitle")}
               side="top"
               onClick={() => onPromote(row.original)}
-              className="text-muted-foreground hover:text-blue-500 h-7 w-7"
+              className="text-muted-foreground h-7 w-7 hover:text-blue-500"
             >
               <Globe className="h-3.5 w-3.5" />
             </TooltipButton>
@@ -162,4 +162,3 @@ export function createAdminApiKeyColumns(
     },
   ]
 }
-

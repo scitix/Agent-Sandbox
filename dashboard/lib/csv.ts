@@ -31,8 +31,8 @@ export function exportToCSV<T>(
             id: col.id,
             getCanSort: () => false,
             getIsSorted: () => false,
-            toggleSorting: () => { },
-            clearSorting: () => { },
+            toggleSorting: () => {},
+            clearSorting: () => {},
           },
         } as never)
 

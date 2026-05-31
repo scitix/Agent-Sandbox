@@ -18,6 +18,7 @@
 
 import { use, useState } from "react"
 import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import {
   ActivityIcon,
@@ -60,6 +61,7 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
   const { t } = useTranslation()
   const clusterID = useClusterID()
   const locale = useLocale()
+  const pathname = usePathname()
 
   const { data, isLoading, isError, error } = useQuery(envQueryOptions(name))
   const env = data?.env
@@ -81,6 +83,12 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
       },
     )
   }
+
+  // A specific pool's detail route (`…/pools/{poolName}`) renders its own
+  // header + tabs, so the Env shell yields its chrome and just forwards the
+  // child subtree. The bare pools list (`…/pools`) keeps the Env chrome.
+  const isPoolDetailRoute = /\/pools\/[^/]+/.test(pathname)
+  if (isPoolDetailRoute) return <>{children}</>
 
   const basePath = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(name)}`
   const tabs = [
@@ -154,9 +162,9 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
       </div>
 
       {/* Env-level sheets & dialogs */}
-      <UpsertEnvSheet env={env ?? null} open={editOpen} onOpenChange={setEditOpen} />
+      <UpsertEnvSheet envName={env?.name ?? null} open={editOpen} onOpenChange={setEditOpen} />
       <DeleteEnvDialog
-        env={deleteOpen ? (env ?? null) : null}
+        env={deleteOpen && env ? { name: env.name, memberCount: env.status?.memberCount } : null}
         onOpenChange={(open) => setDeleteOpen(open)}
       />
     </div>

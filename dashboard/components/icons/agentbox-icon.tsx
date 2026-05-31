@@ -18,47 +18,19 @@ import { SVGProps } from "react"
 const AgentBoxIcon = (props: SVGProps<SVGSVGElement>) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" {...props}>
     <defs>
-      <linearGradient
-        id="a"
-        x1={1.216}
-        x2={0.392}
-        y1={0.165}
-        y2={0.653}
-        data-name="sandbox 22"
-      >
+      <linearGradient id="a" x1={1.216} x2={0.392} y1={0.165} y2={0.653} data-name="sandbox 22">
         <stop offset={0} stopColor="#ffb05a" />
         <stop offset={1} stopColor="#d8355b" />
       </linearGradient>
-      <linearGradient
-        id="b"
-        x1={0.782}
-        x2={0.277}
-        y1={0.18}
-        y2={0.501}
-        data-name="sandbox 13"
-      >
+      <linearGradient id="b" x1={0.782} x2={0.277} y1={0.18} y2={0.501} data-name="sandbox 13">
         <stop offset={0} stopColor="#ffb15c" />
         <stop offset={1} stopColor="#ff735c" />
       </linearGradient>
-      <linearGradient
-        id="c"
-        x1={0.282}
-        x2={0.882}
-        y1={0.913}
-        y2={0.131}
-        data-name="sandbox 24"
-      >
+      <linearGradient id="c" x1={0.282} x2={0.882} y1={0.913} y2={0.131} data-name="sandbox 24">
         <stop offset={0} stopColor="#ff994d" />
         <stop offset={1} stopColor="#d8355b" />
       </linearGradient>
-      <linearGradient
-        id="d"
-        x1={0.017}
-        x2={0.947}
-        y1={1.043}
-        y2={0.148}
-        data-name="sandbox 25"
-      >
+      <linearGradient id="d" x1={0.017} x2={0.947} y1={1.043} y2={0.148} data-name="sandbox 25">
         <stop offset={0} stopColor="#ff994d" />
         <stop offset={1} stopColor="#b82446" />
       </linearGradient>

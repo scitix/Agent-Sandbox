@@ -26,8 +26,8 @@ export const serverVersionQueryOptions = (clusterID: string) =>
   queryOptions({
     queryKey: ["serverVersion", clusterID],
     queryFn: () =>
-      fetch(`${basePath}/api/clusters/${clusterID}/ping`).then((res) =>
-        res.json() as Promise<{ serverVersion: string }>,
+      fetch(`${basePath}/api/clusters/${clusterID}/ping`).then(
+        (res) => res.json() as Promise<{ serverVersion: string }>,
       ),
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
@@ -99,4 +99,3 @@ export const featureGatesQueryOptions = () =>
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   })
-

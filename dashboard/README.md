@@ -4,16 +4,16 @@ Next.js frontend for Agent Sandbox — a Kubernetes-native sandbox management pl
 
 ## Tech Stack
 
-| Layer | Library |
-|-------|---------|
-| Framework | Next.js 15 (App Router) |
-| UI Components | shadcn/ui (Base UI primitives) |
+| Layer         | Library                           |
+| ------------- | --------------------------------- |
+| Framework     | Next.js 15 (App Router)           |
+| UI Components | shadcn/ui (Base UI primitives)    |
 | Data Fetching | TanStack Query v5 + openapi-fetch |
-| Forms | react-hook-form + Zod |
-| State | Jotai |
-| Styling | Tailwind CSS v4 |
-| Charts | Recharts + Prometheus |
-| Testing | Vitest |
+| Forms         | react-hook-form + Zod             |
+| State         | Jotai                             |
+| Styling       | Tailwind CSS v4                   |
+| Charts        | Recharts + Prometheus             |
+| Testing       | Vitest                            |
 
 ## Getting Started
 
@@ -32,64 +32,64 @@ by the runtime (K8s Deployment env / ConfigMap / Secret).
 
 ### Required
 
-| Variable | Purpose |
-|----------|---------|
+| Variable     | Purpose                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------ |
 | `JWT_SECRET` | HS256 secret used to sign session JWTs (`lib/auth.ts`). **Must be set** — the server throws on startup without it. |
 
 ### BFF ↔ Sidecar (required in-cluster, optional locally)
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `WSPROXY_INTERNAL_URL` | `http://localhost:9004` | Base URL of the `wsproxy` sidecar's internal control-plane API (global-template / global-apikey BFF routes). |
-| `AGENTBOX_MANAGER_TOKEN` | `""` | Bearer token forwarded by BFF routes to the manager cluster. |
+| Variable                 | Default                 | Purpose                                                                                                      |
+| ------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `WSPROXY_INTERNAL_URL`   | `http://localhost:9004` | Base URL of the `wsproxy` sidecar's internal control-plane API (global-template / global-apikey BFF routes). |
+| `AGENTBOX_MANAGER_TOKEN` | `""`                    | Bearer token forwarded by BFF routes to the manager cluster.                                                 |
 
 ### Observability — Prometheus
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `PROMETHEUS_URL` | If metrics pages are used | Prometheus query endpoint (`/api/v1/query_range`). When unset, `/api/prometheus/*` routes short-circuit to "not configured". |
-| `PROMETHEUS_TOKEN` | Optional | Bearer token for Prometheus. |
+| Variable           | Required                  | Purpose                                                                                                                      |
+| ------------------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `PROMETHEUS_URL`   | If metrics pages are used | Prometheus query endpoint (`/api/v1/query_range`). When unset, `/api/prometheus/*` routes short-circuit to "not configured". |
+| `PROMETHEUS_TOKEN` | Optional                  | Bearer token for Prometheus.                                                                                                 |
 
 ### Log download (optional)
 
 All three must be set together to enable the in-app log download feature; otherwise
 `/api/sandbox-logs/config` reports the feature as disabled.
 
-| Variable | Purpose |
-|----------|---------|
-| `LOG_DOWNLOAD_URL` | Upstream log service URL. |
-| `LOG_APP_ID` | App ID registered with the log service. |
-| `LOG_TOKEN` | Bearer token for the log service. |
+| Variable           | Purpose                                 |
+| ------------------ | --------------------------------------- |
+| `LOG_DOWNLOAD_URL` | Upstream log service URL.               |
+| `LOG_APP_ID`       | App ID registered with the log service. |
+| `LOG_TOKEN`        | Bearer token for the log service.       |
 
 ### OIDC / Dex SSO (optional)
 
 Setting `DEX_ISSUER_URL` enables OIDC login. When enabled, `DEX_CLIENT_ID`, `DEX_CLIENT_SECRET`
 and `DEX_REDIRECT_URI` must also be set.
 
-| Variable | Purpose |
-|----------|---------|
-| `DEX_ISSUER_URL` | Dex / OIDC issuer URL. Presence toggles OIDC login. |
-| `DEX_REDIRECT_URI` | OAuth callback URL registered with the IdP. |
-| `DEX_CLIENT_ID` | OIDC client ID. |
-| `DEX_CLIENT_SECRET` | OIDC client secret. |
-| `DEX_USERINFO_URI` | Optional userinfo override used during callback. |
-| `DEX_OIDC_ADMINS` | Admin mapping, e.g. `org1:alice,bob;org2:carol`. Empty ⇒ no OIDC admins. |
+| Variable            | Purpose                                                                  |
+| ------------------- | ------------------------------------------------------------------------ |
+| `DEX_ISSUER_URL`    | Dex / OIDC issuer URL. Presence toggles OIDC login.                      |
+| `DEX_REDIRECT_URI`  | OAuth callback URL registered with the IdP.                              |
+| `DEX_CLIENT_ID`     | OIDC client ID.                                                          |
+| `DEX_CLIENT_SECRET` | OIDC client secret.                                                      |
+| `DEX_USERINFO_URI`  | Optional userinfo override used during callback.                         |
+| `DEX_OIDC_ADMINS`   | Admin mapping, e.g. `org1:alice,bob;org2:carol`. Empty ⇒ no OIDC admins. |
 
 ### File paths (optional, container-friendly defaults)
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `CLUSTERS_CONFIG_PATH` | `/etc/agentbox/clusters.yaml` | Location of the clusters registry consumed by the BFF `getClusters()` route. |
-| `IMAGES_CATALOG_PATH` | `/etc/agentbox/images-catalog.json` | Curated image catalog surfaced in create dialogs. |
-| `AUDIT_LOG_PATH` | `""` (disabled) | If set, audit events are appended to this file. |
+| Variable               | Default                             | Purpose                                                                      |
+| ---------------------- | ----------------------------------- | ---------------------------------------------------------------------------- |
+| `CLUSTERS_CONFIG_PATH` | `/etc/agentbox/clusters.yaml`       | Location of the clusters registry consumed by the BFF `getClusters()` route. |
+| `IMAGES_CATALOG_PATH`  | `/etc/agentbox/images-catalog.json` | Curated image catalog surfaced in create dialogs.                            |
+| `AUDIT_LOG_PATH`       | `""` (disabled)                     | If set, audit events are appended to this file.                              |
 
 ### Next.js build / public (exposed to browser)
 
-| Variable | Purpose |
-|----------|---------|
-| `NEXT_BASE_PATH` | Build-time base path (e.g. `/dashboard`) wired into `next.config.mjs`. |
-| `NEXT_PUBLIC_BASE_PATH` | Runtime mirror of the base path used by client fetches, WebSocket URLs, and redirects. Keep equal to `NEXT_BASE_PATH`. |
-| `NEXT_PUBLIC_APP_VERSION` | Displayed in the changelog trigger; injected at build time (default `"0.0.0"`). |
+| Variable                  | Purpose                                                                                                                |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_BASE_PATH`          | Build-time base path (e.g. `/dashboard`) wired into `next.config.mjs`.                                                 |
+| `NEXT_PUBLIC_BASE_PATH`   | Runtime mirror of the base path used by client fetches, WebSocket URLs, and redirects. Keep equal to `NEXT_BASE_PATH`. |
+| `NEXT_PUBLIC_APP_VERSION` | Displayed in the changelog trigger; injected at build time (default `"0.0.0"`).                                        |
 
 ## Key Commands
 
@@ -143,6 +143,7 @@ pkg/openapi/native/openapi.yaml
 ```
 
 Two client types:
+
 - **`currentApiClient()`** — `openapi-react-query` client, per-cluster, for all cluster-scoped resources.
 - **BFF raw fetch** (`getClusters`, `global-apikey`, `global-template`) — plain `fetch()` against Next.js API routes, used for cross-cluster / control-plane operations.
 
@@ -164,6 +165,7 @@ URL-first bilingual support (English default, `/zh/` prefix for Simplified Chine
 ## Contributing
 
 Before submitting changes:
+
 1. `pnpm exec tsc --noEmit` — zero type errors
 2. `pnpm test` — all tests pass
 3. `pnpm i18n:validate` — all locale files in sync

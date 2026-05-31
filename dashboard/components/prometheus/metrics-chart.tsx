@@ -266,8 +266,8 @@ function LegendTable({
         <thead>
           <tr className="text-muted-foreground border-border border-b">
             <th className="pb-1 text-left font-normal">{labelName}</th>
-            <th className="pb-1 pr-3 text-right font-normal">{labelMean}</th>
-            <th className="pb-1 pr-3 text-right font-normal">{labelMax}</th>
+            <th className="pr-3 pb-1 text-right font-normal">{labelMean}</th>
+            <th className="pr-3 pb-1 text-right font-normal">{labelMax}</th>
             <th className="pb-1 text-right font-normal">{labelMin}</th>
             {showPromqlCol && <th className="w-8 pb-1" />}
           </tr>
@@ -313,10 +313,7 @@ function LegendTable({
                 <td className="py-0.5 pr-3 text-right tabular-nums">{fmt(s.max)}</td>
                 <td className="py-0.5 text-right tabular-nums">{fmt(s.min)}</td>
                 {showPromqlCol && (
-                  <td
-                    className="py-0.5 pl-2 text-right"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+                  <td className="py-0.5 pl-2 text-right" onClick={(e) => e.stopPropagation()}>
                     {rowQuery ? (
                       <TooltipProvider delay={400}>
                         <UITooltip>
@@ -335,14 +332,10 @@ function LegendTable({
                             ) : (
                               <Copy className="size-3.5" />
                             )}
-                            <span className="sr-only">
-                              {isCopied ? copiedLabel : copyLabel}
-                            </span>
+                            <span className="sr-only">{isCopied ? copiedLabel : copyLabel}</span>
                           </TooltipTrigger>
                           <TooltipContent side="left" className="max-w-md">
-                            <p className="font-mono break-all">
-                              {rowQuery}
-                            </p>
+                            <p className="font-mono break-all">{rowQuery}</p>
                           </TooltipContent>
                         </UITooltip>
                       </TooltipProvider>
@@ -496,7 +489,11 @@ function ChartBody({
                     : undefined
                 }
               />
-              <Tooltip content={(props) => <TimeSeriesTooltip {...props} valueFormatter={valueFormatter} />} />
+              <Tooltip
+                content={(props) => (
+                  <TimeSeriesTooltip {...props} valueFormatter={valueFormatter} />
+                )}
+              />
               {legendTable ? null : (
                 <Legend
                   content={
@@ -768,7 +765,8 @@ export function MetricsChart({
             return new Set()
           }
 
-          const wasAlreadySoleActive = !next.has(name) && names.every((s) => s === name || next.has(s))
+          const wasAlreadySoleActive =
+            !next.has(name) && names.every((s) => s === name || next.has(s))
 
           if (wasAlreadySoleActive) {
             // Clicking the active legend that's the only visible one → restore all

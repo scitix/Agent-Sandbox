@@ -108,7 +108,7 @@ export function TablePlaceHolder<TData, TValue>({
                   className={cn(
                     "bg-sidebar hover:bg-sidebar",
                     isFixedLayout &&
-                    "after:border-border relative after:absolute after:-bottom-px after:left-0 after:w-full after:border-b",
+                      "after:border-border relative after:absolute after:-bottom-px after:left-0 after:w-full after:border-b",
                   )}
                 >
                   {[...Array(columnCount)].map((_, colIndex) => (

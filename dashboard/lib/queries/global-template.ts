@@ -28,9 +28,14 @@ import { delayedInvalidate } from "./utils"
 // ─── Query options (Master reads via hub proxy) ───────────────────────────────
 
 export const globalTemplatesQueryOptions = () =>
-  getHubApiClient().queryOptions("get", "/v1/sandbox-templates", {}, {
-    select: (data) => data.items ?? [],
-  })
+  getHubApiClient().queryOptions(
+    "get",
+    "/v1/sandbox-templates",
+    {},
+    {
+      select: (data) => data.items ?? [],
+    },
+  )
 
 export const globalTemplateQueryOptions = (name: string) =>
   getHubApiClient().queryOptions(
@@ -60,10 +65,10 @@ export function useUpdateGlobalTemplate() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (args: { name: string; crdJson: string }) => {
-      const { data, error } = await getHubFetchClient().PUT(
-        "/v1/admin/sandbox-templates/{name}",
-        { params: { path: { name: args.name } }, body: { crdJson: args.crdJson } },
-      )
+      const { data, error } = await getHubFetchClient().PUT("/v1/admin/sandbox-templates/{name}", {
+        params: { path: { name: args.name } },
+        body: { crdJson: args.crdJson },
+      })
       if (error) throw error
       return data
     },
@@ -75,10 +80,9 @@ export function useDeleteGlobalTemplate() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (name: string) => {
-      const { error } = await getHubFetchClient().DELETE(
-        "/v1/admin/sandbox-templates/{name}",
-        { params: { path: { name } } },
-      )
+      const { error } = await getHubFetchClient().DELETE("/v1/admin/sandbox-templates/{name}", {
+        params: { path: { name } },
+      })
       if (error) throw error
     },
     onSuccess: () => delayedInvalidate(qc, ["get", "/v1/sandbox-templates"]),

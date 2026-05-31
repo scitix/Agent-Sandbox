@@ -227,9 +227,7 @@ function UpsertInner({
                   </Select>
                 )}
               />
-              <FieldDescription>
-                {t("envs.editAutoscaling.field.scaleUpModeDesc")}
-              </FieldDescription>
+              <FieldDescription>{t("envs.editAutoscaling.field.scaleUpModeDesc")}</FieldDescription>
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <SecondsField
@@ -307,11 +305,7 @@ const SecondsField = ((
       <FieldDescription className="text-[10px] leading-snug">{description}</FieldDescription>
     )}
   </Field>
-)) as (props: {
-  label: string
-  description?: string
-  name: string
-}) => React.ReactElement
+)) as (props: { label: string; description?: string; name: string }) => React.ReactElement
 
 // extractGroupForForm produces the react-hook-form defaultValues for the
 // group being edited. Every field is seeded with the current CR value;
@@ -333,8 +327,7 @@ function extractGroupForForm(group: AgentEnvAutoscalingGroup): FormValues {
       group.scaleUpPolicy?.idleZeroQuietWindowSeconds ?? crdDefaults.idleZeroQuietWindowSeconds,
     saturationCooldownSeconds:
       group.scaleUpPolicy?.saturationCooldownSeconds ?? crdDefaults.saturationCooldownSeconds,
-    idleTimeoutSeconds:
-      group.scaleDownPolicy?.idleTimeoutSeconds ?? crdDefaults.idleTimeoutSeconds,
+    idleTimeoutSeconds: group.scaleDownPolicy?.idleTimeoutSeconds ?? crdDefaults.idleTimeoutSeconds,
     stabilizationSeconds:
       group.scaleDownPolicy?.stabilizationSeconds ?? crdDefaults.stabilizationSeconds,
     protectionWindowSeconds:
@@ -382,10 +375,7 @@ function buildGroupBody(v: FormValues) {
 
 function runMutation<TInput>(
   mutation: {
-    mutate: (
-      input: TInput,
-      opts: { onSuccess: () => void; onError: (e: unknown) => void },
-    ) => void
+    mutate: (input: TInput, opts: { onSuccess: () => void; onError: (e: unknown) => void }) => void
   },
   input: TInput,
 ): Promise<void> {

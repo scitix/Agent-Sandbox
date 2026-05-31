@@ -44,9 +44,7 @@ async function proxyRequest(request: NextRequest, path: string[]) {
   if (contentType) headers["Content-Type"] = contentType
 
   const body =
-    request.method !== "GET" && request.method !== "HEAD"
-      ? await request.arrayBuffer()
-      : undefined
+    request.method !== "GET" && request.method !== "HEAD" ? await request.arrayBuffer() : undefined
 
   let res: Response
   try {

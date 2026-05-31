@@ -28,16 +28,19 @@ import (
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
-// PoolToGen converts a CRD SandboxPool to the gen wire shape. The CRD spec
-// is intentionally not exposed; instead we project the fields the API
-// documents (replicas, default timeouts, template reference, computed
-// CPU/Memory, SpecYaml for diff) into gen.SandboxPool.
+// PoolToSummary converts a CRD SandboxPool to the lightweight list wire shape
+// (gen.SandboxPoolSummary). It projects everything the dashboard pool table
+// reads — replicas, default timeouts, template reference, status counts,
+// computed CPU/Memory, scaling group, owning Env — but deliberately OMITS the
+// heavy SpecYaml (full pod-template YAML), which no list consumer reads. Use
+// PoolToGen for the Get path when the full body (incl. SpecYaml diff source)
+// is needed.
 //
 // Pool is no longer a user-facing object — the only callers are the
 // env-scoped Pool CRUD endpoints in pkg/apiserver/service/envmember, which
 // project pools they read off the K8s API server before returning them to
 // the dashboard. There is no longer a top-level /sandboxpools service.
-func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.SandboxPool {
+func PoolToSummary(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.SandboxPoolSummary {
 	spec := gen.SandboxPoolSpec{
 		Replicas: pool.Spec.Replicas,
 	}
@@ -69,9 +72,8 @@ func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sandbo
 		status.Phase = &phase
 	}
 
-	specYaml := embeddedTemplateToYAML(pool.Spec.EmbeddedSandboxTemplate)
 	createdAt := pool.CreationTimestamp.UTC()
-	result := gen.SandboxPool{
+	result := gen.SandboxPoolSummary{
 		Name:            pool.Name,
 		Namespace:       pool.Namespace,
 		Spec:            spec,
@@ -80,7 +82,6 @@ func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sandbo
 		User:            ptr.To(pool.Labels[agentsv1alpha1.LabelUser]),
 		ScalingGroup:    ptr.To(pool.Labels[agentsv1alpha1.LabelScalingGroup]),
 		TemplateVersion: ptr.To(pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey]),
-		SpecYaml:        ptr.To(specYaml),
 		CreatedAt:       &createdAt,
 	}
 	if len(pool.Spec.Template.Spec.Containers) > 0 {
@@ -103,6 +104,29 @@ func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sandbo
 		}
 	}
 	return result
+}
+
+// PoolToGen converts a CRD SandboxPool to the full gen wire shape. It is the
+// PoolToSummary projection plus SpecYaml (the full EmbeddedSandboxTemplate
+// serialised to YAML), which the SyncTemplate diff view consumes. Use this on
+// the Get path; the List path uses PoolToSummary to keep the payload lean.
+func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.SandboxPool {
+	s := PoolToSummary(ctx, pool)
+	return gen.SandboxPool{
+		Name:            s.Name,
+		Namespace:       s.Namespace,
+		Spec:            s.Spec,
+		Status:          s.Status,
+		Cpu:             s.Cpu,
+		Memory:          s.Memory,
+		Team:            s.Team,
+		User:            s.User,
+		ScalingGroup:    s.ScalingGroup,
+		TemplateVersion: s.TemplateVersion,
+		CreatedAt:       s.CreatedAt,
+		OwningEnv:       s.OwningEnv,
+		SpecYaml:        ptr.To(embeddedTemplateToYAML(pool.Spec.EmbeddedSandboxTemplate)),
+	}
 }
 
 // embeddedTemplateToYAML serialises the EmbeddedSandboxTemplate fields

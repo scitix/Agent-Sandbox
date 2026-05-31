@@ -77,7 +77,7 @@ export function LargeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* No fixed w/h on DialogContent — the inner wrapper drives the size */}
       <DialogContent
-        className="flex flex-col gap-0 overflow-hidden p-0 w-fit sm:max-w-[95dvw]"
+        className="flex w-fit flex-col gap-0 overflow-hidden p-0 sm:max-w-[95dvw]"
         showCloseButton={false}
       >
         {/* Accessible title for screen readers */}
@@ -85,7 +85,7 @@ export function LargeDialog({
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col overflow-hidden rounded-xl w-[90dvw] max-h-[90dvh]">
+        <div className="flex max-h-[90dvh] w-[90dvw] flex-col overflow-hidden rounded-xl">
           {/* ── Toolbar ── */}
           <div className="flex shrink-0 items-center justify-between border-b px-4 py-2.5">
             <TooltipProvider delay={300}>

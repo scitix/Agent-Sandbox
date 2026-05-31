@@ -1141,6 +1141,34 @@ export interface components {
         SandboxPoolEnvelope: {
             template: components["schemas"]["SandboxPool"];
         };
+        /** @description Lightweight shape returned by the pool List endpoint: the full SandboxPool minus the heavy specYaml (full pod-template YAML) and overrides, neither of which list consumers read. Fetch GET /envs/{name}/sandboxpools/{poolName} for the full body (incl. specYaml for the diff view). */
+        SandboxPoolSummary: {
+            /** @description Name of the SandboxPool (RFC 1123 DNS label). */
+            name: string;
+            /** @description Kubernetes namespace the pool is deployed in. */
+            namespace: string;
+            spec: components["schemas"]["SandboxPoolSpec"];
+            status: components["schemas"]["SandboxPoolStatus"];
+            /** @description CPU resource per pod in the pool (Kubernetes resource quantity, e.g. "1", "100m"). */
+            cpu?: string;
+            /** @description Memory resource per pod in the pool (Kubernetes resource quantity, e.g. "16Gi", "512Mi"). */
+            memory?: string;
+            /** @description Team label of the pool owner (from CRD label). */
+            team?: string;
+            /** @description User label of the pool owner (from CRD label). */
+            user?: string;
+            /** @description Scaling group this pool belongs to. Members in the same group share an autoscaling policy. Empty when excluded from autoscaling. */
+            scalingGroup?: string;
+            /** @description Version of the source SandboxTemplate at last sync (from annotation). */
+            templateVersion?: string;
+            /**
+             * Format: date-time
+             * @description Creation time of the pool (from metadata.creationTimestamp).
+             */
+            createdAt?: string;
+            /** @description Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). */
+            owningEnv?: string;
+        };
         /**
          * @description Add a member SandboxPool to an Env. The server derives:
          *       - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
@@ -1218,8 +1246,8 @@ export interface components {
             status: string;
         };
         ListSandboxPoolsResult: {
-            /** @description Page of SandboxPool objects. */
-            items: components["schemas"]["SandboxPool"][];
+            /** @description Page of SandboxPool summaries. */
+            items: components["schemas"]["SandboxPoolSummary"][];
             /** @description Total number of pools matching the query (before pagination). */
             total: number;
             /** @description Maximum number of items requested per page. */
@@ -1514,10 +1542,26 @@ export interface components {
             conditions?: components["schemas"]["EnvCondition"][];
             clusters?: components["schemas"]["EnvClusterStatus"][];
             scalingGroups?: components["schemas"]["EnvScalingGroupStatus"][];
-            /** Format: int32 */
-            pendingRequests?: number;
-            /** Format: int32 */
-            localMemberCount?: number;
+            /**
+             * Format: int32
+             * @description Total member Pools across all cluster segments (today: the local segment only). Exists because printer columns cannot evaluate the nested clusters[].members[] array.
+             */
+            memberCount?: number;
+            /**
+             * Format: int32
+             * @description Env-wide sum of every member Pool's desired replicas.
+             */
+            desiredReplicas?: number;
+            /**
+             * Format: int32
+             * @description Env-wide sum of every member Pool's running replicas.
+             */
+            runningReplicas?: number;
+            /**
+             * Format: int32
+             * @description Env-wide sum of every member Pool's idle replicas.
+             */
+            idleReplicas?: number;
         };
         SandboxEnv: {
             name: string;
@@ -1537,8 +1581,60 @@ export interface components {
         SandboxEnvEnvelope: {
             env: components["schemas"]["SandboxEnv"];
         };
+        /** @description Lightweight summary returned by the List endpoint — omits the full spec (autoscaling policies, per-member config) and detailed per-member status. Fetch GET /envs/{name} for the complete SandboxEnv. */
+        SandboxEnvSummary: {
+            /** @description Name of the SandboxEnv (RFC 1123 DNS label, unique within its namespace). */
+            name: string;
+            namespace?: string;
+            team?: string;
+            user?: string;
+            /**
+             * Format: date-time
+             * @description RFC 3339 timestamp when the Env was created.
+             */
+            createdAt?: string;
+            /** @description The bound SandboxTemplate name (from spec.templateRef.name). */
+            templateName?: string;
+            /**
+             * @description How the Env satisfies sandbox-create requests.
+             * @enum {string}
+             */
+            mode?: "WarmPool" | "OnDemandJob";
+            /**
+             * Format: int32
+             * @description Total member Pools across all cluster segments.
+             */
+            memberCount?: number;
+            /**
+             * Format: int32
+             * @description Env-wide sum of every member Pool's desired replicas.
+             */
+            desiredReplicas?: number;
+            /**
+             * Format: int32
+             * @description Env-wide sum of every member Pool's running replicas.
+             */
+            runningReplicas?: number;
+            /**
+             * Format: int32
+             * @description Env-wide sum of every member Pool's idle replicas.
+             */
+            idleReplicas?: number;
+            /**
+             * Format: int32
+             * @description Total number of autoscaling groups declared on the Env.
+             */
+            scalingGroupCount?: number;
+            /**
+             * Format: int32
+             * @description Number of autoscaling groups with enabled=true. There is no Env-level autoscaling switch; autoscaling is toggled per group.
+             */
+            autoscalingEnabledGroupCount?: number;
+            /** @description True when the Env's Ready condition is True (all members Active). */
+            ready?: boolean;
+        };
         ListSandboxEnvsResult: {
-            items: components["schemas"]["SandboxEnv"][];
+            items: components["schemas"]["SandboxEnvSummary"][];
         };
         /** @description Patch one or more editable Env shell fields. Omitted fields are left unchanged. Members are managed through `/envs/{name}/sandboxpools/*` and autoscaling through `/envs/{name}/autoscaling/*`. */
         UpdateSandboxEnvRequest: {

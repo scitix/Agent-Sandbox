@@ -25,7 +25,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.sandbox_pool import SandboxPool
+  from ..models.sandbox_pool_summary import SandboxPoolSummary
 
 
 
@@ -39,13 +39,13 @@ T = TypeVar("T", bound="ListSandboxPoolsResult")
 class ListSandboxPoolsResult:
     """ 
         Attributes:
-            items (list[SandboxPool]): Page of SandboxPool objects.
+            items (list[SandboxPoolSummary]): Page of SandboxPool summaries.
             total (int): Total number of pools matching the query (before pagination).
             limit (int): Maximum number of items requested per page.
             offset (int): Number of items skipped before this page.
      """
 
-    items: list[SandboxPool]
+    items: list[SandboxPoolSummary]
     total: int
     limit: int
     offset: int
@@ -56,7 +56,7 @@ class ListSandboxPoolsResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_pool import SandboxPool
+        from ..models.sandbox_pool_summary import SandboxPoolSummary
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
@@ -86,12 +86,12 @@ class ListSandboxPoolsResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_pool import SandboxPool
+        from ..models.sandbox_pool_summary import SandboxPoolSummary
         d = dict(src_dict)
         items = []
         _items = d.pop("items")
         for items_item_data in (_items):
-            items_item = SandboxPool.from_dict(items_item_data)
+            items_item = SandboxPoolSummary.from_dict(items_item_data)
 
 
 

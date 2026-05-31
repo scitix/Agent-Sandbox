@@ -183,55 +183,55 @@ export function PrometheusSection({
     () =>
       (isAbsolute
         ? replicasTrendAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : replicasTrendQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof replicasTrendAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof replicasTrendAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
   const claimOpts = useMemo(
     () =>
       (isAbsolute
         ? claimDurationAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : claimDurationQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof claimDurationAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof claimDurationAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
   const startingOpts = useMemo(
     () =>
       (isAbsolute
         ? startingDurationAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : startingDurationQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof startingDurationAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof startingDurationAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
   const runningOpts = useMemo(
     () =>
       (isAbsolute
         ? runningDurationAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : runningDurationQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof runningDurationAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof runningDurationAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
   const recycleOpts = useMemo(
     () =>
       (isAbsolute
         ? recycleDurationAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : recycleDurationQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof recycleDurationAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof recycleDurationAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -239,11 +239,11 @@ export function PrometheusSection({
     () =>
       (isAbsolute
         ? sandboxCreateRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : sandboxCreateRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof sandboxCreateRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof sandboxCreateRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -251,11 +251,11 @@ export function PrometheusSection({
     () =>
       (isAbsolute
         ? sandboxDeleteRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : sandboxDeleteRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof sandboxDeleteRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof sandboxDeleteRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -263,11 +263,11 @@ export function PrometheusSection({
     () =>
       (isAbsolute
         ? scheduleSuccessRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : scheduleSuccessRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof scheduleSuccessRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof scheduleSuccessRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -275,11 +275,11 @@ export function PrometheusSection({
     () =>
       (isAbsolute
         ? recycleSuccessRateAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : recycleSuccessRateQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof recycleSuccessRateAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof recycleSuccessRateAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -287,11 +287,11 @@ export function PrometheusSection({
     () =>
       (isAbsolute
         ? scheduleDispatchLatencyAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : scheduleDispatchLatencyQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof scheduleDispatchLatencyAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof scheduleDispatchLatencyAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, resolvedPreset, effectiveRefetch],
   )
 
@@ -299,11 +299,11 @@ export function PrometheusSection({
     () =>
       (isAbsolute
         ? sandboxUserStatsAbsoluteQueryOptions(filters, start, end, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : sandboxUserStatsQueryOptions(filters, resolvedPreset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof sandboxUserStatsAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof sandboxUserStatsAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, resolvedPreset, effectiveRefetch],
   )
 

@@ -53,8 +53,7 @@ export interface QuerySpec {
 export const DEFAULT_CLUSTERS = ["prod-foo", "prod-bar"]
 export const DEFAULT_SUBQUERY_STEP = "1m"
 export const ENVOY_CLUSTER_NAME = "original_dst_cluster"
-export const AGENTBOX_NAMESPACE =
-  process.env.AGENTBOX_NAMESPACE || "agentbox-system"
+export const AGENTBOX_NAMESPACE = process.env.AGENTBOX_NAMESPACE || "agentbox-system"
 
 export function parseArgs(argv: string[]) {
   const args = new Map<string, string>()

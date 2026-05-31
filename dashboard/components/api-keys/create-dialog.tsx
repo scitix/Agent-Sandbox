@@ -243,9 +243,7 @@ function CreateApiKeyForm({ onOpenChange, onCreated, onKeyCreated }: CreateApiKe
         <Controller
           control={control}
           name="expiresAt"
-          render={({ field }) => (
-            <ExpiresAtPicker value={field.value} onChange={field.onChange} />
-          )}
+          render={({ field }) => <ExpiresAtPicker value={field.value} onChange={field.onChange} />}
         />
         <FieldDescription>{t("apiKeys.form.expiresAtDesc")}</FieldDescription>
       </Field>

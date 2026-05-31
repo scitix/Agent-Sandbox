@@ -54,9 +54,7 @@ export function computeYamlDiff(oldYaml: string, newYaml: string): DiffLine[] {
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {
       dp[i][j] =
-        oldLines[i] === newLines[j]
-          ? dp[i + 1][j + 1] + 1
-          : Math.max(dp[i + 1][j], dp[i][j + 1])
+        oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
     }
   }
   const result: DiffLine[] = []
@@ -101,14 +99,13 @@ export function YamlDiffView({ oldYaml, newYaml, className }: YamlDiffViewProps)
           key={i}
           className={cn(
             "flex items-start px-4 py-0.5",
-            d.type === "removed" &&
-              "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400",
+            d.type === "removed" && "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400",
             d.type === "added" &&
               "bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-400",
             d.type === "same" && "text-foreground/70",
           )}
         >
-          <span className="mr-2 w-4 shrink-0 select-none text-center">
+          <span className="mr-2 w-4 shrink-0 text-center select-none">
             {d.type === "removed" ? "-" : d.type === "added" ? "+" : " "}
           </span>
           <span className="whitespace-pre">{d.line}</span>

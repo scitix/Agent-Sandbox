@@ -211,8 +211,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     } finally {
       // Always emit the meta line so the frontend knows the stream is complete
-      await writer.write(encoder.encode(metaLine)).catch(() => { })
-      await writer.close().catch(() => { })
+      await writer.write(encoder.encode(metaLine)).catch(() => {})
+      await writer.close().catch(() => {})
     }
   })()
 

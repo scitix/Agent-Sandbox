@@ -22,7 +22,7 @@
 // /sandboxpools endpoint.
 
 import { useQueryClient } from "@tanstack/react-query"
-import { currentApiClient } from "@/lib/api/client"
+import { currentApiClient, currentFetchClient } from "@/lib/api/client"
 import { delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
@@ -100,6 +100,19 @@ export function useDeleteEnv() {
       delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools"])
     },
   })
+}
+
+/**
+ * Imperative single-env delete for batch operations (the multi-select toolbar
+ * deletes each selected row outside the React render tree). Mirrors
+ * `deleteSandboxImperative`. Cache invalidation is the caller's responsibility.
+ */
+export async function deleteEnvImperative(name: string): Promise<void> {
+  const client = currentFetchClient()
+  const { error } = await client.DELETE("/envs/{name}", {
+    params: { path: { name } },
+  })
+  if (error) throw error
 }
 
 /**

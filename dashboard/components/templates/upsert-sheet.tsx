@@ -60,9 +60,7 @@ import { LargeDialog } from "@/components/large-dialog"
 // ─── Kubernetes-managed annotations to strip from display / submission ───────────
 
 /** Annotations managed by Kubernetes or kubectl that should never be shown or submitted. */
-const K8S_MANAGED_ANNOTATIONS = new Set([
-  "kubectl.kubernetes.io/last-applied-configuration",
-])
+const K8S_MANAGED_ANNOTATIONS = new Set(["kubectl.kubernetes.io/last-applied-configuration"])
 
 /** Return a copy of the annotations map without any K8s-managed keys. */
 function stripManagedAnnotations(
@@ -287,26 +285,26 @@ function formToCrdObject(
   const runtimes =
     data.runtimes && data.runtimes.length > 0
       ? data.runtimes
-        .filter((r) => r.name)
-        .map((r) => ({
-          name: r.name,
-          port: r.port ? Number(r.port) : undefined,
-          protocol: r.protocol || undefined,
-          description: r.description || undefined,
-          logDir: r.logDir || undefined,
-          readinessProbe: r.readinessProbeEnabled
-            ? {
-              httpGet: {
-                port: r.readinessProbePort
-                  ? Number(r.readinessProbePort)
-                  : r.port
-                    ? Number(r.port)
-                    : 80,
-                path: r.readinessProbePath || "/",
-              },
-            }
-            : undefined,
-        }))
+          .filter((r) => r.name)
+          .map((r) => ({
+            name: r.name,
+            port: r.port ? Number(r.port) : undefined,
+            protocol: r.protocol || undefined,
+            description: r.description || undefined,
+            logDir: r.logDir || undefined,
+            readinessProbe: r.readinessProbeEnabled
+              ? {
+                  httpGet: {
+                    port: r.readinessProbePort
+                      ? Number(r.readinessProbePort)
+                      : r.port
+                        ? Number(r.port)
+                        : 80,
+                    path: r.readinessProbePath || "/",
+                  },
+                }
+              : undefined,
+          }))
       : undefined
 
   let visibility: Record<string, unknown> | undefined = undefined
@@ -371,13 +369,16 @@ function formToCrdObject(
     metadata: {
       name: isEdit
         ? (existingTemplate?.name ?? name)
-        : (name ?? ((base.metadata as Record<string, unknown> | undefined)?.name as string | undefined)),
+        : (name ??
+          ((base.metadata as Record<string, unknown> | undefined)?.name as string | undefined)),
       ...(baseLabels && Object.keys(baseLabels).length > 0 ? { labels: baseLabels } : {}),
       ...(finalAnnotations ? { annotations: finalAnnotations } : {}),
       // Carry K8s system fields so the API server can validate the optimistic lock.
       ...(existingMeta?.resourceVersion ? { resourceVersion: existingMeta.resourceVersion } : {}),
       ...(existingMeta?.uid ? { uid: existingMeta.uid } : {}),
-      ...(existingMeta?.creationTimestamp ? { creationTimestamp: existingMeta.creationTimestamp } : {}),
+      ...(existingMeta?.creationTimestamp
+        ? { creationTimestamp: existingMeta.creationTimestamp }
+        : {}),
     },
     spec,
   }
@@ -390,13 +391,13 @@ function crdToFormFields(yamlStr: string): Partial<FormData> & { parseError?: st
     const spec = (parsed.spec as Record<string, unknown>) ?? {}
     const parsedRuntimes = spec.runtimes as
       | Array<{
-        name: string
-        port?: number
-        protocol?: string
-        description?: string
-        logDir?: string
-        readinessProbe?: { httpGet?: { port?: number; path?: string } }
-      }>
+          name: string
+          port?: number
+          protocol?: string
+          description?: string
+          logDir?: string
+          readinessProbe?: { httpGet?: { port?: number; path?: string } }
+        }>
       | undefined
     const parsedVisibility = spec.visibility as
       | { rules: Array<{ team?: string; users?: string[] }> }
@@ -1135,7 +1136,9 @@ function ConfirmDiffDialog({
   return (
     <LargeDialog
       open={open}
-      onOpenChange={(o) => { if (!o) onCancel() }}
+      onOpenChange={(o) => {
+        if (!o) onCancel()
+      }}
       title={t("templates.confirmSave")}
       description={t("templates.confirmSaveDesc")}
       actions={

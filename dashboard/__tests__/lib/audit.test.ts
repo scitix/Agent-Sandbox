@@ -75,7 +75,7 @@ describe("AuditWriter abstraction", () => {
       },
     })
 
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => { })
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
     expect(() =>
       writeAuditEvent({
         timestamp: "2026-04-02T08:00:00.000Z",
@@ -261,7 +261,7 @@ describe("FileAuditWriter formatting", () => {
     const { FileAuditWriter } = await import("@/lib/audit/file-writer")
     const w = new FileAuditWriter("/no-such-dir/nope/audit.log")
 
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => { })
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
     expect(() =>
       w.write({
         timestamp: "2026-04-02T10:00:00.000Z",
@@ -354,12 +354,15 @@ describe("Cluster proxy route — audit integration", () => {
     const { POST } = await getClusterRoute()
     // Pass signal directly in the Request constructor — Object.assign cannot
     // override the read-only signal property of the native Request class.
-    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ spec: {} }),
-      signal: new AbortController().signal,
-    })
+    const req = new Request(
+      "http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ spec: {} }),
+        signal: new AbortController().signal,
+      },
+    )
     const res = await POST(req as never, {
       params: Promise.resolve({
         clusterID: "cluster-prod",
@@ -389,11 +392,14 @@ describe("Cluster proxy route — audit integration", () => {
     mockUndici.mockResolvedValueOnce(fakeUndiciResponse(200, {}))
 
     const { DELETE } = await getClusterRoute()
-    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools/pool-abc", {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-      signal: new AbortController().signal,
-    })
+    const req = new Request(
+      "http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools/pool-abc",
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: new AbortController().signal,
+      },
+    )
     await DELETE(req as never, {
       params: Promise.resolve({
         clusterID: "cluster-prod",
@@ -474,10 +480,13 @@ describe("Cluster proxy route — audit integration", () => {
     mockUndici.mockResolvedValueOnce(fakeUndiciResponse(200, { items: [] }))
 
     const { GET } = await getClusterRoute()
-    const req = new Request("http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools", {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: new AbortController().signal,
-    })
+    const req = new Request(
+      "http://localhost/api/clusters/cluster-prod/v1/envs/env-prod/sandboxpools",
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: new AbortController().signal,
+      },
+    )
     await GET(req as never, {
       params: Promise.resolve({
         clusterID: "cluster-prod",

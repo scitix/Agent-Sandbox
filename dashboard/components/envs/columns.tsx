@@ -16,14 +16,19 @@
 
 // Column definitions for the SandboxEnv table.
 //
-// Mirrors `dashboard/components/pools/columns.tsx` in style: a top-level
-// factory that takes `t` (for i18n) and per-row action callbacks. Rows are
-// keyed by env name (unique within namespace, which the API scopes us to).
+// Rows are the lightweight `SandboxEnvSummary` returned by the List endpoint
+// (identity + template name + mode + replica rollups + autoscaling group
+// counts + ready). The full spec/status is fetched on demand by the detail
+// and edit flows via GET /envs/{name}. The table deliberately mirrors the
+// `kubectl get sbe` columns (Template / Members / Running / Idle / Ready)
+// and turns the reference cells into navigation: Template → its detail page,
+// Members → the Env's Pools page.
 
 import type { ColumnDef } from "@tanstack/react-table"
-import { Eye, MoreVertical, Pencil, Trash2 } from "lucide-react"
+import { Check, Eye, MoreVertical, Pencil, Trash2, X } from "lucide-react"
 
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
+import { ResourceLink } from "@/components/custom/resource-link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -32,119 +37,131 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import type { AgentSandboxEnv } from "@/lib/api/client"
+import type { AgentSandboxEnvSummary } from "@/lib/api/client"
+import { clusterPath } from "@/lib/cluster-path"
+import type { Locale } from "@/lib/i18n/config"
+import { cn } from "@/lib/utils"
 import type { TranslationKey } from "@/messages/_schema"
 
 type TranslationFn = (key: TranslationKey, params?: Record<string, string | number>) => string
 
-/**
- * Returns the per-Env aggregated scaling-group status, when present.
- *
- * Phase 1 envs only have a single group (matching the single resource shape
- * across all members). We pick the first non-empty group; future multi-group
- * Envs will warrant a richer breakdown in the detail sheet.
- */
-function pickAggregateGroup(env: AgentSandboxEnv) {
-  const groups = env.status?.scalingGroups
-  if (!groups || groups.length === 0) return undefined
-  return groups[0]
-}
-
 export function createEnvColumns(
   t: TranslationFn,
-  onViewDetail: (env: AgentSandboxEnv) => void,
-  onEditEnv?: (env: AgentSandboxEnv) => void,
-  onDeleteEnv?: (env: AgentSandboxEnv) => void,
-): ColumnDef<AgentSandboxEnv>[] {
+  clusterID: string,
+  locale: Locale,
+  onViewDetail: (env: AgentSandboxEnvSummary) => void,
+  onEditEnv?: (env: AgentSandboxEnvSummary) => void,
+  onDeleteEnv?: (env: AgentSandboxEnvSummary) => void,
+): ColumnDef<AgentSandboxEnvSummary>[] {
+  const envsBase = clusterPath(clusterID, "envs", locale)
+  const templatesBase = clusterPath(clusterID, "templates", locale)
   return [
     {
       accessorKey: "name",
       header: ({ column }) => <DataTableColumnHeader column={column} title={t("envs.col.name")} />,
       cell: ({ row }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-auto px-0 py-0 font-mono text-xs hover:bg-transparent"
-          onClick={() => onViewDetail(row.original)}
-        >
-          {row.original.name}
-        </Button>
+        <ResourceLink value={row.original.name} onNavigate={() => onViewDetail(row.original)} />
       ),
     },
     {
       id: "templateRef",
-      accessorFn: (row) => row.spec.templateRef.name,
+      accessorFn: (row) => row.templateName ?? "",
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t("envs.col.template")} />
       ),
-      cell: ({ row }) => (
-        <span className="text-muted-foreground font-mono text-xs">
-          {row.original.spec.templateRef.name}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const name = row.original.templateName
+        if (!name) return <span className="text-muted-foreground text-xs">—</span>
+        return (
+          <ResourceLink
+            value={name}
+            href={`${templatesBase}/${encodeURIComponent(name)}`}
+            tone="muted"
+          />
+        )
+      },
     },
     {
       id: "mode",
-      accessorFn: (row) => row.spec.mode,
+      accessorFn: (row) => row.mode ?? "",
       header: ({ column }) => <DataTableColumnHeader column={column} title={t("envs.col.mode")} />,
       cell: ({ row }) => (
         <Badge variant="outline" className="font-mono text-xs">
-          {row.original.spec.mode}
+          {row.original.mode}
         </Badge>
       ),
     },
     {
       id: "members",
-      accessorFn: (row) => row.status?.localMemberCount ?? 0,
+      accessorFn: (row) => row.memberCount ?? 0,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t("envs.col.members")} />
       ),
       cell: ({ row }) => {
-        const localCluster = row.original.spec.clusters?.find((c) => c.members && c.members.length > 0)
-        const memberNames = localCluster?.members?.map((m) => m.name) ?? []
-        if (memberNames.length === 0) return <span className="text-muted-foreground text-xs">0</span>
-        const label = memberNames.length === 1 ? memberNames[0] : `${memberNames.length} pools`
-        return <span className="text-muted-foreground font-mono text-xs">{label}</span>
+        const count = row.original.memberCount ?? 0
+        return (
+          <ResourceLink
+            value={String(count)}
+            href={`${envsBase}/${encodeURIComponent(row.original.name)}/pools`}
+            copyable={false}
+          />
+        )
       },
     },
     {
       id: "autoscaling",
-      accessorFn: (row) => (row.spec.autoscaling?.groups ?? []).some((g) => g.enabled),
+      accessorFn: (row) => row.autoscalingEnabledGroupCount ?? 0,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t("envs.col.autoscaling")} />
       ),
       cell: ({ row }) => {
-        const enabled = (row.original.spec.autoscaling?.groups ?? []).some((g) => g.enabled)
+        const total = row.original.scalingGroupCount ?? 0
+        const enabled = row.original.autoscalingEnabledGroupCount ?? 0
+        if (total === 0) return <span className="text-muted-foreground text-xs">—</span>
         return (
           <Badge
-            variant={enabled ? "default" : "outline"}
+            variant={enabled > 0 ? "default" : "outline"}
             className="font-mono text-xs"
+            title={t("envs.autoscalingGroupsHint", { enabled, total })}
           >
-            {enabled ? t("envs.autoscalingEnabled") : t("envs.autoscalingDisabled")}
+            {enabled}/{total}
           </Badge>
         )
       },
     },
     {
-      id: "totalIdle",
-      accessorFn: (row) => pickAggregateGroup(row)?.totalIdle ?? 0,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t("envs.col.totalIdle")} />
-      ),
-      cell: ({ row }) => {
-        const agg = pickAggregateGroup(row.original)
-        return <span className="font-mono text-xs">{agg?.totalIdle ?? 0}</span>
-      },
-    },
-    {
       id: "totalRunning",
-      accessorFn: (row) => pickAggregateGroup(row)?.totalRunning ?? 0,
+      accessorFn: (row) => row.runningReplicas ?? 0,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t("envs.col.totalRunning")} />
       ),
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">{row.original.runningReplicas ?? 0}</span>
+      ),
+    },
+    {
+      id: "totalIdle",
+      accessorFn: (row) => row.idleReplicas ?? 0,
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t("envs.col.totalIdle")} />
+      ),
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">{row.original.idleReplicas ?? 0}</span>
+      ),
+    },
+    {
+      id: "ready",
+      accessorFn: (row) => (row.ready ? 1 : 0),
+      header: ({ column }) => <DataTableColumnHeader column={column} title={t("envs.col.ready")} />,
       cell: ({ row }) => {
-        const agg = pickAggregateGroup(row.original)
-        return <span className="font-mono text-xs">{agg?.totalRunning ?? 0}</span>
+        const ready = row.original.ready ?? false
+        const Icon = ready ? Check : X
+        return (
+          <Icon
+            className={cn("h-3.5 w-3.5", ready ? "text-green-500" : "text-muted-foreground")}
+            aria-label={ready ? t("common.yes") : t("common.no")}
+          />
+        )
       },
     },
     {

@@ -20,7 +20,7 @@
 // List / Get) live under `/envs/{name}/autoscaling/groups`.
 
 import { useQueryClient } from "@tanstack/react-query"
-import { currentApiClient } from "@/lib/api/client"
+import { currentApiClient, currentFetchClient } from "@/lib/api/client"
 import { delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
@@ -53,8 +53,16 @@ export function useUpdateEnvAutoscalingGroup(envName: string) {
   const qc = useQueryClient()
   return currentApiClient().useMutation("put", "/envs/{name}/autoscaling/groups/{groupName}", {
     onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/envs/{name}/autoscaling/groups", { params: { path: { name: envName } } }])
-      delayedInvalidate(qc, ["get", "/envs/{name}/autoscaling", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, [
+        "get",
+        "/envs/{name}/autoscaling/groups",
+        { params: { path: { name: envName } } },
+      ])
+      delayedInvalidate(qc, [
+        "get",
+        "/envs/{name}/autoscaling",
+        { params: { path: { name: envName } } },
+      ])
       delayedInvalidate(qc, ["get", "/envs/{name}"])
     },
   })
@@ -65,9 +73,32 @@ export function useDeleteEnvAutoscalingGroup(envName: string) {
   const qc = useQueryClient()
   return currentApiClient().useMutation("delete", "/envs/{name}/autoscaling/groups/{groupName}", {
     onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/envs/{name}/autoscaling/groups", { params: { path: { name: envName } } }])
-      delayedInvalidate(qc, ["get", "/envs/{name}/autoscaling", { params: { path: { name: envName } } }])
+      delayedInvalidate(qc, [
+        "get",
+        "/envs/{name}/autoscaling/groups",
+        { params: { path: { name: envName } } },
+      ])
+      delayedInvalidate(qc, [
+        "get",
+        "/envs/{name}/autoscaling",
+        { params: { path: { name: envName } } },
+      ])
       delayedInvalidate(qc, ["get", "/envs/{name}"])
     },
   })
+}
+
+/**
+ * Imperative autoscaling-group delete for the multi-select batch toolbar.
+ * The caller invalidates the env + groups queries afterwards.
+ */
+export async function deleteEnvAutoscalingGroupImperative(
+  envName: string,
+  groupName: string,
+): Promise<void> {
+  const client = currentFetchClient()
+  const { error } = await client.DELETE("/envs/{name}/autoscaling/groups/{groupName}", {
+    params: { path: { name: envName, groupName } },
+  })
+  if (error) throw error
 }

@@ -27,9 +27,14 @@ export const IMAGES_QUERY_KEY = ["images-catalog"] as const
 // ─── Query options ────────────────────────────────────────────────────────────
 
 export function imagesCatalogQueryOptions() {
-  return getHubApiClient().queryOptions("get", "/v1/images-catalog", {}, {
-    select: (data) => (data ?? []) as unknown as ImageDataset[],
-  })
+  return getHubApiClient().queryOptions(
+    "get",
+    "/v1/images-catalog",
+    {},
+    {
+      select: (data) => (data ?? []) as unknown as ImageDataset[],
+    },
+  )
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────

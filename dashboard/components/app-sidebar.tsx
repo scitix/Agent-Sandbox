@@ -170,7 +170,7 @@ interface AppSidebarProps {
   onOpenCommand?: () => void
 }
 
-export function AppSidebar({ }: AppSidebarProps) {
+export function AppSidebar({}: AppSidebarProps) {
   const { theme, setTheme } = useTheme()
   const { state, toggleSidebar, isMobile } = useSidebar()
   const isCollapsed = state === "collapsed"

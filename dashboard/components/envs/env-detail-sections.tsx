@@ -17,8 +17,10 @@
 "use client"
 
 import { useMemo } from "react"
-import { type ColumnDef } from "@tanstack/react-table"
+import { type ColumnDef, type Row } from "@tanstack/react-table"
+import { useQueryClient } from "@tanstack/react-query"
 import { MoreVertical, Pencil, Plus, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -31,8 +33,13 @@ import {
 import { DataTable } from "@/components/custom/query-table/table-without-query"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
+import type { MultipleHandler } from "@/components/custom/query-table/pagination"
 import { createPoolColumns } from "@/components/pools/columns"
-import { envPoolsQueryOptions } from "@/lib/queries"
+import {
+  deleteEnvAutoscalingGroupImperative,
+  deleteEnvPoolImperative,
+  envPoolsQueryOptions,
+} from "@/lib/queries"
 import type {
   AgentEnvAutoscalingGroup,
   AgentEnvObservedMember,
@@ -51,7 +58,7 @@ export function SpecSection({ env }: { env: AgentSandboxEnv }) {
       <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.12em] uppercase">
         {t("envs.detail.section.spec")}
       </h3>
-      <dl className="border-border bg-muted/20 divide-border grid grid-cols-2 divide-y divide-x rounded border text-xs">
+      <dl className="border-border bg-muted/20 divide-border grid grid-cols-2 divide-x divide-y rounded border text-xs">
         <Row label={t("envs.detail.field.template")} value={env.spec.templateRef.name} />
         <Row label={t("envs.detail.field.mode")} value={env.spec.mode} />
         <Row
@@ -130,6 +137,45 @@ export function EnvPoolsSection({
   )
 
   const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
+  const qc = useQueryClient()
+
+  const multipleHandlers: MultipleHandler<AgentSandboxPool>[] = [
+    {
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      title: (rows: Row<AgentSandboxPool>[]) => t("pools.deleteCount", { count: rows.length }),
+      description: (rows: Row<AgentSandboxPool>[]) => (
+        <div className="space-y-2">
+          <p>{t("pools.deleteCountDescription")}</p>
+          <div className="max-h-48 overflow-auto">
+            <ul className="space-y-1">
+              {rows.map((row) => (
+                <li key={row.original.name} className="text-foreground font-mono text-xs">
+                  {row.original.name}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ),
+      handleSubmit: async (rows: Row<AgentSandboxPool>[]) => {
+        const results = await Promise.allSettled(
+          rows.map((row) => deleteEnvPoolImperative(env.name, row.original.name)),
+        )
+        const failed = results.filter((r) => r.status === "rejected").length
+        const succeeded = results.length - failed
+        if (succeeded > 0) {
+          toast.success(t("pools.deletedCount", { count: succeeded }))
+          void qc.invalidateQueries({
+            queryKey: ["get", "/envs/{name}/sandboxpools", { params: { path: { name: env.name } } }],
+          })
+        }
+        if (failed > 0) {
+          toast.error(t("pools.deleteFailedCount", { count: failed }))
+        }
+      },
+      isDanger: true,
+    },
+  ]
 
   const createButton = (
     <Button onClick={onCreatePool} size="sm" className="h-9 gap-1 px-2 text-xs" variant="secondary">
@@ -143,6 +189,7 @@ export function EnvPoolsSection({
         columns={columns}
         idFn={(row: AgentSandboxPool) => row.name}
         queryOptions={queryOptions}
+        multipleHandlers={multipleHandlers}
         toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
         className="table-layout-fixed h-full"
       >
@@ -167,6 +214,7 @@ export function EnvPoolsSection({
         columns={columns}
         idFn={(row: AgentSandboxPool) => row.name}
         queryOptions={queryOptions}
+        multipleHandlers={multipleHandlers}
         toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
       >
         {createButton}
@@ -181,10 +229,12 @@ export function AutoscalingSection({
   env,
   onEdit,
   onDelete,
+  fixed = false,
 }: {
   env: AgentSandboxEnv
   onEdit: (group: AgentEnvAutoscalingGroup) => void
   onDelete: (group: AgentEnvAutoscalingGroup) => void
+  fixed?: boolean
 }) {
   const { t } = useTranslation()
   const groups = env.spec.autoscaling?.groups ?? []
@@ -278,6 +328,61 @@ export function AutoscalingSection({
     [t, onEdit, onDelete],
   )
 
+  const qc = useQueryClient()
+  const multipleHandlers: MultipleHandler<AgentEnvAutoscalingGroup>[] = [
+    {
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      title: (rows: Row<AgentEnvAutoscalingGroup>[]) =>
+        t("envs.autoscaling.deleteCount", { count: rows.length }),
+      description: (rows: Row<AgentEnvAutoscalingGroup>[]) => (
+        <div className="space-y-2">
+          <p>{t("envs.autoscaling.deleteCountDescription")}</p>
+          <div className="max-h-48 overflow-auto">
+            <ul className="space-y-1">
+              {rows.map((row) => (
+                <li key={row.original.name} className="text-foreground font-mono text-xs">
+                  {row.original.name}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ),
+      handleSubmit: async (rows: Row<AgentEnvAutoscalingGroup>[]) => {
+        const results = await Promise.allSettled(
+          rows.map((row) => deleteEnvAutoscalingGroupImperative(env.name, row.original.name)),
+        )
+        const failed = results.filter((r) => r.status === "rejected").length
+        const succeeded = results.length - failed
+        if (succeeded > 0) {
+          toast.success(t("envs.autoscaling.deletedCount", { count: succeeded }))
+          void qc.invalidateQueries({
+            queryKey: ["get", "/envs/{name}", { params: { path: { name: env.name } } }],
+          })
+        }
+        if (failed > 0) {
+          toast.error(t("envs.autoscaling.deleteFailedCount", { count: failed }))
+        }
+      },
+      isDanger: true,
+    },
+  ]
+
+  if (fixed) {
+    return (
+      <DataTable
+        data={groups}
+        dataUpdatedAt={0}
+        isLoading={false}
+        columns={columns}
+        idFn={(row: AgentEnvAutoscalingGroup) => row.name}
+        multipleHandlers={multipleHandlers}
+        toolbarConfig={{ globalSearch: { placeholder: t("common.search") } }}
+        className="table-layout-fixed h-full"
+      />
+    )
+  }
+
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
@@ -291,6 +396,7 @@ export function AutoscalingSection({
         isLoading={false}
         columns={columns}
         idFn={(row: AgentEnvAutoscalingGroup) => row.name}
+        multipleHandlers={multipleHandlers}
         toolbarConfig={{ globalSearch: { placeholder: t("common.search") } }}
       />
     </section>

@@ -72,10 +72,18 @@ function categorize(reason: string): EventCategory {
 }
 
 function iconFor(reason: string): { Icon: LucideIcon; color: string } {
-  if (reason === "ScaleUp" || reason === "AutoscalerScaleUp" || reason === "SandboxPoolPhaseScalingUp") {
+  if (
+    reason === "ScaleUp" ||
+    reason === "AutoscalerScaleUp" ||
+    reason === "SandboxPoolPhaseScalingUp"
+  ) {
     return { Icon: TrendingUp, color: C.warning }
   }
-  if (reason === "ScaleDown" || reason === "AutoscalerScaleDown" || reason === "SandboxPoolPhaseScalingDown") {
+  if (
+    reason === "ScaleDown" ||
+    reason === "AutoscalerScaleDown" ||
+    reason === "SandboxPoolPhaseScalingDown"
+  ) {
     return { Icon: TrendingDown, color: C.idle }
   }
   if (reason === "PoolReady" || reason === "PoolRecovered") {
@@ -159,7 +167,11 @@ export function EnvEventsTimelineSection({ envName }: EnvEventsTimelineSectionPr
       ) : (
         <ol className="border-border bg-background relative space-y-2 rounded border p-3">
           {filtered.map((e: EnvEvent, i: number) => (
-            <TimelineRow key={`${e.involvedKind}-${e.involvedName}-${e.reason}-${i}`} event={e} envName={envName} />
+            <TimelineRow
+              key={`${e.involvedKind}-${e.involvedName}-${e.reason}-${i}`}
+              event={e}
+              envName={envName}
+            />
           ))}
         </ol>
       )}
@@ -229,9 +241,7 @@ function TimelineRow({ event, envName }: { event: EnvEvent; envName: string }) {
             </Badge>
           )}
         </div>
-        <p className="text-muted-foreground font-mono text-[11px] break-words">
-          {event.message}
-        </p>
+        <p className="text-muted-foreground font-mono text-[11px] break-words">{event.message}</p>
         <span className="text-muted-foreground font-mono text-[10px]">
           {formatRelative(event.lastTimestamp ?? event.firstTimestamp ?? undefined)}
         </span>

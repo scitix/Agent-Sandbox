@@ -36,6 +36,8 @@ interface Props {
   envName: string
   pool: AgentSandboxPool | null
   onOpenChange: (open: boolean) => void
+  /** Invoked after the pool is successfully removed (e.g. to navigate away). */
+  onDeleted?: () => void
 }
 
 /**
@@ -43,7 +45,7 @@ interface Props {
  * apiserver patches env.spec.clusters[].members[] to drop the entry; the
  * Env Reconciler cascade-deletes the underlying SandboxPool CR.
  */
-export function DeletePoolDialog({ envName, pool, onOpenChange }: Props) {
+export function DeletePoolDialog({ envName, pool, onOpenChange, onDeleted }: Props) {
   const { t } = useTranslation()
   const { mutate, isPending } = useDeleteEnvPool(envName)
 
@@ -71,6 +73,7 @@ export function DeletePoolDialog({ envName, pool, onOpenChange }: Props) {
                   onSuccess: () => {
                     toast.success(t("envs.poolDelete.toast", { name: pool.name }))
                     onOpenChange(false)
+                    onDeleted?.()
                   },
                   onError: (err) => toast.error(err?.error ?? String(err)),
                 },

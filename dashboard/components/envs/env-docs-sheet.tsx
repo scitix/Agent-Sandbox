@@ -181,13 +181,13 @@ export function EnvDocsSheet() {
                 <Boxes className="h-4 w-4" />
               </div>
               <div className="flex min-w-0 items-center gap-2">
-                <SheetTitle className="font-mono text-base font-semibold">{target ?? ""}</SheetTitle>
+                <SheetTitle className="font-mono text-base font-semibold">
+                  {target ?? ""}
+                </SheetTitle>
                 {target && <InlineCopyButton value={target} />}
               </div>
             </div>
-            <p className="text-muted-foreground mt-0.5 text-xs">
-              {t("envs.envDocsSheet.title")}
-            </p>
+            <p className="text-muted-foreground mt-0.5 text-xs">{t("envs.envDocsSheet.title")}</p>
           </SheetHeader>
 
           {isOpen && target && <EnvDocsContent envName={target} />}
@@ -198,9 +198,7 @@ export function EnvDocsSheet() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("envs.apiKeyRequired.title")}</DialogTitle>
-            <DialogDescription>
-              {t("envs.apiKeyRequired.envDocsDescription")}
-            </DialogDescription>
+            <DialogDescription>{t("envs.apiKeyRequired.envDocsDescription")}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => void setEnvName(null)}>

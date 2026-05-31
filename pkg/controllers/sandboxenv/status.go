@@ -44,6 +44,9 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 	// legacy / pre-migration and the autoscaler ignores them anyway.
 	type groupTotals struct{ idle, running, desired int32 }
 	byGroup := map[string]*groupTotals{}
+	// Env-wide rollup across every member regardless of scaling group, backing
+	// the top-level status scalars (and the printer columns built on them).
+	var envIdle, envRunning, envDesired int32
 	for _, member := range localSpec.Members {
 		pool := &agentsv1alpha1.SandboxPool{}
 		err := r.Get(ctx, types.NamespacedName{Namespace: env.Namespace, Name: member.Name}, pool)
@@ -86,6 +89,9 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		// without reaching into Pool status semantics.
 		om.SaturatedUntil = deriveSaturatedUntil(env, pool, &member)
 		observed = append(observed, om)
+		envIdle += pool.Status.IdleReplicas
+		envRunning += pool.Status.RunningReplicas
+		envDesired += pool.Spec.Replicas
 		if member.Config.ScalingGroup != "" {
 			g, ok := byGroup[member.Config.ScalingGroup]
 			if !ok {
@@ -113,7 +119,10 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		setScalingGroupStatus(env, name, totals.idle, totals.running, totals.desired)
 	}
 
-	env.Status.LocalMemberCount = int32(len(observed))
+	env.Status.MemberCount = int32(len(observed))
+	env.Status.IdleReplicas = envIdle
+	env.Status.RunningReplicas = envRunning
+	env.Status.DesiredReplicas = envDesired
 
 	// Conditions
 	setReadyCondition(env, observed)

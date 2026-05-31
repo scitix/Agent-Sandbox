@@ -45,15 +45,20 @@ class SandboxEnvStatus:
             conditions (list[EnvCondition] | Unset):
             clusters (list[EnvClusterStatus] | Unset):
             scaling_groups (list[EnvScalingGroupStatus] | Unset):
-            pending_requests (int | Unset):
-            local_member_count (int | Unset):
+            member_count (int | Unset): Total member Pools across all cluster segments (today: the local segment only).
+                Exists because printer columns cannot evaluate the nested clusters[].members[] array.
+            desired_replicas (int | Unset): Env-wide sum of every member Pool's desired replicas.
+            running_replicas (int | Unset): Env-wide sum of every member Pool's running replicas.
+            idle_replicas (int | Unset): Env-wide sum of every member Pool's idle replicas.
      """
 
     conditions: list[EnvCondition] | Unset = UNSET
     clusters: list[EnvClusterStatus] | Unset = UNSET
     scaling_groups: list[EnvScalingGroupStatus] | Unset = UNSET
-    pending_requests: int | Unset = UNSET
-    local_member_count: int | Unset = UNSET
+    member_count: int | Unset = UNSET
+    desired_replicas: int | Unset = UNSET
+    running_replicas: int | Unset = UNSET
+    idle_replicas: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -91,9 +96,13 @@ class SandboxEnvStatus:
 
 
 
-        pending_requests = self.pending_requests
+        member_count = self.member_count
 
-        local_member_count = self.local_member_count
+        desired_replicas = self.desired_replicas
+
+        running_replicas = self.running_replicas
+
+        idle_replicas = self.idle_replicas
 
 
         field_dict: dict[str, Any] = {}
@@ -106,10 +115,14 @@ class SandboxEnvStatus:
             field_dict["clusters"] = clusters
         if scaling_groups is not UNSET:
             field_dict["scalingGroups"] = scaling_groups
-        if pending_requests is not UNSET:
-            field_dict["pendingRequests"] = pending_requests
-        if local_member_count is not UNSET:
-            field_dict["localMemberCount"] = local_member_count
+        if member_count is not UNSET:
+            field_dict["memberCount"] = member_count
+        if desired_replicas is not UNSET:
+            field_dict["desiredReplicas"] = desired_replicas
+        if running_replicas is not UNSET:
+            field_dict["runningReplicas"] = running_replicas
+        if idle_replicas is not UNSET:
+            field_dict["idleReplicas"] = idle_replicas
 
         return field_dict
 
@@ -157,16 +170,22 @@ class SandboxEnvStatus:
                 scaling_groups.append(scaling_groups_item)
 
 
-        pending_requests = d.pop("pendingRequests", UNSET)
+        member_count = d.pop("memberCount", UNSET)
 
-        local_member_count = d.pop("localMemberCount", UNSET)
+        desired_replicas = d.pop("desiredReplicas", UNSET)
+
+        running_replicas = d.pop("runningReplicas", UNSET)
+
+        idle_replicas = d.pop("idleReplicas", UNSET)
 
         sandbox_env_status = cls(
             conditions=conditions,
             clusters=clusters,
             scaling_groups=scaling_groups,
-            pending_requests=pending_requests,
-            local_member_count=local_member_count,
+            member_count=member_count,
+            desired_replicas=desired_replicas,
+            running_replicas=running_replicas,
+            idle_replicas=idle_replicas,
         )
 
 

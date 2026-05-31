@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
 import { CopyableText } from "@/components/custom/copyable-text"
+import { ResourceLink } from "@/components/custom/resource-link"
 import { RelativeTime } from "@/components/custom/relative-time"
 import { parseCpuToCore, parseMemoryToMiB, formatCores, formatMiB } from "@/lib/resources"
 import { Button } from "../ui/button"
@@ -38,7 +39,6 @@ import type { TranslationKey } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
-import Link from "next/link"
 
 export const SANDBOX_STATUS_COLORS: StatusBadgeColorMap = {
   running: "bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30",
@@ -140,23 +140,13 @@ function SandboxStatusBadge({
 }
 
 // Sandbox id → detail page. Shows the short (last-segment) id but links to the
-// full consolidated detail route.
+// full consolidated detail route, and copies the full id.
 function SandboxIdCell({ id }: { id: string }) {
   const clusterID = useClusterID()
   const locale = useLocale()
   const shortId = id.length > 12 ? id.slice(-12) : id
   const href = `${clusterPath(clusterID, "sandboxes", locale)}/${encodeURIComponent(id)}`
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      nativeButton={false}
-      className="text-foreground hover:text-brand h-auto px-0 py-0 font-mono text-xs hover:bg-transparent hover:underline"
-      render={<Link href={href} />}
-    >
-      {shortId}
-    </Button>
-  )
+  return <ResourceLink value={id} label={shortId} href={href} />
 }
 
 function EnvNameCell({ envName }: { envName: string | undefined }) {
@@ -164,35 +154,25 @@ function EnvNameCell({ envName }: { envName: string | undefined }) {
   const locale = useLocale()
   if (!envName) return <span className="text-muted-foreground text-xs">---</span>
   const href = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}`
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      nativeButton={false}
-      className="text-foreground hover:text-brand h-auto gap-1 px-0 py-0 font-mono text-xs hover:bg-transparent hover:underline"
-      render={<Link href={href} />}
-    >
-      {envName}
-    </Button>
-  )
+  return <ResourceLink value={envName} href={href} />
 }
 
-function PoolNameCell({ poolName }: { poolName: string | undefined }) {
+// Pool name → the pool's detail page under its Env. Links only when the owning
+// env name is known; otherwise renders a copy-only label.
+function PoolNameCell({
+  poolName,
+  envName,
+}: {
+  poolName: string | undefined
+  envName: string | undefined
+}) {
   const clusterID = useClusterID()
   const locale = useLocale()
   if (!poolName) return <span className="text-muted-foreground text-xs">---</span>
-  const href = clusterPath(clusterID, "envs", locale)
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      nativeButton={false}
-      className="text-muted-foreground hover:text-foreground h-auto gap-1 px-0 py-0 font-mono text-xs hover:bg-transparent"
-      render={<Link href={href} />}
-    >
-      {poolName}
-    </Button>
-  )
+  const href = envName
+    ? `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}/pools/${encodeURIComponent(poolName)}`
+    : undefined
+  return <ResourceLink value={poolName} href={href} tone="muted" />
 }
 
 export function createSandboxColumns(
@@ -492,7 +472,12 @@ export function createSandboxColumns(
           tooltip={t("sandboxes.col.poolTooltip")}
         />
       ),
-      cell: ({ row }) => <PoolNameCell poolName={row.original.poolName} />,
+      cell: ({ row }) => (
+        <PoolNameCell
+          poolName={row.original.poolName}
+          envName={row.original.envName ?? undefined}
+        />
+      ),
       filterFn: (row, _columnId, filterValue: string[]) => {
         if (!filterValue || filterValue.length === 0) return true
         return filterValue.includes(row.original.poolName)

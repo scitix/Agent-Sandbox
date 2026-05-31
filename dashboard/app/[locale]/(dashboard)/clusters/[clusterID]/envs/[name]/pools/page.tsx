@@ -17,31 +17,39 @@
 "use client"
 
 import { use, useState } from "react"
+import { useRouter } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 
 import { EnvPoolsSection } from "@/components/envs/env-detail-sections"
 import { UpsertPoolSheet } from "@/components/envs/upsert-pool-sheet"
 import { DeletePoolDialog } from "@/components/envs/delete-pool-dialog"
-import { PoolMetricsSheet } from "@/components/prometheus/pool-metrics-sheet"
 import { envQueryOptions } from "@/lib/queries"
+import { clusterPath } from "@/lib/cluster-path"
+import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import type { AgentSandboxPool } from "@/lib/api/client"
 
 interface PageProps {
   params: Promise<{ clusterID: string; name: string; locale: string }>
 }
 
-/** Pools tab — full-height pool table + create/edit/delete/metrics dialogs. */
+/** Pools tab — full-height pool table + create/edit/delete dialogs. Metrics
+ *  opens the pool's detail Metrics tab rather than an inline sheet. */
 export default function EnvPoolsPage({ params }: PageProps) {
   const { name } = use(params)
+  const router = useRouter()
+  const clusterID = useClusterID()
+  const locale = useLocale()
   const { data } = useQuery(envQueryOptions(name))
   const env = data?.env
 
   const [createPoolOpen, setCreatePoolOpen] = useState(false)
   const [editPoolTarget, setEditPoolTarget] = useState<AgentSandboxPool | null>(null)
   const [deletePoolTarget, setDeletePoolTarget] = useState<AgentSandboxPool | null>(null)
-  const [metricsTarget, setMetricsTarget] = useState<AgentSandboxPool | null>(null)
 
   if (!env) return null
+
+  const basePath = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(name)}`
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -50,7 +58,9 @@ export default function EnvPoolsPage({ params }: PageProps) {
         onCreatePool={() => setCreatePoolOpen(true)}
         onEditPool={(pool) => setEditPoolTarget(pool)}
         onDeletePool={(pool) => setDeletePoolTarget(pool)}
-        onViewMetrics={(pool) => setMetricsTarget(pool)}
+        onViewMetrics={(pool) =>
+          router.push(`${basePath}/pools/${encodeURIComponent(pool.name)}/metrics`)
+        }
         fixed
       />
 
@@ -73,12 +83,6 @@ export default function EnvPoolsPage({ params }: PageProps) {
         pool={deletePoolTarget}
         onOpenChange={(open) => {
           if (!open) setDeletePoolTarget(null)
-        }}
-      />
-      <PoolMetricsSheet
-        pool={metricsTarget}
-        onOpenChange={(open) => {
-          if (!open) setMetricsTarget(null)
         }}
       />
     </div>

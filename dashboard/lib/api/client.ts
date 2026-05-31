@@ -51,9 +51,11 @@ export type { components }
 export type AgentSandbox = components["schemas"]["Sandbox"] // backward-compat alias
 
 export type AgentSandboxPool = components["schemas"]["SandboxPool"] // backward-compat alias
+export type AgentSandboxPoolSummary = components["schemas"]["SandboxPoolSummary"]
 
 // Env
 export type AgentSandboxEnv = components["schemas"]["SandboxEnv"]
+export type AgentSandboxEnvSummary = components["schemas"]["SandboxEnvSummary"]
 export type AgentSandboxEnvSpec = components["schemas"]["SandboxEnvSpec"]
 export type AgentEnvAutoscalingSpec = components["schemas"]["EnvAutoscalingSpec"]
 export type AgentEnvAutoscalingGroup = components["schemas"]["EnvAutoscalingGroup"]

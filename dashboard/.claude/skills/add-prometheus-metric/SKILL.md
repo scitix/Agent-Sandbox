@@ -119,19 +119,19 @@ export const GET = withPrometheusRoute(
 Never hard-code `[5m]` or `[2m]`; always interpolate `${rateWindow}` from
 `timeRange`. Current ladder (15 s scrape):
 
-| duration ≤ | step   | rateWindow |
-| ---------- | ------ | ---------- |
-| 5 m        | 15 s   | 1 m        |
-| 15 m       | 30 s   | 1 m        |
-| 1 h        | 60 s   | 2 m        |
-| 3 h        | 2 m    | 4 m        |
-| 6 h        | 5 m    | 10 m       |
-| 12 h       | 10 m   | 20 m       |
-| 1 d        | 15 m   | 30 m       |
-| 2 d        | 30 m   | 1 h        |
-| 7 d        | 1 h    | 2 h        |
-| 30 d       | 4 h    | 8 h        |
-| > 30 d     | 12 h   | 1 d        |
+| duration ≤ | step | rateWindow |
+| ---------- | ---- | ---------- |
+| 5 m        | 15 s | 1 m        |
+| 15 m       | 30 s | 1 m        |
+| 1 h        | 60 s | 2 m        |
+| 3 h        | 2 m  | 4 m        |
+| 6 h        | 5 m  | 10 m       |
+| 12 h       | 10 m | 20 m       |
+| 1 d        | 15 m | 30 m       |
+| 2 d        | 30 m | 1 h        |
+| 7 d        | 1 h  | 2 h        |
+| 30 d       | 4 h  | 8 h        |
+| > 30 d     | 12 h | 1 d        |
 
 **Key notes:**
 
@@ -340,8 +340,7 @@ the component auto-assigns a palette color — but prefer explicit tokens.
 
 ```tsx
 import { C } from "@/components/prometheus/colors"
-
-<MetricsChart
+;<MetricsChart
   title={t("prometheus.myMetric")}
   description={t("prometheus.myMetricTooltip")}
   series={[
@@ -361,13 +360,13 @@ import { C } from "@/components/prometheus/colors"
 
 Color token cheatsheet (see `colors.ts` for the full list):
 
-| Tokens                                | Use for                             |
-| ------------------------------------- | ----------------------------------- |
-| `C.p99` `C.p95` `C.p90` `C.p50`       | Latency percentiles (red→blue)      |
-| `C.success` `C.warning` `C.error`     | Outcome / health                    |
-| `C.tx` `C.rx`                         | Network direction                   |
-| `C.desired` `C.running` `C.starting` `C.stopping` `C.idle` | Replica / sandbox states |
-| `C.green` `C.blue` `C.indigo` `C.orange` `C.purple` … | Generic palette     |
+| Tokens                                                     | Use for                        |
+| ---------------------------------------------------------- | ------------------------------ |
+| `C.p99` `C.p95` `C.p90` `C.p50`                            | Latency percentiles (red→blue) |
+| `C.success` `C.warning` `C.error`                          | Outcome / health               |
+| `C.tx` `C.rx`                                              | Network direction              |
+| `C.desired` `C.running` `C.starting` `C.stopping` `C.idle` | Replica / sandbox states       |
+| `C.green` `C.blue` `C.indigo` `C.orange` `C.purple` …      | Generic palette                |
 
 No `mergeChartSeries` import, no `promqlQueries` prop — both are handled inside
 the component. Callers that pre-merge series for shared state across multiple

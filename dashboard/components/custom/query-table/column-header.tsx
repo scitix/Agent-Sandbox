@@ -32,27 +32,27 @@ type DataTableColumnHeaderProps<TData, TValue> = React.HTMLAttributes<HTMLDivEle
   tooltip?: string
 } & (
     | {
-      numberRangeFilterOptions: {
-        title?: string
-        unit?: string
-        placeholder?: {
-          min?: string
-          max?: string
+        numberRangeFilterOptions: {
+          title?: string
+          unit?: string
+          placeholder?: {
+            min?: string
+            max?: string
+          }
+        }
+        includesStringFilterOptions?: never
+      }
+    | {
+        numberRangeFilterOptions?: never
+        includesStringFilterOptions: {
+          title?: string
+          placeholder?: string
         }
       }
-      includesStringFilterOptions?: never
-    }
     | {
-      numberRangeFilterOptions?: never
-      includesStringFilterOptions: {
-        title?: string
-        placeholder?: string
+        numberRangeFilterOptions?: never
+        includesStringFilterOptions?: never
       }
-    }
-    | {
-      numberRangeFilterOptions?: never
-      includesStringFilterOptions?: never
-    }
   )
 
 export function DataTableColumnHeader<TData, TValue>({

@@ -86,12 +86,12 @@ pnpm exec tsc --noEmit # Run TypeScript compilation check
 
 ## Command Reference
 
-| Command               | Description                                                                          |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| `pnpm i18n:gen-types` | Generates `_schema.ts` (TS types) from `zh-Hans.json`                                |
+| Command               | Description                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| `pnpm i18n:gen-types` | Generates `_schema.ts` (TS types) from `zh-Hans.json`                                      |
 | `pnpm i18n:translate` | AI-powered translation for missing keys (requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`) |
-| `pnpm i18n:validate`  | Validates key consistency and placeholder matching against `zh-Hans.json`             |
-| `pnpm i18n:extract`   | Scans code for hardcoded strings (Development helper)                                |
+| `pnpm i18n:validate`  | Validates key consistency and placeholder matching against `zh-Hans.json`                  |
+| `pnpm i18n:extract`   | Scans code for hardcoded strings (Development helper)                                      |
 
 ## Key Naming Convention
 
@@ -107,7 +107,7 @@ login.oidc.failed     → OIDC login error
 
 ## Important Notes
 
-* **`_schema.ts` must not be modified manually**; it is auto-generated via `pnpm i18n:gen-types`.
-* **`zh-Hans.json` is the sole source for all keys**. New copy must be added here first.
-* **Interpolation Syntax**: Use `{{variableName}}`, e.g., `"Sandbox {{id}} deleted"`.
-* **Key Consistency**: All language files must have identical keys. `pnpm i18n:validate` automatically detects and checks all `*.json` files in the directory.
+- **`_schema.ts` must not be modified manually**; it is auto-generated via `pnpm i18n:gen-types`.
+- **`zh-Hans.json` is the sole source for all keys**. New copy must be added here first.
+- **Interpolation Syntax**: Use `{{variableName}}`, e.g., `"Sandbox {{id}} deleted"`.
+- **Key Consistency**: All language files must have identical keys. `pnpm i18n:validate` automatically detects and checks all `*.json` files in the directory.

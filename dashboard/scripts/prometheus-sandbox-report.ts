@@ -59,9 +59,7 @@ function renderSummaryMarkdown(report: Report): string {
     lines.push(`| Create success rate | ${formatPercent(scope.derived.createSuccessRate)} |`)
     lines.push(`| No-idle rate | ${formatPercent(scope.derived.createNoIdleRate)} |`)
     lines.push(`| Delete failed rate | ${formatPercent(scope.derived.deleteFailedRate)} |`)
-    lines.push(
-      `| Claim success rate | ${formatPercent(scope.derived.claimSuccessRate)} |`,
-    )
+    lines.push(`| Claim success rate | ${formatPercent(scope.derived.claimSuccessRate)} |`)
     lines.push(
       `| Claim P50 / P95 / P99 (s) | ${formatNumber(scope.metrics.claimP50, 3)} / ${formatNumber(scope.metrics.claimP95, 3)} / ${formatNumber(scope.metrics.claimP99, 3)} |`,
     )

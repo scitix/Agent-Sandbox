@@ -46,3 +46,34 @@ func TestPoolToGen_ScalingGroupFromLabel(t *testing.T) {
 		t.Fatalf("ScalingGroup for unlabelled pool = %v, want empty string", gotBare.ScalingGroup)
 	}
 }
+
+// TestPoolToSummary_OmitsSpecYaml asserts the list projection drops the heavy
+// SpecYaml field while keeping the fields the dashboard table reads, and that
+// PoolToGen still carries SpecYaml for the Get/diff path.
+func TestPoolToSummary_OmitsSpecYaml(t *testing.T) {
+	pool := &agentsv1alpha1.SandboxPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "env-a-2c8gi",
+			Namespace: "default",
+			Labels:    map[string]string{agentsv1alpha1.LabelScalingGroup: "2c8gi"},
+		},
+		Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 3},
+	}
+
+	summary := PoolToSummary(context.Background(), pool)
+	if summary.Spec.Replicas != 3 {
+		t.Errorf("summary Spec.Replicas = %d, want 3", summary.Spec.Replicas)
+	}
+	if summary.ScalingGroup == nil || *summary.ScalingGroup != "2c8gi" {
+		t.Errorf("summary ScalingGroup = %v, want 2c8gi", summary.ScalingGroup)
+	}
+
+	// PoolToGen (Get path) keeps SpecYaml populated.
+	full := PoolToGen(context.Background(), pool)
+	if full.SpecYaml == nil || *full.SpecYaml == "" {
+		t.Errorf("PoolToGen SpecYaml should be populated for the Get path")
+	}
+	if full.Spec.Replicas != summary.Spec.Replicas || full.ScalingGroup == nil {
+		t.Errorf("PoolToGen should carry the same base fields as the summary")
+	}
+}

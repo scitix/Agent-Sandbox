@@ -21,9 +21,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envcommon"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
@@ -103,6 +105,51 @@ func TestSandboxEnvService_List_NoFilterReturnsAll(t *testing.T) {
 	}
 	if items[0].Name != envTestName || items[1].Name != "env-b" {
 		t.Errorf("unexpected sort order: %v", []string{items[0].Name, items[1].Name})
+	}
+}
+
+func TestEnvToSummary_ProjectsListShape(t *testing.T) {
+	env := newEnv(envTestName, "team-1", "user-1")
+	// Two scaling groups, one enabled — exercises the enabled/total counts.
+	env.Spec.Autoscaling.Groups = []agentsv1alpha1.EnvAutoscalingGroup{
+		{Name: "1c4Gi", Enabled: true},
+		{Name: "2c8Gi", Enabled: false},
+	}
+	env.Status = agentsv1alpha1.SandboxEnvStatus{
+		MemberCount:     2,
+		DesiredReplicas: 9,
+		RunningReplicas: 5,
+		IdleReplicas:    4,
+		Conditions: []metav1.Condition{
+			{Type: agentsv1alpha1.SandboxEnvConditionReady, Status: metav1.ConditionTrue},
+		},
+	}
+
+	s := envToSummary(env)
+
+	if got := ptr.Deref(s.TemplateName, ""); got != "envd-runtime" {
+		t.Errorf("TemplateName = %q, want envd-runtime", got)
+	}
+	if s.Mode == nil || *s.Mode != gen.WarmPool {
+		t.Errorf("Mode = %v, want WarmPool", s.Mode)
+	}
+	if got := ptr.Deref(s.ScalingGroupCount, 0); got != 2 {
+		t.Errorf("ScalingGroupCount = %d, want 2", got)
+	}
+	if got := ptr.Deref(s.AutoscalingEnabledGroupCount, 0); got != 1 {
+		t.Errorf("AutoscalingEnabledGroupCount = %d, want 1", got)
+	}
+	if got := ptr.Deref(s.MemberCount, 0); got != 2 {
+		t.Errorf("MemberCount = %d, want 2", got)
+	}
+	if got := ptr.Deref(s.RunningReplicas, 0); got != 5 {
+		t.Errorf("RunningReplicas = %d, want 5", got)
+	}
+	if got := ptr.Deref(s.IdleReplicas, 0); got != 4 {
+		t.Errorf("IdleReplicas = %d, want 4", got)
+	}
+	if !ptr.Deref(s.Ready, false) {
+		t.Errorf("Ready = false, want true")
 	}
 }
 

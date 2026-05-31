@@ -47,7 +47,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (!hydrated) return // Wait for hydration before checking auth
     if (auth === null) {
       const fullPath = window.location.pathname + window.location.search
-      const appPath = basePath && fullPath.startsWith(basePath) ? fullPath.slice(basePath.length) : fullPath
+      const appPath =
+        basePath && fullPath.startsWith(basePath) ? fullPath.slice(basePath.length) : fullPath
       router.replace(`${loginPath(locale)}?redirect=${encodeURIComponent(appPath)}`)
     }
   }, [hydrated, auth, router, locale])

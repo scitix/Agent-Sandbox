@@ -28,12 +28,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import type { AgentSandboxEnv } from "@/lib/api/client"
+import type { AgentSandboxEnvSummary } from "@/lib/api/client"
 import { useDeleteEnv } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 
 interface Props {
-  env: AgentSandboxEnv | null
+  env: AgentSandboxEnvSummary | null
   onOpenChange: (open: boolean) => void
 }
 
@@ -46,8 +46,7 @@ export function DeleteEnvDialog({ env, onOpenChange }: Props) {
   const { t } = useTranslation()
   const { mutate, isPending } = useDeleteEnv()
 
-  const memberCount =
-    (env?.spec.clusters ?? []).reduce((acc, c) => acc + (c.members?.length ?? 0), 0) ?? 0
+  const memberCount = env?.memberCount ?? 0
 
   return (
     <Dialog open={!!env} onOpenChange={onOpenChange}>

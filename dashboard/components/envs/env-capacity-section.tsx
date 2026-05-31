@@ -100,20 +100,17 @@ export function EnvCapacitySection({ envName }: EnvCapacitySectionProps) {
   const preset = timeRange.type === "preset" ? timeRange.preset : "1h"
   const effectiveRefetch = refreshInterval > 0 ? refreshInterval : undefined
 
-  const filters = useMemo(
-    () => ({ cluster: clusterID, sandboxEnv: envName }),
-    [clusterID, envName],
-  )
+  const filters = useMemo(() => ({ cluster: clusterID, sandboxEnv: envName }), [clusterID, envName])
 
   const opts = useMemo(
     () =>
       (isAbsolute
         ? envCapacityWaterfallAbsoluteQueryOptions(filters, start, end, step, {
-          refetchInterval: effectiveRefetch,
-        })
+            refetchInterval: effectiveRefetch,
+          })
         : envCapacityWaterfallQueryOptions(filters, preset, {
-          refetchInterval: effectiveRefetch,
-        })) as ReturnType<typeof envCapacityWaterfallAbsoluteQueryOptions>,
+            refetchInterval: effectiveRefetch,
+          })) as ReturnType<typeof envCapacityWaterfallAbsoluteQueryOptions>,
     [isAbsolute, filters, start, end, step, preset, effectiveRefetch],
   )
 

@@ -74,4 +74,3 @@ export const GET = withPrometheusRoute(
     return { series, _promql: queries.map((q) => q.query) }
   },
 )
-

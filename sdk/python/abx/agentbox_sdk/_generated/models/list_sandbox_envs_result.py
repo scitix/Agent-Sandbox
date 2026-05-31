@@ -25,7 +25,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.sandbox_env import SandboxEnv
+  from ..models.sandbox_env_summary import SandboxEnvSummary
 
 
 
@@ -39,10 +39,10 @@ T = TypeVar("T", bound="ListSandboxEnvsResult")
 class ListSandboxEnvsResult:
     """ 
         Attributes:
-            items (list[SandboxEnv]):
+            items (list[SandboxEnvSummary]):
      """
 
-    items: list[SandboxEnv]
+    items: list[SandboxEnvSummary]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -50,7 +50,7 @@ class ListSandboxEnvsResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_env import SandboxEnv
+        from ..models.sandbox_env_summary import SandboxEnvSummary
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
@@ -71,12 +71,12 @@ class ListSandboxEnvsResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_env import SandboxEnv
+        from ..models.sandbox_env_summary import SandboxEnvSummary
         d = dict(src_dict)
         items = []
         _items = d.pop("items")
         for items_item_data in (_items):
-            items_item = SandboxEnv.from_dict(items_item_data)
+            items_item = SandboxEnvSummary.from_dict(items_item_data)
 
 
 

@@ -64,9 +64,7 @@ export function DeleteAutoscalingGroupDialog({ envName, group, onOpenChange }: P
                 { params: { path: { name: envName, groupName: group.name } } },
                 {
                   onSuccess: () => {
-                    toast.success(
-                      t("envs.upsertAutoscaling.deletedToast", { group: group.name }),
-                    )
+                    toast.success(t("envs.upsertAutoscaling.deletedToast", { group: group.name }))
                     onOpenChange(false)
                   },
                   onError: (err) => toast.error(err?.error ?? String(err)),
