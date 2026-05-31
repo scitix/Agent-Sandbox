@@ -16,10 +16,9 @@
 
 "use client"
 
-import { useAtom, useAtomValue } from "jotai"
+import { useAtom } from "jotai"
 import { useQueryClient, useQuery } from "@tanstack/react-query"
-import { Users } from "lucide-react"
-import { impersonationTeamAtom, impersonationUserAtom, isImpersonatingAtom } from "@/lib/atoms"
+import { impersonationTeamAtom, impersonationUserAtom } from "@/lib/atoms"
 import { adminTeamsQueryOptions, adminUsersByTeamQueryOptions } from "@/lib/queries"
 import {
   Combobox,
@@ -36,7 +35,6 @@ export function ImpersonationSelector() {
   const { t } = useTranslation()
   const [team, setTeam] = useAtom(impersonationTeamAtom)
   const [user, setUser] = useAtom(impersonationUserAtom)
-  const isActive = useAtomValue(isImpersonatingAtom)
   const qc = useQueryClient()
 
   const { data: teams = [] } = useQuery(adminTeamsQueryOptions())

@@ -96,6 +96,13 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+.PHONY: install-hooks
+install-hooks: ## Point git at the tracked hooks in hack/git-hooks (pre-commit lint+build gate)
+	@chmod +x hack/git-hooks/* 2>/dev/null || true
+	@git config core.hooksPath hack/git-hooks
+	@echo "Installed: core.hooksPath -> hack/git-hooks"
+	@echo "Bypass a single commit with 'git commit --no-verify'; uninstall with 'git config --unset core.hooksPath'."
+
 ##@ Build
 
 # VERSION is read from the VERSION file at the repo root.

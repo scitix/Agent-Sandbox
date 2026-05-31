@@ -61,7 +61,6 @@ import AgentBoxIcon from "./icons/agentbox-icon"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { clusterPath, loginPath, type DashboardPage } from "@/lib/cluster-path"
-import { ChangelogTrigger } from "@/components/changelog/changelog-trigger"
 import { useTranslation } from "@/lib/i18n"
 import type { TranslationKey } from "@/messages/_schema"
 

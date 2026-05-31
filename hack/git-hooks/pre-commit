@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+#
+# Copyright 2026 ScitiX
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Pre-commit hook: lint + build the areas touched by the staged change set.
+#
+# It is path-aware — a backend-only commit never triggers a website build, and
+# vice versa. Editing pkg/openapi/native/openapi.yaml fans out to every consumer
+# (Go server, dashboard types, docs website), since all three are generated from
+# or validated against that spec.
+#
+# The hook runs against the WORKING TREE, not a clean checkout of the staged
+# blobs. Stash unstaged changes first if you want a faithful staged-only check.
+#
+# Escape hatches:
+#   git commit --no-verify          # skip the hook entirely (native git flag)
+#   SKIP_HOOK=1 git commit ...       # same, via env var
+#   HOOK_SKIP="website go" git ...   # skip specific areas: go, dashboard, website, openapi
+
+set -uo pipefail
+
+if [ "${SKIP_HOOK:-}" = "1" ]; then
+  echo "pre-commit: SKIP_HOOK=1 set, skipping all checks."
+  exit 0
+fi
+
+# Resolve repo root regardless of where git invokes us from.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT" || exit 1
+
+# --- pretty output -----------------------------------------------------------
+if [ -t 1 ]; then
+  BOLD="$(printf '\033[1m')"; RED="$(printf '\033[31m')"
+  GREEN="$(printf '\033[32m')"; YELLOW="$(printf '\033[33m')"
+  CYAN="$(printf '\033[36m')"; RESET="$(printf '\033[0m')"
+else
+  BOLD=""; RED=""; GREEN=""; YELLOW=""; CYAN=""; RESET=""
+fi
+
+FAILURES=()
+
+# Returns success when $1 (a space-separated skip list) contains area $2.
+is_skipped() {
+  case " ${HOOK_SKIP:-} " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# run <area> <human label> <command...>
+run() {
+  local area="$1" label="$2"; shift 2
+  if is_skipped "$area"; then
+    printf '%s» %-22s skipped (HOOK_SKIP)%s\n' "$YELLOW" "$label" "$RESET"
+    return 0
+  fi
+  printf '%s» %s%s\n' "$CYAN" "$label" "$RESET"
+  local start end
+  start="$(date +%s)"
+  if "$@"; then
+    end="$(date +%s)"
+    printf '  %s✓ %s%s (%ss)\n' "$GREEN" "$label" "$RESET" "$((end - start))"
+  else
+    end="$(date +%s)"
+    printf '  %s✗ %s%s (%ss)\n' "$RED" "$label" "$RESET" "$((end - start))"
+    FAILURES+=("$label")
+  fi
+}
+
+require() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    printf '%s✗ %s is required but not installed (needed for staged changes)%s\n' "$RED" "$1" "$RESET"
+    FAILURES+=("missing tool: $1")
+    return 1
+  fi
+}
+
+# --- classify staged changes -------------------------------------------------
+STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -z "$STAGED" ]; then
+  echo "pre-commit: no staged files, nothing to check."
+  exit 0
+fi
+
+OPENAPI_SPEC="pkg/openapi/native/openapi.yaml"
+
+changed() { grep -qE "$1" <<<"$STAGED"; }
+
+touched_openapi=false
+touched_go=false
+touched_dashboard=false
+touched_website=false
+
+changed "^${OPENAPI_SPEC}$"                                   && touched_openapi=true
+changed '\.go$|^go\.(mod|sum)$|^\.golangci\.yml$'             && touched_go=true
+changed '^dashboard/'                                         && touched_dashboard=true
+changed '^docs/website/'                                      && touched_website=true
+
+# The spec is the single source of truth for all three consumers.
+if $touched_openapi; then
+  touched_go=true
+  touched_dashboard=true
+  touched_website=true
+fi
+
+printf '%spre-commit:%s areas → go=%s dashboard=%s website=%s openapi=%s\n' \
+  "$BOLD" "$RESET" "$touched_go" "$touched_dashboard" "$touched_website" "$touched_openapi"
+
+# --- OpenAPI spec validation (cheap, run first) ------------------------------
+if $touched_openapi && ! is_skipped openapi; then
+  if require python3; then
+    run openapi "OpenAPI FumaDocs tag check" python3 hack/scripts/check-openapi-fumadocs.py
+    run openapi "OpenAPI backward-compat check" \
+      python3 hack/scripts/check-openapi-compat.py --diff-base HEAD
+  fi
+fi
+
+# --- Backend (Go): lint + compile -------------------------------------------
+if $touched_go; then
+  run go "Go lint (golangci-lint)" make lint
+  if require go; then
+    run go "Go build (compile check)" go build ./...
+  fi
+fi
+
+# --- Dashboard: lint + typecheck + i18n + build ------------------------------
+if $touched_dashboard; then
+  if require pnpm; then
+    run dashboard "Dashboard eslint"      pnpm -C dashboard run lint
+    run dashboard "Dashboard typecheck"   bash -c 'cd dashboard && pnpm exec next typegen && pnpm exec tsc --noEmit'
+    run dashboard "Dashboard i18n"        pnpm -C dashboard run i18n:validate
+    run dashboard "Dashboard build"       pnpm -C dashboard run build
+  fi
+fi
+
+# --- Docs website: build (this is what catches malformed OpenAPI) ------------
+if $touched_website; then
+  if require pnpm; then
+    run website "Docs website build" pnpm -C docs/website run build
+  fi
+fi
+
+# --- summary -----------------------------------------------------------------
+echo
+if [ "${#FAILURES[@]}" -eq 0 ]; then
+  printf '%s✓ pre-commit passed%s\n' "$GREEN" "$RESET"
+  exit 0
+fi
+
+printf '%s✗ pre-commit failed:%s\n' "$RED" "$RESET"
+for f in "${FAILURES[@]}"; do printf '   - %s\n' "$f"; done
+printf '\nFix the issues above, or bypass with %sgit commit --no-verify%s.\n' "$BOLD" "$RESET"
+exit 1

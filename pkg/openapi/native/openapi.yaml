@@ -3334,7 +3334,7 @@ paths:
         actions). Reads come straight from the apiserver — no Prometheus
         round-trip — so the latest event is visible as soon as the controllers
         emit it.
-      tags: [envs]
+      tags: [sandbox-envs]
       parameters:
         - in: path
           name: name
