@@ -17,9 +17,9 @@ Patch the E2B Python SDK to target an Agent Sandbox deployment.
 
 Default in-cluster configuration:
   - Data plane gateway:
-    agent-sandbox-data-plane.agentbox-system.svc.cluster.local
+    agentbox-data-plane.agentbox-system.svc.cluster.local
   - E2B-compatible API:
-    http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local
+    http://agentbox-e2b-api.agentbox-system.svc.cluster.local
 
 Usage:
     from agent_sandbox_e2b import patch_e2b
@@ -33,9 +33,9 @@ Usage:
 import os
 from urllib.parse import urlparse
 
-_DEFAULT_DOMAIN = "agent-sandbox-data-plane.agentbox-system.svc.cluster.local"
+_DEFAULT_DOMAIN = "agentbox-data-plane.agentbox-system.svc.cluster.local"
 _DEFAULT_API_URL = (
-    "http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local"
+    "http://agentbox-e2b-api.agentbox-system.svc.cluster.local"
 )
 
 
@@ -129,5 +129,26 @@ def patch_e2b(
             return f"{scheme}://{host}"
 
         ConnectionConfig.get_sandbox_url = _connection_config_get_sandbox_url
+    except (ImportError, AttributeError):
+        pass
+
+    # Newer E2B SDKs (>= ~2.24.0) added a client-side API-key format check
+    # (e2b.api.validate_api_key / _API_KEY_PATTERN = r"\Ae2b_[0-9a-f]+\Z").
+    # Agent Sandbox uses "agbx_" keys, so this check rejects them with an
+    # AuthenticationException before any request is sent. The real auth happens
+    # at the Agent Sandbox gateway, so neutralize the local format check.
+    # validate_api_key is referenced only within e2b.api (both ApiClient and
+    # AsyncApiClient route through ApiClient.__init__), and the call resolves
+    # the name from the module globals at call time, so replacing the module
+    # attribute is sufficient for sync and async clients alike.
+    try:
+        import re as _re
+
+        import e2b.api as _e2b_api  # type: ignore[import]
+
+        if hasattr(_e2b_api, "validate_api_key"):
+            _e2b_api.validate_api_key = lambda api_key: None  # type: ignore[assignment]
+        if hasattr(_e2b_api, "_API_KEY_PATTERN"):
+            _e2b_api._API_KEY_PATTERN = _re.compile(r"\A.+\Z")  # type: ignore[assignment]
     except (ImportError, AttributeError):
         pass

@@ -95,10 +95,30 @@ patch_e2b(
 )
 ```
 
+## API key format (`agbx_` keys)
+
+Agent Sandbox issues API keys with an `agbx_` prefix. Newer E2B SDKs
+(>= ~2.24.0) added a **client-side** key-format check
+(`e2b.api.validate_api_key`, pattern `\Ae2b_[0-9a-f]+\Z`) that rejects any key
+not starting with `e2b_`, raising `AuthenticationException` before a request is
+ever sent. `patch_e2b()` **automatically neutralizes this local check** (the
+real authentication happens at the Agent Sandbox gateway), so `agbx_` keys work
+across both old and new E2B SDKs with no extra configuration:
+
+```python
+os.environ["E2B_API_KEY"] = "agbx_..."   # accepted after patch_e2b()
+patch_e2b()
+```
+
+The override is applied inside `patch_e2b()` and is a no-op on older SDKs that
+don't have the check. If you ever need the original behavior, do not call
+`patch_e2b()` (or re-assign `e2b.api.validate_api_key` back yourself).
+
 ## Compatibility
 
 Release builds verify the patch against the latest E2B SDK from PyPI before
-publishing. After patching, all standard E2B SDK operations work unchanged:
+publishing (verified through E2B SDK `2.25.1`). After patching, all standard
+E2B SDK operations work unchanged:
 
 ```python
 sandbox.commands.run("python --version")

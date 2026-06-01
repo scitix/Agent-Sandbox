@@ -16,7 +16,7 @@
 
 from .environment import AgentSandboxEnvironment
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 SUPPORTED_HARBOR_MAX_VERSION = ""
 
 __all__ = ["SUPPORTED_HARBOR_MAX_VERSION", "AgentSandboxEnvironment"]

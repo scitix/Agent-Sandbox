@@ -21,34 +21,61 @@ Subclasses Harbor's stock ``E2BEnvironment`` so that:
     redirecting traffic to the Agent Sandbox E2B-compatible endpoint.
   * The "template build" step is skipped (``alias_exists -> True``,
     ``_create_template -> no-op``). Agent Sandbox uses a pre-warmed pool with
-    in-place image swap, so no template build is needed.
+    in-place image swap, so no per-task template build is needed.
   * The "template" string is rewritten to Agent Sandbox's pool+image shorthand
-    ``"<CLUSTER_ID>::<POOL_NAME>//<rewritten_image>"`` so that PostSandboxes on
-    the compat layer creates a sandbox from the pre-warmed pool.
+    ``"<CLUSTER_ID>::<POOL_NAME>//<image>"`` so that PostSandboxes on the compat
+    layer creates a sandbox from the pre-warmed pool.
 
-Harbor's stock ``E2BEnvironment.__init__`` runs unchanged (we only subclass
-and call ``super().__init__()``), so ``environment/Dockerfile`` is parsed for
-``WORKDIR`` and ``self._workdir`` is set automatically. Terminal-Bench 2.0
-ships a Dockerfile for every task.
+Design: one capability — bring-your-own pre-built image
+=======================================================
+This environment assumes the image you point it at is **already fully built**
+(everything the agent and verifier need is baked in). It does NOT build images
+and does NOT mutate a running sandbox to add tooling. There are two ways to tell
+it which image to use, checked in order:
+
+  1. **Image-override map** (``AGBX_IMAGE_MAP``): a text file mapping a task name
+     to a fully-qualified image reference, one per line::
+
+         # <task-name>  <image-ref>
+         astropy__astropy-7606  registry.internal/agentbox/swebench/sweb.eval.x86_64.astropy_1776_astropy-7606:260328-uv
+         django__django-11265   registry.internal/agentbox/swebench/sweb.eval.x86_64.django_1776_django-11265:260328-uv
+
+     ``<task-name>`` is matched against Harbor's ``environment_name`` (the task
+     directory name / instance id). ``=`` may be used instead of whitespace.
+     The image value is used verbatim. This is how datasets whose ``task.toml``
+     has no ``docker_image`` (e.g. SWE-bench, where the upstream task is a
+     Dockerfile) are supported: pre-build/mirror the images once, list them
+     here, and pass the file in.
+
+  2. **task.toml ``docker_image``** (e.g. Terminal-Bench 2.0): if the task sets
+     ``[environment] docker_image`` and there is no map entry, that image is
+     used (after optional mirror-prefix / tag rewrite — see ``_rewrite_image``).
+
+If neither applies, the task is rejected (this environment does not build
+images). Datasets that need an image built from a Dockerfile must be pre-built
+and listed in ``AGBX_IMAGE_MAP``.
 
 Required environment variables (typically via ``harbor run --env-file ...``):
     E2B_API_KEY            Agent Sandbox API key (``agbx_...``).
     AGBX_POOL_NAME         Pre-warmed pool name (e.g. ``terminal2``).
 
 Optional environment variables:
+    AGBX_IMAGE_MAP         Path to a ``<task-name> <image>`` map file (see above).
     E2B_DOMAIN             Data-plane gateway host[:port][/path].
     E2B_API_URL            E2B-compatible control-plane URL (scheme://host).
     AGBX_CLUSTER_ID        Cluster id prefix (e.g. ``bar``); omit for
                            single-cluster setups.
-    AGBX_IMAGE_PREFIX      Internal mirror prefix
-                           (e.g. ``registry.internal/agent-sandbox``).
-                           ``docker.io/`` is stripped before the prefix is
-                           applied.
+    AGBX_IMAGE_PREFIX      Internal mirror prefix applied to the task.toml
+                           ``docker_image`` (e.g. ``registry.internal/agentbox``).
+                           ``docker.io/`` is stripped first. Not applied to map
+                           values (those are used verbatim).
+    AGBX_IMAGE_TAG         Override the tag of the task.toml ``docker_image``
+                           after rewriting. Not applied to map values.
     AGBX_HTTPS             ``true``/``false`` for the data-plane scheme
                            (default ``true``).
     AGBX_STARTUP_TIMEOUT   Sandbox startup timeout, seconds (default ``300``).
-    AGBX_READY_TIMEOUT     Cold-image readiness ceiling, seconds
-                           (default ``600``).
+    AGBX_READY_TIMEOUT     Cold-image readiness ceiling, seconds (default
+                           ``600``). Large images (e.g. SWE-bench) may need more.
 """
 
 from __future__ import annotations
@@ -75,20 +102,69 @@ from harbor.environments.e2b import E2BEnvironment  # noqa: E402
 from harbor.models.environment_type import EnvironmentType  # noqa: E402
 
 
+def _load_image_map(path: str | None) -> dict[str, str]:
+    """Parse an ``AGBX_IMAGE_MAP`` file into ``{task_name: image}``.
+
+    Lines are ``<task-name> <image>`` or ``<task-name>=<image>``. Blank lines
+    and ``#`` comments are ignored.
+    """
+    if not path:
+        return {}
+    mapping: dict[str, str] = {}
+    with open(path, encoding="utf-8") as fh:
+        for lineno, raw in enumerate(fh, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line and " " not in line.split("=", 1)[0]:
+                key, _, value = line.partition("=")
+            else:
+                parts = line.split()
+                if len(parts) < 2:
+                    raise ValueError(
+                        f"{path}:{lineno}: expected '<task-name> <image>', got: {line!r}"
+                    )
+                key, value = parts[0], parts[1]
+            mapping[key.strip()] = value.strip()
+    return mapping
+
+
+# Loaded once at import. ``--env-file`` is applied to os.environ before this
+# module is imported, so AGBX_IMAGE_MAP is visible here.
+_IMAGE_MAP: dict[str, str] = _load_image_map(os.environ.get("AGBX_IMAGE_MAP", "").strip() or None)
+
+
 def _rewrite_image(raw_image: str) -> str:
-    """Strip ``docker.io/`` and apply the internal mirror prefix."""
+    """Strip ``docker.io/``, apply the internal mirror prefix, swap the tag.
+
+    Applies only to the task.toml ``docker_image`` path (Terminal-Bench). With
+    ``AGBX_IMAGE_TAG`` unset the original tag is kept. OCI repository names are
+    lowercase, so the result is lowercased.
+    """
     if not raw_image:
         return raw_image
     if raw_image.startswith("docker.io/"):
         raw_image = raw_image[len("docker.io/") :]
+
     prefix = os.environ.get("AGBX_IMAGE_PREFIX", "").rstrip("/")
     if prefix and not raw_image.startswith(prefix + "/"):
-        return f"{prefix}/{raw_image}"
-    return raw_image
+        raw_image = f"{prefix}/{raw_image}"
+
+    tag_override = os.environ.get("AGBX_IMAGE_TAG", "").strip()
+    if tag_override:
+        head, sep, last = raw_image.rpartition("/")
+        name = last.split(":", 1)[0]
+        raw_image = f"{head}{sep}{name}:{tag_override}"
+
+    return raw_image.lower()
 
 
 class AgentSandboxEnvironment(E2BEnvironment):
-    """E2B-compatible Harbor environment that targets Agent Sandbox pools."""
+    """E2B-compatible Harbor environment that targets Agent Sandbox pools.
+
+    Runs pre-built images on a pre-warmed pool. Image selection: an
+    ``AGBX_IMAGE_MAP`` entry for the task, else the task's ``docker_image``.
+    """
 
     @staticmethod
     def type() -> EnvironmentType:
@@ -106,24 +182,36 @@ class AgentSandboxEnvironment(E2BEnvironment):
 
     def __init__(self, *args, **kwargs):
         # Let E2BEnvironment.__init__ parse environment/Dockerfile for WORKDIR
-        # and run its own validation. Terminal-Bench 2.0 ships a Dockerfile for
-        # every task, so the validation passes.
+        # and run its own validation.
         super().__init__(*args, **kwargs)
 
-        docker_image = self.task_env_config.docker_image
-        if not docker_image:
-            raise ValueError(
-                f"task '{self.environment_name}' has no environment.docker_image; "
-                "AgentSandboxEnvironment requires it to be set."
-            )
+        image = self._resolve_image()
 
         cluster = os.environ.get("AGBX_CLUSTER_ID", "").strip()
         pool = os.environ["AGBX_POOL_NAME"]
-        image = _rewrite_image(docker_image)
         prefix = f"{cluster}::" if cluster else ""
         # PostSandboxes on the compat layer parses "<cluster>::<pool>//<image>".
         # Replace the hash-based template name that the parent computed.
         self._template_name = f"{prefix}{pool}//{image}"
+
+    def _resolve_image(self) -> str:
+        """Pick the image: override map first, then task.toml docker_image."""
+        override = _IMAGE_MAP.get(self.environment_name)
+        if override:
+            return override
+
+        docker_image = self.task_env_config.docker_image
+        if docker_image:
+            return _rewrite_image(docker_image)
+
+        map_path = os.environ.get("AGBX_IMAGE_MAP", "").strip() or "unset"
+        raise SystemExit(
+            f"AgentSandboxEnvironment: task '{self.environment_name}' has no "
+            "environment.docker_image and no entry in the image-override map "
+            f"(AGBX_IMAGE_MAP={map_path}). This environment only runs PRE-BUILT "
+            "images; add a line '<task-name> <image-ref>' to the map, or use a "
+            "dataset whose task.toml sets environment.docker_image."
+        )
 
     # --- skip template build entirely ----------------------------------------
 
