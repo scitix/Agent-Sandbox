@@ -36,6 +36,7 @@ export type GlobalListSandboxTemplatesResult =
   import("./global-schema").components["schemas"]["ListSandboxTemplatesResult"]
 export type GlobalUpsertSandboxTemplateRequest =
   import("./global-schema").components["schemas"]["UpsertSandboxTemplateRequest"]
+export type ImageDataset = import("./global-schema").components["schemas"]["ImageDataset"]
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 

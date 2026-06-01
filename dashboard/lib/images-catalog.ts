@@ -17,20 +17,20 @@
 /**
  * Server-side images catalog loader.
  *
- * In development / without a ConfigMap:  reads from the static TypeScript file
- * (components/images/data.ts compiled values injected at startup).
+ * Reads from IMAGES_CATALOG_PATH (default /etc/agentbox/images-catalog.json), a JSON array
+ * of ImageDataset objects. When the ConfigMap is mounted k8s updates the symlink atomically,
+ * so we watch the directory just like cluster-config.ts.
  *
- * In production:  reads from IMAGES_CATALOG_PATH (default /etc/agentbox/images-catalog.json).
- * The file is a JSON array of ImageDataset objects.  When the ConfigMap is mounted k8s will
- * update the symlink atomically, so we watch the directory just like cluster-config.ts.
- *
- * The in-memory static data acts as a fallback when the file is missing or empty.
+ * When the file is missing or empty, an empty catalog is served.
  */
 import * as fs from "fs"
 import * as path from "path"
-import { IMAGE_DATASETS, type ImageDataset } from "@/components/images/data"
+import type { ImageDataset } from "@/lib/api/hub-client"
 
 const CATALOG_FILE = process.env.IMAGES_CATALOG_PATH || "/etc/agentbox/images-catalog.json"
+
+// Served when no ConfigMap-backed catalog file is present.
+const EMPTY_CATALOG: ImageDataset[] = []
 
 let cachedCatalog: ImageDataset[] | null = null
 let watcherInitialized = false
@@ -68,7 +68,7 @@ export function ensureWatcher(): void {
 /** Returns the current catalog: file-backed if available, otherwise static fallback. */
 export function listImages(): ImageDataset[] {
   ensureWatcher()
-  return cachedCatalog ?? IMAGE_DATASETS
+  return cachedCatalog ?? EMPTY_CATALOG
 }
 
 /** Persists the full catalog to the file (admin writes only). */

@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/dialog"
 import { MarkdownRenderer } from "@/components/markdown-renderer"
 import { UpsertImageDialog } from "@/components/images/upsert-dialog"
-import type { ImageDataset } from "@/components/images/data"
+import type { ImageDataset } from "@/lib/api/hub-client"
 import { imagesCatalogQueryOptions, useDeleteImageDataset } from "@/lib/queries/images"
 import { isActualAdminAtom } from "@/lib/atoms"
 import { clusterPath } from "@/lib/cluster-path"
@@ -102,7 +102,7 @@ export default function DatasetDetailPage({ params }: PageProps) {
     )
   }
 
-  const docContent = dataset.clusterDocs[clusterID]
+  const docContent = dataset.clusterDocs?.[clusterID]
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -110,7 +110,7 @@ export default function DatasetDetailPage({ params }: PageProps) {
         icon={HardDrive}
         title={dataset.name}
         copyValue={dataset.name}
-        kind={t("datasets.imageCount", { count: dataset.imageCount })}
+        kind={t("datasets.imageCount", { count: dataset.imageCount ?? 0 })}
         meta={[
           { label: t("datasets.filterByCategory"), value: dataset.category },
           { label: t("datasets.filterBySource"), value: dataset.source },

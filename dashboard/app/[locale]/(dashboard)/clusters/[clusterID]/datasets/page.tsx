@@ -38,7 +38,7 @@ import { clusterPath } from "@/lib/cluster-path"
 import { useTranslation } from "@/lib/i18n"
 import { isActualAdminAtom } from "@/lib/atoms"
 import { imagesCatalogQueryOptions, useDeleteImageDataset } from "@/lib/queries/images"
-import type { ImageDataset } from "@/components/images/data"
+import type { ImageDataset } from "@/lib/api/hub-client"
 import { UpsertImageDialog } from "@/components/images/upsert-dialog"
 import { cn } from "@/lib/utils"
 
@@ -85,7 +85,7 @@ function ImageCard({
               {dataset.name}
             </p>
             <p className="text-muted-foreground font-mono text-xs">
-              {t("datasets.imageCount", { count: dataset.imageCount })}
+              {t("datasets.imageCount", { count: dataset.imageCount ?? 0 })}
             </p>
           </div>
         </div>
@@ -121,9 +121,9 @@ function ImageCard({
       </p>
 
       {/* Tags */}
-      {dataset.tags.length > 0 && (
+      {(dataset.tags?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {dataset.tags.map((tag) => (
+          {dataset.tags?.map((tag) => (
             <span
               key={tag}
               className="bg-secondary text-muted-foreground rounded px-2 py-0.5 font-mono text-xs"
@@ -205,7 +205,7 @@ export default function ImagesPage() {
 
   // Only show datasets that have docs for the current cluster
   const availableDatasets = useMemo(
-    () => allDatasets.filter((d) => clusterID in d.clusterDocs),
+    () => allDatasets.filter((d) => clusterID in (d.clusterDocs ?? {})),
     [allDatasets, clusterID],
   )
 
@@ -215,8 +215,8 @@ export default function ImagesPage() {
     return availableDatasets.filter(
       (d) =>
         d.name.toLowerCase().includes(q) ||
-        d.description.toLowerCase().includes(q) ||
-        d.tags.some((tag) => tag.toLowerCase().includes(q)),
+        (d.description ?? "").toLowerCase().includes(q) ||
+        (d.tags ?? []).some((tag) => tag.toLowerCase().includes(q)),
     )
   }, [availableDatasets, search])
 

@@ -19,8 +19,7 @@
 // GET is accessible to any authenticated user; POST/PUT/DELETE are admin-only (enforced server-side).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { getHubApiClient, getHubFetchClient } from "@/lib/api/hub-client"
-import type { ImageDataset } from "@/components/images/data"
+import { getHubApiClient, getHubFetchClient, type ImageDataset } from "@/lib/api/hub-client"
 
 export const IMAGES_QUERY_KEY = ["images-catalog"] as const
 
@@ -32,7 +31,7 @@ export function imagesCatalogQueryOptions() {
     "/v1/images-catalog",
     {},
     {
-      select: (data) => (data ?? []) as unknown as ImageDataset[],
+      select: (data) => data ?? [],
     },
   )
 }

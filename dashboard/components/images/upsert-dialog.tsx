@@ -31,7 +31,7 @@ import { Badge } from "@/components/ui/badge"
 import { Field, FieldLabel, FieldError, FieldDescription } from "@/components/ui/field"
 import { clustersAtom } from "@/lib/atoms"
 import { useCreateImageDataset, useUpdateImageDataset } from "@/lib/queries/images"
-import type { ImageDataset } from "@/components/images/data"
+import type { ImageDataset } from "@/lib/api/hub-client"
 import { useTranslation } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
@@ -79,7 +79,7 @@ function UpsertImageForm({
   // if editing, otherwise default to empty string.
   const defaultClusterDocs = clusters.map((c) => ({
     clusterId: c.id,
-    markdown: dataset?.clusterDocs[c.id] ?? "",
+    markdown: dataset?.clusterDocs?.[c.id] ?? "",
   }))
 
   const {
@@ -97,7 +97,7 @@ function UpsertImageForm({
       description: dataset?.description ?? "",
       imageCount: dataset?.imageCount ?? 0,
       huggingFaceUrl: dataset?.huggingFaceUrl ?? "https://huggingface.co/datasets/",
-      tags: dataset?.tags.join(", ") ?? "",
+      tags: dataset?.tags?.join(", ") ?? "",
       clusterDocs: defaultClusterDocs,
     },
   })
