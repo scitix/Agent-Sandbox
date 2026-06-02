@@ -46,15 +46,19 @@ export function DataTableNumberRangeFilter<TData>({
   placeholder,
 }: DataTableNumberRangeFilterProps<TData>) {
   const currentValues = (column?.getFilterValue() as [number?, number?]) || [undefined, undefined]
-  const [minValue, setMinValue] = useState<string>(currentValues[0]?.toString() || "")
-  const [maxValue, setMaxValue] = useState<string>(currentValues[1]?.toString() || "")
+  // Seed the inputs from the active filter, falling back to the caller's
+  // default. The effect below pushes the same default into the column filter.
+  const [minValue, setMinValue] = useState<string>(
+    () => currentValues[0]?.toString() ?? defaultValues?.[0]?.toString() ?? "",
+  )
+  const [maxValue, setMaxValue] = useState<string>(
+    () => currentValues[1]?.toString() ?? defaultValues?.[1]?.toString() ?? "",
+  )
 
-  // load default values
+  // Apply the caller's default to the column filter on mount.
   useEffect(() => {
     if (defaultValues) {
       column?.setFilterValue(defaultValues)
-      setMinValue(defaultValues[0]?.toString() || "")
-      setMaxValue(defaultValues[1]?.toString() || "")
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultValues])

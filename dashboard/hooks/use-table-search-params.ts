@@ -23,7 +23,7 @@ import {
   type PaginationState,
   type SortingState,
 } from "@tanstack/react-table"
-import { useMemo, useCallback, useRef } from "react"
+import { useMemo, useCallback, useState } from "react"
 import { type TableExternalState } from "./use-table-state"
 
 export type FilterColumnType = "string" | "number-range" | "faceted"
@@ -50,8 +50,11 @@ export function useTableSearchParams(
 ): TableExternalState {
   const defaultPageSize = options?.defaultPageSize ?? 15
 
-  // Capture initial filterColumns to keep parsers stable across renders
-  const filterColumnsRef = useRef(filterColumns)
+  // Capture the initial filterColumns once and treat it as immutable. The
+  // contract is that callers pass a stable array (see the param docs); holding
+  // it in never-updated state lets us read it during render (a ref cannot be
+  // read in render) while keeping the nuqs parser map keys stable.
+  const [stableFilterColumns] = useState(filterColumns)
 
   // Build nuqs parser map — must be stable (same keys) across renders
   const parsers = useMemo(() => {
@@ -68,12 +71,12 @@ export function useTableSearchParams(
       sort: parseAsString.withDefault(""),
       desc: parseAsBoolean.withDefault(false),
     }
-    for (const col of filterColumnsRef.current) {
+    for (const col of stableFilterColumns) {
       // All filter columns use parseAsArrayOf(parseAsString) for uniform serialization
       p[col.id] = parseAsArrayOf(parseAsString).withDefault([])
     }
     return p
-  }, [defaultPageSize])
+  }, [defaultPageSize, stableFilterColumns])
 
   const [state, setState] = useQueryStates(parsers)
 
@@ -88,7 +91,7 @@ export function useTableSearchParams(
 
   const columnFilters: ColumnFiltersState = useMemo(() => {
     const filters: ColumnFiltersState = []
-    for (const col of filterColumnsRef.current) {
+    for (const col of stableFilterColumns) {
       const values = (state as Record<string, unknown>)[col.id] as string[] | undefined
       if (!values || values.length === 0) continue
 
@@ -119,7 +122,7 @@ export function useTableSearchParams(
       }
     }
     return filters
-  }, [state])
+  }, [state, stableFilterColumns])
 
   // ── Column Filters: tanstack-table → URL ──────────────────────────────
 
@@ -131,13 +134,13 @@ export function useTableSearchParams(
       const update: Record<string, unknown> = {}
 
       // Clear all filter columns first
-      for (const col of filterColumnsRef.current) {
+      for (const col of stableFilterColumns) {
         update[col.id] = null
       }
 
       // Set new values
       for (const filter of newFilters) {
-        const col = filterColumnsRef.current.find((c) => c.id === filter.id)
+        const col = stableFilterColumns.find((c) => c.id === filter.id)
         if (!col) continue
 
         switch (col.type) {
@@ -172,7 +175,7 @@ export function useTableSearchParams(
       update.page = null
       setState(update as Parameters<typeof setState>[0])
     },
-    [columnFilters, setState],
+    [columnFilters, setState, stableFilterColumns],
   )
 
   // ── Global Filter ─────────────────────────────────────────────────────
@@ -241,11 +244,11 @@ export function useTableSearchParams(
       desc: null,
       size: null,
     }
-    for (const col of filterColumnsRef.current) {
+    for (const col of stableFilterColumns) {
       update[col.id] = null
     }
     setState(update as Parameters<typeof setState>[0])
-  }, [setState])
+  }, [setState, stableFilterColumns])
 
   // ── Return TableExternalState ─────────────────────────────────────────
 

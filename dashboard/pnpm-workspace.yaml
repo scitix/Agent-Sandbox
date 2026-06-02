@@ -2,3 +2,10 @@ allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+
+# Floors for transitive dev-only deps flagged by security advisories.
+# vite (via vitest) — dev-server file-read CVEs; flatted (via eslint flat-cache)
+# — prototype pollution. Neither ships in the production bundle.
+overrides:
+  vite: "^8.0.16"
+  flatted: "^3.4.2"

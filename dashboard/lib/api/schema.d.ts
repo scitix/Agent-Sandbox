@@ -1260,7 +1260,7 @@ export interface components {
             involvedKind: string;
             /** @description metadata.name of the involved object. */
             involvedName: string;
-            /** @description Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDown / SandboxPoolPhase*. */
+            /** @description Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDownStarted / AutoscalerScaleDownCompleted / AutoscalerScaleDownStuck / SandboxPoolPhase*. */
             reason: string;
             /** @description Event action (machine-readable). Sometimes absent on older events. */
             action?: string;

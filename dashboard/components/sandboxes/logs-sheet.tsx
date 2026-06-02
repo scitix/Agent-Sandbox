@@ -66,6 +66,20 @@ interface NdjsonMeta {
 
 type NdjsonLine = NdjsonEntry | NdjsonMeta | { _meta?: never; log?: never; error: string }
 
+/** Render one NDJSON log entry into an ANSI-decorated terminal line. */
+function formatEntry(e: NdjsonEntry): string {
+  const parts: string[] = []
+  if (e._timestamp) {
+    const ts = new Date(e._timestamp).toISOString().replace("T", " ").replace("Z", "")
+    parts.push(`\x1b[2m${ts}\x1b[0m`)
+  }
+  if (e.container_name) {
+    parts.push(`\x1b[36m[${e.container_name}]\x1b[0m`)
+  }
+  parts.push(e.log)
+  return parts.join(" ")
+}
+
 // ─── Inner log viewer (mounted only when sheet is open) ────────────────────────
 
 interface LogViewerProps {
@@ -234,9 +248,10 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
   // Re-run search whenever debounced query changes.
   useEffect(() => {
     if (!debouncedQuery) {
+      // The match counters are driven by the addon's onDidChangeResults and are
+      // only rendered while a query is active, so clearing decorations suffices;
+      // the next search overwrites the stale counts.
       searchAddonRef.current?.clearDecorations()
-      setSearchResultIndex(-1)
-      setSearchResultCount(0)
       return
     }
     doSearch("next")
@@ -401,19 +416,6 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
     }
   }, [abortRef, lines, clusterID, sandboxId, isTerminated, isExternalLogsConfigured, sandbox])
 
-  function formatEntry(e: NdjsonEntry): string {
-    const parts: string[] = []
-    if (e._timestamp) {
-      const ts = new Date(e._timestamp).toISOString().replace("T", " ").replace("Z", "")
-      parts.push(`\x1b[2m${ts}\x1b[0m`)
-    }
-    if (e.container_name) {
-      parts.push(`\x1b[36m[${e.container_name}]\x1b[0m`)
-    }
-    parts.push(e.log)
-    return parts.join(" ")
-  }
-
   const [xtermReady, setXtermReady] = useState(false)
   useEffect(() => {
     const interval = setInterval(() => {
@@ -427,6 +429,11 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
 
   useEffect(() => {
     if (!xtermReady) return
+    // Start (and restart, on line-count / sandbox change) the NDJSON log stream
+    // once the terminal exists. fetchLogs resets the viewer's streaming state
+    // synchronously before awaiting the network — the documented "fetch in an
+    // effect" pattern, which set-state-in-effect over-flags here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchLogs()
     return () => {
       abortRef.current?.abort()

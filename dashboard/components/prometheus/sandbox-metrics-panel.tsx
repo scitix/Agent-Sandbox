@@ -32,7 +32,7 @@
  *   (fallback: claimedAt) to recycledAt (fallback: terminatedAt) — fixed, no refresh
  */
 
-import { useState, useMemo, useEffect, useCallback } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { useTranslation } from "@/lib/i18n"
 import { AlertCircle } from "lucide-react"
 import { MetricsChart } from "@/components/prometheus/metrics-chart"
@@ -61,6 +61,31 @@ function formatDurationLabel(startSec: number, endSec: number): string {
   return formatDuration(endSec - startSec)
 }
 
+// Default time range for a sandbox's metrics:
+// - Terminated with lifetime: full lifetime view (absolute, startedAt → recycledAt)
+// - Running with a known start < 15 min ago: from start to now (absolute, adjustable)
+// - Running with start >= 15 min ago: last 15 minutes preset (avoid full-range query)
+// - Otherwise: last 1 hour preset
+// `nowSec` is supplied by the caller so this stays pure (the clock is read in
+// the call site's useState initializer, which runs once per mount).
+function defaultTimeRangeForSandbox(sandbox: AgentSandbox, nowSec: number): TimeRangeValue {
+  const isTerminated = isTerminalStatus(sandbox.status)
+  const bounds = sandboxLifetimeBounds(sandbox)
+  const hasLifetime = bounds.start !== undefined && bounds.end !== undefined
+  if (isTerminated && hasLifetime) {
+    return { type: "absolute", start: bounds.start!, end: bounds.end! }
+  }
+  if (!isTerminated && bounds.start !== undefined) {
+    const startSec = bounds.start
+    const FIFTEEN_MINUTES = 15 * 60
+    if (nowSec - startSec < FIFTEEN_MINUTES) {
+      return { type: "absolute", start: startSec, end: nowSec }
+    }
+    return { type: "preset", preset: "15m" }
+  }
+  return { type: "preset", preset: "1h" }
+}
+
 // ─── Inner form (only mounted when open) ─────────────────────────────────
 
 export function SandboxMetricsPanel({ sandbox }: { sandbox: AgentSandbox }) {
@@ -71,40 +96,14 @@ export function SandboxMetricsPanel({ sandbox }: { sandbox: AgentSandbox }) {
   const bounds = useMemo(() => sandboxLifetimeBounds(sandbox), [sandbox])
   const hasLifetime = bounds.start !== undefined && bounds.end !== undefined
 
-  // Default time range:
-  // - Terminated with lifetime: full lifetime view (absolute, startedAt → recycledAt)
-  // - Running with a known start < 15 min ago: from start to now (absolute, adjustable)
-  // - Running with start >= 15 min ago: last 15 minutes preset (avoid full-range query)
-  // - Otherwise: last 1 hour preset
-  const defaultTimeRange = useMemo<TimeRangeValue>(
-    () => {
-      if (isTerminated && hasLifetime) {
-        return { type: "absolute", start: bounds.start!, end: bounds.end! }
-      }
-      if (!isTerminated && bounds.start !== undefined) {
-        const startSec = bounds.start
-        const nowSec = Math.floor(Date.now() / 1000)
-        const FIFTEEN_MINUTES = 15 * 60
-        if (nowSec - startSec < FIFTEEN_MINUTES) {
-          return { type: "absolute", start: startSec, end: nowSec }
-        }
-        return { type: "preset", preset: "15m" }
-      }
-      return { type: "preset", preset: "1h" }
-    }, // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sandbox.sandboxId],
+  // The parent mounts this panel with `key={sandbox.sandboxId}`, so switching
+  // sandboxes remounts it and re-seeds the default range. Reading the clock in
+  // the lazy initializer keeps render pure (it runs once per mount).
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(() =>
+    defaultTimeRangeForSandbox(sandbox, Math.floor(Date.now() / 1000)),
   )
-
-  const [timeRange, setTimeRange] = useState<TimeRangeValue>(defaultTimeRange)
   // Terminated sandboxes: no auto-refresh; active: default 30s
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(isTerminated ? 0 : 30_000)
-
-  // Reset state when sandbox changes
-  useEffect(() => {
-    setTimeRange(defaultTimeRange)
-    setRefreshInterval(isTerminated ? 0 : 30_000)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sandbox.sandboxId])
 
   // Compute effective time range
   const { start, end } = useMemo(() => resolveTimeRange(timeRange), [timeRange])

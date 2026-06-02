@@ -26,7 +26,7 @@
  * - No createdAt: last 1 hour preset, auto-refresh 30s
  */
 
-import { useState, useMemo, useCallback, useEffect } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { AlertCircle } from "lucide-react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
@@ -49,38 +49,36 @@ function toUnixSeconds(iso: string): number {
   return Math.floor(new Date(iso).getTime() / 1000)
 }
 
+// Smart time range default:
+// - Pool created < 1 day ago: absolute range from createdAt to now
+// - Pool created >= 1 day ago: last 1 day preset
+// - No createdAt: last 1 hour preset
+// `nowSec` is supplied by the caller so this stays pure (the clock is read at
+// the call site's useState initializer, which runs once per mount).
+function defaultTimeRangeForPool(pool: AgentSandboxPool, nowSec: number): TimeRangeValue {
+  if (pool.createdAt) {
+    const startSec = toUnixSeconds(pool.createdAt)
+    const ONE_DAY = 24 * 60 * 60
+    if (nowSec - startSec < ONE_DAY) {
+      return { type: "absolute", start: startSec, end: nowSec }
+    }
+    return { type: "preset", preset: "1d" }
+  }
+  return { type: "preset", preset: "1h" }
+}
+
 export function PoolMetricsPanel({ pool }: { pool: AgentSandboxPool }) {
   const { t } = useTranslation()
   const clusterID = useClusterID()
   const queryClient = useQueryClient()
 
-  // Smart time range default:
-  // - Pool created < 1 day ago: absolute range from createdAt to now
-  // - Pool created >= 1 day ago: last 1 day preset
-  // - No createdAt: last 1 hour preset
-  const defaultTimeRange = useMemo<TimeRangeValue>(() => {
-    if (pool.createdAt) {
-      const startSec = toUnixSeconds(pool.createdAt)
-      const nowSec = Math.floor(Date.now() / 1000)
-      const ONE_DAY = 24 * 60 * 60
-      if (nowSec - startSec < ONE_DAY) {
-        return { type: "absolute", start: startSec, end: nowSec }
-      }
-      return { type: "preset", preset: "1d" }
-    }
-    return { type: "preset", preset: "1h" }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pool.name])
-
-  const [timeRange, setTimeRange] = useState<TimeRangeValue>(defaultTimeRange)
+  // The parent mounts this panel with `key={pool.name}`, so switching pools
+  // remounts it and re-seeds the default range from scratch. Reading the clock
+  // in the lazy initializer keeps render pure (it runs once per mount).
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(() =>
+    defaultTimeRangeForPool(pool, Math.floor(Date.now() / 1000)),
+  )
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(30_000)
-
-  // Reset state when pool changes
-  useEffect(() => {
-    setTimeRange(defaultTimeRange)
-    setRefreshInterval(30_000)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pool.name])
 
   const { start, end, step } = useMemo(() => resolveTimeRange(timeRange), [timeRange])
   const isAbsolute = timeRange.type === "absolute"

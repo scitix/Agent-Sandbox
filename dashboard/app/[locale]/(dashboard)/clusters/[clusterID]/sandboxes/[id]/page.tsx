@@ -51,7 +51,8 @@ export default function SandboxOverviewPage({ params }: PageProps) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <SandboxOverview sandbox={sandbox} t={t} />
-      {hasMetrics && <SandboxMetricsPanel sandbox={sandbox} />}
+      {/* key forces a fresh panel (and a re-seeded default time range) per sandbox. */}
+      {hasMetrics && <SandboxMetricsPanel key={sandbox.sandboxId} sandbox={sandbox} />}
     </div>
   )
 }

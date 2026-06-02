@@ -102,17 +102,16 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [dictVersion, setDictVersion] = useState(() => (getDictionary(locale) ? 1 : 0))
   const isLoading = dictVersion === 0
 
-  // Load dictionary on locale change. For "en" this resolves instantly from cache.
+  // Load dictionary on locale change. When the dictionary is already cached,
+  // `t` already recomputes via its `locale` dependency, so no version bump is
+  // needed — only a freshly-loaded dictionary must signal readiness once its
+  // async load resolves.
   useEffect(() => {
+    if (getDictionary(locale)) return
     let cancelled = false
-    if (!getDictionary(locale)) {
-      loadDictionary(locale).then(() => {
-        if (!cancelled) setDictVersion((v) => v + 1)
-      })
-    } else {
-      // Already in cache, bump version to ensure t() picks it up
-      setDictVersion((v) => v + 1)
-    }
+    loadDictionary(locale).then(() => {
+      if (!cancelled) setDictVersion((v) => v + 1)
+    })
     return () => {
       cancelled = true
     }

@@ -31,6 +31,9 @@ const eslintConfig = defineConfig([
     "components/ui/**",
     "build/**",
     "next-env.d.ts",
+    // shadcn-generated, lives outside components/ui (installed by the sidebar
+    // block, overwritten on `shadcn add`) — don't lint upstream code.
+    "hooks/use-mobile.ts",
   ]),
   {
     rules: {

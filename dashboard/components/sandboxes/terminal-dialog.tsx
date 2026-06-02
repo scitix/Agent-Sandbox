@@ -79,7 +79,6 @@ function TerminalContent({ sandboxId, clusterID }: TerminalContentProps) {
 
   const connect = async () => {
     if (!containerRef.current) return
-    setStatus("connecting")
 
     // Clean up previous terminal and WS
     wsRef.current?.close()
@@ -186,8 +185,11 @@ function TerminalContent({ sandboxId, clusterID }: TerminalContentProps) {
     }
   }
 
-  // Connect on mount
+  // Connect on mount. connect() opens the WebSocket and updates status from its
+  // async callbacks — the documented "connect to an external system" effect use,
+  // which set-state-in-effect over-flags here.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void connect()
     return () => {
       wsRef.current?.close()
@@ -216,7 +218,10 @@ function TerminalContent({ sandboxId, clusterID }: TerminalContentProps) {
               size="sm"
               variant="outline"
               className="h-7 font-mono text-[11px]"
-              onClick={() => void connect()}
+              onClick={() => {
+                setStatus("connecting")
+                void connect()
+              }}
             >
               {t("sandboxes.reconnect")}
             </Button>

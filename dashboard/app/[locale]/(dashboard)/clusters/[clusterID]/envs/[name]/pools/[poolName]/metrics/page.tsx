@@ -34,5 +34,6 @@ export default function PoolMetricsPage({ params }: PageProps) {
 
   if (!pool) return null
 
-  return <PoolMetricsPanel pool={pool} />
+  // key forces a fresh panel (and a re-seeded default time range) per pool.
+  return <PoolMetricsPanel key={pool.name} pool={pool} />
 }

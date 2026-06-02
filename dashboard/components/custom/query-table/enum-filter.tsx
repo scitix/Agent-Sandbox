@@ -18,7 +18,7 @@
 // Modified code - migrated to Base UI
 import { Column } from "@tanstack/react-table"
 import { CheckIcon, XIcon } from "lucide-react"
-import { ReactNode, useEffect, useMemo, useState } from "react"
+import { ReactNode, useEffect, useMemo, useRef } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import {
@@ -72,16 +72,19 @@ export function DataTableDefaultFilter<TData>({
         ? [rawFilterValue]
         : [],
   )
-  const [initialized, setInitialized] = useState(false)
+  // One-shot guard: apply the caller's default filter once on mount. It only
+  // gates the effect (never rendered), so a ref is the right tool and avoids a
+  // setState-in-effect re-render.
+  const initializedRef = useRef(false)
 
   // load default values from column filter state
   useEffect(() => {
-    if (defaultValues && selectedValues.size === 0 && !initialized) {
+    if (defaultValues && selectedValues.size === 0 && !initializedRef.current) {
       column?.setFilterValue(defaultValues)
-      setInitialized(true)
+      initializedRef.current = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultValues, selectedValues, initialized])
+  }, [defaultValues, selectedValues])
 
   const options: DataTableFacetedFilterOption[] = useMemo(() => {
     if (rawOptions) {

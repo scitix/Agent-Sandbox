@@ -55,27 +55,22 @@ export function RelativeTime({ date, lang, className }: RelativeTimeProps) {
   const { locale: i18nLocale } = useTranslation()
   const effectiveLang = lang ?? i18nLocale
   const locale = resolveLocale(effectiveLang)
-  const [relative, setRelative] = useState<string>("")
   const parsed = date ? new Date(date) : null
+  const isValid = parsed !== null && !isNaN(parsed.getTime())
 
+  // Re-render every 10s so the relative string stays fresh. The tick is bumped
+  // only from the interval callback (never synchronously in the effect body),
+  // and `relative` is derived during render below.
+  const [, setTick] = useState(0)
   useEffect(() => {
-    if (!parsed || isNaN(parsed.getTime())) {
-      setRelative("")
-      return
-    }
-
-    const update = () => {
-      setRelative(formatDistanceToNow(parsed, { locale, addSuffix: true }))
-    }
-
-    update()
-    const timer = setInterval(update, 10_000)
+    if (!isValid) return
+    const timer = setInterval(() => setTick((n) => n + 1), 10_000)
     return () => clearInterval(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, effectiveLang])
+  }, [isValid])
 
-  if (!parsed || isNaN(parsed.getTime()) || !relative) return null
+  if (!parsed || !isValid) return null
 
+  const relative = formatDistanceToNow(parsed, { locale, addSuffix: true })
   const exact = format(parsed, "MM/dd HH:mm:ss")
 
   return (
