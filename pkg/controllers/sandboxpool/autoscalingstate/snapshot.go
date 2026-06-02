@@ -22,6 +22,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
@@ -105,6 +106,13 @@ type Snapshot struct {
 	// duration comparison downstream so a single Snapshot evaluates
 	// consistently end-to-end even if the decision logic runs slowly.
 	Now time.Time
+
+	// ScaleDownSession is the in-process view of this Pool's ongoing
+	// scale-down lifecycle (gate timestamp + whether a session is open).
+	// The zero value means "no session". Populated from Loader.ScaleDown
+	// when wired; left zero in unit tests that don't exercise the
+	// cache-lag gate or the Started/Completed event pairing.
+	ScaleDownSession ScaleDownSessionView
 }
 
 // IsAutoscalingEnabled reports whether the decision logic should consider
@@ -189,6 +197,14 @@ type Loader struct {
 
 	// Clock provides Now(). When nil, SystemClock() is used.
 	Clock Clock
+
+	// ScaleDown is the shared per-Pool scale-down session tracker. nil is
+	// allowed; the loader then leaves Snapshot.ScaleDownSession zero,
+	// which the decision logic reads as "no session" and falls back to
+	// the persisted status timestamp alone. Must be the SAME instance the
+	// reconciler holds — two instances silently defeat the cache-lag
+	// gate.
+	ScaleDown *ScaleDownTracker
 }
 
 // Load assembles a Snapshot for the given Pool. The Pool argument is
@@ -225,6 +241,10 @@ func (l *Loader) Load(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (*S
 		}
 	}
 	snap.LastCreateAt = resolveLastCreate(pool, l.LastCreate)
+	if l.ScaleDown != nil {
+		snap.ScaleDownSession = l.ScaleDown.View(
+			types.NamespacedName{Namespace: pool.Namespace, Name: pool.Name}, snap.Now)
+	}
 
 	// 2) Reverse-lookup the owning Env. Prefer the LabelEnv index; fall
 	//    back to ownerReferences when the label is missing (older Pools

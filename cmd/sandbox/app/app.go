@@ -400,12 +400,18 @@ func Run(opts Options) {
 	// tolerated by the Loader — it simply leaves reactive demand
 	// signals unobserved, which degrades to "proactive-only" behaviour
 	// instead of crashing.
+	// The scale-down session tracker is shared by reference between the
+	// Loader (reads a session View into each Snapshot) and the reconciler
+	// (applies the resulting transition after Commit). They MUST be the
+	// same instance.
+	scaleDownTracker := autoscalingstate.NewScaleDownTracker()
 	autoscalingLoader := &autoscalingstate.Loader{
 		Client:     mgr.GetClient(),
 		Schedulers: schedulerLookup,
 		LastCreate: lastCreateTracker,
 		Prober:     &sandboxpool.PluginProber{PluginManager: pluginManager},
 		Clock:      autoscalingstate.SystemClock(),
+		ScaleDown:  scaleDownTracker,
 	}
 	if err := (&sandboxpool.SandboxPoolReconciler{
 		Client:                   mgr.GetClient(),
@@ -418,6 +424,7 @@ func Run(opts Options) {
 		SandboxReadyHook:         hooksRunner,
 		AutoscalingLoader:        autoscalingLoader,
 		AutoscalingEventRecorder: mgr.GetEventRecorder("sandboxpool-autoscaler"),
+		ScaleDown:                scaleDownTracker,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxPool")
 		os.Exit(1)

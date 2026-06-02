@@ -17,6 +17,7 @@ package sandboxpool
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 
@@ -157,6 +158,17 @@ func (r *SandboxPoolReconciler) syncAutoscaling(ctx context.Context, pool *agent
 		klog.ErrorS(err, "autoscaler: commit failed; will retry",
 			"namespace", pool.Namespace, "name", pool.Name)
 		return err
+	}
+
+	// Apply the scale-down session transition only after the writes
+	// committed, reusing snap.Now so the recorded lastDecisionAt is exactly
+	// the value the next reconcile's stabilization gate compares against.
+	// This is what keeps the in-process gate from running ahead of a
+	// persisted decrement.
+	if r.ScaleDown != nil {
+		if tr := mut.ScaleDownTransition(); tr.Kind != autoscalingstate.ScaleDownNoTransition {
+			r.ScaleDown.Apply(types.NamespacedName{Namespace: pool.Namespace, Name: pool.Name}, tr, snap.Now)
+		}
 	}
 	return nil
 }

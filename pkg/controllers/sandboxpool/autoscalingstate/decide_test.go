@@ -53,6 +53,10 @@ type scenario struct {
 	schedSnap    *schedule.Snapshot
 	lastCreateAt *time.Time
 	idlePodAges  []time.Duration
+
+	// scaleDownSession is the in-process scale-down session view the
+	// Loader would have stamped onto the Snapshot. Zero = no session.
+	scaleDownSession ScaleDownSessionView
 }
 
 func (s scenario) build() *Snapshot {
@@ -70,11 +74,12 @@ func (s scenario) build() *Snapshot {
 		maps.Copy(pool.Annotations, s.poolAnn)
 	}
 	snap := &Snapshot{
-		Pool:          pool,
-		PoolSchedSnap: s.schedSnap,
-		LastCreateAt:  s.lastCreateAt,
-		IdlePodAges:   s.idlePodAges,
-		Now:           s.now,
+		Pool:             pool,
+		PoolSchedSnap:    s.schedSnap,
+		LastCreateAt:     s.lastCreateAt,
+		IdlePodAges:      s.idlePodAges,
+		Now:              s.now,
+		ScaleDownSession: s.scaleDownSession,
 	}
 	if s.withEnv {
 		members := make([]agentsv1alpha1.EnvClusterMember, 0, 1+len(s.siblings))
@@ -149,6 +154,20 @@ func statusOf(mut *Mutator) *agentsv1alpha1.PoolAutoScalingStatus {
 	}
 	return s
 }
+
+// eventReasonsOf returns the reason of every event the mutator buffered,
+// in order. Lets scale-down lifecycle tests assert exactly which events
+// fired without running Commit.
+func eventReasonsOf(mut *Mutator) []string {
+	reasons := make([]string, 0, len(mut.events))
+	for _, e := range mut.events {
+		reasons = append(reasons, e.reason)
+	}
+	return reasons
+}
+
+// transitionOf returns the scale-down session transition the cycle staged.
+func transitionOf(mut *Mutator) ScaleDownTransition { return mut.scaleDownTransition }
 
 // ---------- IdleZero bookkeeping ----------
 
@@ -716,5 +735,313 @@ func TestApplyScaleUpMode(t *testing.T) {
 		if got := applyScaleUpMode(tc.mode, tc.current); got != tc.want {
 			t.Errorf("applyScaleUpMode(%q, %d) = %d, want %d", tc.mode, tc.current, got, tc.want)
 		}
+	}
+}
+
+// ---------- Scale-down session lifecycle ----------
+
+// helper: a group with timeouts that let scale-down fire freely so the
+// lifecycle (not the gates) is under test.
+func scaleDownGroup() agentsv1alpha1.EnvAutoscalingGroup {
+	g := defaultGroupEnabled()
+	g.ScaleDownPolicy.IdleTimeoutSeconds = 60
+	g.ScaleDownPolicy.StabilizationSeconds = 60
+	g.MinReplicas = ptr.To(int32(0))
+	return g
+}
+
+// First decrement of an idle-aged Pool opens a session: one Started event,
+// a Started transition carrying the from-count, and the decrement staged.
+func TestScaleDown_FirstStep_EmitsStarted(t *testing.T) {
+	g := scaleDownGroup()
+	target, ok, mut := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 5,
+		poolIdle:     5,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		// no session active
+	})
+	if !ok || target != 4 {
+		t.Fatalf("expected 5→4, got ok=%v target=%d", ok, target)
+	}
+	if got := eventReasonsOf(mut); len(got) != 1 || got[0] != "AutoscalerScaleDownStarted" {
+		t.Errorf("expected exactly one Started event, got %v", got)
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownStarted || tr.StartReplicas != 5 {
+		t.Errorf("expected Started{5}, got %+v", tr)
+	}
+}
+
+// A subsequent decrement within an open session is silent: decrement
+// staged, Stepped transition, NO event.
+func TestScaleDown_SubsequentStep_Silent(t *testing.T) {
+	g := scaleDownGroup()
+	g.ScaleDownPolicy.StabilizationSeconds = 0 // not under test here
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	target, ok, mut := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 4,
+		poolIdle:     4,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		scaleDownSession: ScaleDownSessionView{
+			Active:        true,
+			StartReplicas: 5,
+			StartAt:       now.Add(-2 * time.Minute),
+		},
+	})
+	if !ok || target != 3 {
+		t.Fatalf("expected 4→3, got ok=%v target=%d", ok, target)
+	}
+	if got := eventReasonsOf(mut); len(got) != 0 {
+		t.Errorf("subsequent step must be silent, got events %v", got)
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownStepped {
+		t.Errorf("expected Stepped, got %+v", tr)
+	}
+}
+
+// When an active session can no longer find an idle-aged Pod, it ends
+// naturally: one Completed event reporting from→to + count, a Completed
+// transition, and NO spec write.
+func TestScaleDown_NoMoreEligible_CompletesSession(t *testing.T) {
+	g := scaleDownGroup()
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	_, ok, mut := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 2,
+		poolIdle:     2,
+		idlePodAges:  []time.Duration{30 * time.Second}, // below 60s timeout → not eligible
+		scaleDownSession: ScaleDownSessionView{
+			Active:        true,
+			StartReplicas: 5,
+			StartAt:       now.Add(-3 * time.Minute),
+		},
+	})
+	if ok {
+		t.Fatal("no decrement should be staged when nothing is eligible")
+	}
+	if got := eventReasonsOf(mut); len(got) != 1 || got[0] != "AutoscalerScaleDownCompleted" {
+		t.Errorf("expected one Completed event, got %v", got)
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownCompleted {
+		t.Errorf("expected Completed, got %+v", tr)
+	}
+	if s := statusOf(mut); s.LastScaleDownTime != nil {
+		t.Errorf("completion must not stamp LastScaleDownTime, got %v", s.LastScaleDownTime)
+	}
+}
+
+// Draining to zero completes the session.
+func TestScaleDown_ReachesZero_CompletesSession(t *testing.T) {
+	g := scaleDownGroup()
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	_, ok, mut := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 0,
+		poolIdle:     0,
+		scaleDownSession: ScaleDownSessionView{
+			Active:        true,
+			StartReplicas: 4,
+			StartAt:       now.Add(-5 * time.Minute),
+		},
+	})
+	if ok {
+		t.Fatal("no decrement at zero replicas")
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownCompleted {
+		t.Errorf("expected Completed at zero, got %+v", tr)
+	}
+}
+
+// The cache-lag regression: two reconciles fire on a stale Snapshot before
+// the first decrement's status patch is read back. The in-process
+// lastDecisionAt must gate the second one — no decrement, no event, no
+// transition — even though Status.LastScaleDownTime is still nil.
+func TestScaleDown_InProcessGate_SuppressesDuplicate(t *testing.T) {
+	g := scaleDownGroup() // StabilizationSeconds = 60
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	target, ok, _ := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 5,
+		poolIdle:     5,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		// Stale: status has no LastScaleDownTime yet (patch not read back),
+		// but the in-process session recorded a decrement 3s ago.
+		scaleDownSession: ScaleDownSessionView{
+			Active:         true,
+			StartReplicas:  6,
+			StartAt:        now.Add(-1 * time.Minute),
+			LastDecisionAt: now.Add(-3 * time.Second),
+		},
+	})
+	if ok {
+		t.Errorf("in-process gate must block a decrement 3s after the last one (window=60s), got target=%d", target)
+	}
+}
+
+// Sanity counterpart: once the in-process window has elapsed, the next
+// decrement proceeds (and stays silent because the session is open).
+func TestScaleDown_InProcessGate_AllowsAfterWindow(t *testing.T) {
+	g := scaleDownGroup()
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	target, ok, mut := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 5,
+		poolIdle:     5,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		scaleDownSession: ScaleDownSessionView{
+			Active:         true,
+			StartReplicas:  6,
+			StartAt:        now.Add(-5 * time.Minute),
+			LastDecisionAt: now.Add(-90 * time.Second), // > 60s window
+		},
+	})
+	if !ok || target != 4 {
+		t.Fatalf("expected 5→4 once window elapsed, got ok=%v target=%d", ok, target)
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownStepped {
+		t.Errorf("expected silent Stepped, got %+v", tr)
+	}
+}
+
+// A hard floor (group MinReplicas) with idle pods present marks an active
+// session Stuck once, rate-limited thereafter.
+func TestScaleDown_HardFloor_EmitsStuckOnce(t *testing.T) {
+	g := scaleDownGroup()
+	g.MinReplicas = ptr.To(int32(2))
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+
+	// First encounter: lastStuckAt zero → Stuck fires.
+	_, ok, mut := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 2, // at the floor
+		poolIdle:     2,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		scaleDownSession: ScaleDownSessionView{
+			Active:        true,
+			StartReplicas: 5,
+			StartAt:       now.Add(-2 * time.Minute),
+		},
+	})
+	if ok {
+		t.Fatal("no decrement should be staged at the group floor")
+	}
+	if got := eventReasonsOf(mut); len(got) != 1 || got[0] != "AutoscalerScaleDownStuck" {
+		t.Errorf("expected one Stuck event, got %v", got)
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownStuckMarked {
+		t.Errorf("expected StuckMarked, got %+v", tr)
+	}
+
+	// Second encounter shortly after: rate-limited, no event.
+	_, _, mut2 := runDecide(t, scenario{
+		now:          now.Add(1 * time.Minute), // < stuckEventInterval (5m)
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 2,
+		poolIdle:     2,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		scaleDownSession: ScaleDownSessionView{
+			Active:        true,
+			StartReplicas: 5,
+			StartAt:       now.Add(-2 * time.Minute),
+			LastStuckAt:   now,
+		},
+	})
+	if got := eventReasonsOf(mut2); len(got) != 0 {
+		t.Errorf("Stuck must be rate-limited within stuckEventInterval, got %v", got)
+	}
+}
+
+// A transient stabilization gate must NOT mark an active session Stuck or
+// Completed — it just waits silently.
+func TestScaleDown_Stabilization_DoesNotStuckOrComplete(t *testing.T) {
+	g := scaleDownGroup()
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	_, ok, mut := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 4,
+		poolIdle:     4,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		scaleDownSession: ScaleDownSessionView{
+			Active:         true,
+			StartReplicas:  5,
+			StartAt:        now.Add(-1 * time.Minute),
+			LastDecisionAt: now.Add(-10 * time.Second), // within 60s window
+		},
+	})
+	if ok {
+		t.Fatal("stabilization window should block the decrement")
+	}
+	if got := eventReasonsOf(mut); len(got) != 0 {
+		t.Errorf("transient stabilization must emit no event, got %v", got)
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownNoTransition {
+		t.Errorf("transient stabilization must stage no transition, got %+v", tr)
+	}
+}
+
+// Reactive demand mid-session aborts it: no event, ScaleDownAborted
+// transition so the reconciler clears the in-process session.
+func TestScaleDown_ReactiveDemand_AbortsSession(t *testing.T) {
+	g := scaleDownGroup()
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	recentUp := metav1.NewTime(now.Add(-10 * time.Second))
+	_, _, mut := runDecide(t, scenario{
+		now:          now,
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 3,
+		poolIdle:     0,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		poolStatus:   &agentsv1alpha1.PoolAutoScalingStatus{LastScaleUpTime: &recentUp},
+		schedSnap:    &schedule.Snapshot{QueueLen: 1, IdleReady: 0}, // reactive demand
+		scaleDownSession: ScaleDownSessionView{
+			Active:        true,
+			StartReplicas: 5,
+			StartAt:       now.Add(-1 * time.Minute),
+		},
+	})
+	if got := eventReasonsOf(mut); len(got) != 0 {
+		t.Errorf("abort must be silent, got %v", got)
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownAborted {
+		t.Errorf("expected Aborted, got %+v", tr)
+	}
+}
+
+// After a controller restart the in-process session is lost; the next
+// committed decrement starts a fresh session (Started), not a silent step.
+func TestScaleDown_RestartSafety_FreshSessionStarts(t *testing.T) {
+	g := scaleDownGroup()
+	g.ScaleDownPolicy.StabilizationSeconds = 0
+	_, ok, mut := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 4,
+		poolIdle:     4,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+		// zero ScaleDownSession — as if the process just restarted
+	})
+	if !ok {
+		t.Fatal("expected a decrement after restart")
+	}
+	if tr := transitionOf(mut); tr.Kind != ScaleDownStarted || tr.StartReplicas != 4 {
+		t.Errorf("expected fresh Started{4}, got %+v", tr)
 	}
 }

@@ -653,7 +653,7 @@ type EnvEvent struct {
 	// Message Human-readable message body.
 	Message string `json:"message"`
 
-	// Reason Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDown / SandboxPoolPhase*.
+	// Reason Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDownStarted / AutoscalerScaleDownCompleted / AutoscalerScaleDownStuck / SandboxPoolPhase*.
 	Reason string `json:"reason"`
 
 	// Type Normal | Warning

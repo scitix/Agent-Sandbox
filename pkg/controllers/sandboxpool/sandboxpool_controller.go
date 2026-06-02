@@ -127,6 +127,15 @@ type SandboxPoolReconciler struct {
 	// the existing Recorder field above because the two are wired
 	// through different injection paths.
 	AutoscalingEventRecorder events.EventRecorder
+
+	// ScaleDown is the shared per-Pool scale-down session tracker. It
+	// must be the SAME instance injected into AutoscalingLoader.ScaleDown
+	// — the Loader reads a session View into each Snapshot, and
+	// syncAutoscaling applies the resulting transition here after Commit.
+	// Two separate instances would silently defeat the cache-lag gate and
+	// the Started/Completed event pairing. nil disables both (unit tests
+	// that don't exercise the autoscaler).
+	ScaleDown *autoscalingstate.ScaleDownTracker
 }
 
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools,verbs=get;list;watch;create;update;patch;delete
@@ -304,6 +313,13 @@ func (r *SandboxPoolReconciler) handleDeletion(ctx context.Context, sandboxPool 
 	// Clean up in-memory expectations so the map does not grow unboundedly.
 	if r.expectations != nil {
 		r.expectations.DeleteExpectations(types.NamespacedName{
+			Namespace: sandboxPool.Namespace,
+			Name:      sandboxPool.Name,
+		})
+	}
+	// Drop any scale-down session bookkeeping for the same reason.
+	if r.ScaleDown != nil {
+		r.ScaleDown.DeleteSession(types.NamespacedName{
 			Namespace: sandboxPool.Namespace,
 			Name:      sandboxPool.Name,
 		})
@@ -620,6 +636,18 @@ func (r *SandboxPoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	if r.expectations == nil {
 		r.expectations = NewPoolExpectations()
+	}
+
+	if r.ScaleDown == nil {
+		r.ScaleDown = autoscalingstate.NewScaleDownTracker()
+	}
+	// The reconciler and the Loader must share one tracker instance: the
+	// Loader reads the session View into each Snapshot and the reconciler
+	// applies the resulting transition. A mismatch silently reintroduces
+	// the event-burst the tracker exists to prevent.
+	if r.AutoscalingLoader != nil && r.AutoscalingLoader.ScaleDown != r.ScaleDown {
+		klog.InfoS("WARNING: autoscaler ScaleDown tracker differs from Loader.ScaleDown; " +
+			"the scale-down stabilization gate and Started/Completed events will not work correctly")
 	}
 
 	// enqueueOwningPool derives the owning SandboxPool from the pod's label and

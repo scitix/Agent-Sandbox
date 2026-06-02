@@ -538,3 +538,56 @@ func TestCommit_EmptyMutator_NoOp(t *testing.T) {
 		t.Fatalf("Commit on empty mutator: %v", err)
 	}
 }
+
+// ---------- Scale-down transition ----------
+
+func TestScaleDownTransition_RoundTrip(t *testing.T) {
+	m := NewMutator(&Snapshot{Pool: poolFixture{name: "p"}.build()})
+	if tr := m.ScaleDownTransition(); tr.Kind != ScaleDownNoTransition {
+		t.Errorf("default transition = %+v, want NoTransition", tr)
+	}
+	m.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownStarted, StartReplicas: 7})
+	if tr := m.ScaleDownTransition(); tr.Kind != ScaleDownStarted || tr.StartReplicas != 7 {
+		t.Errorf("transition = %+v, want Started{7}", tr)
+	}
+}
+
+// A Completed/Aborted cycle stages no spec/status write, only a
+// transition — HasWrites must still report true so Commit runs and the
+// Completed event is emitted.
+func TestHasWrites_TransitionOnly(t *testing.T) {
+	m := NewMutator(&Snapshot{Pool: poolFixture{name: "p"}.build()})
+	if m.HasWrites() {
+		t.Fatal("precondition: no writes")
+	}
+	m.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownCompleted})
+	if !m.HasWrites() {
+		t.Error("a transition-only cycle must report HasWrites so Commit emits its event")
+	}
+}
+
+// The three scale-down lifecycle events round-trip through Commit with the
+// expected recorder formatting.
+func TestCommit_EmitsScaleDownLifecycleEvents(t *testing.T) {
+	scheme := newTestScheme(t)
+	pool := poolFixture{name: "p"}.build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pool).Build()
+	rec := &fakeEventRecorder{}
+
+	m := NewMutator(&Snapshot{Pool: pool})
+	m.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownCompleted})
+	m.EmitEvent(corev1.EventTypeNormal, "ScaleDown", "AutoscalerScaleDownCompleted",
+		"completed scale-down of %s/%s from %d to %d (removed %d replicas in %s)",
+		"ns", "p", 5, 0, 5, 3*time.Minute)
+
+	if err := m.Commit(context.Background(), c, rec); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if got, want := len(rec.events), 1; got != want {
+		t.Fatalf("recorded %d events, want %d", got, want)
+	}
+	want := "Normal AutoscalerScaleDownCompleted ScaleDown completed scale-down of ns/p from 5 to 0 (removed 5 replicas in 3m0s)"
+	if rec.events[0] != want {
+		t.Errorf("event = %q, want %q", rec.events[0], want)
+	}
+}

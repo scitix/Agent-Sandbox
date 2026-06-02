@@ -68,6 +68,13 @@ type Mutator struct {
 	scaleUpAttempt *scaleUpAttempt
 	podAnnOps      []podAnnotationOp
 	events         []eventOp
+
+	// scaleDownTransition is the scale-down session state change this
+	// cycle wants applied to the shared ScaleDownTracker. The reconciler
+	// reads it after a successful Commit and applies it; see
+	// ScaleDownTransition. The zero value (ScaleDownNoTransition) means
+	// the cycle touched no session state.
+	scaleDownTransition ScaleDownTransition
 }
 
 // scaleUpAttempt records a scale-up intent that will be resolved at
@@ -200,13 +207,30 @@ func (m *Mutator) EmitEvent(eventType, action, reason, format string, args ...an
 	})
 }
 
+// SetScaleDownTransition records the scale-down session state change to
+// apply to the shared ScaleDownTracker after this cycle commits. Calling
+// it multiple times keeps the last value. Buffering only — the tracker is
+// not touched until the reconciler reads ScaleDownTransition post-Commit,
+// so a session never advances ahead of a persisted decrement.
+func (m *Mutator) SetScaleDownTransition(tr ScaleDownTransition) {
+	m.scaleDownTransition = tr
+}
+
+// ScaleDownTransition reports the buffered session transition. The
+// reconciler applies it to the ScaleDownTracker only after Commit
+// succeeds.
+func (m *Mutator) ScaleDownTransition() ScaleDownTransition {
+	return m.scaleDownTransition
+}
+
 // HasWrites reports whether Commit would issue any K8s write. Useful for
 // the reconciler's "nothing changed" fast-path logging.
 func (m *Mutator) HasWrites() bool {
 	return len(m.statusMutators) > 0 ||
 		m.targetReplicas != nil ||
 		m.scaleUpAttempt != nil ||
-		len(m.podAnnOps) > 0
+		len(m.podAnnOps) > 0 ||
+		m.scaleDownTransition.Kind != ScaleDownNoTransition
 }
 
 // Commit applies the accumulated writes in fixed order:

@@ -976,7 +976,7 @@ components:
           description: "metadata.name of the involved object."
         reason:
           type: string
-          description: "Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDown / SandboxPoolPhase*."
+          description: "Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded / AutoscalerScaleUp / AutoscalerScaleDownStarted / AutoscalerScaleDownCompleted / AutoscalerScaleDownStuck / SandboxPoolPhase*."
         action:
           type: string
           description: "Event action (machine-readable). Sometimes absent on older events."

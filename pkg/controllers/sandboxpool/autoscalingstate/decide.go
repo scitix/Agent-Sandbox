@@ -76,6 +76,14 @@ func Decide(snap *Snapshot, mut *Mutator) {
 		return
 	}
 	if scaledUp := evaluateScaleUp(snap, mut); scaledUp {
+		// A scale-up cut an in-flight scale-down session short. Close it
+		// silently: the session did not finish on its own terms, so a
+		// "completed, removed N" event would misreport. The in-process
+		// session is cleared; the Started event already emitted stands as
+		// the record that a drain began.
+		if snap.ScaleDownSession.Active {
+			mut.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownAborted})
+		}
 		return
 	}
 	evaluateScaleDown(snap, mut)
@@ -432,31 +440,60 @@ func applyScaleUpMode(mode agentsv1alpha1.PoolScaleUpMode, current int32) int32 
 	}
 }
 
-// evaluateScaleDown runs the scale-down decision pipeline. Decrements
-// Pool.Spec.Replicas by exactly one when every gate clears. Multi-step
-// scale-down is intentionally not done — gives the next reconcile a
-// chance to observe the new state before deciding to go further.
+// stuckEventInterval rate-limits the AutoscalerScaleDownStuck warning so a
+// session blocked for a long time by a hard floor (RunningReplicas or
+// group MinReplicas) reports periodically rather than every reconcile. The
+// per-step stabilization window is too short to reuse here — it governs
+// decrement cadence, not how often to re-warn about a stall.
+const stuckEventInterval = 5 * time.Minute
+
+// evaluateScaleDown runs the scale-down decision pipeline. It decrements
+// Pool.Spec.Replicas by exactly one when every gate clears — multi-step
+// scale-down is intentionally not done, giving the next reconcile a chance
+// to observe the new state before going further — and it drives a
+// Started / Completed / Stuck event lifecycle (one pair per drain) instead
+// of one event per replica removed.
+//
+// Each gate early-return below maps to exactly one session transition; the
+// mapping must be preserved if the gate order is ever changed:
+//
+//	reactive demand        → Aborted (active session cut short by demand)
+//	stabilization window   → no transition (transient wait; session stays open)
+//	current <= 0           → Completed (drained to zero)
+//	group MinReplicas floor→ Stuck (idle pods remain but a hard floor blocks)
+//	no idle pod aged enough→ Completed (nothing left to remove — natural end)
+//	RunningReplicas floor  → Stuck (idle pods remain but a hard floor blocks)
+//	decrement staged       → Started (first step) or Stepped (subsequent, silent)
 func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 	key := poolKeyFor(snap)
+	sess := snap.ScaleDownSession
 	if snap.IsReactiveDemand() {
 		klog.V(3).InfoS("autoscaler: scale-down skipped (reactive demand)",
 			"pool", key,
 			"queueLen", snap.PoolSchedSnap.QueueLen,
 			"idleReady", snap.PoolSchedSnap.IdleReady,
 		)
+		if sess.Active {
+			mut.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownAborted})
+		}
 		return
 	}
 	policy := snap.Group.ScaleDownPolicy
 	if scaleDownStabilizationActive(snap, policy) {
+		// Transient gate: the previous decrement is still inside its
+		// stabilization window. The session, if open, stays open — do not
+		// emit Completed or Stuck.
 		klog.V(3).InfoS("autoscaler: scale-down gated by stabilization window",
 			"pool", key,
 			"lastScaleDownTime", asStatus(snap).LastScaleDownTime,
+			"inProcessLastDecision", sess.LastDecisionAt,
 			"stabilizationSeconds", policy.StabilizationSeconds,
 		)
 		return
 	}
 	current := snap.Pool.Spec.Replicas
 	if current <= 0 {
+		completeScaleDownSession(snap, mut)
 		return
 	}
 	if !groupMinReplicasHeadroomAvailable(snap, current) {
@@ -465,14 +502,19 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 			"groupDesiredTotal", snap.GroupDesiredTotal(),
 			"minReplicas", snap.Group.MinReplicas,
 		)
+		maybeEmitScaleDownStuck(snap, mut, current, "group MinReplicas")
 		return
 	}
 	if !oldestIdleEligible(snap, policy) {
+		// No idle Pod has aged past the timeout: there is genuinely
+		// nothing more to remove right now. This is the natural end of a
+		// drain, not a stall.
 		klog.V(3).InfoS("autoscaler: scale-down skipped (no idle pod aged enough)",
 			"pool", key,
 			"idleTimeoutSeconds", policy.IdleTimeoutSeconds,
 			"idlePodCount", len(snap.IdlePodAges),
 		)
+		completeScaleDownSession(snap, mut)
 		return
 	}
 
@@ -484,35 +526,101 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 	if running := snap.Pool.Status.RunningReplicas; target < running {
 		klog.V(3).InfoS("autoscaler: scale-down blocked by RunningReplicas floor",
 			"pool", key, "wantTarget", target, "running", running)
+		maybeEmitScaleDownStuck(snap, mut, current, "RunningReplicas floor")
 		return
 	}
 	klog.V(2).InfoS("autoscaler: scaling down",
 		"pool", key,
 		"current", current,
 		"target", target,
+		"sessionActive", sess.Active,
 	)
 	mut.SetTargetReplicas(target)
 	now := metav1.NewTime(snap.Now)
 	mut.PatchStatus(func(s *agentsv1alpha1.PoolAutoScalingStatus) {
 		s.LastScaleDownTime = &now
 	})
+	if sess.Active {
+		// Subsequent step of an open session — decrement silently.
+		mut.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownStepped})
+		return
+	}
+	// First step — open a session and announce it once.
+	mut.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownStarted, StartReplicas: current})
 	oldest, _ := snap.OldestIdleAge()
-	mut.EmitEvent(corev1.EventTypeNormal, "ScaleDown", "AutoscalerScaleDown",
-		"decreased %s/%s replicas from %d to %d (oldestIdleDuration: %s)",
-		snap.Pool.Namespace, snap.Pool.Name, current, target, oldest.Round(time.Second))
+	mut.EmitEvent(corev1.EventTypeNormal, "ScaleDown", "AutoscalerScaleDownStarted",
+		"started scale-down of %s/%s from %d replicas (oldestIdleDuration: %s)",
+		snap.Pool.Namespace, snap.Pool.Name, current, oldest.Round(time.Second))
+}
+
+// completeScaleDownSession closes an open scale-down session and emits a
+// single summary event. A no-op when no session is active (the common case
+// where the Pool was already at its floor and never started draining).
+func completeScaleDownSession(snap *Snapshot, mut *Mutator) {
+	sess := snap.ScaleDownSession
+	if !sess.Active {
+		return
+	}
+	current := snap.Pool.Spec.Replicas
+	removed := sess.StartReplicas - current
+	mut.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownCompleted})
+	mut.EmitEvent(corev1.EventTypeNormal, "ScaleDown", "AutoscalerScaleDownCompleted",
+		"completed scale-down of %s/%s from %d to %d (removed %d replicas in %s)",
+		snap.Pool.Namespace, snap.Pool.Name, sess.StartReplicas, current, removed,
+		snap.Now.Sub(sess.StartAt).Round(time.Second))
+}
+
+// maybeEmitScaleDownStuck warns that an open session cannot make progress
+// because a hard floor (RunningReplicas or group MinReplicas) blocks the
+// decrement while idle Pods remain. Rate-limited to one warning per
+// stuckEventInterval; the session stays open so it resumes automatically
+// once the floor lifts. A no-op when no session is active.
+func maybeEmitScaleDownStuck(snap *Snapshot, mut *Mutator, current int32, reason string) {
+	sess := snap.ScaleDownSession
+	if !sess.Active {
+		return
+	}
+	if !sess.LastStuckAt.IsZero() && snap.Now.Sub(sess.LastStuckAt) < stuckEventInterval {
+		return
+	}
+	mut.SetScaleDownTransition(ScaleDownTransition{Kind: ScaleDownStuckMarked})
+	mut.EmitEvent(corev1.EventTypeWarning, "ScaleDown", "AutoscalerScaleDownStuck",
+		"scale-down of %s/%s blocked at %d replicas by %s for over %s",
+		snap.Pool.Namespace, snap.Pool.Name, current, reason, stuckEventInterval)
 }
 
 // scaleDownStabilizationActive enforces a minimum gap between two
-// consecutive scale-downs on the same Pool.
+// consecutive scale-downs on the same Pool. It gates on the more recent of
+// two timestamps: the persisted Pool.Status.AutoScaling.LastScaleDownTime
+// (survives process restart) and the in-process session's lastDecisionAt
+// (immune to informer-cache lag). The status timestamp alone is not
+// enough: it is not read back from the cache before the next
+// watch-triggered reconcile, so two near-simultaneous reconciles on the
+// same stale Snapshot would both pass the gate and both decrement.
 func scaleDownStabilizationActive(snap *Snapshot, policy agentsv1alpha1.PoolScaleDownPolicy) bool {
 	if policy.StabilizationSeconds <= 0 {
 		return false
 	}
-	if snap.Pool.Status.AutoScaling == nil || snap.Pool.Status.AutoScaling.LastScaleDownTime == nil {
+	last := lastScaleDownReference(snap)
+	if last.IsZero() {
 		return false
 	}
-	elapsed := snap.Now.Sub(snap.Pool.Status.AutoScaling.LastScaleDownTime.Time)
+	elapsed := snap.Now.Sub(last)
 	return elapsed < time.Duration(policy.StabilizationSeconds)*time.Second
+}
+
+// lastScaleDownReference returns the more recent of the persisted
+// LastScaleDownTime and the in-process session's lastDecisionAt. Either
+// may be zero (no prior scale-down recorded on that path).
+func lastScaleDownReference(snap *Snapshot) time.Time {
+	var t time.Time
+	if s := snap.Pool.Status.AutoScaling; s != nil && s.LastScaleDownTime != nil {
+		t = s.LastScaleDownTime.Time
+	}
+	if ip := snap.ScaleDownSession.LastDecisionAt; ip.After(t) {
+		t = ip
+	}
+	return t
 }
 
 // groupMinReplicasHeadroomAvailable returns true when the group's
