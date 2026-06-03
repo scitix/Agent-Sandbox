@@ -17,7 +17,12 @@
 "use client"
 
 import { type ColumnDef } from "@tanstack/react-table"
-import { type AgentEnvObservedMember, type AgentSandboxPool } from "@/lib/api/client"
+import {
+  type AgentEnvAutoscalingGroup,
+  type AgentEnvObservedMember,
+  type AgentSandboxPool,
+} from "@/lib/api/client"
+import { useTranslation } from "@/lib/i18n"
 import { MoreVertical, ArrowUpRight, Activity, AlertTriangle, Pencil, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -36,6 +41,7 @@ import { StatusBadge, type StatusBadgeColorMap } from "@/components/custom/statu
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
+import { cn } from "@/lib/utils"
 import Link from "next/link"
 import type { TranslationKey } from "@/messages/_schema"
 
@@ -46,6 +52,16 @@ export const POOL_PHASE_COLORS: StatusBadgeColorMap = {
   scalingdown: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30",
   pending: "bg-gray-500/15 text-gray-500 dark:text-gray-400 border-gray-500/30",
 }
+
+// Autoscaling Enabled/Disabled badge colors — outline + tone, matching the
+// phase-badge styling (blue = autoscaler active, gray = manual/off).
+const SCALING_STATUS_COLORS = {
+  enabled: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30",
+  disabled: "bg-gray-500/15 text-gray-500 dark:text-gray-400 border-gray-500/30",
+} as const
+
+// Infinity glyph used for an unset (unbounded) autoscaling max.
+const UNBOUNDED = "∞"
 
 function StatusLinkCell({
   value,
@@ -133,20 +149,117 @@ function PoolNameCell({ pool }: { pool: AgentSandboxPool }) {
   return <ResourceLink value={pool.name} href={href} />
 }
 
+// Per-pool autoscaling lookups, all keyed off the owning Env's spec/status.
+// Bundled so the column takes a single option instead of three parallel maps.
+export interface PoolScalingContext {
+  // Pool name → its observed autoscaler state (state, saturatedUntil).
+  observedByPool?: Map<string, AgentEnvObservedMember>
+  // Pool name → its scaling-group name (env.spec.clusters.members.config).
+  scalingGroupByPool?: Map<string, string>
+  // Scaling-group name → its autoscaling policy (env.spec.autoscaling.groups).
+  groups?: Map<string, AgentEnvAutoscalingGroup>
+}
+
+// Autoscaling cell: a single Enabled/Disabled badge that links to the scaling
+// group's detail page. Enabled badges show the group's min~max range inside a
+// blue badge (0~∞ when unbounded); disabled show a gray "Disabled". Autoscaler
+// runtime detail (observed state, saturation window, last scale-up result) is
+// tucked into the badge's hover tooltip. The group name itself is not shown —
+// it is reachable by clicking through.
+function ScalingCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingContext }) {
+  const clusterID = useClusterID()
+  const locale = useLocale()
+  const { t } = useTranslation()
+
+  const group = ctx.scalingGroupByPool?.get(pool.name) ?? pool.scalingGroup ?? ""
+  if (!group) return <span className="text-muted-foreground text-xs">—</span>
+
+  const groupConfig = ctx.groups?.get(group)
+  const observed = ctx.observedByPool?.get(pool.name)
+  const enabled = groupConfig?.enabled ?? false
+  const min = groupConfig?.minReplicas ?? 0
+  const max = groupConfig?.maxReplicas
+
+  const label = enabled ? `${min} ~ ${max ?? UNBOUNDED}` : t("pools.scaling.disabled")
+  const color = enabled ? SCALING_STATUS_COLORS.enabled : SCALING_STATUS_COLORS.disabled
+
+  const state = observed?.state
+  const saturatedUntil = observed?.saturatedUntil
+  const lastResult = pool.status?.autoscaling?.lastScaleUpAttemptResult
+  const showLastResult = Boolean(lastResult && lastResult !== "Enough")
+  const hasTooltip = Boolean(state || saturatedUntil || showLastResult)
+
+  const href = pool.owningEnv
+    ? `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/autoscaling/${encodeURIComponent(group)}`
+    : undefined
+
+  const badge = (
+    <Badge variant="outline" className={cn("font-mono text-[10px]", color, href && "cursor-pointer")}>
+      {label}
+    </Badge>
+  )
+
+  if (!hasTooltip) {
+    return href ? (
+      <Link href={href} title={group} className="inline-flex w-fit">
+        {badge}
+      </Link>
+    ) : (
+      badge
+    )
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          href ? (
+            <Link href={href} title={group} className="inline-flex w-fit" />
+          ) : (
+            <span className="inline-flex w-fit" />
+          )
+        }
+      >
+        {badge}
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-60 space-y-1 text-xs">
+        {state && (
+          <div>
+            <span className="text-muted-foreground">{t("pools.scaling.tooltip.state")}: </span>
+            {state}
+          </div>
+        )}
+        {saturatedUntil && (
+          <div>
+            <span className="text-muted-foreground">
+              {t("pools.scaling.tooltip.saturatedUntil")}:{" "}
+            </span>
+            <RelativeTime date={saturatedUntil} />
+          </div>
+        )}
+        {showLastResult && (
+          <div>
+            <span className="text-muted-foreground">
+              {t("pools.scaling.tooltip.lastResult")}:{" "}
+            </span>
+            {lastResult}
+          </div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 export interface PoolColumnsOptions {
   showOwner?: boolean
   // Hide the "Env" reverse-link column. Useful when the table is already
   // scoped to a single Env (e.g. the Env detail page) where the column would
   // be redundant for every row.
   hideOwningEnv?: boolean
-  // When present, adds a "Scaling" column that surfaces the per-member
-  // observed state (scaling group, state, saturatedUntil, last attempt
-  // result) from the owning Env's status. Pools that aren't in the map
-  // render an em-dash.
-  envObservedByPool?: Map<string, AgentEnvObservedMember>
-  // Optional scaling-group lookup (sourced from env.spec.clusters.members).
-  // Falls back to "" when missing.
-  scalingGroupByPool?: Map<string, string>
+  // When present, adds the "Autoscaling" column driven by the owning Env's
+  // spec/status. Omit it (e.g. on a page already scoped to one scaling group)
+  // to hide the column entirely.
+  scaling?: PoolScalingContext
   // Env-scoped row actions. Each appears in the row dropdown when set.
   onEditPool?: (pool: AgentSandboxPool) => void
   onDeletePool?: (pool: AgentSandboxPool) => void
@@ -206,40 +319,14 @@ export function createPoolColumns(
     },
   }
 
+  const scalingCtx = options?.scaling
   const scalingColumn: ColumnDef<AgentSandboxPool> = {
     id: "scaling",
     enableSorting: false,
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title={t("pools.col.scaling")} />
     ),
-    cell: ({ row }) => {
-      const observed = options?.envObservedByPool?.get(row.original.name)
-      const group =
-        options?.scalingGroupByPool?.get(row.original.name) ?? row.original.scalingGroup ?? ""
-      const state = observed?.state ?? ""
-      const saturatedUntil = observed?.saturatedUntil
-      const lastResult = row.original.status?.autoscaling?.lastScaleUpAttemptResult
-      if (!group && !state && !saturatedUntil && !lastResult)
-        return <span className="text-muted-foreground text-xs">—</span>
-      return (
-        <div className="flex flex-col gap-0.5 font-mono text-[11px]">
-          {group && <span className="text-muted-foreground truncate">{group}</span>}
-          {state && (
-            <Badge variant="outline" className="w-fit font-mono text-[10px]">
-              {state}
-            </Badge>
-          )}
-          {saturatedUntil && (
-            <span className="text-[10px] text-amber-600">
-              {t("envs.detail.members.col.saturatedUntil")}: <RelativeTime date={saturatedUntil} />
-            </span>
-          )}
-          {lastResult && lastResult !== "Enough" && (
-            <span className="text-muted-foreground text-[10px]">{lastResult}</span>
-          )}
-        </div>
-      )
-    },
+    cell: ({ row }) => <ScalingCell pool={row.original} ctx={scalingCtx ?? {}} />,
   }
 
   const createdAtColumn: ColumnDef<AgentSandboxPool> = {
@@ -302,20 +389,20 @@ export function createPoolColumns(
     ...(options?.hideOwningEnv
       ? []
       : [
-          {
-            // Reverse-link to the owning SandboxEnv. The OwnerReference is
-            // stamped by the Phase 1 adopter, so every Pool created
-            // post-adoption shows a link; brand-new Pools may show "—"
-            // briefly before adoption runs.
-            id: "owningEnv",
-            accessorFn: (row) => row.owningEnv ?? "",
-            header: ({ column }) => (
-              <DataTableColumnHeader column={column} title={t("pools.col.env")} />
-            ),
-            cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
-          } satisfies ColumnDef<AgentSandboxPool>,
-        ]),
-    ...(options?.envObservedByPool ? [scalingColumn] : []),
+        {
+          // Reverse-link to the owning SandboxEnv. The OwnerReference is
+          // stamped by the Phase 1 adopter, so every Pool created
+          // post-adoption shows a link; brand-new Pools may show "—"
+          // briefly before adoption runs.
+          id: "owningEnv",
+          accessorFn: (row) => row.owningEnv ?? "",
+          header: ({ column }) => (
+            <DataTableColumnHeader column={column} title={t("pools.col.env")} />
+          ),
+          cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
+        } satisfies ColumnDef<AgentSandboxPool>,
+      ]),
+    ...(options?.scaling ? [scalingColumn] : []),
     {
       id: "replicas",
       accessorFn: (row) => row.spec?.replicas,
@@ -326,22 +413,15 @@ export function createPoolColumns(
           tooltip={t("pools.col.replicasTooltip")}
         />
       ),
+      // Plain count — desired replicas isn't a filterable sandbox status, so it
+      // carries no drill-down link; the Running/Idle/etc. columns provide those.
       cell: ({ row }) => {
         const replicas = row.original.spec?.replicas
-        const idleReplicas = row.original.status?.idleReplicas
-        if (replicas == null) return <span className="font-mono text-sm">---</span>
-        // Autoscaling state lives on the owning SandboxEnv now; the Pool
-        // spec only carries the desired replica count. The "autoscaling
-        // active" tooltip will return when the dashboard surfaces Env-level
-        // state — out of scope for this refactor.
+        if (replicas == null) return <span className="text-muted-foreground text-xs">---</span>
         return (
-          <StatusLinkCell
-            value={replicas}
-            color="text-foreground"
-            poolName={row.original.name}
-            status=""
-            disableLink={idleReplicas === replicas}
-          />
+          <span className="text-foreground inline-flex min-w-8 font-mono text-sm font-semibold">
+            {replicas}
+          </span>
         )
       },
     },

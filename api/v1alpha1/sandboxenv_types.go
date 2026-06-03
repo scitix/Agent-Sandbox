@@ -292,6 +292,14 @@ type EnvClusterMemberConfig struct {
 	// +kubebuilder:default=default
 	ScalingGroup string `json:"scalingGroup,omitempty"`
 
+	// MinReplicas is the lower bound on this member's spec.replicas.
+	// Enforced by the Env autoscaler: scale-down never shrinks this member
+	// below MinReplicas. nil/0 means no per-member floor (only the group's
+	// aggregate MinReplicas applies).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
 	// MaxReplicas is the upper bound on this member's spec.replicas.
 	// Enforced by the Env autoscaler when distributing scale-up delta
 	// across members.

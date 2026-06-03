@@ -1199,6 +1199,11 @@ export interface components {
             replicas?: number;
             /**
              * Format: int32
+             * @description Lower bound on this pool's replicas, enforced as a per-member scale-down floor by the Env autoscaler.
+             */
+            minReplicas?: number;
+            /**
+             * Format: int32
              * @description Upper bound on this pool's replicas, enforced when the Env autoscaler distributes scale-up delta.
              */
             maxReplicas?: number;
@@ -1224,6 +1229,11 @@ export interface components {
              * @description Initial / desired replica count. Rejected when this pool's scalingGroup has autoscaling enabled.
              */
             replicas?: number;
+            /**
+             * Format: int32
+             * @description Lower bound on this pool's replicas, enforced as a per-member scale-down floor by the Env autoscaler. Always accepted.
+             */
+            minReplicas?: number;
             /**
              * Format: int32
              * @description Upper bound on this pool's replicas. Always accepted.
@@ -1388,6 +1398,11 @@ export interface components {
             inlineResources?: components["schemas"]["ResourceRequirements"];
             /** @description ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi'). Members in the same group share autoscaling policy. */
             scalingGroup?: string;
+            /**
+             * Format: int32
+             * @description Lower bound on this member's spec.replicas. Enforced by the Env autoscaler as a per-member scale-down floor.
+             */
+            minReplicas?: number;
             /**
              * Format: int32
              * @description Upper bound on this member's spec.replicas. Enforced by the Env autoscaler when distributing scale-up delta.

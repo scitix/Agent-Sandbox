@@ -587,6 +587,38 @@ func TestScaleDown_GroupMinReplicasBlocks(t *testing.T) {
 	}
 }
 
+func TestScaleDown_MemberMinReplicasBlocks(t *testing.T) {
+	g := defaultGroupEnabled()
+	g.MinReplicas = ptr.To(int32(0)) // group floor is open; the member floor must bind
+	_, ok, _ := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		memberCfg:    &agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: testGroup, MinReplicas: ptr.To(int32(2))},
+		poolReplicas: 2, // already at the per-member floor
+		poolIdle:     2,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+	})
+	if ok {
+		t.Error("expected scale-down blocked by member MinReplicas floor")
+	}
+}
+
+func TestScaleDown_MemberMinReplicasAllowsAboveFloor(t *testing.T) {
+	g := defaultGroupEnabled()
+	g.MinReplicas = ptr.To(int32(0))
+	target, ok, _ := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		memberCfg:    &agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: testGroup, MinReplicas: ptr.To(int32(2))},
+		poolReplicas: 3, // one above the floor — a single decrement is allowed
+		poolIdle:     3,
+		idlePodAges:  []time.Duration{10 * time.Minute},
+	})
+	if !ok || target != 2 {
+		t.Fatalf("expected scale-down 3→2 down to the member floor, got ok=%v target=%d", ok, target)
+	}
+}
+
 func TestScaleDown_StabilizationActive(t *testing.T) {
 	g := defaultGroupEnabled()
 	recentDown := metav1.NewTime(time.Date(2026, 5, 27, 11, 59, 30, 0, time.UTC)) // 30s ago < 60s

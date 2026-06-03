@@ -877,6 +877,11 @@ components:
           format: int32
           minimum: 0
           description: "Initial replica count. Autoscaling, once enabled on this scalingGroup, owns subsequent changes."
+        minReplicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Lower bound on this pool's replicas, enforced as a per-member scale-down floor by the Env autoscaler."
         maxReplicas:
           type: integer
           format: int32
@@ -906,6 +911,11 @@ components:
           format: int32
           minimum: 0
           description: "Initial / desired replica count. Rejected when this pool's scalingGroup has autoscaling enabled."
+        minReplicas:
+          type: integer
+          format: int32
+          minimum: 0
+          description: "Lower bound on this pool's replicas, enforced as a per-member scale-down floor by the Env autoscaler. Always accepted."
         maxReplicas:
           type: integer
           format: int32
@@ -1141,6 +1151,10 @@ components:
         scalingGroup:
           type: string
           description: "ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi'). Members in the same group share autoscaling policy."
+        minReplicas:
+          type: integer
+          format: int32
+          description: "Lower bound on this member's spec.replicas. Enforced by the Env autoscaler as a per-member scale-down floor."
         maxReplicas:
           type: integer
           format: int32

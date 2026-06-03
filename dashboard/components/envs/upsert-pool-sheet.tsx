@@ -95,10 +95,24 @@ const baseObject = z.object({
   memoryGiB: intGte1,
   quotaUrl: z.string().optional(),
   replicas: intGte0,
+  minReplicas: intGte0,
   maxReplicas: intGte0,
 })
 
+// minReplicas must not exceed maxReplicas when both are supplied. Shared by
+// both Create and Edit since maxReplicas/minReplicas are editable in both.
+function refineReplicaBounds(m: FormValues, ctx: z.RefinementCtx) {
+  if (m.minReplicas !== undefined && m.maxReplicas !== undefined && m.minReplicas > m.maxReplicas) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "envs.poolForm.errors.minMaxOrder",
+      path: ["minReplicas"],
+    })
+  }
+}
+
 const createSchema = baseObject.superRefine((m, ctx) => {
+  refineReplicaBounds(m, ctx)
   if (m.resourceMode === "instanceType") {
     if (!m.instanceType) {
       ctx.addIssue({
@@ -132,7 +146,7 @@ const createSchema = baseObject.superRefine((m, ctx) => {
   }
 })
 
-const updateSchema = baseObject
+const updateSchema = baseObject.superRefine(refineReplicaBounds)
 
 type FormValues = z.infer<typeof baseObject>
 
@@ -379,7 +393,7 @@ function UpsertPoolInner({
 
           <Separator />
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <Field>
               <FieldLabel>{t("envs.poolForm.replicas")}</FieldLabel>
               <Input
@@ -391,6 +405,13 @@ function UpsertPoolInner({
               />
               {replicasDisabled && (
                 <FieldDescription>{t("envs.poolForm.replicasOwnedByAutoscaler")}</FieldDescription>
+              )}
+            </Field>
+            <Field>
+              <FieldLabel>{t("envs.poolForm.minReplicas")}</FieldLabel>
+              <Input type="number" min={0} placeholder="0" {...register("minReplicas")} />
+              {errors.minReplicas && (
+                <FieldError>{t(errors.minReplicas.message as never)}</FieldError>
               )}
             </Field>
             <Field>
@@ -599,6 +620,7 @@ function buildDefaultValues(
       memoryGiB: undefined,
       quotaUrl: undefined,
       replicas: 1,
+      minReplicas: undefined,
       maxReplicas: undefined,
     }
   }
@@ -619,6 +641,7 @@ function buildDefaultValues(
     memoryGiB: mem != null ? Math.max(1, Math.round(mem / 1024)) : undefined,
     quotaUrl: cfg?.labels?.[QUOTA_URL_LABEL],
     replicas: pool.spec.replicas,
+    minReplicas: cfg?.minReplicas,
     maxReplicas: cfg?.maxReplicas,
   }
 }
@@ -651,6 +674,7 @@ function formValuesToCreateBody(v: FormValues) {
     body.labels = { [QUOTA_URL_LABEL]: v.quotaUrl }
   }
   if (v.replicas !== undefined) body.replicas = v.replicas
+  if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
   if (v.maxReplicas !== undefined) body.maxReplicas = v.maxReplicas
   return body
 }
@@ -658,6 +682,7 @@ function formValuesToCreateBody(v: FormValues) {
 function formValuesToUpdateBody(v: FormValues) {
   const body: Record<string, unknown> = {}
   if (v.replicas !== undefined) body.replicas = v.replicas
+  if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
   if (v.maxReplicas !== undefined) body.maxReplicas = v.maxReplicas
   return body
 }

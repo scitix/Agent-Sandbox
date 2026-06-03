@@ -33,6 +33,10 @@ import {
 import { DataTable } from "@/components/custom/query-table/table-without-query"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
+import { ResourceLink } from "@/components/custom/resource-link"
+import { clusterPath } from "@/lib/cluster-path"
+import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
 import type { MultipleHandler } from "@/components/custom/query-table/pagination"
 import { createPoolColumns } from "@/components/pools/columns"
 import {
@@ -106,7 +110,7 @@ export function EnvPoolsSection({
   // Build scalingGroup + observed lookups from the Env spec/status so the
   // pool table can surface autoscaler-derived info that the bare /sandboxpools
   // response doesn't carry.
-  const { observedByPool, scalingGroupByPool, memberCount } = useMemo(() => {
+  const { observedByPool, scalingGroupByPool, autoscalingGroups, memberCount } = useMemo(() => {
     const observed = new Map<string, AgentEnvObservedMember>()
     const groups = new Map<string, string>()
     for (const cluster of env.status?.clusters ?? []) {
@@ -121,19 +125,30 @@ export function EnvPoolsSection({
         count++
       }
     }
-    return { observedByPool: observed, scalingGroupByPool: groups, memberCount: count }
+    const ag = new Map<string, AgentEnvAutoscalingGroup>(
+      (env.spec.autoscaling?.groups ?? []).map((g) => [g.name, g]),
+    )
+    return {
+      observedByPool: observed,
+      scalingGroupByPool: groups,
+      autoscalingGroups: ag,
+      memberCount: count,
+    }
   }, [env])
 
   const columns = useMemo(
     () =>
       createPoolColumns(t, onViewMetrics, {
         hideOwningEnv: true,
-        envObservedByPool: observedByPool,
-        scalingGroupByPool: scalingGroupByPool,
+        scaling: {
+          observedByPool,
+          scalingGroupByPool,
+          groups: autoscalingGroups,
+        },
         onEditPool,
         onDeletePool,
       }),
-    [t, onViewMetrics, observedByPool, scalingGroupByPool, onEditPool, onDeletePool],
+    [t, onViewMetrics, observedByPool, scalingGroupByPool, autoscalingGroups, onEditPool, onDeletePool],
   )
 
   const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
@@ -225,6 +240,15 @@ export function EnvPoolsSection({
 
 // ─── Autoscaling table ───────────────────────────────────────────────────────
 
+// Scaling-group name → its standalone autoscaling-group detail page, listing
+// the group's policy and every member Pool in the group.
+function GroupNameCell({ envName, group }: { envName: string; group: string }) {
+  const clusterID = useClusterID()
+  const locale = useLocale()
+  const href = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}/autoscaling/${encodeURIComponent(group)}`
+  return <ResourceLink value={group} href={href} />
+}
+
 export function AutoscalingSection({
   env,
   onEdit,
@@ -246,9 +270,7 @@ export function AutoscalingSection({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title={t("envs.autoscaling.col.group")} />
         ),
-        cell: ({ row }) => (
-          <span className="text-foreground font-mono text-xs">{row.original.name}</span>
-        ),
+        cell: ({ row }) => <GroupNameCell envName={env.name} group={row.original.name} />,
       },
       {
         id: "enabled",
@@ -325,7 +347,7 @@ export function AutoscalingSection({
         ),
       },
     ],
-    [t, onEdit, onDelete],
+    [t, env.name, onEdit, onDelete],
   )
 
   const qc = useQueryClient()
@@ -403,7 +425,7 @@ export function AutoscalingSection({
   )
 }
 
-function ScaleUpCell({ group }: { group: AgentEnvAutoscalingGroup }) {
+export function ScaleUpCell({ group }: { group: AgentEnvAutoscalingGroup }) {
   const { t } = useTranslation()
   const mode = group.scaleUpPolicy?.mode
   const cd = group.scaleUpPolicy?.cooldownSeconds
@@ -421,7 +443,7 @@ function ScaleUpCell({ group }: { group: AgentEnvAutoscalingGroup }) {
   )
 }
 
-function ScaleDownCell({ group }: { group: AgentEnvAutoscalingGroup }) {
+export function ScaleDownCell({ group }: { group: AgentEnvAutoscalingGroup }) {
   const { t } = useTranslation()
   const idle = group.scaleDownPolicy?.idleTimeoutSeconds
   const stab = group.scaleDownPolicy?.stabilizationSeconds

@@ -519,6 +519,15 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 	}
 
 	target := current - 1
+	// Per-member floor: the owning Env member may declare its own
+	// MinReplicas (Config.MinReplicas), independent of the group's
+	// aggregate MinReplicas. Never shrink this Pool below it.
+	if memberMin := memberMinReplicasFloor(snap); target < memberMin {
+		klog.V(3).InfoS("autoscaler: scale-down blocked by member MinReplicas floor",
+			"pool", key, "wantTarget", target, "memberMinReplicas", memberMin)
+		maybeEmitScaleDownStuck(snap, mut, current, "member MinReplicas")
+		return
+	}
 	// Defensive: never lower the target below RunningReplicas. The
 	// top-of-Decide self-heal usually keeps current >= running so this
 	// branch is rarely reached, but keeping the invariant adjacent to
@@ -627,6 +636,18 @@ func lastScaleDownReference(snap *Snapshot) time.Time {
 // aggregate desired (minus 1 for our planned decrement) is still at
 // or above MinReplicas. The min is a group-level invariant; per-Pool
 // min would conflate group policy with individual Pool state.
+// memberMinReplicasFloor returns the per-member scale-down floor declared on
+// the owning Env member (Config.MinReplicas). 0 when unset — in that case only
+// the group aggregate MinReplicas applies.
+func memberMinReplicasFloor(snap *Snapshot) int32 {
+	if snap.MemberConfig != nil && snap.MemberConfig.MinReplicas != nil {
+		if m := *snap.MemberConfig.MinReplicas; m > 0 {
+			return m
+		}
+	}
+	return 0
+}
+
 func groupMinReplicasHeadroomAvailable(snap *Snapshot, currentSelf int32) bool {
 	minR := int32(0)
 	if snap.Group.MinReplicas != nil {

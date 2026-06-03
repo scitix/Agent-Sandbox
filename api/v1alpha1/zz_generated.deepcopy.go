@@ -22,7 +22,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -137,6 +137,11 @@ func (in *EnvClusterMemberConfig) DeepCopyInto(out *EnvClusterMemberConfig) {
 		in, out := &in.InlineResources, &out.InlineResources
 		*out = new(corev1.ResourceRequirements)
 		(*in).DeepCopyInto(*out)
+	}
+	if in.MinReplicas != nil {
+		in, out := &in.MinReplicas, &out.MinReplicas
+		*out = new(int32)
+		**out = **in
 	}
 	if in.MaxReplicas != nil {
 		in, out := &in.MaxReplicas, &out.MaxReplicas

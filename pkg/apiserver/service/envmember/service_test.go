@@ -369,6 +369,93 @@ func TestUpdate_AllowsNoopReplicasResendUnderAutoscaling(t *testing.T) {
 	}
 }
 
+// TestUpdate_MaxReplicasOnlySkipsAdmission guards the regression where a
+// maxReplicas-only edit (autoscaling owns replicas) still ran PreUpdatePool —
+// re-submitting the scheduler reservation for the unchanged replica count and
+// failing on quota. maxReplicas lives on Member.Config, never on the Pool
+// Spec, so the candidate Spec is unchanged and admission must be skipped.
+func TestUpdate_MaxReplicasOnlySkipsAdmission(t *testing.T) {
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
+		{
+			Name:   "m1",
+			Spec:   agentsv1alpha1.SandboxPoolSpec{Replicas: 12},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "1c15Gi"},
+		},
+	}
+	pl := &capturingPlugin{}
+	cli := newClient(t, env)
+	svc := envmember.New(cli, plugins.NewPluginManager(pl), nil, nil)
+
+	mr := int32(20)
+	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
+		envmember.MemberPoolPatch{MaxReplicas: &mr}); err != nil {
+		t.Fatalf("maxReplicas-only update: %+v", err)
+	}
+	if pl.updateCalls != 0 {
+		t.Fatalf("PreUpdatePool must not run for a maxReplicas-only edit, got %d calls", pl.updateCalls)
+	}
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: testEnvName}, got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	persisted := got.Spec.Clusters[0].Members[0]
+	if persisted.Config.MaxReplicas == nil || *persisted.Config.MaxReplicas != 20 {
+		t.Fatalf("expected persisted Config.MaxReplicas=20, got %+v", persisted.Config.MaxReplicas)
+	}
+
+	// A genuine replica change must still run admission exactly once.
+	r := int32(5)
+	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
+		envmember.MemberPoolPatch{Replicas: &r}); err != nil {
+		t.Fatalf("replicas update: %+v", err)
+	}
+	if pl.updateCalls != 1 {
+		t.Fatalf("PreUpdatePool must run once for a real replica change, got %d calls", pl.updateCalls)
+	}
+}
+
+// TestUpdate_MinReplicasPersistsAndValidates covers the per-member MinReplicas
+// edit path: a minReplicas-only update persists onto Member.Config without
+// running admission (it is Config, not Pool Spec), and min > max is rejected.
+func TestUpdate_MinReplicasPersistsAndValidates(t *testing.T) {
+	env := newEnvForPoolOps()
+	maxR := int32(10)
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
+		{
+			Name:   "m1",
+			Spec:   agentsv1alpha1.SandboxPoolSpec{Replicas: 4},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "1c4Gi", MaxReplicas: &maxR},
+		},
+	}
+	pl := &capturingPlugin{}
+	cli := newClient(t, env)
+	svc := envmember.New(cli, plugins.NewPluginManager(pl), nil, nil)
+
+	minR := int32(2)
+	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
+		envmember.MemberPoolPatch{MinReplicas: &minR}); err != nil {
+		t.Fatalf("minReplicas-only update: %+v", err)
+	}
+	if pl.updateCalls != 0 {
+		t.Fatalf("PreUpdatePool must not run for a minReplicas-only edit, got %d calls", pl.updateCalls)
+	}
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: testEnvName}, got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if mr := got.Spec.Clusters[0].Members[0].Config.MinReplicas; mr == nil || *mr != 2 {
+		t.Fatalf("expected persisted Config.MinReplicas=2, got %+v", mr)
+	}
+
+	// min > max is rejected (existing max=10).
+	tooBig := int32(11)
+	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
+		envmember.MemberPoolPatch{MinReplicas: &tooBig}); err == nil || err.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected BadRequest for minReplicas>maxReplicas, got %+v", err)
+	}
+}
+
 // TestAdd_DefaultReplicasFromGroupMin confirms that joining an
 // autoscaling group with min > existing-siblings-total lifts the new
 // member's replicas to satisfy the shortfall. With minReplicas=3 and

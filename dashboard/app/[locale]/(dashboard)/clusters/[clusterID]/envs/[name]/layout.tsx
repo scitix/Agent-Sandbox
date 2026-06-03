@@ -84,11 +84,12 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
     )
   }
 
-  // A specific pool's detail route (`…/pools/{poolName}`) renders its own
-  // header + tabs, so the Env shell yields its chrome and just forwards the
-  // child subtree. The bare pools list (`…/pools`) keeps the Env chrome.
-  const isPoolDetailRoute = /\/pools\/[^/]+/.test(pathname)
-  if (isPoolDetailRoute) return <>{children}</>
+  // A specific child detail route (`…/pools/{poolName}` or
+  // `…/autoscaling/{group}`) renders its own header, so the Env shell yields
+  // its chrome and just forwards the child subtree. The bare list routes
+  // (`…/pools`, `…/autoscaling`) keep the Env chrome.
+  const isChildDetailRoute = /\/(pools|autoscaling)\/[^/]+/.test(pathname)
+  if (isChildDetailRoute) return <>{children}</>
 
   const basePath = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(name)}`
   const tabs = [

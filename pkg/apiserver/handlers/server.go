@@ -731,6 +731,10 @@ func memberFromCreateEnvPoolRequest(body *gen.CreateEnvSandboxPoolRequest) agent
 	if body.Multiplier != nil {
 		cm.Config.Multiplier = *body.Multiplier
 	}
+	if body.MinReplicas != nil {
+		v := *body.MinReplicas
+		cm.Config.MinReplicas = &v
+	}
 	if body.MaxReplicas != nil {
 		v := *body.MaxReplicas
 		cm.Config.MaxReplicas = &v
@@ -819,6 +823,10 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 	if req.Body.Replicas != nil {
 		v := *req.Body.Replicas
 		patch.Replicas = &v
+	}
+	if req.Body.MinReplicas != nil {
+		v := *req.Body.MinReplicas
+		patch.MinReplicas = &v
 	}
 	if req.Body.MaxReplicas != nil {
 		v := *req.Body.MaxReplicas

@@ -702,6 +702,10 @@ func envMemberConfigToGen(c agentsv1alpha1.EnvClusterMemberConfig) *gen.EnvClust
 		out.ScalingGroup = ptr.To(c.ScalingGroup)
 		populated = true
 	}
+	if c.MinReplicas != nil {
+		out.MinReplicas = ptr.To(*c.MinReplicas)
+		populated = true
+	}
 	if c.MaxReplicas != nil {
 		out.MaxReplicas = ptr.To(*c.MaxReplicas)
 		populated = true

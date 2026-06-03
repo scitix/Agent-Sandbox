@@ -377,6 +377,15 @@ spec:
                                 format: int32
                                 minimum: 0
                                 type: integer
+                              minReplicas:
+                                description: |-
+                                  MinReplicas is the lower bound on this member's spec.replicas.
+                                  Enforced by the Env autoscaler: scale-down never shrinks this member
+                                  below MinReplicas. nil/0 means no per-member floor (only the group's
+                                  aggregate MinReplicas applies).
+                                format: int32
+                                minimum: 0
+                                type: integer
                               multiplier:
                                 description: |-
                                   Multiplier scales InstanceType's resources. Required when

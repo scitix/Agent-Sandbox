@@ -88,7 +88,19 @@ type MemberPoolService interface {
 // disambiguate "leave unchanged" from "explicit zero".
 type MemberPoolPatch struct {
 	Replicas    *int32
+	MinReplicas *int32
 	MaxReplicas *int32
+}
+
+// validateMemberReplicaBounds rejects a member whose per-member MinReplicas
+// exceeds its per-member MaxReplicas. Either bound may be nil (unset), in
+// which case there is nothing to compare.
+func validateMemberReplicaBounds(min, max *int32) *domain.AppError {
+	if min != nil && max != nil && *min > *max {
+		return domain.NewBadRequest(fmt.Sprintf(
+			"minReplicas (%d) must not exceed maxReplicas (%d)", *min, *max))
+	}
+	return nil
 }
 
 // New constructs the default Service implementation backed by the K8s
@@ -132,6 +144,9 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 		return nil, appErr
 	}
 	member = derived
+	if err := validateMemberReplicaBounds(member.Config.MinReplicas, member.Config.MaxReplicas); err != nil {
+		return nil, err
+	}
 	key := types.NamespacedName{Namespace: namespace, Name: envName}
 
 	env := &agentsv1alpha1.SandboxEnv{}
@@ -231,8 +246,8 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
-	if patch.Replicas == nil && patch.MaxReplicas == nil {
-		return nil, domain.NewBadRequest("at least one of replicas or maxReplicas must be provided")
+	if patch.Replicas == nil && patch.MinReplicas == nil && patch.MaxReplicas == nil {
+		return nil, domain.NewBadRequest("at least one of replicas, minReplicas or maxReplicas must be provided")
 	}
 	key := types.NamespacedName{Namespace: namespace, Name: envName}
 
@@ -269,16 +284,23 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	}
 
 	// Build the updated member by overlaying patch onto existing — preserves
-	// Metadata, Config (other than MaxReplicas), name. Replicas goes directly
-	// into Member.Spec because the Env Reconciler is the sole writer of the
-	// live Pool's Spec.Replicas and it reads it from Member.Spec.Replicas.
+	// Metadata, Config (other than Min/MaxReplicas), name. Replicas goes
+	// directly into Member.Spec because the Env Reconciler is the sole writer
+	// of the live Pool's Spec.Replicas and it reads it from Member.Spec.Replicas.
 	member := *existing.DeepCopy()
 	if patch.Replicas != nil {
 		member.Spec.Replicas = *patch.Replicas
 	}
+	if patch.MinReplicas != nil {
+		v := *patch.MinReplicas
+		member.Config.MinReplicas = &v
+	}
 	if patch.MaxReplicas != nil {
 		v := *patch.MaxReplicas
 		member.Config.MaxReplicas = &v
+	}
+	if err := validateMemberReplicaBounds(member.Config.MinReplicas, member.Config.MaxReplicas); err != nil {
+		return nil, err
 	}
 
 	// Candidate Pool used by PreUpdatePool admission: start from the
@@ -295,20 +317,29 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	}
 	before := candidate.DeepCopy()
 
-	// Pod list (driver-supplied for PreUpdatePool) is left empty here; the
-	// Reconciler still owns the in-cluster update path that supplies live
-	// pods. This is a coarse pre-check at the API edge.
-	pluginUpdated, appErr := s.pm.PreUpdatePool(ctx, candidate, nil)
-	if appErr != nil {
-		return nil, appErr
-	}
-	if pluginUpdated && !equality.Semantic.DeepEqual(before, candidate) {
-		// Plugin mutated the candidate — persist the new snapshot back onto
-		// the Member so the Reconciler picks up the drift on its next pass.
-		// We deliberately do NOT touch the live Pool here: the Reconciler is
-		// the sole writer of SandboxPool.Spec.
-		member.Metadata = sanitizeMemberMetadata(candidate.ObjectMeta)
-		member.Spec = *candidate.Spec.DeepCopy()
+	// PreUpdatePool admission carries scheduler side-effects (e.g. reservation
+	// submit). It is only meaningful when the live Pool's Spec would actually
+	// change. maxReplicas lives on Member.Config, never on the Pool Spec, so a
+	// maxReplicas-only edit leaves the candidate Spec identical to the existing
+	// Pool — re-running admission there would re-submit the reservation for an
+	// unchanged replica count and can spuriously fail on quota. Gate on a real
+	// Spec change (this also skips the no-op replicas resend under autoscaling).
+	if !equality.Semantic.DeepEqual(&existing.Spec, &member.Spec) {
+		// Pod list (driver-supplied for PreUpdatePool) is left empty here; the
+		// Reconciler still owns the in-cluster update path that supplies live
+		// pods. This is a coarse pre-check at the API edge.
+		pluginUpdated, appErr := s.pm.PreUpdatePool(ctx, candidate, nil)
+		if appErr != nil {
+			return nil, appErr
+		}
+		if pluginUpdated && !equality.Semantic.DeepEqual(before, candidate) {
+			// Plugin mutated the candidate — persist the new snapshot back onto
+			// the Member so the Reconciler picks up the drift on its next pass.
+			// We deliberately do NOT touch the live Pool here: the Reconciler is
+			// the sole writer of SandboxPool.Spec.
+			member.Metadata = sanitizeMemberMetadata(candidate.ObjectMeta)
+			member.Spec = *candidate.Spec.DeepCopy()
+		}
 	}
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
