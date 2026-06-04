@@ -1,14 +1,30 @@
 {{- if .Values.imagesCatalog.enabled }}
+{{- $name := include "agent-sandbox-hub.imagesCatalogConfigMapName" . }}
+{{- /*
+The catalog is runtime-mutable state: ws-proxy's images-catalog CRUD endpoints
+(and manual kubectl edits) write to this ConfigMap after deployment. The live
+content is therefore looked up and re-emitted verbatim on upgrade, so a
+`helm upgrade` never resets it; `.Values.imagesCatalog.datasets` only seeds
+the catalog when the ConfigMap does not exist yet (fresh install).
+Note: `lookup` requires server-side rendering — plain `helm template` or
+client-side GitOps renderers see no live object and fall back to the seed.
+*/}}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace $name }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agent-sandbox-hub.imagesCatalogConfigMapName" . }}
+  name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+  annotations:
+    # Catalog data must survive `helm uninstall` and chart refactors.
+    helm.sh/resource-policy: keep
 data:
   images-catalog.json: |
-    {{- if .Values.imagesCatalog.datasets }}
+    {{- if and $existing $existing.data (index $existing.data "images-catalog.json") }}
+    {{- index $existing.data "images-catalog.json" | nindent 4 }}
+    {{- else if .Values.imagesCatalog.datasets }}
     {{- .Values.imagesCatalog.datasets | toJson | nindent 4 }}
     {{- else }}
     []
