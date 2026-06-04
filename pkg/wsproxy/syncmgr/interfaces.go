@@ -26,7 +26,6 @@ import (
 type KeyStore interface {
 	List(ctx context.Context) ([]apikey.KeyMetadata, error)
 	ListByTeamAndUser(ctx context.Context, team, user string) ([]apikey.KeyMetadata, error)
-	CountUserKeys(ctx context.Context, namespace, user string) (int, error)
 	Create(ctx context.Context, meta apikey.KeyMetadata) (rawToken, keyID string, err error)
 	CreateFromHash(ctx context.Context, meta apikey.KeyMetadata, tokenHash, hashPrefix string) error
 	Validate(ctx context.Context, rawToken string) (*apikey.KeyMetadata, error)

@@ -91,7 +91,6 @@ func (s *Server) CreateApiKey(
 
 	targetUser := auth.User
 	targetTeam := auth.Team
-	targetNamespace := auth.Namespace
 	role := auth.Role
 	if isImpersonating {
 		targetUser = impUser
@@ -100,11 +99,11 @@ func (s *Server) CreateApiKey(
 	}
 
 	if deps.MaxPerUser > 0 {
-		count, err := deps.KeyStore.CountUserKeys(ctx, targetNamespace, targetUser)
+		keys, err := deps.KeyStore.ListByTeamAndUser(ctx, targetTeam, targetUser)
 		if err != nil {
 			return wsproxygen.CreateApiKey503JSONResponse{Error: "internal error"}, nil
 		}
-		if count >= deps.MaxPerUser {
+		if len(keys) >= deps.MaxPerUser {
 			return wsproxygen.CreateApiKey409JSONResponse{
 				Error: fmt.Sprintf("exceeded max keys per user (%d)", deps.MaxPerUser),
 			}, nil
@@ -116,8 +115,12 @@ func (s *Server) CreateApiKey(
 		expiresAt = *body.ExpiresAt
 	}
 
+	// Global keys are stored with an empty namespace: each Worker cluster's
+	// auth middleware resolves the effective namespace at request time from
+	// the key's team+user metadata via its local IAM. Baking in a namespace
+	// resolved on the master would pin the key to a namespace that may not
+	// exist on the workers (tenant namespaces live only there).
 	meta := apikey.KeyMetadata{
-		Namespace:   targetNamespace,
 		User:        targetUser,
 		Team:        targetTeam,
 		Role:        role,

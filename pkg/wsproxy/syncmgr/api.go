@@ -73,12 +73,12 @@ func (m *SyncManager) handleInternalCreate(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	if m.deps.MaxPerUser > 0 {
-		count, err := m.deps.KeyStore.CountUserKeys(ctx, req.Namespace, req.User)
+		keys, err := m.deps.KeyStore.ListByTeamAndUser(ctx, req.Team, req.User)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
-		if count >= m.deps.MaxPerUser {
+		if len(keys) >= m.deps.MaxPerUser {
 			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("exceeded max keys per user (%d)", m.deps.MaxPerUser)})
 			return
 		}
@@ -96,8 +96,12 @@ func (m *SyncManager) handleInternalCreate(c *gin.Context) {
 		role = apikey.RoleTenant
 	}
 
+	// Global keys are stored with an empty namespace — the requesting Worker's
+	// namespace (req.Namespace) is intentionally dropped so that every Worker
+	// cluster resolves the effective namespace locally from team+user via IAM
+	// at auth time. The same team+user pair can map to different namespaces on
+	// different Workers.
 	meta := apikey.KeyMetadata{
-		Namespace:   req.Namespace,
 		User:        req.User,
 		Team:        req.Team,
 		Role:        role,

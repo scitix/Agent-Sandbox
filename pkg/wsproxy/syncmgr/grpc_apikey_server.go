@@ -53,12 +53,12 @@ func (s *apiKeyServer) CreateKey(ctx context.Context, req *syncv1.CreateKeyReque
 
 	// Enforce per-user limit (best-effort; race-prone like the v1 path).
 	if s.m.deps.MaxPerUser > 0 {
-		count, err := s.m.deps.KeyStore.CountUserKeys(ctx, req.Namespace, req.User)
+		keys, err := s.m.deps.KeyStore.ListByTeamAndUser(ctx, req.Team, req.User)
 		if err != nil {
 			log.Printf("syncmgr/grpc: CreateKey count error: %v", err)
 			return nil, status.Error(codes.Internal, "failed to count keys")
 		}
-		if count >= s.m.deps.MaxPerUser {
+		if len(keys) >= s.m.deps.MaxPerUser {
 			return nil, status.Errorf(codes.AlreadyExists,
 				"exceeded max keys per user (%d)", s.m.deps.MaxPerUser)
 		}
@@ -69,8 +69,12 @@ func (s *apiKeyServer) CreateKey(ctx context.Context, req *syncv1.CreateKeyReque
 		role = apikey.RoleTenant
 	}
 
+	// Global keys are stored with an empty namespace — the requesting Worker's
+	// namespace (req.Namespace) is intentionally dropped so that every Worker
+	// cluster resolves the effective namespace locally from team+user via IAM
+	// at auth time. The same team+user pair can map to different namespaces on
+	// different Workers.
 	meta := apikey.KeyMetadata{
-		Namespace:   req.Namespace,
 		User:        req.User,
 		Team:        req.Team,
 		Role:        role,
