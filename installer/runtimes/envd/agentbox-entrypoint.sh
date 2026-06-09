@@ -13,21 +13,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# PID 1 of every agent-sandbox pod. It runs inside the USER's image (the image
+# is swapped in by the pool), does a small amount of environment preparation
+# that the e2b stack assumes but does not itself provide, then hands off to the
+# envd daemon which serves the e2b API.
+#
+# Two pieces of preparation, each documented at its function:
+#   create_user        - ensure an unprivileged `user` account exists
+#   persist_image_env  - make the image's ENV reach exec'd commands
+#
+# NOTE: there used to be a third step (install_sh_shim) that rewrote /bin/sh to
+# survive envd's OOM-score wrapper failing under Kubernetes. That is now fixed
+# properly in our patched envd (skips the wrapper in not-FC mode; see
+# patches/0001-skip-oom-nice-wrapper-when-not-firecracker.patch), so the shim —
+# and the whole-image /bin/sh mutation it required — is gone.
+
 set -e
 
 AGENTBOX_DIR=${AGENTBOX_DIR:-/mnt/agentbox}
 
 
+# IdleImage: a placeholder pod that holds a pool slot warm but should do nothing
+# until its image is swapped for a real one. Just sleep; never start envd.
 if [ "$AGENTBOX_IS_IDLE_IMAGE" = "true" ] || [ -f /etc/agentbox_is_idle_image ]; then
     echo "[INFO] IdleImage detected. Entering sleep mode."
     exec sleep infinity
 fi
 
+# Ensure an unprivileged `user` account exists.
+#
+# The e2b stack defaults to running commands as `user` (e.g. the SDK's default
+# exec user), but arbitrary base images often don't ship that account. Without
+# it, exec-as-user fails. We create it best-effort across the toolchains images
+# actually have — useradd, then adduser (busybox/alpine), then a raw
+# /etc/passwd append as a last resort — and give it passwordless sudo so it can
+# still perform root actions when a task needs them. Failure is non-fatal: an
+# image that already runs everything as root works without this account.
 create_user() {
     local username="user"
     local home_dir="/home/$username"
     local default_shell="/bin/bash"
 
+    # Already present (image baked it in, or a previous run created it).
     if id "$username" >/dev/null 2>&1; then return 0; fi
     [ ! -x "$default_shell" ] && default_shell="/bin/sh"
 
@@ -51,47 +78,6 @@ create_user() {
     fi
     chmod 777 -R "$home_dir" 2>/dev/null || true
     chown -R "$username:$username" "$home_dir" 2>/dev/null || true
-}
-
-# Install a /bin/sh shim so that envd's OOM wrapper script doesn't fail.
-#
-# envd wraps every executed command as:
-#   /bin/sh -c "echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n 0 ..." -- CMD
-#
-# In a Kubernetes container, the cgroup controller sets oom_score_adj=999 and prevents
-# any process from writing a lower value (Permission denied / I/O error), causing the
-# wrapper to exit immediately with an error without running the actual command.
-#
-# Fix: /bin/sh is a symlink chain ending at the real shell binary (e.g. /usr/bin/dash).
-# We REPLACE that final binary with a bash shim that intercepts any invocation
-# containing "oom_score_adj", makes the write non-fatal (2>/dev/null ;), then
-# re-executes the fixed script via bash.  All other invocations are forwarded unchanged.
-#
-# The shim is pure bash (no python3 dependency):
-#   - sed with single-quoted replacement string keeps literal $$ from being expanded
-#   - exec replaces the shim process with bash, preserving correct exit codes
-install_sh_shim() {
-    local real_sh
-    real_sh="$(readlink -f /bin/sh 2>/dev/null)" || real_sh="/bin/sh"
-    if head -1 "$real_sh" 2>/dev/null | grep -q 'bash'; then return 0; fi
-
-    local exec_sh="/bin/bash"
-    [ ! -x "$exec_sh" ] && exec_sh="/usr/bin/bash"
-    [ ! -x "$exec_sh" ] && return 1
-
-    rm -f "$real_sh"
-    cat > "$real_sh" << 'SHIMEOF'
-#!/bin/bash
-EXEC_SH=/bin/bash
-[ ! -x "$EXEC_SH" ] && EXEC_SH=/usr/bin/bash
-if [ "$1" = "-c" ] && [[ "$2" == *"oom_score_adj"* ]]; then
-    fixed="$(printf '%s' "$2" | sed 's|echo [0-9-]\+ > /proc/[^ ]*/oom_score_adj &&|echo 100 > /proc/$$/oom_score_adj 2>/dev/null ;|g')"
-    shift 2
-    exec "$EXEC_SH" -c "$fixed" "$@"
-fi
-exec "$EXEC_SH" "$@"
-SHIMEOF
-    chmod +x "$real_sh"
 }
 
 # Persist the image ENV for exec'd commands.
@@ -149,10 +135,13 @@ persist_image_env() {
 
 create_user || echo "Warning: user creation had issues, continuing..." >&2
 mkdir -p /run/e2b 2>/dev/null || true
-install_sh_shim || echo "Warning: could not install sh shim, continuing..." >&2
 persist_image_env || echo "Warning: could not persist image env, continuing..." >&2
 
+# Disable MPTCP: some kernels/images mis-handle it and it breaks envd's port
+# forwarding; envd does not need it.
 export GODEBUG=multipathtcp=0
 
-# Start envd daemon (non-FC mode: stdout logs, no MMDS, no Firecracker cgroups)
+# Start envd daemon. -isnotfc = "not a Firecracker microVM": logs go to stdout
+# (no MMDS/Firecracker log shipping) AND, with our patch, the process handler
+# skips the Firecracker-only OOM/nice wrapper that fails under Kubernetes.
 exec "$AGENTBOX_DIR/envd" -isnotfc

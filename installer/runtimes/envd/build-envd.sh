@@ -23,20 +23,50 @@ TINI_IMAGE_NAME="agent-sandbox-tini"
 # Override INFRA_DIR to use a pre-cloned checkout.
 INFRA_DIR=${INFRA_DIR:-""}
 INFRA_REPO="https://github.com/e2b-dev/infra"
+# Pin to an exact commit so the build is reproducible AND so the patches below
+# (which are line-addressed) apply deterministically. e2b-infra's default
+# branch moves fast (date-based release tags), so an unpinned clone would
+# silently change the envd version and break patch application. This commit is
+# envd 0.5.11 — the version the pools currently run. Bump this together with
+# regenerating the patches when you intentionally move to a newer envd.
+# Full SHA is required: `git fetch --depth 1 origin <sha>` rejects abbreviated SHAs.
+INFRA_REF=${INFRA_REF:-"b781ad49198da0a1659a09a5cfc038fd52c3d433"}
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PATCHES_DIR="$CURRENT_DIR/patches"
 
 # --- 1. Clone or use existing e2b-infra repo ---
 if [ -z "$INFRA_DIR" ]; then
     TMPDIR="$(mktemp -d)"
     trap 'rm -rf "$TMPDIR"' EXIT
-    echo "--- Step 1: Cloning e2b-infra ---"
-    git clone --depth 1 "$INFRA_REPO" "$TMPDIR/infra"
+    echo "--- Step 1: Cloning e2b-infra @ ${INFRA_REF} ---"
+    # Fetch just the pinned commit instead of a shallow clone of the tip.
+    git init -q "$TMPDIR/infra"
+    git -C "$TMPDIR/infra" remote add origin "$INFRA_REPO"
+    git -C "$TMPDIR/infra" fetch -q --depth 1 origin "$INFRA_REF"
+    git -C "$TMPDIR/infra" checkout -q FETCH_HEAD
     INFRA_DIR="$TMPDIR/infra"
 else
     echo "--- Step 1: Using existing e2b-infra at $INFRA_DIR ---"
 fi
 
 ENVD_SRC_DIR="$INFRA_DIR/packages/envd"
+
+# --- 1b. Apply ScitiX patches to envd ---
+# These are our carried-forward fixes on top of upstream envd. They MUST apply
+# cleanly; a reject means upstream drifted from INFRA_REF and a human needs to
+# rebase the patch (do NOT ship an unpatched binary — it reintroduces the
+# Kubernetes OOM-wrapper bug). See each patch's header for what it does.
+if [ -d "$PATCHES_DIR" ]; then
+    for patch in "$PATCHES_DIR"/*.patch; do
+        [ -e "$patch" ] || continue
+        echo "--- Step 1b: Applying patch $(basename "$patch") ---"
+        git -C "$INFRA_DIR" apply --verbose "$patch" || {
+            echo "ERROR: failed to apply $(basename "$patch") to e2b-infra@${INFRA_REF}." >&2
+            echo "       Upstream likely drifted; rebase the patch and update INFRA_REF." >&2
+            exit 1
+        }
+    done
+fi
 
 # --- 2. Build envd binary ---
 echo "--- Step 2: Building envd binary from source ---"

@@ -1,0 +1,156 @@
+diff --git a/packages/envd/internal/execcontext/context.go b/packages/envd/internal/execcontext/context.go
+index 57e274630..55c608271 100644
+--- a/packages/envd/internal/execcontext/context.go
++++ b/packages/envd/internal/execcontext/context.go
+@@ -10,6 +10,12 @@ type Defaults struct {
+ 	EnvVars *utils.Map[string, string]
+ 	User    string
+ 	Workdir *string
++	// IsNotFC is true when envd runs OUTSIDE a Firecracker microVM (e.g. as a
++	// plain container under Kubernetes). It mirrors the `-isnotfc` CLI flag and
++	// is consumed by the process handler to skip Firecracker-only priming of
++	// the child's OOM score / nice value, which is both unnecessary and
++	// impossible under an externally-managed cgroup. See handler.New.
++	IsNotFC bool
+ }
+ 
+ func ResolveDefaultWorkdir(workdir string, defaultWorkdir *string) string {
+diff --git a/packages/envd/internal/services/process/handler/handler.go b/packages/envd/internal/services/process/handler/handler.go
+index 4d60b2b9e..7092bc025 100644
+--- a/packages/envd/internal/services/process/handler/handler.go
++++ b/packages/envd/internal/services/process/handler/handler.go
+@@ -99,10 +99,29 @@ func New(
+ 	// This eliminates the race window where grandchildren could inherit the parent's protected OOM score (-1000)
+ 	// or high CPU priority (nice -20) before the post-start calls had a chance to correct them.
+ 	// nice(1) applies a relative adjustment, so we compute the delta from the current (inherited) nice to the target.
+-	niceDelta := defaultNice - currentNice()
+-	oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
+-	wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
+-	cmd := exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
++	//
++	// This priming is Firecracker-specific. Outside a microVM (IsNotFC, e.g. a
++	// Kubernetes container) it is both unnecessary and harmful:
++	//   - The container's oom_score_adj / CPU shares are already managed by the
++	//     kubelet's QoS controller and the cgroup, not inherited from a -1000/-20
++	//     envd; there is no protected value to undo.
++	//   - The kubelet pins a per-QoS oom_score_adj floor and FORBIDS lowering it,
++	//     so `echo 100 > /proc/$$/oom_score_adj` fails with EACCES. Because of the
++	//     `&&`, that failure short-circuits and the user's command never runs.
++	//   - Routing every exec through `/bin/sh -c` also makes execution depend on a
++	//     working /bin/sh in the user's image (busybox multi-call binaries, etc.).
++	// So in not-FC mode we exec the command directly. cgroup attachment and the
++	// credential/uid setup below are unaffected — those are the real resource
++	// controls under Kubernetes.
++	var cmd *exec.Cmd
++	if defaults != nil && defaults.IsNotFC {
++		cmd = exec.CommandContext(ctx, req.GetProcess().GetCmd(), req.GetProcess().GetArgs()...)
++	} else {
++		niceDelta := defaultNice - currentNice()
++		oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
++		wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
++		cmd = exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
++	}
+ 
+ 	uid, gid, err := permissions.GetUserIdUints(user)
+ 	if err != nil {
+diff --git a/packages/envd/internal/services/process/handler/handler_oom_test.go b/packages/envd/internal/services/process/handler/handler_oom_test.go
+new file mode 100644
+index 000000000..10575507a
+--- /dev/null
++++ b/packages/envd/internal/services/process/handler/handler_oom_test.go
+@@ -0,0 +1,83 @@
++package handler
++
++import (
++	"context"
++	"os/user"
++	"strings"
++	"testing"
++
++	"github.com/rs/zerolog"
++
++	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
++	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
++	rpc "github.com/e2b-dev/infra/packages/envd/internal/services/spec/process"
++)
++
++// buildHandler exercises New() up to command construction (no Pty => the
++// process is not started) and returns the assembled *exec.Cmd for inspection.
++func buildHandler(t *testing.T, isNotFC bool) (cmdPath string, cmdArgs []string) {
++	t.Helper()
++
++	u, err := user.Current()
++	if err != nil {
++		t.Fatalf("user.Current: %v", err)
++	}
++
++	cwd := "/tmp"
++	req := &rpc.StartRequest{
++		Process: &rpc.ProcessConfig{
++			Cmd:  "/bin/echo",
++			Args: []string{"hello"},
++			Cwd:  &cwd,
++		},
++	}
++	logger := zerolog.Nop()
++	defaults := &execcontext.Defaults{IsNotFC: isNotFC}
++
++	h, err := New(
++		context.Background(),
++		u,
++		req,
++		&logger,
++		defaults,
++		cgroups.NewNoopManager(),
++		func() {},
++	)
++	if err != nil {
++		t.Fatalf("New(isNotFC=%v): %v", isNotFC, err)
++	}
++	return h.cmd.Path, h.cmd.Args
++}
++
++// In not-FC (Kubernetes) mode the command must be exec'd DIRECTLY: no /bin/sh
++// wrapper and no oom_score_adj write that the kubelet would reject.
++func TestNew_NotFC_ExecsDirectly(t *testing.T) {
++	path, args := buildHandler(t, true)
++
++	if !strings.HasSuffix(path, "/bin/echo") {
++		t.Errorf("expected cmd.Path to be the command itself, got %q", path)
++	}
++	joined := strings.Join(args, " ")
++	if strings.Contains(joined, "/bin/sh") {
++		t.Errorf("not-FC mode must not route through /bin/sh, got args: %v", args)
++	}
++	if strings.Contains(joined, "oom_score_adj") {
++		t.Errorf("not-FC mode must not attempt the oom_score_adj write, got args: %v", args)
++	}
++	if args[0] != "/bin/echo" || args[1] != "hello" {
++		t.Errorf("expected direct [/bin/echo hello], got: %v", args)
++	}
++}
++
++// In FC (microVM) mode the original wrapper is preserved: /bin/sh -c "...".
++func TestNew_FC_KeepsOOMWrapper(t *testing.T) {
++	path, args := buildHandler(t, false)
++
++	if path != "/bin/sh" {
++		t.Errorf("FC mode must wrap in /bin/sh, got cmd.Path=%q", path)
++	}
++	joined := strings.Join(args, " ")
++	if !strings.Contains(joined, "oom_score_adj") {
++		t.Errorf("FC mode must keep the oom_score_adj priming, got args: %v", args)
++	}
++}
+diff --git a/packages/envd/main.go b/packages/envd/main.go
+index 67a7cdb2a..017ce45d9 100644
+--- a/packages/envd/main.go
++++ b/packages/envd/main.go
+@@ -154,6 +154,7 @@ func main() {
+ 	defaults := &execcontext.Defaults{
+ 		User:    defaultUser,
+ 		EnvVars: utils.NewMap[string, string](),
++		IsNotFC: isNotFC,
+ 	}
+ 	isFCBoolStr := strconv.FormatBool(!isNotFC)
+ 	defaults.EnvVars.Store("E2B_SANDBOX", isFCBoolStr)
