@@ -1,38 +1,38 @@
 diff --git a/packages/envd/internal/execcontext/context.go b/packages/envd/internal/execcontext/context.go
-index 57e274630..55c608271 100644
+index c7b68284f..b2eaf795c 100644
 --- a/packages/envd/internal/execcontext/context.go
 +++ b/packages/envd/internal/execcontext/context.go
 @@ -10,6 +10,12 @@ type Defaults struct {
- 	EnvVars *utils.Map[string, string]
+ 	EnvVars *utils.EnvVars
  	User    string
  	Workdir *string
 +	// IsNotFC is true when envd runs OUTSIDE a Firecracker microVM (e.g. as a
 +	// plain container under Kubernetes). It mirrors the `-isnotfc` CLI flag and
 +	// is consumed by the process handler to skip Firecracker-only priming of
-+	// the child's OOM score / nice value, which is both unnecessary and
++	// the child's OOM score / ioprio / nice value, which is both unnecessary and
 +	// impossible under an externally-managed cgroup. See handler.New.
 +	IsNotFC bool
  }
  
  func ResolveDefaultWorkdir(workdir string, defaultWorkdir *string) string {
 diff --git a/packages/envd/internal/services/process/handler/handler.go b/packages/envd/internal/services/process/handler/handler.go
-index 4d60b2b9e..7092bc025 100644
+index e30320944..7bda501a8 100644
 --- a/packages/envd/internal/services/process/handler/handler.go
 +++ b/packages/envd/internal/services/process/handler/handler.go
-@@ -99,10 +99,29 @@ func New(
- 	// This eliminates the race window where grandchildren could inherit the parent's protected OOM score (-1000)
- 	// or high CPU priority (nice -20) before the post-start calls had a chance to correct them.
- 	// nice(1) applies a relative adjustment, so we compute the delta from the current (inherited) nice to the target.
+@@ -102,10 +102,29 @@ func New(
+ 	userCmd := strings.Join(append([]string{req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...), " ")
+ 
+ 	// Wrap in a shell that resets oom_score_adj, ioprio (ionice best-effort/4), and nice.
 -	niceDelta := defaultNice - currentNice()
--	oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
+-	oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/ionice -c 2 -n 4 /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
 -	wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
 -	cmd := exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
 +	//
 +	// This priming is Firecracker-specific. Outside a microVM (IsNotFC, e.g. a
 +	// Kubernetes container) it is both unnecessary and harmful:
-+	//   - The container's oom_score_adj / CPU shares are already managed by the
-+	//     kubelet's QoS controller and the cgroup, not inherited from a -1000/-20
-+	//     envd; there is no protected value to undo.
++	//   - The container's oom_score_adj / ioprio / CPU shares are already managed
++	//     by the kubelet's QoS controller and the cgroup, not inherited from a
++	//     -1000/-20 envd; there is no protected value to undo.
 +	//   - The kubelet pins a per-QoS oom_score_adj floor and FORBIDS lowering it,
 +	//     so `echo 100 > /proc/$$/oom_score_adj` fails with EACCES. Because of the
 +	//     `&&`, that failure short-circuits and the user's command never runs.
@@ -46,7 +46,7 @@ index 4d60b2b9e..7092bc025 100644
 +		cmd = exec.CommandContext(ctx, req.GetProcess().GetCmd(), req.GetProcess().GetArgs()...)
 +	} else {
 +		niceDelta := defaultNice - currentNice()
-+		oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
++		oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/ionice -c 2 -n 4 /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
 +		wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
 +		cmd = exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
 +	}
@@ -143,13 +143,13 @@ index 000000000..10575507a
 +	}
 +}
 diff --git a/packages/envd/main.go b/packages/envd/main.go
-index 67a7cdb2a..017ce45d9 100644
+index a9f462110..99151f778 100644
 --- a/packages/envd/main.go
 +++ b/packages/envd/main.go
-@@ -154,6 +154,7 @@ func main() {
+@@ -167,6 +167,7 @@ func run() error {
  	defaults := &execcontext.Defaults{
  		User:    defaultUser,
- 		EnvVars: utils.NewMap[string, string](),
+ 		EnvVars: utils.NewEnvVars(),
 +		IsNotFC: isNotFC,
  	}
  	isFCBoolStr := strconv.FormatBool(!isNotFC)

@@ -24,7 +24,10 @@ on:
       infra_ref:
         description: "e2b-infra git ref to checkout (branch, tag, or commit SHA)"
         required: false
-        default: "main"
+        # Pinned to envd 0.6.1. MUST match build-envd.sh's INFRA_REF and the
+        # base the patches in installer/runtimes/envd/patches/ were generated
+        # against — the apply step below fails the build if they drift.
+        default: "1d930ee60fd74b3ad1d5c167165b1005baa471fe"
       tini_version:
         description: "tini version to package (e.g. v0.19.0)"
         required: false
@@ -57,8 +60,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: e2b-dev/infra
-          ref: ${{ github.event.inputs.infra_ref || 'main' }}
+          ref: ${{ github.event.inputs.infra_ref || '1d930ee60fd74b3ad1d5c167165b1005baa471fe' }}
           path: e2b-infra
+
+      # Apply our carried-forward envd patches BEFORE building. Without this the
+      # CI image is an UNPATCHED upstream envd (the OOM-wrapper bug that breaks
+      # exec under Kubernetes is back). A reject means the pinned infra_ref drifted
+      # from the patch base — rebase the patches and bump both refs. See
+      # installer/runtimes/envd/patches/README.md.
+      - name: Apply ScitiX envd patches
+        working-directory: e2b-infra
+        run: |
+          for patch in "${{ github.workspace }}"/installer/runtimes/envd/patches/*.patch; do
+            [ -e "$patch" ] || continue
+            echo "Applying $(basename "$patch")"
+            git apply --verbose "$patch"
+          done
 
       - name: Set up Go
         uses: actions/setup-go@v5

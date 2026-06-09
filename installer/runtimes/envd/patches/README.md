@@ -18,7 +18,7 @@ unpatched envd: it reintroduces the bug below.
 
 ## 0001-skip-oom-nice-wrapper-when-not-firecracker.patch
 
-**Base:** envd 0.5.11 (`b781ad49198da0a1659a09a5cfc038fd52c3d433`)
+**Base:** envd 0.6.1 (`1d930ee60fd74b3ad1d5c167165b1005baa471fe`)
 
 **Problem.** Before exec-ing each command, envd wraps it as
 `/bin/sh -c "echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n N -- CMD"`.
