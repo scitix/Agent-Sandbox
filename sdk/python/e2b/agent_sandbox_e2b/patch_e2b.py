@@ -152,3 +152,23 @@ def patch_e2b(
             _e2b_api._API_KEY_PATTERN = _re.compile(r"\A.+\Z")  # type: ignore[assignment]
     except (ImportError, AttributeError):
         pass
+
+    # The E2B SDK attaches telemetry headers (lang_version, package_version,
+    # sdk_runtime) whose names contain underscores. Gateways in the nginx family
+    # reject or silently drop headers with underscores (underscores_in_headers),
+    # which breaks requests routed through such an ingress. Rewrite those header
+    # names to their hyphenated equivalents.
+    #
+    # default_headers is imported by-reference into e2b.api and the volume
+    # clients and is splatted (**default_headers) at client-init time, so
+    # mutating the shared dict object in place reaches every consumer;
+    # reassigning the module attribute would leave the other imports pointing at
+    # the original dict.
+    try:
+        from e2b.api import metadata as _e2b_metadata  # type: ignore[import]
+
+        _hdrs = _e2b_metadata.default_headers
+        for _key in [k for k in _hdrs if "_" in k]:
+            _hdrs[_key.replace("_", "-")] = _hdrs.pop(_key)
+    except (ImportError, AttributeError):
+        pass

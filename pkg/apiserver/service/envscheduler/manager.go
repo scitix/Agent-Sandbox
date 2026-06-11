@@ -21,7 +21,6 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/schedule"
-	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 )
 
 // New constructs a Manager. localClusterID identifies the cluster this
@@ -49,33 +48,39 @@ func (m *Manager) WithFramework(f *Framework) *Manager {
 	return m
 }
 
-// Resolve maps a Sandbox.Create `template` (formerly known as PoolName) to
-// the routing target. See ResolveKind for the four outcomes. The result is
-// computed under a single RLock + one map lookup; safe to call from the
-// hot path.
+// Resolve maps a parsed Sandbox.Create template to the routing target. See
+// ResolveKind for the four outcomes. The result is computed under a single
+// RLock + one map lookup; safe to call from the hot path.
+//
+// The caller passes the already-split reference: clusterID is the cluster
+// prefix the user supplied verbatim (empty when the user gave a bare name —
+// callers MUST NOT substitute a default, since an empty clusterID is what
+// distinguishes a bare Env-name lookup from an explicit pool reference), and
+// poolOrEnvName is the bare name with any image override already stripped —
+// interpreted as a Pool name when clusterID is set, or an Env name when it is
+// not.
 //
 // Resolve rules:
-//   - "<localID>::poolName" — ResolveLocalPool (bypass Env routing)
-//   - "<remoteID>::poolName" — ResolveCrossCluster
-//   - "bareName" matching an Env — ResolveEnv
-//   - "bareName" with no Env — ResolveNotFound (MVP: no Pool fallback)
-func (m *Manager) Resolve(ns, raw string) ResolveResult {
-	parsed := cluster.ParsePoolRef(raw)
+//   - clusterID == localID                 — ResolveLocalPool (bypass Env routing)
+//   - clusterID set but not local          — ResolveCrossCluster
+//   - bare name matching an Env            — ResolveEnv
+//   - bare name with no Env                — ResolveNotFound (no Pool fallback)
+func (m *Manager) Resolve(ns, clusterID, poolOrEnvName string) ResolveResult {
 	switch {
-	case parsed.ClusterID != "" && parsed.ClusterID == m.local:
-		return ResolveResult{Kind: ResolveLocalPool, PoolName: parsed.PoolName}
-	case parsed.ClusterID != "":
-		return ResolveResult{Kind: ResolveCrossCluster, ClusterID: parsed.ClusterID, PoolName: parsed.PoolName}
+	case clusterID != "" && clusterID == m.local:
+		return ResolveResult{Kind: ResolveLocalPool, PoolName: poolOrEnvName}
+	case clusterID != "":
+		return ResolveResult{Kind: ResolveCrossCluster, ClusterID: clusterID, PoolName: poolOrEnvName}
 	}
-	if parsed.PoolName == "" {
+	if poolOrEnvName == "" {
 		return ResolveResult{Kind: ResolveNotFound}
 	}
-	key := types.NamespacedName{Namespace: ns, Name: parsed.PoolName}
+	key := types.NamespacedName{Namespace: ns, Name: poolOrEnvName}
 	m.mu.RLock()
 	_, ok := m.envs[key]
 	m.mu.RUnlock()
 	if !ok {
-		return ResolveResult{Kind: ResolveNotFound, PoolName: parsed.PoolName}
+		return ResolveResult{Kind: ResolveNotFound, PoolName: poolOrEnvName}
 	}
 	return ResolveResult{Kind: ResolveEnv, EnvKey: key}
 }

@@ -109,7 +109,7 @@ type SandboxService interface {
 // treats every template as a direct Pool reference (legacy behaviour, used
 // by tests that don't wire the Env layer).
 type EnvRouter interface {
-	Resolve(ns, raw string) envscheduler.ResolveResult
+	Resolve(ns, clusterID, poolOrEnvName string) envscheduler.ResolveResult
 	SelectPool(envKey types.NamespacedName) string
 }
 
@@ -348,7 +348,12 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	// resolution and treat input.PoolName as a direct Pool reference, which
 	// is exactly the pre-Env behaviour.
 	if s.envRouter != nil {
-		res := s.envRouter.Resolve(input.Namespace, input.PoolName)
+		// The handler already split "[clusterID::]poolName" into ClusterID +
+		// PoolName; hand both to the router verbatim. A non-empty ClusterID
+		// matching the local cluster classifies as ResolveLocalPool (direct
+		// pool, bypassing Env); an empty ClusterID keeps PoolName a bare
+		// Env-name lookup, never an implicit local pool.
+		res := s.envRouter.Resolve(input.Namespace, input.ClusterID, input.PoolName)
 		switch res.Kind {
 		case envscheduler.ResolveEnv:
 			selected := s.envRouter.SelectPool(res.EnvKey)

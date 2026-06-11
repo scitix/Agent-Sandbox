@@ -89,7 +89,7 @@ func TestResolve_BareNameHitsEnv(t *testing.T) {
 	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
 	mgr.OnEnvUpsert(makeEnv("my-env", agentsv1alpha1.EnvClusterMember{Name: "my-env"}))
 
-	r := mgr.Resolve("ns", "my-env")
+	r := mgr.Resolve("ns", "", "my-env")
 	if r.Kind != ResolveEnv {
 		t.Fatalf("Kind = %v, want ResolveEnv (%+v)", r.Kind, r)
 	}
@@ -100,7 +100,7 @@ func TestResolve_BareNameHitsEnv(t *testing.T) {
 
 func TestResolve_BareNameMissingEnv_ReturnsNotFound(t *testing.T) {
 	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
-	r := mgr.Resolve("ns", "nope")
+	r := mgr.Resolve("ns", "", "nope")
 	if r.Kind != ResolveNotFound {
 		t.Errorf("Kind = %v, want ResolveNotFound", r.Kind)
 	}
@@ -113,7 +113,7 @@ func TestResolve_LocalExplicit_BypassesEnv(t *testing.T) {
 	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
 	mgr.OnEnvUpsert(makeEnv("my-env", agentsv1alpha1.EnvClusterMember{Name: "my-env"}))
 
-	r := mgr.Resolve("ns", localID+"::my-env")
+	r := mgr.Resolve("ns", localID, "my-env")
 	if r.Kind != ResolveLocalPool {
 		t.Errorf("Kind = %v, want ResolveLocalPool", r.Kind)
 	}
@@ -124,7 +124,7 @@ func TestResolve_LocalExplicit_BypassesEnv(t *testing.T) {
 
 func TestResolve_CrossClusterExplicit(t *testing.T) {
 	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
-	r := mgr.Resolve("ns", "cluster-b::my-pool")
+	r := mgr.Resolve("ns", "cluster-b", "my-pool")
 	if r.Kind != ResolveCrossCluster {
 		t.Errorf("Kind = %v, want ResolveCrossCluster", r.Kind)
 	}
@@ -135,7 +135,7 @@ func TestResolve_CrossClusterExplicit(t *testing.T) {
 
 func TestResolve_EmptyTemplate(t *testing.T) {
 	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
-	r := mgr.Resolve("ns", "")
+	r := mgr.Resolve("ns", "", "")
 	if r.Kind != ResolveNotFound {
 		t.Errorf("empty template: Kind = %v, want ResolveNotFound", r.Kind)
 	}
@@ -201,11 +201,11 @@ func TestManager_OnEnvDelete(t *testing.T) {
 	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
 	env := makeEnv("transient", agentsv1alpha1.EnvClusterMember{Name: "transient"})
 	mgr.OnEnvUpsert(env)
-	if r := mgr.Resolve("ns", "transient"); r.Kind != ResolveEnv {
+	if r := mgr.Resolve("ns", "", "transient"); r.Kind != ResolveEnv {
 		t.Fatalf("pre-delete: Kind = %v, want ResolveEnv", r.Kind)
 	}
 	mgr.OnEnvDelete(types.NamespacedName{Namespace: "ns", Name: "transient"})
-	if r := mgr.Resolve("ns", "transient"); r.Kind != ResolveNotFound {
+	if r := mgr.Resolve("ns", "", "transient"); r.Kind != ResolveNotFound {
 		t.Errorf("post-delete: Kind = %v, want ResolveNotFound", r.Kind)
 	}
 }

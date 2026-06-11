@@ -209,12 +209,12 @@ func TestSandboxService_Create_PoolNotFound(t *testing.T) {
 
 // fakeEnvRouter is a tiny EnvRouter stub for the entry-resolution tests.
 type fakeEnvRouter struct {
-	resolveFn func(ns, raw string) envscheduler.ResolveResult
+	resolveFn func(ns, clusterID, poolName string) envscheduler.ResolveResult
 	pickFn    func(types.NamespacedName) string
 }
 
-func (f *fakeEnvRouter) Resolve(ns, raw string) envscheduler.ResolveResult {
-	return f.resolveFn(ns, raw)
+func (f *fakeEnvRouter) Resolve(ns, clusterID, poolName string) envscheduler.ResolveResult {
+	return f.resolveFn(ns, clusterID, poolName)
 }
 func (f *fakeEnvRouter) SelectPool(key types.NamespacedName) string {
 	return f.pickFn(key)
@@ -231,8 +231,8 @@ func TestSandboxService_Create_EnvRouter_BareNameMissing_Returns404(t *testing.T
 	svc := newTestSandboxService(t, pool)
 
 	router := &fakeEnvRouter{
-		resolveFn: func(_, raw string) envscheduler.ResolveResult {
-			return envscheduler.ResolveResult{Kind: envscheduler.ResolveNotFound, PoolName: raw}
+		resolveFn: func(_, _, poolName string) envscheduler.ResolveResult {
+			return envscheduler.ResolveResult{Kind: envscheduler.ResolveNotFound, PoolName: poolName}
 		},
 	}
 	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
@@ -257,7 +257,7 @@ func TestSandboxService_Create_EnvRouter_LocalPoolBypassesEnv(t *testing.T) {
 
 	var resolveCalls, pickCalls int
 	router := &fakeEnvRouter{
-		resolveFn: func(_, raw string) envscheduler.ResolveResult {
+		resolveFn: func(_, _, _ string) envscheduler.ResolveResult {
 			resolveCalls++
 			return envscheduler.ResolveResult{Kind: envscheduler.ResolveLocalPool, PoolName: "direct"}
 		},
@@ -272,7 +272,8 @@ func TestSandboxService_Create_EnvRouter_LocalPoolBypassesEnv(t *testing.T) {
 	// Use a tiny StartupTimeout so the scheduler wait fails fast rather than
 	// stalling the test for the default 2-minute timeout.
 	_, _ = svc.Create(context.Background(), CreateSandboxInput{
-		PoolName:       "local::direct",
+		ClusterID:      "local",
+		PoolName:       "direct",
 		Namespace:      "tenant-a",
 		StartupTimeout: 100 * time.Millisecond,
 	})
@@ -284,19 +285,59 @@ func TestSandboxService_Create_EnvRouter_LocalPoolBypassesEnv(t *testing.T) {
 	}
 }
 
+// TestSandboxService_Create_EnvRouter_PassesParsedRefVerbatim verifies that
+// the service forwards the already-parsed ClusterID + PoolName to the router
+// unchanged. In particular a bare PoolName arrives with an empty ClusterID —
+// the service must not substitute a default — so the router can keep treating
+// it as an Env-name lookup rather than an implicit local pool.
+func TestSandboxService_Create_EnvRouter_PassesParsedRefVerbatim(t *testing.T) {
+	tests := []struct {
+		name          string
+		clusterID     string
+		poolName      string
+		wantClusterID string
+		wantPoolName  string
+	}{
+		{name: "qualified", clusterID: "bar", poolName: "pool-x", wantClusterID: "bar", wantPoolName: "pool-x"},
+		{name: "bare", clusterID: "", poolName: "bare", wantClusterID: "", wantPoolName: "bare"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestSandboxService(t)
+			var gotClusterID, gotPoolName string
+			router := &fakeEnvRouter{
+				resolveFn: func(_, clusterID, poolName string) envscheduler.ResolveResult {
+					gotClusterID, gotPoolName = clusterID, poolName
+					return envscheduler.ResolveResult{Kind: envscheduler.ResolveNotFound, PoolName: poolName}
+				},
+			}
+			svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
+			_, _ = svc.Create(context.Background(), CreateSandboxInput{
+				ClusterID: tc.clusterID,
+				PoolName:  tc.poolName,
+				Namespace: "tenant-a",
+			})
+			if gotClusterID != tc.wantClusterID || gotPoolName != tc.wantPoolName {
+				t.Errorf("Resolve args = (%q, %q), want (%q, %q)", gotClusterID, gotPoolName, tc.wantClusterID, tc.wantPoolName)
+			}
+		})
+	}
+}
+
 // TestSandboxService_Create_EnvRouter_CrossClusterRejected confirms that a
 // cross-cluster reference reaching the service is treated as a wiring bug
 // (the handler should have forwarded the request before reaching service).
 func TestSandboxService_Create_EnvRouter_CrossClusterRejected(t *testing.T) {
 	svc := newTestSandboxService(t)
 	router := &fakeEnvRouter{
-		resolveFn: func(_, raw string) envscheduler.ResolveResult {
+		resolveFn: func(_, _, _ string) envscheduler.ResolveResult {
 			return envscheduler.ResolveResult{Kind: envscheduler.ResolveCrossCluster, ClusterID: "remote", PoolName: "p"}
 		},
 	}
 	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
 	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
-		PoolName:  "remote::p",
+		ClusterID: "remote",
+		PoolName:  "p",
 		Namespace: "tenant-a",
 	})
 	if appErr == nil || appErr.Code != domain.ErrCodeBadRequest {
@@ -313,10 +354,10 @@ func TestSandboxService_Create_EnvRouter_EnvHit_PicksSelectedPool(t *testing.T) 
 	svc := newTestSandboxService(t, chosenPool)
 
 	router := &fakeEnvRouter{
-		resolveFn: func(ns, raw string) envscheduler.ResolveResult {
+		resolveFn: func(ns, _, poolName string) envscheduler.ResolveResult {
 			return envscheduler.ResolveResult{
 				Kind:   envscheduler.ResolveEnv,
-				EnvKey: types.NamespacedName{Namespace: ns, Name: raw},
+				EnvKey: types.NamespacedName{Namespace: ns, Name: poolName},
 			}
 		},
 		pickFn: func(types.NamespacedName) string { return "chosen" },
@@ -342,8 +383,8 @@ func TestSandboxService_Create_EnvRouter_EnvHit_PicksSelectedPool(t *testing.T) 
 func TestSandboxService_Create_EnvRouter_EnvHitNoMembers_ReturnsServiceUnavailable(t *testing.T) {
 	svc := newTestSandboxService(t)
 	router := &fakeEnvRouter{
-		resolveFn: func(ns, raw string) envscheduler.ResolveResult {
-			return envscheduler.ResolveResult{Kind: envscheduler.ResolveEnv, EnvKey: types.NamespacedName{Namespace: ns, Name: raw}}
+		resolveFn: func(ns, _, poolName string) envscheduler.ResolveResult {
+			return envscheduler.ResolveResult{Kind: envscheduler.ResolveEnv, EnvKey: types.NamespacedName{Namespace: ns, Name: poolName}}
 		},
 		pickFn: func(types.NamespacedName) string { return "" },
 	}
