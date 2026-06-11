@@ -62,8 +62,13 @@ def _make_sandbox_get_host(resolved_domain: str | None):
     return _get_host
 
 
+def _truthy(value: str) -> bool:
+    """Interpret a string env var as a boolean."""
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 def patch_e2b(
-    https: bool = False,
+    https: bool | None = None,
     domain: str | None = None,
     api_url: str | None = None,
 ) -> None:
@@ -74,6 +79,8 @@ def patch_e2b(
 
     Args:
         https: Use HTTPS for data-plane sandbox URLs.
+            Priority: argument > E2B_HTTPS > default (False).
+            E2B_HTTPS is truthy for "1"/"true"/"yes"/"on" (case-insensitive).
         domain: Data-plane gateway host, optionally with an ingress path.
             Priority: argument > E2B_DOMAIN > default in-cluster service.
         api_url: E2B-compatible API URL, including scheme.
@@ -88,6 +95,9 @@ def patch_e2b(
         raise ImportError(
             "The 'e2b' package is required. Install it with: pip install e2b"
         ) from exc
+
+    if https is None:
+        https = _truthy(os.environ.get("E2B_HTTPS", ""))
 
     resolved_domain = (
         domain or os.environ.get("E2B_DOMAIN", "") or _DEFAULT_DOMAIN

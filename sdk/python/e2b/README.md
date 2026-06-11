@@ -70,7 +70,7 @@ sandbox = Sandbox.create(
 | `api_url` | `http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local` | E2B-compatible API URL |
 | `https` | `False` | Use HTTPS for the data plane |
 
-**Priority**: explicit argument > `E2B_DOMAIN` / `E2B_API_URL` environment variables > built-in defaults.
+**Priority**: explicit argument > `E2B_HTTPS` / `E2B_DOMAIN` / `E2B_API_URL` environment variables > built-in defaults. `E2B_HTTPS` is truthy for `1`/`true`/`yes`/`on` (case-insensitive).
 
 ```python
 # Local debugging via port-forward
@@ -80,6 +80,7 @@ patch_e2b(https=False, domain="localhost:9081", api_url="http://localhost:9082")
 # export E2B_DOMAIN=agent-sandbox-data-plane.agentbox-system.svc.cluster.local
 # export E2B_API_URL=http://agent-sandbox-e2b-api.agentbox-system.svc.cluster.local
 # export E2B_API_KEY=agbx_your_key
+# export E2B_HTTPS=true   # required when the data plane is behind an HTTPS ingress
 patch_e2b()
 ```
 
@@ -117,7 +118,7 @@ don't have the check. If you ever need the original behavior, do not call
 ## Compatibility
 
 Release builds verify the patch against the latest E2B SDK from PyPI before
-publishing (verified through E2B SDK `2.25.1`). After patching, all standard
+publishing (verified through E2B SDK `2.28.0`). After patching, all standard
 E2B SDK operations work unchanged:
 
 ```python
