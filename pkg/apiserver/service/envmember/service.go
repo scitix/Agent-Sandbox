@@ -56,6 +56,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
+	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
 // Service is the Env-scoped Pool CRUD surface. Routes onto
@@ -325,10 +326,24 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	// unchanged replica count and can spuriously fail on quota. Gate on a real
 	// Spec change (this also skips the no-op replicas resend under autoscaling).
 	if !equality.Semantic.DeepEqual(&existing.Spec, &member.Spec) {
-		// Pod list (driver-supplied for PreUpdatePool) is left empty here; the
-		// Reconciler still owns the in-cluster update path that supplies live
-		// pods. This is a coarse pre-check at the API edge.
-		pluginUpdated, appErr := s.pm.PreUpdatePool(ctx, candidate, nil)
+		// Plugins inspect the live Pods to make their admission decision (e.g.
+		// the scheduler reservation plugin sizes its reservation off the
+		// currently-running replicas). Passing nil makes those plugins behave
+		// as if the Pool had zero Pods, which mis-sizes the reservation and can
+		// spuriously fail or leak quota. Supply the live Pods via the same
+		// indexer the Reconciler uses so the API-edge pre-check sees the same
+		// world the Reconciler will.
+		rawPods, err := indexer.ListPodsBySandboxPool(ctx, s.client, namespace, poolName)
+		if err != nil {
+			return nil, domain.NewInternal(err.Error(), err)
+		}
+		// Deep-copy to avoid handing plugins (which may mutate) references into
+		// the shared informer cache.
+		pods := make([]corev1.Pod, len(rawPods))
+		for i := range rawPods {
+			pods[i] = *rawPods[i].DeepCopy()
+		}
+		pluginUpdated, appErr := s.pm.PreUpdatePool(ctx, candidate, pods)
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -549,8 +564,3 @@ func cloneStringMap(in map[string]string) map[string]string {
 	maps.Copy(out, in)
 	return out
 }
-
-// Compile-time reference to corev1 — kept so the new sanitizer/import
-// list stays stable when callers in this package start consuming pod
-// shapes directly (UpdateMember's plugin admission is one such path).
-var _ = corev1.Pod{}
