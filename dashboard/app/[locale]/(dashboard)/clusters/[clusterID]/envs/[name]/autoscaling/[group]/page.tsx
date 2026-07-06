@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge"
 import { DetailHeader } from "@/components/custom/detail-header"
 import { DataTable } from "@/components/custom/query-table/table-without-query"
 import { ScaleUpCell, ScaleDownCell } from "@/components/envs/env-detail-sections"
-import { createPoolColumns } from "@/components/pools/columns"
+import { createPoolColumns, poolNumberFilterOptions } from "@/components/pools/columns"
 import { envQueryOptions, envPoolsQueryOptions } from "@/lib/queries"
 import { clusterPath } from "@/lib/cluster-path"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -126,7 +126,10 @@ export default function AutoscalingGroupPage({ params }: PageProps) {
                 isLoading={false}
                 columns={columns}
                 idFn={(row: AgentSandboxPool) => row.name}
-                toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
+                toolbarConfig={{
+                  filterOptions: poolNumberFilterOptions(t),
+                  globalSearch: { placeholder: t("pools.searchAll") },
+                }}
               />
             </section>
           </>

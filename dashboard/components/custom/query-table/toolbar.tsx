@@ -24,7 +24,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
-import { DataTableFacetedFilter, DataTableFacetedFilterProps } from "./faceted-filter"
+import { DataTableFacetedFilterProps } from "./faceted-filter"
+import { DataTableFilters } from "./filters"
 import { DataTableViewOptions } from "./view-options"
 import { useTranslation } from "@/lib/i18n"
 
@@ -102,17 +103,9 @@ export function DataTableToolbar<TData>({
           </Button>
         </div>
         <div className="flex h-9 items-center space-x-1 overflow-x-auto overflow-y-hidden sm:space-x-2">
-          {!isLoading &&
-            filterOptions?.map(
-              (filterOption) =>
-                table.getColumn(filterOption.columnKey) && (
-                  <DataTableFacetedFilter
-                    key={filterOption.columnKey}
-                    column={table.getColumn(filterOption.columnKey)}
-                    {...filterOption}
-                  />
-                ),
-            )}
+          {!isLoading && filterOptions && filterOptions.length > 0 && (
+            <DataTableFilters table={table} filterOptions={filterOptions} />
+          )}
           {isFiltered && !isLoading && (
             <TooltipProvider delay={100}>
               <Tooltip>

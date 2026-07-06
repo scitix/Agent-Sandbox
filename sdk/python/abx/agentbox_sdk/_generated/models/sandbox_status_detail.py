@@ -23,7 +23,6 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 import datetime
 
@@ -90,7 +89,7 @@ class SandboxStatusDetail:
         if isinstance(_last_updated_time,  Unset):
             last_updated_time = UNSET
         else:
-            last_updated_time = isoparse(_last_updated_time)
+            last_updated_time = datetime.datetime.fromisoformat(_last_updated_time)
 
 
 

@@ -79,6 +79,7 @@ from .pool_scale_up_policy_mode import PoolScaleUpPolicyMode
 from .pool_template_overrides import PoolTemplateOverrides
 from .promote_api_key_result import PromoteAPIKeyResult
 from .quota import Quota
+from .quota_metadata import QuotaMetadata
 from .quota_resources import QuotaResources
 from .quota_resources_free import QuotaResourcesFree
 from .quota_resources_reserved import QuotaResourcesReserved
@@ -102,6 +103,8 @@ from .sandbox_env_labels import SandboxEnvLabels
 from .sandbox_env_spec import SandboxEnvSpec
 from .sandbox_env_spec_mode import SandboxEnvSpecMode
 from .sandbox_env_status import SandboxEnvStatus
+from .sandbox_env_summary import SandboxEnvSummary
+from .sandbox_env_summary_mode import SandboxEnvSummaryMode
 from .sandbox_env_template_ref import SandboxEnvTemplateRef
 from .sandbox_envelope import SandboxEnvelope
 from .sandbox_log_entry import SandboxLogEntry
@@ -114,6 +117,7 @@ from .sandbox_pool_spec import SandboxPoolSpec
 from .sandbox_pool_spec_pod_creation_image_policy import SandboxPoolSpecPodCreationImagePolicy
 from .sandbox_pool_status import SandboxPoolStatus
 from .sandbox_pool_status_phase import SandboxPoolStatusPhase
+from .sandbox_pool_summary import SandboxPoolSummary
 from .sandbox_readiness_result import SandboxReadinessResult
 from .sandbox_readiness_result_endpoints import SandboxReadinessResultEndpoints
 from .sandbox_readiness_result_endpoints_additional_property import SandboxReadinessResultEndpointsAdditionalProperty
@@ -209,6 +213,7 @@ __all__ = (
     "PoolTemplateOverrides",
     "PromoteAPIKeyResult",
     "Quota",
+    "QuotaMetadata",
     "QuotaResources",
     "QuotaResourcesFree",
     "QuotaResourcesReserved",
@@ -233,6 +238,8 @@ __all__ = (
     "SandboxEnvSpec",
     "SandboxEnvSpecMode",
     "SandboxEnvStatus",
+    "SandboxEnvSummary",
+    "SandboxEnvSummaryMode",
     "SandboxEnvTemplateRef",
     "SandboxLogEntry",
     "SandboxLogsResult",
@@ -244,6 +251,7 @@ __all__ = (
     "SandboxPoolSpecPodCreationImagePolicy",
     "SandboxPoolStatus",
     "SandboxPoolStatusPhase",
+    "SandboxPoolSummary",
     "SandboxReadinessResult",
     "SandboxReadinessResultEndpoints",
     "SandboxReadinessResultEndpointsAdditionalProperty",

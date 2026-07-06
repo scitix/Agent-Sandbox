@@ -57,6 +57,8 @@ class EnvClusterMemberConfig:
                 Pool resource sizing on EnvClusterMember.inlineResources.
             scaling_group (str | Unset): ScalingGroup name (typically derived from the effective resources, e.g. '1c4Gi').
                 Members in the same group share autoscaling policy.
+            min_replicas (int | Unset): Lower bound on this member's spec.replicas. Enforced by the Env autoscaler as a per-
+                member scale-down floor.
             max_replicas (int | Unset): Upper bound on this member's spec.replicas. Enforced by the Env autoscaler when
                 distributing scale-up delta.
             priority (int | Unset): Canonical preference: lower wins. Used for routing tiebreaks and as the default for
@@ -73,6 +75,7 @@ class EnvClusterMemberConfig:
     multiplier: int | Unset = UNSET
     inline_resources: ResourceRequirements | Unset = UNSET
     scaling_group: str | Unset = UNSET
+    min_replicas: int | Unset = UNSET
     max_replicas: int | Unset = UNSET
     priority: int | Unset = UNSET
     scale_up_priority: int | Unset = UNSET
@@ -105,6 +108,8 @@ class EnvClusterMemberConfig:
 
         scaling_group = self.scaling_group
 
+        min_replicas = self.min_replicas
+
         max_replicas = self.max_replicas
 
         priority = self.priority
@@ -130,6 +135,8 @@ class EnvClusterMemberConfig:
             field_dict["inlineResources"] = inline_resources
         if scaling_group is not UNSET:
             field_dict["scalingGroup"] = scaling_group
+        if min_replicas is not UNSET:
+            field_dict["minReplicas"] = min_replicas
         if max_replicas is not UNSET:
             field_dict["maxReplicas"] = max_replicas
         if priority is not UNSET:
@@ -185,6 +192,8 @@ class EnvClusterMemberConfig:
 
         scaling_group = d.pop("scalingGroup", UNSET)
 
+        min_replicas = d.pop("minReplicas", UNSET)
+
         max_replicas = d.pop("maxReplicas", UNSET)
 
         priority = d.pop("priority", UNSET)
@@ -200,6 +209,7 @@ class EnvClusterMemberConfig:
             multiplier=multiplier,
             inline_resources=inline_resources,
             scaling_group=scaling_group,
+            min_replicas=min_replicas,
             max_replicas=max_replicas,
             priority=priority,
             scale_up_priority=scale_up_priority,

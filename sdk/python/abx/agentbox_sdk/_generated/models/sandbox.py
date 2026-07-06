@@ -24,7 +24,6 @@ from ..types import UNSET, Unset
 
 from ..models.sandbox_status import SandboxStatus
 from ..types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 import datetime
 
@@ -263,7 +262,7 @@ class Sandbox:
 
 
 
-        claimed_at = isoparse(d.pop("claimedAt"))
+        claimed_at = datetime.datetime.fromisoformat(d.pop("claimedAt"))
 
 
 
@@ -275,7 +274,7 @@ class Sandbox:
         if isinstance(_started_at,  Unset):
             started_at = UNSET
         else:
-            started_at = isoparse(_started_at)
+            started_at = datetime.datetime.fromisoformat(_started_at)
 
 
 
@@ -319,7 +318,7 @@ class Sandbox:
         if isinstance(_terminated_at,  Unset):
             terminated_at = UNSET
         else:
-            terminated_at = isoparse(_terminated_at)
+            terminated_at = datetime.datetime.fromisoformat(_terminated_at)
 
 
 
@@ -329,7 +328,7 @@ class Sandbox:
         if isinstance(_recycled_at,  Unset):
             recycled_at = UNSET
         else:
-            recycled_at = isoparse(_recycled_at)
+            recycled_at = datetime.datetime.fromisoformat(_recycled_at)
 
 
 

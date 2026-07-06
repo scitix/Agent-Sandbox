@@ -23,7 +23,6 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 import datetime
 
@@ -43,7 +42,8 @@ class EnvEvent:
             involved_kind (str): Kind of the K8s object this event was emitted against. One of SandboxEnv | SandboxPool.
             involved_name (str): metadata.name of the involved object.
             reason (str): Event reason (machine-readable verb): ScaleUp / ScaleDown / PoolReady / PoolRecovered / Degraded /
-                AutoscalerScaleUp / AutoscalerScaleDown / SandboxPoolPhase*.
+                AutoscalerScaleUp / AutoscalerScaleDownStarted / AutoscalerScaleDownCompleted / AutoscalerScaleDownStuck /
+                SandboxPoolPhase*.
             message (str): Human-readable message body.
             type_ (str): Normal | Warning
             count (int): Number of times this event has fired. K8s coalesces repeated identical events and bumps this
@@ -135,7 +135,7 @@ class EnvEvent:
         if isinstance(_first_timestamp,  Unset):
             first_timestamp = UNSET
         else:
-            first_timestamp = isoparse(_first_timestamp)
+            first_timestamp = datetime.datetime.fromisoformat(_first_timestamp)
 
 
 
@@ -145,7 +145,7 @@ class EnvEvent:
         if isinstance(_last_timestamp,  Unset):
             last_timestamp = UNSET
         else:
-            last_timestamp = isoparse(_last_timestamp)
+            last_timestamp = datetime.datetime.fromisoformat(_last_timestamp)
 
 
 

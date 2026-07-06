@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+// i18n-processed-v1.1.0
 import {
   ColumnDef,
   PaginationState,
@@ -27,12 +28,11 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { ChevronDown, ChevronRight } from "lucide-react"
-import React, { Fragment, useCallback, useEffect, useMemo, useState } from "react"
+import { ChevronDown, ChevronRight, GridIcon } from "lucide-react"
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -44,14 +44,19 @@ import {
 } from "@/components/ui/table"
 
 import { TableExternalState } from "@/hooks/use-table-state"
+import { useTranslation } from "@/lib/i18n"
 import { RefreshIntervalPreset } from "@/lib/queries/refresh-interval-atom"
 import { cn } from "@/lib/utils"
 
 import TooltipButton from "../button/tooltip-button"
 import { TableSkeleton } from "../layout/table-skeleton"
+import { DataTableFacetedFilterProps } from "./faceted-filter"
+import { TableFilterOptionsProvider } from "./filter-context"
 import { DataTablePagination, MultipleHandler } from "./pagination"
+import { TableScrollArea } from "./table-scroll-area"
 import { DataTableToolbar, DataTableToolbarConfig } from "./toolbar"
-import { useTranslation } from "@/lib/i18n"
+
+const EMPTY_FILTER_OPTIONS: readonly DataTableFacetedFilterProps[] = []
 
 export interface ExpandedConfig<TData> {
   expandable: (row: Row<TData>) => boolean
@@ -85,8 +90,8 @@ export function TablePlaceHolder<TData, TValue>({
       {toolbarConfig && (
         <div
           className={cn(
-            "flex h-13 w-full flex-row items-center justify-between gap-2",
-            isFixedLayout ? "shrink-0 px-6 py-1" : "",
+            "flex h-11 w-full flex-row items-center justify-between gap-2",
+            isFixedLayout ? "shrink-0 pb-2" : "",
           )}
         >
           <Skeleton className="h-9 w-1/4" />
@@ -94,25 +99,19 @@ export function TablePlaceHolder<TData, TValue>({
         </div>
       )}
       <div className={isFixedLayout ? "min-h-0 flex-1" : ""}>
-        <div
+        <Card
           className={
             isFixedLayout
-              ? "h-full overflow-hidden border-y p-0 shadow-xs"
+              ? "bg-sidebar/50 h-full overflow-hidden rounded-md p-0 shadow-xs"
               : "overflow-hidden rounded-md p-0 shadow-xs"
           }
         >
-          <div className={isFixedLayout ? "h-full p-0" : "p-0"}>
+          <CardContent className={isFixedLayout ? "h-full p-0" : "p-0"}>
             <Table>
-              <TableHeader className={cn(isFixedLayout ? "sticky top-0 z-10 [&_tr]:border-0" : "")}>
-                <TableRow
-                  className={cn(
-                    "bg-sidebar hover:bg-sidebar",
-                    isFixedLayout &&
-                      "after:border-border relative after:absolute after:-bottom-px after:left-0 after:w-full after:border-b",
-                  )}
-                >
+              <TableHeader className={isFixedLayout ? "sticky top-0 z-10" : ""}>
+                <TableRow className="bg-accent hover:bg-accent">
                   {[...Array(columnCount)].map((_, colIndex) => (
-                    <TableHead key={colIndex} className="text-muted-foreground px-6" />
+                    <TableHead key={colIndex} className="text-muted-foreground" />
                   ))}
                 </TableRow>
               </TableHeader>
@@ -120,16 +119,11 @@ export function TablePlaceHolder<TData, TValue>({
                 <TableSkeleton rows={20} columns={columnCount} />
               </TableBody>
             </Table>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       </div>
       {isFixedLayout && (
-        <div
-          className={cn(
-            "flex h-13 w-full flex-row items-center justify-between gap-2 border-0 px-6 py-2",
-            "shrink-0",
-          )}
-        >
+        <div className="flex h-11 w-full shrink-0 flex-row items-center justify-between gap-2 pt-2">
           <Skeleton className="h-9 w-1/4" />
           <Skeleton className="h-9 w-1/8" />
         </div>
@@ -168,6 +162,12 @@ export const TableContent = <TData,>({
 }) => {
   const { t } = useTranslation()
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const tableAreaRef = useRef<HTMLDivElement>(null)
+  const tableRef = useRef<HTMLTableElement>(null)
+
+  // Exposed to column headers so each can offer an in-place funnel for its
+  // configured filter dimension (see column-header-filter.tsx).
+  const filterOptions = toolbarConfig?.filterOptions ?? EMPTY_FILTER_OPTIONS
 
   const [internalPagination, setInternalPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -182,6 +182,8 @@ export const TableContent = <TData,>({
       setExpandedRows(new Set([idFn(data[0])]))
     }
   }, [data, expandedConfig, idFn])
+
+  const hasSelect = !!(multipleHandlers && multipleHandlers.length > 0)
 
   const extendedColumns = useMemo(() => {
     if (!columns) {
@@ -200,7 +202,7 @@ export const TableContent = <TData,>({
           <TooltipButton
             variant="ghost"
             size="icon"
-            tooltip={isExpanded ? "collapse" : "expand"}
+            tooltip={isExpanded ? t("table.collapseDetails") : t("table.expandDetails")}
             onClick={() => {
               const newExpanded = new Set(expandedRows)
               if (isExpanded) {
@@ -242,10 +244,10 @@ export const TableContent = <TData,>({
 
     return [
       ...(expandedConfig ? [expandColumn] : []),
-      ...(multipleHandlers && multipleHandlers.length > 0 ? [selectColumn] : []),
+      ...(hasSelect ? [selectColumn] : []),
       ...columns,
     ]
-  }, [columns, expandedConfig, expandedRows, idFn, multipleHandlers])
+  }, [columns, expandedConfig, expandedRows, hasSelect, idFn, t])
 
   const table = useReactTable({
     data: data,
@@ -278,18 +280,102 @@ export const TableContent = <TData,>({
     autoResetPageIndex: externalState ? false : true,
   })
 
+  // Fixed layout freezes the leading column(s): the first data column plus any
+  // expand / multi-select utility column to its left (so the checkbox column
+  // and the first data column both stay anchored).
+  const pinnedCount = isFixedLayout ? (expandedConfig ? 1 : 0) + (hasSelect ? 1 : 0) + 1 : 0
+
+  // Freeze the trailing actions column against the right edge (fixed layout).
+  // The actions column is always appended last and is non-hideable, so the
+  // last rendered cell is the one to pin.
+  const lastColumn = extendedColumns?.[extendedColumns.length - 1]
+  const pinRight = isFixedLayout && lastColumn?.id === "actions"
+
+  // base-ui's ScrollArea only re-measures overflow when the *viewport* resizes,
+  // not when the table content does — so a table that grows wider than the
+  // viewport after async data arrives (or after the web font swaps in) never
+  // flips `hiddenState.x` and the horizontal scrollbar stays hidden. Observe
+  // the table element instead and nudge base-ui (synthetic scroll) whenever its
+  // size changes, so the bar appears/disappears as content overflow demands.
+  //
+  // In fixed layout the same pass measures the rendered widths of the frozen
+  // cells and exposes them as CSS vars: the sticky cells read the `left`/`right`
+  // offsets and the horizontal scrollbar insets past the frozen blocks instead
+  // of running underneath them (see globals.css).
+  useEffect(() => {
+    const tableEl = tableRef.current
+    if (!tableEl) {
+      return
+    }
+    const viewport = tableEl.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    const wrap = tableAreaRef.current
+    const update = () => {
+      if (wrap && isFixedLayout) {
+        const headerRow = tableEl.querySelector<HTMLElement>('[data-slot="table-header"] tr')
+        const cells = headerRow ? (Array.from(headerRow.children) as HTMLElement[]) : []
+        let acc = 0
+        const offsets: number[] = []
+        for (let i = 0; i < pinnedCount && i < cells.length; i++) {
+          offsets.push(acc)
+          acc += cells[i].offsetWidth
+        }
+        wrap.style.setProperty("--pinned-left-1", `${offsets[1] ?? 0}px`)
+        wrap.style.setProperty("--pinned-left-2", `${offsets[2] ?? 0}px`)
+        wrap.style.setProperty("--pinned-col-width", `${acc}px`)
+        wrap.style.setProperty(
+          "--pinned-right-col-width",
+          `${pinRight ? (cells[cells.length - 1]?.offsetWidth ?? 0) : 0}px`,
+        )
+        // The sticky header sits inside the same scroll viewport as the
+        // scrollbars, so the vertical bar would otherwise run up underneath it.
+        // Expose the header height; the CSS insets the vertical scrollbar's top
+        // by this amount so it spans only the scrollable body (see globals.css).
+        const header = tableEl.querySelector<HTMLElement>('[data-slot="table-header"]')
+        wrap.style.setProperty("--table-header-height", `${header?.offsetHeight ?? 0}px`)
+      }
+      viewport?.dispatchEvent(new Event("scroll"))
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(tableEl)
+    return () => observer.disconnect()
+  }, [isFixedLayout, pinnedCount, pinRight, extendedColumns.length])
+
   const renderTableContent = useCallback(
     () => (
-      <Table>
-        <TableHeader
-          className={cn("[&_tr]:border-b", {
-            "bg-accent sticky top-0 z-10": isFixedLayout,
-          })}
+      // `overflow-x-visible` hands horizontal scrolling to the enclosing
+      // ScrollArea viewport so the bottom scrollbar pins to the visible area.
+      // In fixed layout `pinned-cols` additionally freezes the leading column(s)
+      // (`sticky left`); auto-height tables scroll every column (see globals.css).
+      <TableFilterOptionsProvider value={filterOptions}>
+        {/* Plain <table> (not the ui <Table> wrapper, whose container forces
+            `overflow-x-auto`): the enclosing TableScrollArea viewport owns
+            horizontal scrolling so the bottom scrollbar pins to the visible
+            area and the pinned cells stick relative to the viewport. */}
+        <table
+          ref={tableRef}
+          data-slot="table"
+          className={cn(
+            "w-full caption-bottom text-sm",
+            isFixedLayout && "pinned-cols",
+            pinRight && "pinned-right-col",
+          )}
+          data-pinned-count={isFixedLayout ? pinnedCount : undefined}
         >
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id} className={cn("bg-sidebar hover:bg-sidebar relative")}>
-              {headerGroup.headers.map((header, i) => {
-                return (
+          <TableHeader
+            className={cn("[&_tr]:border-0", {
+              "sticky top-0 z-20": isFixedLayout,
+            })}
+          >
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow
+                key={headerGroup.id}
+                className={cn(
+                  "bg-accent hover:bg-accent relative",
+                  "after:border-border after:absolute after:-bottom-px after:left-0 after:w-full after:border-b",
+                )}
+              >
+                {headerGroup.headers.map((header, i) => (
                   <TableHead
                     key={header.id}
                     colSpan={header.colSpan}
@@ -302,56 +388,73 @@ export const TableContent = <TData,>({
                       ? null
                       : flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
-                )
-              })}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody className="bg-card">
-          {table.getRowModel().rows?.length ? (
-            table.getRowModel().rows.map((row) => (
-              <Fragment key={row.id}>
-                <TableRow
-                  key={row.id}
-                  data-state={row.getIsSelected() && "selected"}
-                  className="border-0"
-                >
-                  {row.getVisibleCells().map((cell, i) => (
-                    <TableCell
-                      key={cell.id}
-                      className={cn({
+                ))}
+              </TableRow>
+            ))}
+          </TableHeader>
+          <TableBody className="bg-card">
+            {table.getRowModel().rows?.length ? (
+              table.getRowModel().rows.map((row) => (
+                <Fragment key={row.id}>
+                  <TableRow
+                    key={row.id}
+                    data-state={row.getIsSelected() && "selected"}
+                    className="border-0 hover:bg-card"
+                  >
+                    {row.getVisibleCells().map((cell, i) => (
+                      <TableCell key={cell.id} className={cn({
                         "pl-6": i === 0,
                         "pr-6": i === row.getVisibleCells().length - 1,
-                      })}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-                {expandedRows.has(idFn(row.original)) && (
-                  <TableRow key={`${row.id}-pods`}>
-                    {expandedConfig?.renderRow(extendedColumns, row)}
+                      })}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
                   </TableRow>
-                )}
-              </Fragment>
-            ))
-          ) : (
-            <TableRow className="hover:bg-transparent">
-              <TableCell
-                colSpan={columns.length}
-                className={cn(
-                  "text-muted-foreground/85 text-center hover:bg-transparent",
-                  isFixedLayout ? "h-0 p-0" : "h-full",
-                )}
-              ></TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+                  {expandedRows.has(idFn(row.original)) && (
+                    <TableRow key={`${row.id}-pods`} className="border-0 hover:bg-card">
+                      {expandedConfig?.renderRow(extendedColumns, row)}
+                    </TableRow>
+                  )}
+                </Fragment>
+              ))
+            ) : isFixedLayout ? null : (
+              // Fixed layout renders its own centered overlay below; only the
+              // auto-height table shows the empty state inline (avoids rendering
+              // "no data" twice — see the overlay in the fixed layout branch).
+              <TableRow>
+                <TableCell
+                  colSpan={columns.length}
+                  className="text-muted-foreground/85 h-full text-center hover:bg-transparent"
+                >
+                  <div className="flex flex-col items-center justify-center py-16">
+                    <div className="bg-muted mb-4 rounded-full p-3">
+                      <GridIcon className="h-6 w-6" />
+                    </div>
+                    <p className="text-sm select-none">{t("table.noData")}</p>
+                  </div>
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </table>
+      </TableFilterOptionsProvider>
     ),
-    [columns.length, expandedConfig, expandedRows, extendedColumns, idFn, isFixedLayout, table],
+    [
+      columns.length,
+      expandedConfig,
+      expandedRows,
+      extendedColumns,
+      filterOptions,
+      idFn,
+      isFixedLayout,
+      pinnedCount,
+      pinRight,
+      table,
+      t,
+    ],
   )
 
+  // Fixed layout mode
   if (isFixedLayout) {
     return (
       <div className={cn("flex h-full flex-col", className)}>
@@ -368,26 +471,24 @@ export const TableContent = <TData,>({
           </div>
         )}
 
-        <div className={cn("min-h-0 flex-1", toolbarConfig ? "" : "mt-0")}>
-          <div className="relative h-full overflow-hidden border-y p-0">
-            <CardContent className="h-full p-0">
-              <ScrollArea className="h-full">
-                {renderTableContent()}
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
-              {table.getRowModel().rows?.length === 0 && (
-                <div className="bg-dot-pattern text-muted-foreground/85 absolute inset-0 flex flex-col items-center justify-center">
-                  <div className="flex flex-1 items-center justify-center overflow-auto">
-                    <div className="border-border bg-background/80 flex w-full max-w-md flex-col items-center rounded-lg border p-8 shadow-sm backdrop-blur-sm">
-                      <h2 className="text-lg tracking-tight uppercase">{t("common.noData")}</h2>
-                    </div>
-                  </div>
+        {/* Scrollable table area */}
+        <div ref={tableAreaRef} className={cn("min-h-0 flex-1", toolbarConfig ? "" : "mt-0")}>
+          <div className="relative h-full overflow-hidden p-0 border-y">
+            <TableScrollArea orientation="both" className="table-scroll-area h-full">
+              {renderTableContent()}
+            </TableScrollArea>
+            {table.getRowModel().rows?.length === 0 && (
+              <div className="bg-card text-muted-foreground/85 absolute inset-0 flex flex-col items-center justify-center">
+                <div className="bg-muted mb-4 rounded-full p-3">
+                  <GridIcon className="h-6 w-6" />
                 </div>
-              )}
-            </CardContent>
+                <p className="text-sm select-none">{t("table.noData")}</p>
+              </div>
+            )}
           </div>
         </div>
 
+        {/* Pagination pinned to the bottom */}
         <div className="h-13 shrink-0 overflow-hidden px-6 py-2">
           <DataTablePagination
             table={table}
@@ -404,6 +505,7 @@ export const TableContent = <TData,>({
     )
   }
 
+  // Default auto-expand mode
   return (
     <div className={cn("flex flex-col gap-4", className)}>
       {toolbarConfig && (
@@ -417,7 +519,11 @@ export const TableContent = <TData,>({
         </DataTableToolbar>
       )}
       <Card className="overflow-hidden rounded-md p-0 shadow-xs">
-        <CardContent className="p-0">{renderTableContent()}</CardContent>
+        <CardContent className="p-0">
+          <TableScrollArea orientation="both" className="table-scroll-area">
+            {renderTableContent()}
+          </TableScrollArea>
+        </CardContent>
       </Card>
       <DataTablePagination
         table={table}

@@ -34,6 +34,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
+import { DataTableFacetedFilterProps } from "@/components/custom/query-table/faceted-filter"
+import { textFilterFn } from "@/components/custom/query-table/filter-text-panel"
 import { ResourceLink } from "@/components/custom/resource-link"
 import { RelativeTime } from "@/components/custom/relative-time"
 import { parseCpuToCore, parseMemoryToMiB, formatCores, formatMiB } from "@/lib/resources"
@@ -194,7 +196,10 @@ function ScalingCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingCo
     : undefined
 
   const badge = (
-    <Badge variant="outline" className={cn("font-mono text-[10px]", color, href && "cursor-pointer")}>
+    <Badge
+      variant="outline"
+      className={cn("font-mono text-[10px]", color, href && "cursor-pointer")}
+    >
       {label}
     </Badge>
   )
@@ -239,9 +244,7 @@ function ScalingCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingCo
         )}
         {showLastResult && (
           <div>
-            <span className="text-muted-foreground">
-              {t("pools.scaling.tooltip.lastResult")}:{" "}
-            </span>
+            <span className="text-muted-foreground">{t("pools.scaling.tooltip.lastResult")}: </span>
             {lastResult}
           </div>
         )}
@@ -263,6 +266,39 @@ export interface PoolColumnsOptions {
   // Env-scoped row actions. Each appears in the row dropdown when set.
   onEditPool?: (pool: AgentSandboxPool) => void
   onDeletePool?: (pool: AgentSandboxPool) => void
+}
+
+/**
+ * Filter dimensions for the pool table (the name text search plus the CPU /
+ * memory number ranges). Spread into a page's `toolbarConfig.filterOptions` so
+ * they surface both in the toolbar Filters menu and on the matching column
+ * header (keyed by column id) — a magnifier for text, a funnel for the rest.
+ */
+export function poolNumberFilterOptions(
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+): DataTableFacetedFilterProps[] {
+  return [
+    {
+      columnKey: "name",
+      variant: "text",
+      title: t("pools.col.name"),
+      placeholder: t("pools.col.searchByName"),
+    },
+    {
+      columnKey: "cpu",
+      variant: "number_range",
+      title: t("pools.col.cpu"),
+      unit: " cores",
+      placeholder: { min: t("pools.col.minCpu"), max: t("pools.col.maxCpu") },
+    },
+    {
+      columnKey: "memory",
+      variant: "number_range",
+      title: t("pools.col.memory"),
+      unit: "MiB",
+      placeholder: { min: t("pools.col.minMemory"), max: t("pools.col.maxMemory") },
+    },
+  ]
 }
 
 export function createPoolColumns(
@@ -347,10 +383,10 @@ export function createPoolColumns(
           column={column}
           title={t("pools.col.name")}
           tooltip={t("pools.col.nameTooltip")}
-          includesStringFilterOptions={{ placeholder: t("pools.col.searchByName") }}
         />
       ),
       cell: ({ row }) => <PoolNameCell pool={row.original} />,
+      filterFn: textFilterFn,
     },
     ...(options?.showOwner ? [ownerColumn] : []),
     {
@@ -389,19 +425,19 @@ export function createPoolColumns(
     ...(options?.hideOwningEnv
       ? []
       : [
-        {
-          // Reverse-link to the owning SandboxEnv. The OwnerReference is
-          // stamped by the Phase 1 adopter, so every Pool created
-          // post-adoption shows a link; brand-new Pools may show "—"
-          // briefly before adoption runs.
-          id: "owningEnv",
-          accessorFn: (row) => row.owningEnv ?? "",
-          header: ({ column }) => (
-            <DataTableColumnHeader column={column} title={t("pools.col.env")} />
-          ),
-          cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
-        } satisfies ColumnDef<AgentSandboxPool>,
-      ]),
+          {
+            // Reverse-link to the owning SandboxEnv. The OwnerReference is
+            // stamped by the Phase 1 adopter, so every Pool created
+            // post-adoption shows a link; brand-new Pools may show "—"
+            // briefly before adoption runs.
+            id: "owningEnv",
+            accessorFn: (row) => row.owningEnv ?? "",
+            header: ({ column }) => (
+              <DataTableColumnHeader column={column} title={t("pools.col.env")} />
+            ),
+            cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
+          } satisfies ColumnDef<AgentSandboxPool>,
+        ]),
     ...(options?.scaling ? [scalingColumn] : []),
     {
       id: "replicas",
@@ -494,10 +530,6 @@ export function createPoolColumns(
           column={column}
           title={t("pools.col.cpu")}
           tooltip={t("pools.col.cpuTooltip")}
-          numberRangeFilterOptions={{
-            unit: " cores",
-            placeholder: { min: t("pools.col.minCpu"), max: t("pools.col.maxCpu") },
-          }}
         />
       ),
       cell: ({ row }) => {
@@ -521,10 +553,6 @@ export function createPoolColumns(
           column={column}
           title={t("pools.col.memory")}
           tooltip={t("pools.col.memoryTooltip")}
-          numberRangeFilterOptions={{
-            unit: "MiB",
-            placeholder: { min: t("pools.col.minMemory"), max: t("pools.col.maxMemory") },
-          }}
         />
       ),
       cell: ({ row }) => {

@@ -26,6 +26,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
+  from ..models.quota_metadata import QuotaMetadata
   from ..models.quota_resources import QuotaResources
 
 
@@ -48,6 +49,8 @@ class Quota:
             user (str | Unset): User that owns this quota, if applicable.
             resources (QuotaResources | Unset): Resource accounting for a single quota, keyed by resource name (e.g. cpu,
                 memory, nvidia.com/gpu, sci.c22-2).
+            metadata (QuotaMetadata | Unset): Provider-attached display hints, opaque to the core schema. Keys are provider-
+                defined (e.g. a vendor-prefixed pool name/type); generic clients ignore unknown keys.
      """
 
     id: str
@@ -55,6 +58,7 @@ class Quota:
     team: str | Unset = UNSET
     user: str | Unset = UNSET
     resources: QuotaResources | Unset = UNSET
+    metadata: QuotaMetadata | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -62,6 +66,7 @@ class Quota:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.quota_metadata import QuotaMetadata
         from ..models.quota_resources import QuotaResources
         id = self.id
 
@@ -74,6 +79,10 @@ class Quota:
         resources: dict[str, Any] | Unset = UNSET
         if not isinstance(self.resources, Unset):
             resources = self.resources.to_dict()
+
+        metadata: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.metadata, Unset):
+            metadata = self.metadata.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -88,6 +97,8 @@ class Quota:
             field_dict["user"] = user
         if resources is not UNSET:
             field_dict["resources"] = resources
+        if metadata is not UNSET:
+            field_dict["metadata"] = metadata
 
         return field_dict
 
@@ -95,6 +106,7 @@ class Quota:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.quota_metadata import QuotaMetadata
         from ..models.quota_resources import QuotaResources
         d = dict(src_dict)
         id = d.pop("id")
@@ -115,12 +127,23 @@ class Quota:
 
 
 
+        _metadata = d.pop("metadata", UNSET)
+        metadata: QuotaMetadata | Unset
+        if isinstance(_metadata,  Unset):
+            metadata = UNSET
+        else:
+            metadata = QuotaMetadata.from_dict(_metadata)
+
+
+
+
         quota = cls(
             id=id,
             name=name,
             team=team,
             user=user,
             resources=resources,
+            metadata=metadata,
         )
 
 

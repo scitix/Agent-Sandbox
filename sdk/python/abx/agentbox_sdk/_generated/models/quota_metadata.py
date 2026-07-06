@@ -22,55 +22,33 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-from ..types import UNSET, Unset
-from typing import cast
-import datetime
 
 
 
 
 
 
-T = TypeVar("T", bound="SandboxLogEntry")
+T = TypeVar("T", bound="QuotaMetadata")
 
 
 
 @_attrs_define
-class SandboxLogEntry:
-    """ 
-        Attributes:
-            container (str): Name of the container that produced this log line.
-            log (str): Raw log line content.
-            timestamp (datetime.datetime | Unset): RFC 3339 timestamp of the log line.
+class QuotaMetadata:
+    """ Provider-attached display hints, opaque to the core schema. Keys are provider-defined (e.g. a vendor-prefixed pool
+    name/type); generic clients ignore unknown keys.
+
      """
 
-    container: str
-    log: str
-    timestamp: datetime.datetime | Unset = UNSET
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+    additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        container = self.container
-
-        log = self.log
-
-        timestamp: str | Unset = UNSET
-        if not isinstance(self.timestamp, Unset):
-            timestamp = self.timestamp.isoformat()
-
-
+        
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "container": container,
-            "log": log,
-        })
-        if timestamp is not UNSET:
-            field_dict["timestamp"] = timestamp
 
         return field_dict
 
@@ -79,38 +57,21 @@ class SandboxLogEntry:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        container = d.pop("container")
-
-        log = d.pop("log")
-
-        _timestamp = d.pop("timestamp", UNSET)
-        timestamp: datetime.datetime | Unset
-        if isinstance(_timestamp,  Unset):
-            timestamp = UNSET
-        else:
-            timestamp = datetime.datetime.fromisoformat(_timestamp)
-
-
-
-
-        sandbox_log_entry = cls(
-            container=container,
-            log=log,
-            timestamp=timestamp,
+        quota_metadata = cls(
         )
 
 
-        sandbox_log_entry.additional_properties = d
-        return sandbox_log_entry
+        quota_metadata.additional_properties = d
+        return quota_metadata
 
     @property
     def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> str:
         return self.additional_properties[key]
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def __setitem__(self, key: str, value: str) -> None:
         self.additional_properties[key] = value
 
     def __delitem__(self, key: str) -> None:

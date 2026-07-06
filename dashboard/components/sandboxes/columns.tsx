@@ -28,6 +28,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
+import { DataTableFacetedFilterProps } from "@/components/custom/query-table/faceted-filter"
+import { textFilterFn } from "@/components/custom/query-table/filter-text-panel"
 import { CopyableText } from "@/components/custom/copyable-text"
 import { ResourceLink } from "@/components/custom/resource-link"
 import { RelativeTime } from "@/components/custom/relative-time"
@@ -173,6 +175,32 @@ function PoolNameCell({
     ? `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}/pools/${encodeURIComponent(poolName)}`
     : undefined
   return <ResourceLink value={poolName} href={href} tone="muted" />
+}
+
+/**
+ * Number-range filter dimensions for the sandbox table. Spread into the page's
+ * `toolbarConfig.filterOptions` so they surface both in the toolbar Filters
+ * menu and as a funnel on the matching column header (keyed by column id).
+ */
+export function sandboxNumberFilterOptions(
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+): DataTableFacetedFilterProps[] {
+  return [
+    {
+      columnKey: "cpu",
+      variant: "number_range",
+      title: "CPU",
+      unit: " cores",
+      placeholder: { min: t("sandboxes.col.minCpu"), max: t("sandboxes.col.maxCpu") },
+    },
+    {
+      columnKey: "memory",
+      variant: "number_range",
+      title: "Memory",
+      unit: "MiB",
+      placeholder: { min: t("sandboxes.col.minMemory"), max: t("sandboxes.col.maxMemory") },
+    },
+  ]
 }
 
 export function createSandboxColumns(
@@ -442,10 +470,10 @@ export function createSandboxColumns(
           column={column}
           title={t("sandboxes.col.id")}
           tooltip={t("sandboxes.col.idTooltip")}
-          includesStringFilterOptions={{ placeholder: t("sandboxes.searchById") }}
         />
       ),
       cell: ({ row }) => <SandboxIdCell id={row.original.sandboxId} />,
+      filterFn: textFilterFn,
     },
     {
       accessorKey: "envName",
@@ -506,10 +534,6 @@ export function createSandboxColumns(
           column={column}
           title="CPU"
           tooltip={t("sandboxes.col.cpuTooltip")}
-          numberRangeFilterOptions={{
-            unit: " cores",
-            placeholder: { min: t("sandboxes.col.minCpu"), max: t("sandboxes.col.maxCpu") },
-          }}
         />
       ),
       cell: ({ row }) => {
@@ -531,10 +555,6 @@ export function createSandboxColumns(
           column={column}
           title="Memory"
           tooltip={t("sandboxes.col.memoryTooltip")}
-          numberRangeFilterOptions={{
-            unit: "MiB",
-            placeholder: { min: t("sandboxes.col.minMemory"), max: t("sandboxes.col.maxMemory") },
-          }}
         />
       ),
       cell: ({ row }) => {

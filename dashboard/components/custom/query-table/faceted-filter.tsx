@@ -14,19 +14,22 @@
  * limitations under the License.
  */
 
-// i18n-processed-v1.1.0
-import { Column } from "@tanstack/react-table"
+// i18n-processed-v1.1.0 (no translatable strings)
 import { ReactNode } from "react"
 
-import { DataTableDefaultFilter, DataTableFacetedFilterOption } from "./enum-filter"
-import { DataTableNumberRangeFilter } from "./number-range-filter"
+export interface DataTableFacetedFilterOption {
+  label: ReactNode
+  value: string
+  isDestructive?: boolean
+  count?: number
+}
 
 interface DataTableFacetedFilterBaseProps {
   columnKey: string
   title?: string
 }
 
-interface DataTableFacetedFilterDefaultProps extends DataTableFacetedFilterBaseProps {
+export interface DataTableFacetedFilterDefaultProps extends DataTableFacetedFilterBaseProps {
   variant?: "default"
   options?: DataTableFacetedFilterOption[]
   emptyOption?: {
@@ -36,8 +39,9 @@ interface DataTableFacetedFilterDefaultProps extends DataTableFacetedFilterBaseP
   defaultValues?: string[]
 }
 
-interface DataTableFacetedFilterNumberRangeProps extends DataTableFacetedFilterBaseProps {
+export interface DataTableFacetedFilterNumberRangeProps extends DataTableFacetedFilterBaseProps {
   variant: "number_range"
+  unit?: string
   defaultValues?: [number?, number?]
   placeholder?: {
     min?: string
@@ -45,19 +49,13 @@ interface DataTableFacetedFilterNumberRangeProps extends DataTableFacetedFilterB
   }
 }
 
+export interface DataTableFacetedFilterTextProps extends DataTableFacetedFilterBaseProps {
+  variant: "text"
+  placeholder?: string
+  defaultValues?: string[]
+}
+
 export type DataTableFacetedFilterProps =
   | DataTableFacetedFilterDefaultProps
   | DataTableFacetedFilterNumberRangeProps
-
-export function DataTableFacetedFilter<TData>(
-  props: DataTableFacetedFilterProps & {
-    column?: Column<TData>
-  },
-) {
-  const { columnKey: key, ...others } = props
-  if (others.variant === "number_range") {
-    return <DataTableNumberRangeFilter key={key} {...others} />
-  }
-
-  return <DataTableDefaultFilter key={key} {...others} />
-}
+  | DataTableFacetedFilterTextProps

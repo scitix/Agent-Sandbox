@@ -24,7 +24,6 @@ from ..types import UNSET, Unset
 
 from ..models.pool_auto_scaling_status_last_scale_up_attempt_result import PoolAutoScalingStatusLastScaleUpAttemptResult
 from ..types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 import datetime
 
@@ -132,7 +131,7 @@ class PoolAutoScalingStatus:
         if isinstance(_last_scale_up_time,  Unset):
             last_scale_up_time = UNSET
         else:
-            last_scale_up_time = isoparse(_last_scale_up_time)
+            last_scale_up_time = datetime.datetime.fromisoformat(_last_scale_up_time)
 
 
 
@@ -142,7 +141,7 @@ class PoolAutoScalingStatus:
         if isinstance(_last_scale_down_time,  Unset):
             last_scale_down_time = UNSET
         else:
-            last_scale_down_time = isoparse(_last_scale_down_time)
+            last_scale_down_time = datetime.datetime.fromisoformat(_last_scale_down_time)
 
 
 
@@ -152,7 +151,7 @@ class PoolAutoScalingStatus:
         if isinstance(_idle_zero_since,  Unset):
             idle_zero_since = UNSET
         else:
-            idle_zero_since = isoparse(_idle_zero_since)
+            idle_zero_since = datetime.datetime.fromisoformat(_idle_zero_since)
 
 
 
@@ -162,7 +161,7 @@ class PoolAutoScalingStatus:
         if isinstance(_last_scale_up_attempt_time,  Unset):
             last_scale_up_attempt_time = UNSET
         else:
-            last_scale_up_attempt_time = isoparse(_last_scale_up_attempt_time)
+            last_scale_up_attempt_time = datetime.datetime.fromisoformat(_last_scale_up_attempt_time)
 
 
 

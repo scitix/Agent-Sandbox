@@ -60,6 +60,8 @@ class CreateEnvSandboxPoolRequest:
                 Pool resource sizing on EnvClusterMember.inlineResources.
             replicas (int | Unset): Initial replica count. Autoscaling, once enabled on this scalingGroup, owns subsequent
                 changes.
+            min_replicas (int | Unset): Lower bound on this pool's replicas, enforced as a per-member scale-down floor by
+                the Env autoscaler.
             max_replicas (int | Unset): Upper bound on this pool's replicas, enforced when the Env autoscaler distributes
                 scale-up delta.
             labels (CreateEnvSandboxPoolRequestLabels | Unset): Labels stamped onto this member's SandboxPool. Use for
@@ -72,6 +74,7 @@ class CreateEnvSandboxPoolRequest:
     multiplier: int | Unset = UNSET
     inline_resources: ResourceRequirements | Unset = UNSET
     replicas: int | Unset = UNSET
+    min_replicas: int | Unset = UNSET
     max_replicas: int | Unset = UNSET
     labels: CreateEnvSandboxPoolRequestLabels | Unset = UNSET
     annotations: CreateEnvSandboxPoolRequestAnnotations | Unset = UNSET
@@ -94,6 +97,8 @@ class CreateEnvSandboxPoolRequest:
             inline_resources = self.inline_resources.to_dict()
 
         replicas = self.replicas
+
+        min_replicas = self.min_replicas
 
         max_replicas = self.max_replicas
 
@@ -118,6 +123,8 @@ class CreateEnvSandboxPoolRequest:
             field_dict["inlineResources"] = inline_resources
         if replicas is not UNSET:
             field_dict["replicas"] = replicas
+        if min_replicas is not UNSET:
+            field_dict["minReplicas"] = min_replicas
         if max_replicas is not UNSET:
             field_dict["maxReplicas"] = max_replicas
         if labels is not UNSET:
@@ -151,6 +158,8 @@ class CreateEnvSandboxPoolRequest:
 
         replicas = d.pop("replicas", UNSET)
 
+        min_replicas = d.pop("minReplicas", UNSET)
+
         max_replicas = d.pop("maxReplicas", UNSET)
 
         _labels = d.pop("labels", UNSET)
@@ -178,6 +187,7 @@ class CreateEnvSandboxPoolRequest:
             multiplier=multiplier,
             inline_resources=inline_resources,
             replicas=replicas,
+            min_replicas=min_replicas,
             max_replicas=max_replicas,
             labels=labels,
             annotations=annotations,

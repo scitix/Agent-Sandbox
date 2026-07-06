@@ -23,7 +23,7 @@ import { Plus, Trash2 } from "lucide-react"
 import { parseAsString, useQueryState } from "nuqs"
 import { useTranslation } from "@/lib/i18n"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
-import { createSandboxColumns } from "@/components/sandboxes/columns"
+import { createSandboxColumns, sandboxNumberFilterOptions } from "@/components/sandboxes/columns"
 import { TerminalDialog, TERMINAL_SANDBOX_ID_PARAM } from "@/components/sandboxes/terminal-dialog"
 import { CreateSandboxDialog } from "@/components/sandboxes/create-dialog"
 import { DeleteSandboxDialog } from "@/components/sandboxes/delete-dialog"
@@ -141,6 +141,12 @@ export default function SandboxesPage() {
     globalSearch: { placeholder: t("common.searchAll") },
     filterOptions: [
       {
+        columnKey: "sandboxId",
+        variant: "text",
+        title: t("sandboxes.col.id"),
+        placeholder: t("sandboxes.searchById"),
+      },
+      {
         columnKey: "status",
         title: t("sandboxes.col.status"),
         renderer: (value: string) => {
@@ -159,7 +165,8 @@ export default function SandboxesPage() {
       },
       { columnKey: "envName", title: t("sandboxes.col.env") },
       { columnKey: "poolName", title: t("sandboxes.col.pool") },
-    ] as const,
+      ...sandboxNumberFilterOptions(t),
+    ],
     getHeader: (key) => {
       const headers: Record<string, string> = {
         sandboxId: t("sandboxes.col.id"),

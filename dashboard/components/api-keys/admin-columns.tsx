@@ -20,6 +20,7 @@ import { type ColumnDef } from "@tanstack/react-table"
 import { Globe, Trash2 } from "lucide-react"
 import { type AgentboxApiKey } from "@/lib/api/client"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
+import { textFilterFn } from "@/components/custom/query-table/filter-text-panel"
 import { CopyableText } from "@/components/custom/copyable-text"
 import { RelativeTime } from "@/components/custom/relative-time"
 import { Badge } from "@/components/ui/badge"
@@ -35,16 +36,13 @@ export function createAdminApiKeyColumns(
     {
       accessorKey: "keyId",
       header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t("apiKeys.col.keyId")}
-          includesStringFilterOptions={{ placeholder: t("apiKeys.searchById") }}
-        />
+        <DataTableColumnHeader column={column} title={t("apiKeys.col.keyId")} />
       ),
       cell: ({ row }) => {
         const id = row.original.keyId
         return <CopyableText value={id} label={id} className="font-mono text-xs" />
       },
+      filterFn: textFilterFn,
     },
     {
       accessorKey: "rawToken",

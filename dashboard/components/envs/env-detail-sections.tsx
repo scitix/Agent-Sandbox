@@ -38,7 +38,7 @@ import { clusterPath } from "@/lib/cluster-path"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import type { MultipleHandler } from "@/components/custom/query-table/pagination"
-import { createPoolColumns } from "@/components/pools/columns"
+import { createPoolColumns, poolNumberFilterOptions } from "@/components/pools/columns"
 import {
   deleteEnvAutoscalingGroupImperative,
   deleteEnvPoolImperative,
@@ -148,7 +148,15 @@ export function EnvPoolsSection({
         onEditPool,
         onDeletePool,
       }),
-    [t, onViewMetrics, observedByPool, scalingGroupByPool, autoscalingGroups, onEditPool, onDeletePool],
+    [
+      t,
+      onViewMetrics,
+      observedByPool,
+      scalingGroupByPool,
+      autoscalingGroups,
+      onEditPool,
+      onDeletePool,
+    ],
   )
 
   const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
@@ -181,7 +189,11 @@ export function EnvPoolsSection({
         if (succeeded > 0) {
           toast.success(t("pools.deletedCount", { count: succeeded }))
           void qc.invalidateQueries({
-            queryKey: ["get", "/envs/{name}/sandboxpools", { params: { path: { name: env.name } } }],
+            queryKey: [
+              "get",
+              "/envs/{name}/sandboxpools",
+              { params: { path: { name: env.name } } },
+            ],
           })
         }
         if (failed > 0) {
@@ -205,7 +217,10 @@ export function EnvPoolsSection({
         idFn={(row: AgentSandboxPool) => row.name}
         queryOptions={queryOptions}
         multipleHandlers={multipleHandlers}
-        toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
+        toolbarConfig={{
+          filterOptions: poolNumberFilterOptions(t),
+          globalSearch: { placeholder: t("pools.searchAll") },
+        }}
         className="table-layout-fixed h-full"
       >
         {createButton}
@@ -230,7 +245,10 @@ export function EnvPoolsSection({
         idFn={(row: AgentSandboxPool) => row.name}
         queryOptions={queryOptions}
         multipleHandlers={multipleHandlers}
-        toolbarConfig={{ globalSearch: { placeholder: t("pools.searchAll") } }}
+        toolbarConfig={{
+          filterOptions: poolNumberFilterOptions(t),
+          globalSearch: { placeholder: t("pools.searchAll") },
+        }}
       >
         {createButton}
       </QueryTable>

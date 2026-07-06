@@ -69,6 +69,12 @@ export default function AdminApiKeysPage() {
   const toolbarConfig = {
     globalSearch: { placeholder: t("apiKeys.searchById") },
     filterOptions: [
+      {
+        columnKey: "keyId",
+        variant: "text",
+        title: t("apiKeys.col.keyId"),
+        placeholder: t("apiKeys.searchById"),
+      },
       { columnKey: "role", title: t("apiKeys.col.role") },
       { columnKey: "team", title: t("apiKeys.col.team") },
     ] as const,

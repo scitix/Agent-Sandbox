@@ -22,50 +22,30 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 
 import { cn } from "@/lib/utils"
 
-import { ColumnHeaderNumberFilter } from "./column-header-number-filter"
+import { ColumnHeaderFilter } from "./column-header-filter"
 import { ColumnHeaderSort } from "./column-header-sort"
-import { ColumnHeaderStringFilter } from "./column-header-string-filter"
+import { useColumnFilterOption } from "./filter-context"
 
 type DataTableColumnHeaderProps<TData, TValue> = React.HTMLAttributes<HTMLDivElement> & {
   column: Column<TData, TValue>
   title: string
   tooltip?: string
-} & (
-    | {
-        numberRangeFilterOptions: {
-          title?: string
-          unit?: string
-          placeholder?: {
-            min?: string
-            max?: string
-          }
-        }
-        includesStringFilterOptions?: never
-      }
-    | {
-        numberRangeFilterOptions?: never
-        includesStringFilterOptions: {
-          title?: string
-          placeholder?: string
-        }
-      }
-    | {
-        numberRangeFilterOptions?: never
-        includesStringFilterOptions?: never
-      }
-  )
+}
 
 export function DataTableColumnHeader<TData, TValue>({
   column,
   title,
   tooltip,
   className,
-  numberRangeFilterOptions,
-  includesStringFilterOptions,
 }: DataTableColumnHeaderProps<TData, TValue>) {
   const [isHovered, setIsHovered] = useState(false)
-  const [isNumberFilterOpen, setIsNumberFilterOpen] = useState(false)
-  const [isStringFilterActive, setIsStringFilterActive] = useState(false)
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
+
+  // Enum / number-range / text filter configured for this column (if any).
+  // Text dimensions render a magnifier; the others a funnel (see
+  // column-header-filter.tsx).
+  const filterOption = useColumnFilterOption(column.id)
+  const showFunnelFilter = !!filterOption
 
   // Check if filter or sort has non-default values
   const hasActiveSort = column.getIsSorted() !== false
@@ -73,12 +53,12 @@ export function DataTableColumnHeader<TData, TValue>({
 
   // Fine-grained per-element visibility:
   // elements are shown when hovered/interacting, OR when they have a non-default value
-  const isInteracting = isHovered || isNumberFilterOpen || isStringFilterActive
+  const isInteracting = isHovered || isFilterOpen
   const sortVisible = isInteracting || hasActiveSort
   const filterVisible = isInteracting || hasActiveFilter
 
   // If column has no interactive features, just show title
-  if (!column.getCanSort() && !numberRangeFilterOptions && !includesStringFilterOptions) {
+  if (!column.getCanSort() && !filterOption) {
     return <div className={cn("text-xs", className)}>{title}</div>
   }
 
@@ -103,25 +83,14 @@ export function DataTableColumnHeader<TData, TValue>({
       )}
 
       <div className="flex min-w-0 flex-1 flex-row items-center">
-        {/* String Filter */}
-        {includesStringFilterOptions && (
-          <ColumnHeaderStringFilter
+        {/* Enum / number-range / text filter, left of the sort button */}
+        {showFunnelFilter && (
+          <ColumnHeaderFilter
             column={column}
+            option={filterOption}
             title={title}
-            options={includesStringFilterOptions}
-            onActiveChange={setIsStringFilterActive}
             isVisible={filterVisible}
-          />
-        )}
-
-        {/* Number Range Filter */}
-        {numberRangeFilterOptions && (
-          <ColumnHeaderNumberFilter
-            column={column}
-            title={title}
-            options={numberRangeFilterOptions}
-            onOpenChange={setIsNumberFilterOpen}
-            isVisible={filterVisible}
+            onOpenChange={setIsFilterOpen}
           />
         )}
 

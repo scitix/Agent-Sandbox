@@ -24,7 +24,6 @@ from ..types import UNSET, Unset
 
 from ..models.sandbox_logs_result_source import SandboxLogsResultSource
 from ..types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 import datetime
 
@@ -154,7 +153,7 @@ class SandboxLogsResult:
         if isinstance(_captured_at,  Unset):
             captured_at = UNSET
         else:
-            captured_at = isoparse(_captured_at)
+            captured_at = datetime.datetime.fromisoformat(_captured_at)
 
 
 

@@ -24,7 +24,6 @@ from ..types import UNSET, Unset
 
 from ..models.env_observed_member_state import EnvObservedMemberState
 from ..types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 import datetime
 
@@ -161,7 +160,7 @@ class EnvObservedMember:
         if isinstance(_saturated_until,  Unset):
             saturated_until = UNSET
         else:
-            saturated_until = isoparse(_saturated_until)
+            saturated_until = datetime.datetime.fromisoformat(_saturated_until)
 
 
 

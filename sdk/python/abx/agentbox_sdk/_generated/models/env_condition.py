@@ -23,7 +23,6 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 import datetime
 
@@ -105,7 +104,7 @@ class EnvCondition:
         if isinstance(_last_transition_time,  Unset):
             last_transition_time = UNSET
         else:
-            last_transition_time = isoparse(_last_transition_time)
+            last_transition_time = datetime.datetime.fromisoformat(_last_transition_time)
 
 
 

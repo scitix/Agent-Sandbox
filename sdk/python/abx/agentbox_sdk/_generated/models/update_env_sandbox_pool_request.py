@@ -44,10 +44,13 @@ class UpdateEnvSandboxPoolRequest:
         Attributes:
             replicas (int | Unset): Initial / desired replica count. Rejected when this pool's scalingGroup has autoscaling
                 enabled.
+            min_replicas (int | Unset): Lower bound on this pool's replicas, enforced as a per-member scale-down floor by
+                the Env autoscaler. Always accepted.
             max_replicas (int | Unset): Upper bound on this pool's replicas. Always accepted.
      """
 
     replicas: int | Unset = UNSET
+    min_replicas: int | Unset = UNSET
     max_replicas: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -58,6 +61,8 @@ class UpdateEnvSandboxPoolRequest:
     def to_dict(self) -> dict[str, Any]:
         replicas = self.replicas
 
+        min_replicas = self.min_replicas
+
         max_replicas = self.max_replicas
 
 
@@ -67,6 +72,8 @@ class UpdateEnvSandboxPoolRequest:
         })
         if replicas is not UNSET:
             field_dict["replicas"] = replicas
+        if min_replicas is not UNSET:
+            field_dict["minReplicas"] = min_replicas
         if max_replicas is not UNSET:
             field_dict["maxReplicas"] = max_replicas
 
@@ -79,10 +86,13 @@ class UpdateEnvSandboxPoolRequest:
         d = dict(src_dict)
         replicas = d.pop("replicas", UNSET)
 
+        min_replicas = d.pop("minReplicas", UNSET)
+
         max_replicas = d.pop("maxReplicas", UNSET)
 
         update_env_sandbox_pool_request = cls(
             replicas=replicas,
+            min_replicas=min_replicas,
             max_replicas=max_replicas,
         )
 
