@@ -2012,6 +2012,11 @@ components:
           description: "User that owns this quota, if applicable."
         resources:
           $ref: "#/components/schemas/QuotaResources"
+        metadata:
+          type: object
+          description: "Provider-attached display hints, opaque to the core schema. Keys are provider-defined (e.g. a vendor-prefixed pool name/type); generic clients ignore unknown keys."
+          additionalProperties:
+            type: string
 
     ListQuotasResult:
       type: object

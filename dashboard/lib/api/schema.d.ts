@@ -1953,6 +1953,10 @@ export interface components {
             /** @description User that owns this quota, if applicable. */
             user?: string;
             resources?: components["schemas"]["QuotaResources"];
+            /** @description Provider-attached display hints, opaque to the core schema. Keys are provider-defined (e.g. a vendor-prefixed pool name/type); generic clients ignore unknown keys. */
+            metadata?: {
+                [key: string]: string;
+            };
         };
         ListQuotasResult: {
             /** @description Page of quota objects. */
