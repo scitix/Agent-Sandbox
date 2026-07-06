@@ -76,7 +76,13 @@ create_user() {
         echo "$username ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$username 2>/dev/null || true
         chmod 440 /etc/sudoers.d/$username 2>/dev/null || true
     fi
-    chmod 777 -R "$home_dir" 2>/dev/null || true
+    # Home dir must NOT be group/other-writable: sshd's StrictModes (on by
+    # default) refuses pubkey auth when $HOME, ~/.ssh, or authorized_keys are
+    # writable by anyone but the owner — a 777 home silently breaks any workload
+    # that runs its own sshd (e.g. Oracle). Use 755 on the dir and let chown
+    # give the account ownership of everything under it, which covers the
+    # "user must be able to write its own home" need without the 777 footgun.
+    chmod 755 "$home_dir" 2>/dev/null || true
     chown -R "$username:$username" "$home_dir" 2>/dev/null || true
 }
 
