@@ -16,13 +16,13 @@
 
 "use client"
 
-import { Fragment, useMemo } from "react"
+import { Fragment, useMemo, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { useQuery } from "@tanstack/react-query"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { toast } from "sonner"
-import { Save } from "lucide-react"
+import { Check, ChevronsUpDown, Save } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -33,6 +33,16 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "@/components/ui/combobox"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { getPoolMeta, PoolTypeBadge, poolDisplayName } from "@/components/quota/pool-meta"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -468,6 +478,21 @@ function ModeToggle<T extends string>({
   )
 }
 
+// Usage summary line for a quota item, e.g. "41/96 sci.g32-12 · 0/16 sci.c22-2".
+function quotaUsageLine(item: QuotaItem): string | null {
+  const total = item.resources?.total ?? {}
+  const used = item.resources?.used ?? {}
+  if (Object.keys(total).length === 0) return null
+  return Object.entries(total)
+    .map(([k, v]) => `${used[k] ?? "0"}/${v ?? "?"} ${k}`)
+    .join(" · ")
+}
+
+// Quota selector. Uses Popover + Command (not the text-input Combobox) so both
+// the trigger and each option can render the pool-type badge + resource-pool
+// name — a plain <input> can only show a string. Value is the quota id (its
+// url), kept stable for the form; the label surfaced to the user is the pool
+// name, falling back to the raw id when a provider emits no pool metadata.
 function QuotaCombobox({
   items,
   value,
@@ -479,6 +504,10 @@ function QuotaCombobox({
   onChange: (v: string | undefined) => void
   disabled?: boolean
 }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+
   const uniqueItems = useMemo(() => {
     const seen = new Set<string>()
     const out: QuotaItem[] = []
@@ -489,46 +518,99 @@ function QuotaCombobox({
     }
     return out
   }, [items])
+
   const selected = uniqueItems.find((q) => q.id === value) ?? null
+  const selectedMeta = selected ? getPoolMeta(selected) : null
+
+  // Manual search over pool name + type + raw url (cmdk filtering disabled), so
+  // the badge-rendered options remain searchable by what the user reads.
+  const query = search.trim().toLowerCase()
+  const visible = query
+    ? uniqueItems.filter((q) => {
+        const { poolName, poolType } = getPoolMeta(q)
+        return `${poolName ?? ""} ${poolType ?? ""} ${q.name ?? ""} ${q.id}`
+          .toLowerCase()
+          .includes(query)
+      })
+    : uniqueItems
+
   return (
-    <Combobox
-      items={uniqueItems}
-      itemToStringLabel={(item) => item.name || item.id}
-      value={selected}
-      onValueChange={(v) => onChange(v?.id ?? undefined)}
-      disabled={disabled}
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (!next) setSearch("")
+      }}
     >
-      <ComboboxInput placeholder="(none)" />
-      <ComboboxContent>
-        <ComboboxList>
-          {(item: QuotaItem) => {
-            const total = item.resources?.total ?? {}
-            const used = item.resources?.used ?? {}
-            const usageLine =
-              Object.keys(total).length > 0
-                ? Object.entries(total)
-                    .map(([k, v]) => `${used[k] ?? "0"}/${v ?? "?"} ${k}`)
-                    .join(" · ")
-                : null
-            return (
-              <ComboboxItem key={item.id} value={item}>
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate font-mono text-xs leading-tight">
-                    {item.name || item.id}
-                  </span>
-                  {usageLine && (
-                    <span className="text-muted-foreground text-[10px] leading-tight">
-                      {usageLine}
-                    </span>
-                  )}
-                </div>
-              </ComboboxItem>
-            )
-          }}
-        </ComboboxList>
-        <ComboboxEmpty />
-      </ComboboxContent>
-    </Combobox>
+      <PopoverTrigger
+        disabled={disabled}
+        render={
+          <Button
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className="h-9 w-full justify-between px-2.5 font-normal"
+          />
+        }
+      >
+        {selected ? (
+          <span className="flex min-w-0 items-center gap-2">
+            <PoolTypeBadge type={selectedMeta?.poolType} />
+            <span className="truncate font-mono text-xs">{poolDisplayName(selected)}</span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">{t("envs.poolForm.quotaPlaceholder")}</span>
+        )}
+        <ChevronsUpDown className="text-muted-foreground size-4 shrink-0" />
+      </PopoverTrigger>
+      <PopoverContent className="w-(--anchor-width) p-0" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder={t("envs.poolForm.quotaSearch")}
+          />
+          <CommandList>
+            {visible.length === 0 ? (
+              <CommandEmpty>{t("envs.poolForm.quotaEmpty")}</CommandEmpty>
+            ) : (
+              <CommandGroup>
+                {visible.map((item) => {
+                  const { poolType } = getPoolMeta(item)
+                  const usageLine = quotaUsageLine(item)
+                  return (
+                    <CommandItem
+                      key={item.id}
+                      value={item.id}
+                      onSelect={() => {
+                        onChange(item.id)
+                        setOpen(false)
+                        setSearch("")
+                      }}
+                    >
+                      <div className="flex min-w-0 flex-1 flex-col gap-1">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <PoolTypeBadge type={poolType} />
+                          <span className="truncate font-mono text-xs leading-tight">
+                            {poolDisplayName(item)}
+                          </span>
+                        </span>
+                        {usageLine && (
+                          <span className="text-muted-foreground text-[10px] leading-tight">
+                            {usageLine}
+                          </span>
+                        )}
+                      </div>
+                      {item.id === value && <Check className="ml-2 size-4 shrink-0" />}
+                    </CommandItem>
+                  )
+                })}
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }
 

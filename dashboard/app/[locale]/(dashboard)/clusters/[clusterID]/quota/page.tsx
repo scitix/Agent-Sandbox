@@ -21,7 +21,8 @@ import { quotasQueryOptions } from "@/lib/queries"
 import { DotPattern } from "@/components/patterns"
 import { cn } from "@/lib/utils"
 import type { QuotaItem } from "@/lib/api/client"
-import { useTranslation, type TranslationKey } from "@/lib/i18n"
+import { useTranslation } from "@/lib/i18n"
+import { getPoolMeta, PoolTypeBadge } from "@/components/quota/pool-meta"
 
 interface ResourceCardProps {
   resourceKey: string
@@ -102,29 +103,8 @@ function ResourceCard({
   )
 }
 
-// Provider-attached display-hint keys in the generic Quota.metadata bag. The
-// Scitix quota provider populates these; other providers leave them absent, in
-// which case the raw quota id/name (its url) is shown as a fallback identity.
-const META_POOL_NAME = "quota.scitix.ai/pool-name"
-const META_POOL_TYPE = "quota.scitix.ai/pool-type"
-
-// Localization keys for the known pool types (generic cloud tiers). Unknown
-// values fall through to the raw string so a new provider value still renders.
-const POOL_TYPE_KEYS: Record<string, TranslationKey> = {
-  ondemand: "quota.poolType.ondemand",
-  shared: "quota.poolType.shared",
-  exclusive: "quota.poolType.exclusive",
-  idle: "quota.poolType.idle",
-  spot: "quota.poolType.spot",
-}
-
 function QuotaMeta({ quota }: { quota: QuotaItem }) {
-  const { t } = useTranslation()
-  const meta = quota.metadata ?? {}
-  const poolName = meta[META_POOL_NAME]
-  const poolType = meta[META_POOL_TYPE]
-  const poolTypeKey = poolType ? POOL_TYPE_KEYS[poolType] : undefined
-  const poolTypeLabel = poolTypeKey ? t(poolTypeKey) : poolType
+  const { poolName, poolType } = getPoolMeta(quota)
 
   return (
     <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -138,11 +118,7 @@ function QuotaMeta({ quota }: { quota: QuotaItem }) {
           user: {quota.user}
         </span>
       )}
-      {poolTypeLabel && (
-        <span className="border-brand/40 bg-brand/10 text-brand border px-2 py-0.5 font-mono text-xs font-semibold tracking-wide uppercase">
-          {poolTypeLabel}
-        </span>
-      )}
+      <PoolTypeBadge type={poolType} />
       {poolName ? (
         <span className="text-foreground font-mono text-xs break-all">{poolName}</span>
       ) : (
