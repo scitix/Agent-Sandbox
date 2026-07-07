@@ -36,3 +36,30 @@ func DeriveResourceKey(observed corev1.ResourceRequirements) string {
 
 	return fmt.Sprintf("%dc%dgi", cpu, memGi)
 }
+
+// FitsWithin reports whether every resource dimension in pod is ≤ the
+// corresponding dimension in capacity (the reservation envelope, typically an
+// InstanceType's BaseResources × multiplier). This is the "round-down"
+// contract: a Pod may request less than the reserved instance in any
+// dimension, but never more.
+//
+// It returns the first offending dimension when pod exceeds capacity — either
+// a dimension whose value is larger, or a non-zero dimension absent from
+// capacity (e.g. a GPU request against a CPU-only instance). Comparison uses
+// MilliValue() (lossless for cpu / memory / gpu), matching the precision used
+// by the matching helpers elsewhere.
+func FitsWithin(pod, capacity corev1.ResourceList) (exceeded corev1.ResourceName, ok bool) {
+	for name, q := range pod {
+		if q.IsZero() {
+			continue
+		}
+		capQ, has := capacity[name]
+		if !has {
+			return name, false
+		}
+		if q.MilliValue() > capQ.MilliValue() {
+			return name, false
+		}
+	}
+	return "", true
+}

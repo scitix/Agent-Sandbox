@@ -87,6 +87,19 @@ const (
 	LabelTeam = "scheduling.navix.sh/team"
 	LabelUser = "scheduling.navix.sh/user"
 
+	// AnnotationReservationReplicaQuota stores the per-replica reservation quota
+	// as a JSON map[string]string of instancetype-name → whole-instance count,
+	// e.g. {"sci.c23-2":"2"}. It is the bridge between the API server (which
+	// derives sizing from EnvClusterMember.{InstanceType,Multiplier}) and the
+	// closed-source SI Scheduler reservation plugin, which reads it to size the
+	// reservation. When an InstanceType is used, the API server stamps the real
+	// multiplier here so the reservation quota is charged per whole instance even
+	// when the Pod's actual resource request is rounded down below the instance.
+	//
+	// The value MUST stay identical to the reservation plugin's own constant
+	// (agentbox pkg/scitix/reservation/sischeduler.AnnotationReplicaQuota).
+	AnnotationReservationReplicaQuota = "scheduling.navix.sh/reservation-replica-quota"
+
 	// LabelEnv is stamped onto every member SandboxPool by the SandboxEnv
 	// reconciler at materialisation time, with the owning Env's
 	// metadata.name as value. Used by the Pool autoscaler to reverse-lookup

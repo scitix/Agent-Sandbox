@@ -16,7 +16,9 @@ package envmember
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -43,13 +45,22 @@ import (
 //
 // Validation:
 //   - When the InstanceType catalog is enabled, prefer Config.InstanceType.
-//     The server resolves it via the provider, persists the catalog name +
-//     multiplier on the member, AND stamps the resolved resources into
-//     Config.InlineResources so the renderer (which still consumes
-//     InlineResources in Phase 1) sees a consistent picture even before the
-//     catalog-driven renderer lands in Phase 2.
+//     `instanceType × multiplier` defines the reservation "envelope". If the
+//     caller ALSO supplies Config.InlineResources, those are treated as the
+//     actual (possibly rounded-down) Pod request and validated to fit within
+//     the envelope in every dimension (see instancetype.FitsWithin) — a Pod may
+//     request less than the reserved instance but never more. If InlineResources
+//     is absent, the Pod resources default to the full envelope.
+//     The real multiplier is stamped into the reservation-replica-quota
+//     annotation so the SI Scheduler reservation plugin charges quota per whole
+//     instance even when the Pod request is rounded down.
 //   - Otherwise the caller must supply Config.InlineResources directly.
 //   - Both paths empty → BadRequest.
+//
+// Grouping: with an InstanceType, ScalingGroup / PoolName are derived from the
+// envelope shape (instanceType × multiplier), NOT the rounded-down request, so
+// Pools sharing an instanceType cluster into one group regardless of per-Pool
+// downsizing.
 //
 // envName is checked against the 24-char limit (matches openapi.yaml) so
 // the composed PoolName stays under the 63-char DNS-label cap.
@@ -70,19 +81,39 @@ func derivePoolMember(
 	switch {
 	case useInstanceType:
 		mult := max(cfg.Multiplier, 1)
-		resolved, appErr := instProv.Resolve(ctx, cfg.InstanceType, mult)
+		envelope, appErr := instProv.Resolve(ctx, cfg.InstanceType, mult)
 		if appErr != nil {
 			return in, appErr
 		}
-		resources = resolved
 		cfg.Multiplier = mult
-		// Stamp the resolved resources onto InlineResources so the Phase 1
-		// renderer (which consumes InlineResources) sees the catalog's
-		// picture. InstanceType + Multiplier are preserved so when the
-		// catalog-aware renderer ships in Phase 2 it can re-derive on
-		// catalog updates without needing API rewrites.
-		req := resolved.DeepCopy()
-		cfg.InlineResources = req
+
+		if cfg.InlineResources != nil {
+			// Rounded-down real request: every dimension must fit within the
+			// envelope (round down allowed, round up rejected).
+			if dim, ok := instancetypeplugin.FitsWithin(cfg.InlineResources.Requests, envelope.Requests); !ok {
+				return in, domain.NewBadRequest(fmt.Sprintf(
+					"inlineResources request %q exceeds instanceType %q × multiplier %d",
+					dim, cfg.InstanceType, mult))
+			}
+			if dim, ok := instancetypeplugin.FitsWithin(cfg.InlineResources.Limits, envelope.Requests); !ok {
+				return in, domain.NewBadRequest(fmt.Sprintf(
+					"inlineResources limit %q exceeds instanceType %q × multiplier %d",
+					dim, cfg.InstanceType, mult))
+			}
+			// Keep the caller's (smaller) request as the actual Pod resources.
+		} else {
+			// No downsizing: the Pod uses the full envelope.
+			cfg.InlineResources = envelope.DeepCopy()
+		}
+
+		// Group/name by the envelope shape, not the rounded-down request.
+		resources = envelope
+
+		// Carry the real multiplier to the reservation plugin (charges quota
+		// per whole instance even when the request is rounded down).
+		if appErr := stampReservationReplicaQuota(cfg, cfg.InstanceType, mult); appErr != nil {
+			return in, appErr
+		}
 	case cfg.InlineResources != nil:
 		resources = *cfg.InlineResources
 		cfg.InstanceType = ""
@@ -108,6 +139,25 @@ func derivePoolMember(
 	in.Name = envName + "-" + resourceKey + suffix
 	cfg.ScalingGroup = resourceKey
 	return in, nil
+}
+
+// stampReservationReplicaQuota writes {"<instanceType>":"<multiplier>"} into
+// Config.Annotations under AnnotationReservationReplicaQuota. The renderer
+// copies Config.Annotations onto the Pool after template-annotation sync, so
+// this value overrides any template-authored placeholder and carries the real
+// whole-instance count to the SI Scheduler reservation plugin. This lets the
+// reservation charge quota per whole instance even when the Pod's actual
+// request has been rounded down below the instance size.
+func stampReservationReplicaQuota(cfg *agentsv1alpha1.EnvClusterMemberConfig, instanceType string, mult int32) *domain.AppError {
+	b, err := json.Marshal(map[string]string{instanceType: strconv.FormatInt(int64(mult), 10)})
+	if err != nil {
+		return domain.NewInternal("encode reservation replica quota annotation", err)
+	}
+	if cfg.Annotations == nil {
+		cfg.Annotations = map[string]string{}
+	}
+	cfg.Annotations[agentsv1alpha1.AnnotationReservationReplicaQuota] = string(b)
+	return nil
 }
 
 // scalingGroupHasAutoscaling reports whether autoscaling is enabled for
