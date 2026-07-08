@@ -110,7 +110,10 @@ type SandboxService interface {
 // by tests that don't wire the Env layer).
 type EnvRouter interface {
 	Resolve(ns, clusterID, poolOrEnvName string) envscheduler.ResolveResult
-	SelectPool(envKey types.NamespacedName) string
+	// SelectPool picks a member pool of envKey. scalingGroup, when non-empty,
+	// hard-scopes the choice to that autoscaling group (returns "" when the
+	// group has no member). Empty = no constraint.
+	SelectPool(envKey types.NamespacedName, scalingGroup string) string
 }
 
 type k8sSandboxService struct {
@@ -356,10 +359,14 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		res := s.envRouter.Resolve(input.Namespace, input.ClusterID, input.PoolName)
 		switch res.Kind {
 		case envscheduler.ResolveEnv:
-			selected := s.envRouter.SelectPool(res.EnvKey)
+			selected := s.envRouter.SelectPool(res.EnvKey, input.RequestedScalingGroup)
 			if selected == "" {
-				return nil, domain.NewServiceUnavailable(
-					fmt.Sprintf("sandbox env %s/%s has no eligible members", input.Namespace, res.EnvKey.Name))
+				msg := fmt.Sprintf("sandbox env %s/%s has no eligible members", input.Namespace, res.EnvKey.Name)
+				if input.RequestedScalingGroup != "" {
+					msg = fmt.Sprintf("sandbox env %s/%s has no eligible members in scaling group %q",
+						input.Namespace, res.EnvKey.Name, input.RequestedScalingGroup)
+				}
+				return nil, domain.NewServiceUnavailable(msg)
 			}
 			input.PoolName = selected
 		case envscheduler.ResolveLocalPool:

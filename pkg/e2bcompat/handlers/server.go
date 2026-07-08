@@ -19,8 +19,10 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -183,7 +185,7 @@ func domainSandboxToListedSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxP
 // ---------------------------------------------------------------------------
 
 func (s *Server) GetHealth(_ context.Context, _ e2bgen.GetHealthRequestObject) (e2bgen.GetHealthResponseObject, error) {
-	return e2bgen.GetHealth200Response{}, nil
+	return e2bgen.GetHealth204Response{}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +233,13 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 				input.StartupTimeout = time.Duration(secs) * time.Second
 			}
 			delete(input.Metadata, startupTimeoutMetaKey)
+		}
+		// Scaling-group placement: pin this create to a specific autoscaling
+		// group (e.g. "1c2Gi") so it only lands on member pools in that group.
+		// Consumed and NOT forwarded to sandbox metadata.
+		if grp, ok := input.Metadata[service.MetaKeyScalingGroup]; ok && grp != "" {
+			input.RequestedScalingGroup = grp
+			delete(input.Metadata, service.MetaKeyScalingGroup)
 		}
 	}
 	if req.Body.EnvVars != nil && len(*req.Body.EnvVars) > 0 {
@@ -551,6 +560,18 @@ func (s *Server) PostAdminTeamsTeamIDBuildsCancel(_ context.Context, _ e2bgen.Po
 	return e2bgen.PostAdminTeamsTeamIDBuildsCancel500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
 }
 
+func (s *Server) PostAdminTeamsTeamIDApiKeys(_ context.Context, _ e2bgen.PostAdminTeamsTeamIDApiKeysRequestObject) (e2bgen.PostAdminTeamsTeamIDApiKeysResponseObject, error) {
+	return e2bgen.PostAdminTeamsTeamIDApiKeys500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) DeleteAdminTeamsTeamIDApiKeysApiKeyID(_ context.Context, _ e2bgen.DeleteAdminTeamsTeamIDApiKeysApiKeyIDRequestObject) (e2bgen.DeleteAdminTeamsTeamIDApiKeysApiKeyIDResponseObject, error) {
+	return e2bgen.DeleteAdminTeamsTeamIDApiKeysApiKeyID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) PutSandboxesSandboxIDNetwork(_ context.Context, _ e2bgen.PutSandboxesSandboxIDNetworkRequestObject) (e2bgen.PutSandboxesSandboxIDNetworkResponseObject, error) {
+	return e2bgen.PutSandboxesSandboxIDNetwork500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
 func (s *Server) PostAdminTeamsTeamIDSandboxesKill(_ context.Context, _ e2bgen.PostAdminTeamsTeamIDSandboxesKillRequestObject) (e2bgen.PostAdminTeamsTeamIDSandboxesKillResponseObject, error) {
 	return e2bgen.PostAdminTeamsTeamIDSandboxesKill500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
 }
@@ -631,8 +652,136 @@ func (s *Server) GetTemplatesTemplateIDTags(_ context.Context, _ e2bgen.GetTempl
 	return e2bgen.GetTemplatesTemplateIDTags500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
 }
 
-func (s *Server) GetV2Sandboxes(_ context.Context, _ e2bgen.GetV2SandboxesRequestObject) (e2bgen.GetV2SandboxesResponseObject, error) {
-	return e2bgen.GetV2Sandboxes500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+// GetV2Sandboxes is the paginated list endpoint the current E2B SDK targets
+// (GET /v2/sandboxes). It applies the same namespace/team/user scoping as the
+// legacy GetSandboxes, then filters by the optional metadata/state query params
+// and returns one page. The next-page cursor is returned via the "x-next-token"
+// response header — the SDK paginator reads it there and stops once it is absent.
+func (s *Server) GetV2Sandboxes(ctx context.Context, req e2bgen.GetV2SandboxesRequestObject) (e2bgen.GetV2SandboxesResponseObject, error) {
+	auth := authFrom(ctx)
+	result, appErr := s.sandbox.List(ctx, service.SandboxListFilter{
+		Namespace: auth.Namespace,
+		Team:      auth.Team,
+		User:      auth.User,
+		Limit:     0,
+	})
+	if appErr != nil {
+		return e2bgen.GetV2Sandboxes500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespAppErr(ctx, appErr))}, nil
+	}
+
+	metaFilter, err := parseMetadataFilter(req.Params.Metadata)
+	if err != nil {
+		return e2bgen.GetV2Sandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(errRespCode(400, "invalid metadata filter"))}, nil
+	}
+	stateFilter := newStateFilter(req.Params.State)
+
+	poolMap := s.loadPoolMap(ctx, auth.Namespace)
+
+	items := make([]e2bgen.ListedSandbox, 0, len(result.Items))
+	for i := range result.Items {
+		sb := &result.Items[i]
+		listed := domainSandboxToListedSandbox(sb, poolMap[sb.PoolName])
+		if !stateFilter.matches(listed.State) {
+			continue
+		}
+		if !metadataMatches(listed.Metadata, metaFilter) {
+			continue
+		}
+		items = append(items, listed)
+	}
+
+	offset := min(decodeNextToken(req.Params.NextToken), len(items))
+	end := len(items)
+	if req.Params.Limit != nil && *req.Params.Limit > 0 {
+		end = min(offset+int(*req.Params.Limit), end)
+	}
+
+	if end < len(items) {
+		if gc := httpctx.GinFromCtx(ctx); gc != nil {
+			gc.Header("x-next-token", encodeNextToken(end))
+		}
+	}
+
+	return e2bgen.GetV2Sandboxes200JSONResponse(items[offset:end]), nil
+}
+
+// parseMetadataFilter decodes the E2B "metadata" query param — a URL-encoded
+// "key=value&key2=value2" string — into a map. A sandbox matches only when every
+// pair is present (AND semantics), mirroring the upstream E2B filter.
+func parseMetadataFilter(raw *string) (map[string]string, error) {
+	if raw == nil || *raw == "" {
+		return nil, nil
+	}
+	values, err := url.ParseQuery(*raw)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(values))
+	for k, v := range values {
+		if len(v) > 0 {
+			out[k] = v[0]
+		}
+	}
+	return out, nil
+}
+
+func metadataMatches(meta *e2bgen.SandboxMetadata, filter map[string]string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	if meta == nil {
+		return false
+	}
+	for k, v := range filter {
+		if (*meta)[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// stateFilter is the parsed set of sandbox states requested via the "state"
+// query param. A nil/empty set matches every state.
+type stateFilter map[e2bgen.SandboxState]struct{}
+
+func newStateFilter(states *[]e2bgen.SandboxState) stateFilter {
+	if states == nil || len(*states) == 0 {
+		return nil
+	}
+	set := make(stateFilter, len(*states))
+	for _, st := range *states {
+		set[st] = struct{}{}
+	}
+	return set
+}
+
+func (f stateFilter) matches(state e2bgen.SandboxState) bool {
+	if len(f) == 0 {
+		return true
+	}
+	_, ok := f[state]
+	return ok
+}
+
+// encodeNextToken / decodeNextToken carry an opaque offset cursor. The offset is
+// base64-encoded so callers treat it as opaque; a malformed token decodes to 0.
+func encodeNextToken(offset int) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+func decodeNextToken(token *string) int {
+	if token == nil || *token == "" {
+		return 0
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(*token)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(string(raw))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func (s *Server) GetV2SandboxesSandboxIDLogs(_ context.Context, _ e2bgen.GetV2SandboxesSandboxIDLogsRequestObject) (e2bgen.GetV2SandboxesSandboxIDLogsResponseObject, error) {

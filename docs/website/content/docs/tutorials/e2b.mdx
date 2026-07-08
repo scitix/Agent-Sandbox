@@ -140,6 +140,28 @@ sandbox = Sandbox.create(
 )
 ```
 
+### Scaling Group
+
+When the target `SandboxEnv` fronts pools of several sizes (each tagged with a
+scaling group such as `1c2Gi` or `2c4Gi`), you can pin a create to one group
+using the `agentbox.scitix.ai/scaling-group` reserved key in `metadata`. The
+sandbox is then only placed on member pools in that group:
+
+```python
+sandbox = Sandbox.create(
+    "ENV_NAME",
+    secure=False,
+    metadata={"agentbox.scitix.ai/scaling-group": "1c2Gi"},  # only 1c2Gi pools
+)
+```
+
+This is a hard constraint: if the env has no pool in the requested group the
+create fails (HTTP 503) rather than falling back to another group. When the
+group has no idle pod, the create blocks until one becomes available (up to the
+startup timeout) — and if that group has autoscaling enabled, the request also
+drives it to scale up. Omit the key to let the scheduler pick any member pool
+(the default).
+
 ### Complete Example
 
 ```python
@@ -149,6 +171,7 @@ sandbox = Sandbox.create(
     secure=False,
     metadata={
         "agentbox.scitix.ai/startup-timeout": "120",          # Startup timeout: 2 mins
+        "agentbox.scitix.ai/scaling-group": "1c2Gi",          # Pin to the 1c2Gi group (optional)
         "my-custom-key": "my-value",                          # Custom user metadata (optional)
     },
 )

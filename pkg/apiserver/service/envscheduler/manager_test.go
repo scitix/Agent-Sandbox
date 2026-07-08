@@ -227,3 +227,60 @@ func TestOnEnvUpsert_NilIsNoop(t *testing.T) {
 		t.Errorf("nil upsert should be a no-op, snapshot size = %d", len(got))
 	}
 }
+
+// --- SelectPool scaling-group scoping ---------------------------------------
+
+// memberInGroup builds a local member pool that belongs to the named
+// autoscaling group.
+func memberInGroup(name, group string) agentsv1alpha1.EnvClusterMember {
+	return agentsv1alpha1.EnvClusterMember{
+		Name:   name,
+		Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: group},
+	}
+}
+
+func TestSelectPool_NoGroup_Unconstrained(t *testing.T) {
+	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
+	mgr.OnEnvUpsert(makeEnv("env", memberInGroup("small", "1c2Gi"), memberInGroup("big", "2c4Gi")))
+	got := mgr.SelectPool(types.NamespacedName{Namespace: "ns", Name: "env"}, "")
+	// With no constraint either member is acceptable; the framework must pick one.
+	if got != "small" && got != "big" {
+		t.Errorf("unconstrained SelectPool = %q, want one of small/big", got)
+	}
+}
+
+func TestSelectPool_GroupScoping_PicksInGroup(t *testing.T) {
+	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
+	mgr.OnEnvUpsert(makeEnv("env",
+		memberInGroup("small-a", "1c2Gi"),
+		memberInGroup("small-b", "1c2Gi"),
+		memberInGroup("big", "2c4Gi"),
+	))
+	got := mgr.SelectPool(types.NamespacedName{Namespace: "ns", Name: "env"}, "1c2Gi")
+	if got != "small-a" && got != "small-b" {
+		t.Errorf("SelectPool(1c2Gi) = %q, want an in-group pool (small-a/small-b), never big", got)
+	}
+}
+
+func TestSelectPool_GroupScoping_NoMatchReturnsEmpty(t *testing.T) {
+	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
+	mgr.OnEnvUpsert(makeEnv("env", memberInGroup("small", "1c2Gi"), memberInGroup("big", "2c4Gi")))
+	if got := mgr.SelectPool(types.NamespacedName{Namespace: "ns", Name: "env"}, "8c16Gi"); got != "" {
+		t.Errorf("SelectPool for absent group = %q, want \"\" (hard constraint, no fallback)", got)
+	}
+}
+
+func TestSelectPool_GroupScoping_SingleMemberGuard(t *testing.T) {
+	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
+	mgr.OnEnvUpsert(makeEnv("env", memberInGroup("only", "1c2Gi")))
+	key := types.NamespacedName{Namespace: "ns", Name: "env"}
+	if got := mgr.SelectPool(key, "1c2Gi"); got != "only" {
+		t.Errorf("single member in requested group: SelectPool = %q, want only", got)
+	}
+	if got := mgr.SelectPool(key, "2c4Gi"); got != "" {
+		t.Errorf("single member in a different group: SelectPool = %q, want \"\"", got)
+	}
+	if got := mgr.SelectPool(key, ""); got != "only" {
+		t.Errorf("single member, no constraint: SelectPool = %q, want only", got)
+	}
+}

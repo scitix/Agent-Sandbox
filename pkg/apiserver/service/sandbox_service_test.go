@@ -210,14 +210,14 @@ func TestSandboxService_Create_PoolNotFound(t *testing.T) {
 // fakeEnvRouter is a tiny EnvRouter stub for the entry-resolution tests.
 type fakeEnvRouter struct {
 	resolveFn func(ns, clusterID, poolName string) envscheduler.ResolveResult
-	pickFn    func(types.NamespacedName) string
+	pickFn    func(types.NamespacedName, string) string
 }
 
 func (f *fakeEnvRouter) Resolve(ns, clusterID, poolName string) envscheduler.ResolveResult {
 	return f.resolveFn(ns, clusterID, poolName)
 }
-func (f *fakeEnvRouter) SelectPool(key types.NamespacedName) string {
-	return f.pickFn(key)
+func (f *fakeEnvRouter) SelectPool(key types.NamespacedName, scalingGroup string) string {
+	return f.pickFn(key, scalingGroup)
 }
 
 // TestSandboxService_Create_EnvRouter_BareNameMissing_Returns404 verifies the
@@ -261,7 +261,7 @@ func TestSandboxService_Create_EnvRouter_LocalPoolBypassesEnv(t *testing.T) {
 			resolveCalls++
 			return envscheduler.ResolveResult{Kind: envscheduler.ResolveLocalPool, PoolName: "direct"}
 		},
-		pickFn: func(types.NamespacedName) string { pickCalls++; return "" },
+		pickFn: func(types.NamespacedName, string) string { pickCalls++; return "" },
 	}
 	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
 
@@ -360,7 +360,7 @@ func TestSandboxService_Create_EnvRouter_EnvHit_PicksSelectedPool(t *testing.T) 
 				EnvKey: types.NamespacedName{Namespace: ns, Name: poolName},
 			}
 		},
-		pickFn: func(types.NamespacedName) string { return "chosen" },
+		pickFn: func(types.NamespacedName, string) string { return "chosen" },
 	}
 	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
 
@@ -386,7 +386,7 @@ func TestSandboxService_Create_EnvRouter_EnvHitNoMembers_ReturnsServiceUnavailab
 		resolveFn: func(ns, _, poolName string) envscheduler.ResolveResult {
 			return envscheduler.ResolveResult{Kind: envscheduler.ResolveEnv, EnvKey: types.NamespacedName{Namespace: ns, Name: poolName}}
 		},
-		pickFn: func(types.NamespacedName) string { return "" },
+		pickFn: func(types.NamespacedName, string) string { return "" },
 	}
 	svc.(interface{ SetEnvRouter(EnvRouter) }).SetEnvRouter(router)
 

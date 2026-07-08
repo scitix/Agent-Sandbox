@@ -189,21 +189,30 @@ func (m *Manager) buildEntry(env *agentsv1alpha1.SandboxEnv) *envEntry {
 // apply. Returns "" when the env is unknown or has no eligible local
 // members.
 //
+// scalingGroup, when non-empty, hard-scopes selection to members in that
+// autoscaling group: a lone member in a different group, or an env with no
+// member in the group, yields "" (surfaced upstream as a 503) rather than
+// falling back to another group. Empty = no constraint (unchanged).
+//
 // Unlike Route, SelectPool does NOT Enqueue — the caller is responsible
 // for that downstream (typically after fetching the chosen Pool, resolving
 // container images, etc.).
-func (m *Manager) SelectPool(envKey types.NamespacedName) string {
+func (m *Manager) SelectPool(envKey types.NamespacedName, scalingGroup string) string {
 	m.mu.RLock()
 	entry, ok := m.envs[envKey]
 	m.mu.RUnlock()
 	if !ok || len(entry.members) == 0 {
 		return ""
 	}
-	// Single-member fast path: no scoring needed.
+	// Single-member fast path: no scoring needed. Still honour a requested
+	// scaling group — a lone member outside the group is not eligible.
 	if len(entry.members) == 1 && entry.members[0].isLocal {
+		if scalingGroup != "" && entry.members[0].scalingGroup != scalingGroup {
+			return ""
+		}
 		return entry.members[0].poolName
 	}
-	cands := m.buildCandidates(envKey, entry)
+	cands := m.buildCandidates(envKey, entry, scalingGroup)
 	if len(cands) == 0 {
 		return ""
 	}

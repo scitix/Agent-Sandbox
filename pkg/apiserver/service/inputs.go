@@ -20,6 +20,15 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 )
 
+// MetaKeyScalingGroup is the reserved create-metadata key that pins a sandbox
+// to a specific autoscaling group (e.g. "1c2Gi"). Both the E2B-compatible and
+// the native create handlers consume it into CreateSandboxInput.RequestedScalingGroup
+// and strip it from the metadata that gets stored on the pod. Empty / absent =
+// no group constraint (any member pool of the env is eligible — unchanged
+// behaviour). The value is matched verbatim against a member's
+// EnvClusterMemberConfig.ScalingGroup.
+const MetaKeyScalingGroup = "agentbox.scitix.ai/scaling-group"
+
 // CreateSandboxInput carries all parameters needed to create a new sandbox.
 // The shape is service-internal: it holds parsed timeouts (durations), the
 // cluster prefix already split out of the pool name, and post-start hooks
@@ -36,6 +45,13 @@ type CreateSandboxInput struct {
 	Metadata        map[string]string
 	StartupTimeout  time.Duration // 0 means no timeout
 	IdleTimeout     time.Duration // 0 means no expiry
+	// RequestedScalingGroup, when non-empty, hard-scopes pool selection to the
+	// env's member pools whose autoscaling group
+	// (EnvClusterMemberConfig.ScalingGroup) equals this value. If no member of
+	// the env belongs to that group the create fails (503) rather than falling
+	// back to another group. Empty = no constraint. Set from the reserved
+	// metadata key MetaKeyScalingGroup by the create handlers.
+	RequestedScalingGroup string
 	// PostStartHooks are actions to run after the sandbox transitions Starting → Running.
 	// Serialized to a pod annotation at claim time; consumed by the controller.
 	PostStartHooks []poststarthooks.Action

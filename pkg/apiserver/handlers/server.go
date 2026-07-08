@@ -262,6 +262,13 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 	}
 	if req.Body.Metadata != nil {
 		input.Metadata = *req.Body.Metadata
+		// Scaling-group placement via the reserved metadata key (mirrors the
+		// E2B handler): pin selection to one autoscaling group, then strip the
+		// key so it isn't persisted as sandbox metadata.
+		if grp, ok := input.Metadata[service.MetaKeyScalingGroup]; ok && grp != "" {
+			input.RequestedScalingGroup = grp
+			delete(input.Metadata, service.MetaKeyScalingGroup)
+		}
 	}
 	if req.Body.IdleTimeout != nil && *req.Body.IdleTimeout != "" {
 		d, err := time.ParseDuration(*req.Body.IdleTimeout)

@@ -30,7 +30,7 @@ import (
 // in best-first order. The first scheduler whose Enqueue accepts wins.
 // If every candidate refuses, the call returns RouteSaturated.
 func (m *Manager) routeMulti(_ context.Context, envKey types.NamespacedName, entry *envEntry, req *schedule.ClaimRequest) RouteResult {
-	cands := m.buildCandidates(envKey, entry)
+	cands := m.buildCandidates(envKey, entry, "")
 	if len(cands) == 0 {
 		return RouteResult{Kind: RouteNotFound}
 	}
@@ -51,7 +51,18 @@ func (m *Manager) routeMulti(_ context.Context, envKey types.NamespacedName, ent
 // of the env. Reads PoolScheduler.Snapshot for live counters and
 // SandboxEnv.Status.ObservedMember for DesiredReplicas + SaturatedUntil.
 // Both are O(1) atomic / map lookups on the hot path.
-func (m *Manager) buildCandidates(envKey types.NamespacedName, entry *envEntry) []CandidateContext {
+//
+// scalingGroup, when non-empty, hard-scopes the candidate set to members
+// in that autoscaling group. Scoping here — rather than as a Filter plugin —
+// is deliberate: framework.Rank's "all candidates rejected" fallback ranks
+// the candidate slice it was handed, so restricting candidates up front keeps
+// that fallback WITHIN the requested group. A maxed-out / zero-idle in-group
+// pool is therefore still selected (the claim parks and waits, and — if the
+// group has autoscaling enabled — the parked claim is itself the reactive
+// scale-up signal), while the request never leaks to a different group. When
+// no member matches, the empty result surfaces upstream as a 503. Empty
+// scalingGroup = no scoping (unchanged behaviour).
+func (m *Manager) buildCandidates(envKey types.NamespacedName, entry *envEntry, scalingGroup string) []CandidateContext {
 	now := time.Now()
 	// Pull observed-member projections + per-scaling-group sibling
 	// totals from Env.Status (when available). The router has to know
@@ -91,6 +102,10 @@ func (m *Manager) buildCandidates(envKey types.NamespacedName, entry *envEntry) 
 	for _, mr := range entry.members {
 		if !mr.isLocal {
 			continue // cross-cluster routing deferred
+		}
+		// Hard scaling-group scoping: skip members outside the requested group.
+		if scalingGroup != "" && mr.scalingGroup != scalingGroup {
+			continue
 		}
 		var snap schedule.Snapshot
 		if sched := m.pools.GetScheduler(envKey.Namespace, mr.poolName); sched != nil {
