@@ -224,7 +224,7 @@ ADDLICENSE_VERSION ?= v1.2.0
 # so `make gen-internal-proto` is reproducible across machines.
 PROTOC_GEN_GO_VERSION ?= v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
-E2B_SPEC_VERSION ?= 2026.10
+E2B_SPEC_VERSION ?= 2026.24
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \

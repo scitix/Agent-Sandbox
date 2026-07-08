@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	AccessTokenAuthScopes    = "AccessTokenAuth.Scopes"
-	AdminTokenAuthScopes     = "AdminTokenAuth.Scopes"
-	ApiKeyAuthScopes         = "ApiKeyAuth.Scopes"
-	Supabase1TokenAuthScopes = "Supabase1TokenAuth.Scopes"
-	Supabase2TeamAuthScopes  = "Supabase2TeamAuth.Scopes"
+	AccessTokenAuthScopes        = "AccessTokenAuth.Scopes"
+	AdminApiKeyAuthScopes        = "AdminApiKeyAuth.Scopes"
+	AdminTeamAuthScopes          = "AdminTeamAuth.Scopes"
+	ApiKeyAuthScopes             = "ApiKeyAuth.Scopes"
+	AuthProviderBearerAuthScopes = "AuthProviderBearerAuth.Scopes"
+	AuthProviderTeamAuthScopes   = "AuthProviderTeamAuth.Scopes"
+	Supabase1TokenAuthScopes     = "Supabase1TokenAuth.Scopes"
+	Supabase2TeamAuthScopes      = "Supabase2TeamAuth.Scopes"
 )
 
 // Defines values for AWSRegistryType.
@@ -136,6 +139,7 @@ const (
 	NodeStatusConnecting NodeStatus = "connecting"
 	NodeStatusDraining   NodeStatus = "draining"
 	NodeStatusReady      NodeStatus = "ready"
+	NodeStatusStandby    NodeStatus = "standby"
 	NodeStatusUnhealthy  NodeStatus = "unhealthy"
 )
 
@@ -148,7 +152,27 @@ func (e NodeStatus) Valid() bool {
 		return true
 	case NodeStatusReady:
 		return true
+	case NodeStatusStandby:
+		return true
 	case NodeStatusUnhealthy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SandboxOnTimeout.
+const (
+	Kill  SandboxOnTimeout = "kill"
+	Pause SandboxOnTimeout = "pause"
+)
+
+// Valid indicates whether the value is a known member of the SandboxOnTimeout enum.
+func (e SandboxOnTimeout) Valid() bool {
+	switch e {
+	case Kill:
+		return true
+	case Pause:
 		return true
 	default:
 		return false
@@ -591,7 +615,9 @@ type Node struct {
 	// ServiceInstanceID Service instance identifier of the node
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
-	// Status Status of the node
+	// Status Status of the node.
+	// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
+	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 
 	// Version Version of the orchestrator
@@ -628,7 +654,9 @@ type NodeDetail struct {
 	// ServiceInstanceID Service instance identifier of the node
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
-	// Status Status of the node
+	// Status Status of the node.
+	// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
+	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 
 	// Version Version of the orchestrator
@@ -659,7 +687,9 @@ type NodeMetrics struct {
 	MemoryUsedBytes uint64 `json:"memoryUsedBytes"`
 }
 
-// NodeStatus Status of the node
+// NodeStatus Status of the node.
+// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
+// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 type NodeStatus string
 
 // NodeStatusChange defines model for NodeStatusChange.
@@ -667,7 +697,9 @@ type NodeStatusChange struct {
 	// ClusterID Identifier of the cluster
 	ClusterID *openapi_types.UUID `json:"clusterID,omitempty"`
 
-	// Status Status of the node
+	// Status Status of the node.
+	// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
+	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 }
 
@@ -723,6 +755,9 @@ type SandboxDetail struct {
 	// Alias Alias of the template
 	Alias *string `json:"alias,omitempty"`
 
+	// AllowInternetAccess Whether internet access was explicitly enabled or disabled for the sandbox. Null means it was not explicitly set.
+	AllowInternetAccess *bool `json:"allowInternetAccess,omitempty"`
+
 	// ClientID Identifier of the client
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ClientID string `json:"clientID"`
@@ -745,9 +780,13 @@ type SandboxDetail struct {
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
 
+	// Lifecycle Sandbox lifecycle policy returned by sandbox info.
+	Lifecycle *SandboxLifecycle `json:"lifecycle,omitempty"`
+
 	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB MemoryMB         `json:"memoryMB"`
-	Metadata *SandboxMetadata `json:"metadata,omitempty"`
+	MemoryMB MemoryMB              `json:"memoryMB"`
+	Metadata *SandboxMetadata      `json:"metadata,omitempty"`
+	Network  *SandboxNetworkConfig `json:"network,omitempty"`
 
 	// SandboxID Identifier of the sandbox
 	SandboxID string `json:"sandboxID"`
@@ -761,6 +800,27 @@ type SandboxDetail struct {
 	// TemplateID Identifier of the template from which is the sandbox created
 	TemplateID   string                `json:"templateID"`
 	VolumeMounts *[]SandboxVolumeMount `json:"volumeMounts,omitempty"`
+}
+
+// SandboxEgressProxyConfig SOCKS5 proxy for sandbox egress. Outbound TCP is tunneled through the proxy after allow/deny filtering; the sandbox is unaware. Domain-matched flows use remote DNS (ATYP=domain).
+type SandboxEgressProxyConfig struct {
+	// Address SOCKS5 proxy address in host:port format (e.g. "proxy.example.com:1080").
+	Address string `json:"address"`
+
+	// Password Optional SOCKS5 password (RFC 1929), max 255 bytes.
+	Password *string `json:"password,omitempty"`
+
+	// Username Optional SOCKS5 username (RFC 1929), max 255 bytes.
+	Username *string `json:"username,omitempty"`
+}
+
+// SandboxLifecycle Sandbox lifecycle policy returned by sandbox info.
+type SandboxLifecycle struct {
+	// AutoResume Whether the sandbox can auto-resume.
+	AutoResume bool `json:"autoResume"`
+
+	// OnTimeout Action taken when the sandbox times out.
+	OnTimeout SandboxOnTimeout `json:"onTimeout"`
 }
 
 // SandboxLog Log entry with timestamp and line
@@ -818,6 +878,9 @@ type SandboxMetric struct {
 	// DiskUsed Disk used in bytes
 	DiskUsed int64 `json:"diskUsed"`
 
+	// MemCache Cached memory (page cache) in bytes
+	MemCache int64 `json:"memCache"`
+
 	// MemTotal Total memory in bytes
 	MemTotal int64 `json:"memTotal"`
 
@@ -834,21 +897,78 @@ type SandboxMetric struct {
 
 // SandboxNetworkConfig defines model for SandboxNetworkConfig.
 type SandboxNetworkConfig struct {
-	// AllowOut List of allowed CIDR blocks or IP addresses for egress traffic. Allowed addresses always take precedence over blocked addresses.
+	// AllowOut List of allowed destinations for egress traffic. Each entry can be a CIDR block (e.g. "8.8.8.8/32"), a bare IP address (e.g. "8.8.8.8"), or a domain name (e.g. "example.com", "*.example.com"). Allowed entries always take precedence over denied entries.
 	AllowOut *[]string `json:"allowOut,omitempty"`
 
 	// AllowPublicTraffic Specify if the sandbox URLs should be accessible only with authentication.
 	AllowPublicTraffic *bool `json:"allowPublicTraffic,omitempty"`
 
-	// DenyOut List of denied CIDR blocks or IP addresses for egress traffic
+	// DenyOut List of denied CIDR blocks or IP addresses for egress traffic. Domain names are not supported for deny rules.
 	DenyOut *[]string `json:"denyOut,omitempty"`
+
+	// EgressProxy SOCKS5 proxy for sandbox egress. Outbound TCP is tunneled through the proxy after allow/deny filtering; the sandbox is unaware. Domain-matched flows use remote DNS (ATYP=domain).
+	EgressProxy *SandboxEgressProxyConfig `json:"egressProxy,omitempty"`
 
 	// MaskRequestHost Specify host mask which will be used for all sandbox requests
 	MaskRequestHost *string `json:"maskRequestHost,omitempty"`
+
+	// Rules Per-domain transform rules applied to matching egress HTTP/HTTPS requests. Keys are domains (e.g. "api.example.com", "example.com"). A domain listed here is not automatically allowed - use allowOut to permit the traffic.
+	Rules *map[string][]SandboxNetworkRule `json:"rules,omitempty"`
+}
+
+// SandboxNetworkRule Transform rule applied to egress requests matching a domain pattern.
+type SandboxNetworkRule struct {
+	// Transform Transformations applied to matching egress requests before forwarding.
+	Transform *SandboxNetworkTransform `json:"transform,omitempty"`
+}
+
+// SandboxNetworkTransform Transformations applied to matching egress requests before forwarding.
+type SandboxNetworkTransform struct {
+	// Headers HTTP headers to inject or override in matching requests. An existing header with the same name is replaced. Values are plain strings; secret resolution happens client-side before sending to the API.
+	Headers *map[string]string `json:"headers,omitempty"`
+}
+
+// SandboxNetworkUpdateConfig Network configuration update for a running sandbox. Replaces the current egress rules with the provided configuration. Omitting a field clears it.
+type SandboxNetworkUpdateConfig struct {
+	// AllowOut List of allowed destinations for egress traffic. Each entry can be a CIDR block (e.g. "8.8.8.8/32"), a bare IP address (e.g. "8.8.8.8"), or a domain name (e.g. "example.com", "*.example.com"). Allowed entries always take precedence over denied entries.
+	AllowOut *[]string `json:"allowOut,omitempty"`
+
+	// AllowInternetAccess Allow sandbox to access the internet. When set to false, it behaves the same as specifying denyOut to 0.0.0.0/0 in the network config.
+	AllowInternetAccess *bool `json:"allow_internet_access,omitempty"`
+
+	// DenyOut List of denied CIDR blocks or IP addresses for egress traffic. Domain names are not supported for deny rules.
+	DenyOut *[]string `json:"denyOut,omitempty"`
+
+	// EgressProxy SOCKS5 proxy for sandbox egress. Outbound TCP is tunneled through the proxy after allow/deny filtering; the sandbox is unaware. Domain-matched flows use remote DNS (ATYP=domain).
+	EgressProxy *SandboxEgressProxyConfig `json:"egressProxy,omitempty"`
+
+	// Rules Per-domain transform rules. Replaces all existing rules when provided.
+	Rules *map[string][]SandboxNetworkRule `json:"rules,omitempty"`
+}
+
+// SandboxOnTimeout Action taken when the sandbox times out.
+type SandboxOnTimeout string
+
+// SandboxRefreshRequest defines model for SandboxRefreshRequest.
+type SandboxRefreshRequest struct {
+	// Duration Duration for which the sandbox should be kept alive in seconds
+	Duration *int `json:"duration,omitempty"`
+}
+
+// SandboxSnapshotRequest defines model for SandboxSnapshotRequest.
+type SandboxSnapshotRequest struct {
+	// Name Optional name for the snapshot template. If a snapshot template with this name already exists, a new build will be assigned to the existing template instead of creating a new one.
+	Name *string `json:"name,omitempty"`
 }
 
 // SandboxState State of the sandbox
 type SandboxState string
+
+// SandboxTimeoutRequest defines model for SandboxTimeoutRequest.
+type SandboxTimeoutRequest struct {
+	// Timeout Timeout in seconds from the current time after which the sandbox should expire
+	Timeout int32 `json:"timeout"`
+}
 
 // SandboxVolumeMount defines model for SandboxVolumeMount.
 type SandboxVolumeMount struct {
@@ -924,7 +1044,8 @@ type TeamMetric struct {
 // TeamUser defines model for TeamUser.
 type TeamUser struct {
 	// Email Email of the user
-	Email string `json:"email"`
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Email *string `json:"email"`
 
 	// Id Identifier of the user
 	Id openapi_types.UUID `json:"id"`
@@ -1351,6 +1472,12 @@ type N409 = Error
 // N500 defines model for 500.
 type N500 = Error
 
+// GetNodesParams defines parameters for GetNodes.
+type GetNodesParams struct {
+	// ClusterID Identifier of the cluster
+	ClusterID *openapi_types.UUID `form:"clusterID,omitempty" json:"clusterID,omitempty"`
+}
+
 // GetNodesNodeIDParams defines parameters for GetNodesNodeID.
 type GetNodesNodeIDParams struct {
 	// ClusterID Identifier of the cluster
@@ -1383,24 +1510,6 @@ type GetSandboxesSandboxIDMetricsParams struct {
 	// Start Unix timestamp for the start of the interval, in seconds, for which the metrics
 	Start *int64 `form:"start,omitempty" json:"start,omitempty"`
 	End   *int64 `form:"end,omitempty" json:"end,omitempty"`
-}
-
-// PostSandboxesSandboxIDRefreshesJSONBody defines parameters for PostSandboxesSandboxIDRefreshes.
-type PostSandboxesSandboxIDRefreshesJSONBody struct {
-	// Duration Duration for which the sandbox should be kept alive in seconds
-	Duration *int `json:"duration,omitempty"`
-}
-
-// PostSandboxesSandboxIDSnapshotsJSONBody defines parameters for PostSandboxesSandboxIDSnapshots.
-type PostSandboxesSandboxIDSnapshotsJSONBody struct {
-	// Name Optional name for the snapshot template. If a snapshot template with this name already exists, a new build will be assigned to the existing template instead of creating a new one.
-	Name *string `json:"name,omitempty"`
-}
-
-// PostSandboxesSandboxIDTimeoutJSONBody defines parameters for PostSandboxesSandboxIDTimeout.
-type PostSandboxesSandboxIDTimeoutJSONBody struct {
-	// Timeout Timeout in seconds from the current time after which the sandbox should expire
-	Timeout int32 `json:"timeout"`
 }
 
 // GetSnapshotsParams defines parameters for GetSnapshots.
@@ -1508,6 +1617,9 @@ type GetV2SandboxesSandboxIDLogsParams struct {
 // PostAccessTokensJSONRequestBody defines body for PostAccessTokens for application/json ContentType.
 type PostAccessTokensJSONRequestBody = NewAccessToken
 
+// PostAdminTeamsTeamIDApiKeysJSONRequestBody defines body for PostAdminTeamsTeamIDApiKeys for application/json ContentType.
+type PostAdminTeamsTeamIDApiKeysJSONRequestBody = NewTeamAPIKey
+
 // PostApiKeysJSONRequestBody defines body for PostApiKeys for application/json ContentType.
 type PostApiKeysJSONRequestBody = NewTeamAPIKey
 
@@ -1523,17 +1635,20 @@ type PostSandboxesJSONRequestBody = NewSandbox
 // PostSandboxesSandboxIDConnectJSONRequestBody defines body for PostSandboxesSandboxIDConnect for application/json ContentType.
 type PostSandboxesSandboxIDConnectJSONRequestBody = ConnectSandbox
 
+// PutSandboxesSandboxIDNetworkJSONRequestBody defines body for PutSandboxesSandboxIDNetwork for application/json ContentType.
+type PutSandboxesSandboxIDNetworkJSONRequestBody = SandboxNetworkUpdateConfig
+
 // PostSandboxesSandboxIDRefreshesJSONRequestBody defines body for PostSandboxesSandboxIDRefreshes for application/json ContentType.
-type PostSandboxesSandboxIDRefreshesJSONRequestBody PostSandboxesSandboxIDRefreshesJSONBody
+type PostSandboxesSandboxIDRefreshesJSONRequestBody = SandboxRefreshRequest
 
 // PostSandboxesSandboxIDResumeJSONRequestBody defines body for PostSandboxesSandboxIDResume for application/json ContentType.
 type PostSandboxesSandboxIDResumeJSONRequestBody = ResumedSandbox
 
 // PostSandboxesSandboxIDSnapshotsJSONRequestBody defines body for PostSandboxesSandboxIDSnapshots for application/json ContentType.
-type PostSandboxesSandboxIDSnapshotsJSONRequestBody PostSandboxesSandboxIDSnapshotsJSONBody
+type PostSandboxesSandboxIDSnapshotsJSONRequestBody = SandboxSnapshotRequest
 
 // PostSandboxesSandboxIDTimeoutJSONRequestBody defines body for PostSandboxesSandboxIDTimeout for application/json ContentType.
-type PostSandboxesSandboxIDTimeoutJSONRequestBody PostSandboxesSandboxIDTimeoutJSONBody
+type PostSandboxesSandboxIDTimeoutJSONRequestBody = SandboxTimeoutRequest
 
 // PostTemplatesJSONRequestBody defines body for PostTemplates for application/json ContentType.
 type PostTemplatesJSONRequestBody = TemplateBuildRequest
@@ -1692,6 +1807,12 @@ type ServerInterface interface {
 
 	// (DELETE /access-tokens/{accessTokenID})
 	DeleteAccessTokensAccessTokenID(c *gin.Context, accessTokenID AccessTokenID)
+	// Create team API key as admin
+	// (POST /admin/teams/{teamID}/api-keys)
+	PostAdminTeamsTeamIDApiKeys(c *gin.Context, teamID openapi_types.UUID)
+	// Delete team API key as admin
+	// (DELETE /admin/teams/{teamID}/api-keys/{apiKeyID})
+	DeleteAdminTeamsTeamIDApiKeysApiKeyID(c *gin.Context, teamID openapi_types.UUID, apiKeyID ApiKeyID)
 	// Cancel all builds for a team
 	// (POST /admin/teams/{teamID}/builds/cancel)
 	PostAdminTeamsTeamIDBuildsCancel(c *gin.Context, teamID openapi_types.UUID)
@@ -1715,7 +1836,7 @@ type ServerInterface interface {
 	GetHealth(c *gin.Context)
 
 	// (GET /nodes)
-	GetNodes(c *gin.Context)
+	GetNodes(c *gin.Context, params GetNodesParams)
 
 	// (GET /nodes/{nodeID})
 	GetNodesNodeID(c *gin.Context, nodeID NodeID, params GetNodesNodeIDParams)
@@ -1746,6 +1867,9 @@ type ServerInterface interface {
 
 	// (GET /sandboxes/{sandboxID}/metrics)
 	GetSandboxesSandboxIDMetrics(c *gin.Context, sandboxID SandboxID, params GetSandboxesSandboxIDMetricsParams)
+
+	// (PUT /sandboxes/{sandboxID}/network)
+	PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID SandboxID)
 
 	// (POST /sandboxes/{sandboxID}/pause)
 	PostSandboxesSandboxIDPause(c *gin.Context, sandboxID SandboxID)
@@ -1861,6 +1985,8 @@ func (siw *ServerInterfaceWrapper) PostAccessTokens(c *gin.Context) {
 
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -1887,6 +2013,8 @@ func (siw *ServerInterfaceWrapper) DeleteAccessTokensAccessTokenID(c *gin.Contex
 
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -1895,6 +2023,67 @@ func (siw *ServerInterfaceWrapper) DeleteAccessTokensAccessTokenID(c *gin.Contex
 	}
 
 	siw.Handler.DeleteAccessTokensAccessTokenID(c, accessTokenID)
+}
+
+// PostAdminTeamsTeamIDApiKeys operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminTeamsTeamIDApiKeys(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "teamID" -------------
+	var teamID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostAdminTeamsTeamIDApiKeys(c, teamID)
+}
+
+// DeleteAdminTeamsTeamIDApiKeysApiKeyID operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAdminTeamsTeamIDApiKeysApiKeyID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "teamID" -------------
+	var teamID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "apiKeyID" -------------
+	var apiKeyID ApiKeyID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "apiKeyID", c.Param("apiKeyID"), &apiKeyID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter apiKeyID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteAdminTeamsTeamIDApiKeysApiKeyID(c, teamID, apiKeyID)
 }
 
 // PostAdminTeamsTeamIDBuildsCancel operation middleware
@@ -1911,7 +2100,7 @@ func (siw *ServerInterfaceWrapper) PostAdminTeamsTeamIDBuildsCancel(c *gin.Conte
 		return
 	}
 
-	c.Set(AdminTokenAuthScopes, []string{})
+	c.Set(AdminApiKeyAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -1937,7 +2126,7 @@ func (siw *ServerInterfaceWrapper) PostAdminTeamsTeamIDSandboxesKill(c *gin.Cont
 		return
 	}
 
-	c.Set(AdminTokenAuthScopes, []string{})
+	c.Set(AdminApiKeyAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -1956,6 +2145,14 @@ func (siw *ServerInterfaceWrapper) GetApiKeys(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -1972,6 +2169,10 @@ func (siw *ServerInterfaceWrapper) PostApiKeys(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2001,6 +2202,14 @@ func (siw *ServerInterfaceWrapper) DeleteApiKeysApiKeyID(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2029,6 +2238,14 @@ func (siw *ServerInterfaceWrapper) PatchApiKeysApiKeyID(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2055,7 +2272,20 @@ func (siw *ServerInterfaceWrapper) GetHealth(c *gin.Context) {
 // GetNodes operation middleware
 func (siw *ServerInterfaceWrapper) GetNodes(c *gin.Context) {
 
-	c.Set(AdminTokenAuthScopes, []string{})
+	var err error
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetNodesParams
+
+	// ------------- Optional query parameter "clusterID" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "clusterID", c.Request.URL.Query(), &params.ClusterID, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2064,7 +2294,7 @@ func (siw *ServerInterfaceWrapper) GetNodes(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.GetNodes(c)
+	siw.Handler.GetNodes(c, params)
 }
 
 // GetNodesNodeID operation middleware
@@ -2081,7 +2311,7 @@ func (siw *ServerInterfaceWrapper) GetNodesNodeID(c *gin.Context) {
 		return
 	}
 
-	c.Set(AdminTokenAuthScopes, []string{})
+	c.Set(AdminApiKeyAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetNodesNodeIDParams
@@ -2118,7 +2348,7 @@ func (siw *ServerInterfaceWrapper) PostNodesNodeID(c *gin.Context) {
 		return
 	}
 
-	c.Set(AdminTokenAuthScopes, []string{})
+	c.Set(AdminApiKeyAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2140,6 +2370,14 @@ func (siw *ServerInterfaceWrapper) GetSandboxes(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetSandboxesParams
@@ -2171,6 +2409,14 @@ func (siw *ServerInterfaceWrapper) PostSandboxes(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2191,6 +2437,14 @@ func (siw *ServerInterfaceWrapper) GetSandboxesMetrics(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetSandboxesMetricsParams
@@ -2240,6 +2494,14 @@ func (siw *ServerInterfaceWrapper) DeleteSandboxesSandboxID(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2269,6 +2531,14 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxID(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2300,6 +2570,14 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDConnect(c *gin.Context)
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2329,6 +2607,14 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDLogs(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetSandboxesSandboxIDLogsParams
@@ -2379,6 +2665,14 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDMetrics(c *gin.Context) 
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetSandboxesSandboxIDMetricsParams
 
@@ -2408,6 +2702,44 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDMetrics(c *gin.Context) 
 	siw.Handler.GetSandboxesSandboxIDMetrics(c, sandboxID, params)
 }
 
+// PutSandboxesSandboxIDNetwork operation middleware
+func (siw *ServerInterfaceWrapper) PutSandboxesSandboxIDNetwork(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(Supabase1TokenAuthScopes, []string{})
+
+	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PutSandboxesSandboxIDNetwork(c, sandboxID)
+}
+
 // PostSandboxesSandboxIDPause operation middleware
 func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDPause(c *gin.Context) {
 
@@ -2427,6 +2759,14 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDPause(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2458,6 +2798,14 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDRefreshes(c *gin.Contex
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2487,6 +2835,14 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDResume(c *gin.Context) 
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2518,6 +2874,14 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDSnapshots(c *gin.Contex
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2548,6 +2912,14 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDTimeout(c *gin.Context)
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2568,6 +2940,14 @@ func (siw *ServerInterfaceWrapper) GetSnapshots(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetSnapshotsParams
@@ -2613,6 +2993,8 @@ func (siw *ServerInterfaceWrapper) GetTeams(c *gin.Context) {
 
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2642,6 +3024,14 @@ func (siw *ServerInterfaceWrapper) GetTeamsTeamIDMetrics(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetTeamsTeamIDMetricsParams
@@ -2691,6 +3081,14 @@ func (siw *ServerInterfaceWrapper) GetTeamsTeamIDMetricsMax(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetTeamsTeamIDMetricsMaxParams
@@ -2749,6 +3147,14 @@ func (siw *ServerInterfaceWrapper) GetTemplates(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetTemplatesParams
 
@@ -2778,6 +3184,10 @@ func (siw *ServerInterfaceWrapper) PostTemplates(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2809,6 +3219,14 @@ func (siw *ServerInterfaceWrapper) GetTemplatesAliasesAlias(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2828,6 +3246,14 @@ func (siw *ServerInterfaceWrapper) DeleteTemplatesTags(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2846,6 +3272,14 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTags(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2879,6 +3313,14 @@ func (siw *ServerInterfaceWrapper) DeleteTemplatesTemplateID(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2908,6 +3350,14 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateID(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetTemplatesTemplateIDParams
@@ -2960,6 +3410,14 @@ func (siw *ServerInterfaceWrapper) PatchTemplatesTemplateID(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2989,6 +3447,10 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTemplateID(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -3028,6 +3490,10 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTemplateIDBuildsBuildID(c *gin.C
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -3069,6 +3535,14 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDLogs(c *gi
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetTemplatesTemplateIDBuildsBuildIDLogsParams
@@ -3154,6 +3628,14 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDStatus(c *
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetTemplatesTemplateIDBuildsBuildIDStatusParams
 
@@ -3222,6 +3704,14 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDFilesHash(c *gin.Contex
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3252,6 +3742,14 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDTags(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3272,6 +3770,14 @@ func (siw *ServerInterfaceWrapper) GetV2Sandboxes(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetV2SandboxesParams
@@ -3338,6 +3844,14 @@ func (siw *ServerInterfaceWrapper) GetV2SandboxesSandboxIDLogs(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetV2SandboxesSandboxIDLogsParams
 
@@ -3400,6 +3914,14 @@ func (siw *ServerInterfaceWrapper) PostV2Templates(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3431,6 +3953,14 @@ func (siw *ServerInterfaceWrapper) PatchV2TemplatesTemplateID(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -3471,6 +4001,14 @@ func (siw *ServerInterfaceWrapper) PostV2TemplatesTemplateIDBuildsBuildID(c *gin
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3489,6 +4027,14 @@ func (siw *ServerInterfaceWrapper) PostV3Templates(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -3509,6 +4055,14 @@ func (siw *ServerInterfaceWrapper) GetVolumes(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3527,6 +4081,14 @@ func (siw *ServerInterfaceWrapper) PostVolumes(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -3558,6 +4120,14 @@ func (siw *ServerInterfaceWrapper) DeleteVolumesVolumeID(c *gin.Context) {
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
 
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3587,6 +4157,14 @@ func (siw *ServerInterfaceWrapper) GetVolumesVolumeID(c *gin.Context) {
 	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(Supabase2TeamAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -3627,6 +4205,8 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.POST(options.BaseURL+"/access-tokens", wrapper.PostAccessTokens)
 	router.DELETE(options.BaseURL+"/access-tokens/:accessTokenID", wrapper.DeleteAccessTokensAccessTokenID)
+	router.POST(options.BaseURL+"/admin/teams/:teamID/api-keys", wrapper.PostAdminTeamsTeamIDApiKeys)
+	router.DELETE(options.BaseURL+"/admin/teams/:teamID/api-keys/:apiKeyID", wrapper.DeleteAdminTeamsTeamIDApiKeysApiKeyID)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/builds/cancel", wrapper.PostAdminTeamsTeamIDBuildsCancel)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/sandboxes/kill", wrapper.PostAdminTeamsTeamIDSandboxesKill)
 	router.GET(options.BaseURL+"/api-keys", wrapper.GetApiKeys)
@@ -3645,6 +4225,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/connect", wrapper.PostSandboxesSandboxIDConnect)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID/logs", wrapper.GetSandboxesSandboxIDLogs)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID/metrics", wrapper.GetSandboxesSandboxIDMetrics)
+	router.PUT(options.BaseURL+"/sandboxes/:sandboxID/network", wrapper.PutSandboxesSandboxIDNetwork)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/pause", wrapper.PostSandboxesSandboxIDPause)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/refreshes", wrapper.PostSandboxesSandboxIDRefreshes)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/resume", wrapper.PostSandboxesSandboxIDResume)
@@ -3764,6 +4345,122 @@ func (response DeleteAccessTokensAccessTokenID404JSONResponse) VisitDeleteAccess
 type DeleteAccessTokensAccessTokenID500JSONResponse struct{ N500JSONResponse }
 
 func (response DeleteAccessTokensAccessTokenID500JSONResponse) VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAdminTeamsTeamIDApiKeysRequestObject struct {
+	TeamID openapi_types.UUID `json:"teamID"`
+	Body   *PostAdminTeamsTeamIDApiKeysJSONRequestBody
+}
+
+type PostAdminTeamsTeamIDApiKeysResponseObject interface {
+	VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error
+}
+
+type PostAdminTeamsTeamIDApiKeys201JSONResponse CreatedTeamAPIKey
+
+func (response PostAdminTeamsTeamIDApiKeys201JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAdminTeamsTeamIDApiKeys400JSONResponse struct{ N400JSONResponse }
+
+func (response PostAdminTeamsTeamIDApiKeys400JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAdminTeamsTeamIDApiKeys401JSONResponse struct{ N401JSONResponse }
+
+func (response PostAdminTeamsTeamIDApiKeys401JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAdminTeamsTeamIDApiKeys403JSONResponse struct{ N403JSONResponse }
+
+func (response PostAdminTeamsTeamIDApiKeys403JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAdminTeamsTeamIDApiKeys404JSONResponse struct{ N404JSONResponse }
+
+func (response PostAdminTeamsTeamIDApiKeys404JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAdminTeamsTeamIDApiKeys500JSONResponse struct{ N500JSONResponse }
+
+func (response PostAdminTeamsTeamIDApiKeys500JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteAdminTeamsTeamIDApiKeysApiKeyIDRequestObject struct {
+	TeamID   openapi_types.UUID `json:"teamID"`
+	ApiKeyID ApiKeyID           `json:"apiKeyID"`
+}
+
+type DeleteAdminTeamsTeamIDApiKeysApiKeyIDResponseObject interface {
+	VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error
+}
+
+type DeleteAdminTeamsTeamIDApiKeysApiKeyID204Response struct {
+}
+
+func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID204Response) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAdminTeamsTeamIDApiKeysApiKeyID400JSONResponse struct{ N400JSONResponse }
+
+func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID400JSONResponse) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteAdminTeamsTeamIDApiKeysApiKeyID401JSONResponse struct{ N401JSONResponse }
+
+func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID401JSONResponse) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteAdminTeamsTeamIDApiKeysApiKeyID404JSONResponse struct{ N404JSONResponse }
+
+func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID404JSONResponse) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteAdminTeamsTeamIDApiKeysApiKeyID500JSONResponse struct{ N500JSONResponse }
+
+func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID500JSONResponse) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -4021,11 +4718,11 @@ type GetHealthResponseObject interface {
 	VisitGetHealthResponse(w http.ResponseWriter) error
 }
 
-type GetHealth200Response struct {
+type GetHealth204Response struct {
 }
 
-func (response GetHealth200Response) VisitGetHealthResponse(w http.ResponseWriter) error {
-	w.WriteHeader(200)
+func (response GetHealth204Response) VisitGetHealthResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
 	return nil
 }
 
@@ -4039,6 +4736,7 @@ func (response GetHealth401JSONResponse) VisitGetHealthResponse(w http.ResponseW
 }
 
 type GetNodesRequestObject struct {
+	Params GetNodesParams
 }
 
 type GetNodesResponseObject interface {
@@ -4536,6 +5234,59 @@ func (response GetSandboxesSandboxIDMetrics404JSONResponse) VisitGetSandboxesSan
 type GetSandboxesSandboxIDMetrics500JSONResponse struct{ N500JSONResponse }
 
 func (response GetSandboxesSandboxIDMetrics500JSONResponse) VisitGetSandboxesSandboxIDMetricsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutSandboxesSandboxIDNetworkRequestObject struct {
+	SandboxID SandboxID `json:"sandboxID"`
+	Body      *PutSandboxesSandboxIDNetworkJSONRequestBody
+}
+
+type PutSandboxesSandboxIDNetworkResponseObject interface {
+	VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error
+}
+
+type PutSandboxesSandboxIDNetwork204Response struct {
+}
+
+func (response PutSandboxesSandboxIDNetwork204Response) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutSandboxesSandboxIDNetwork401JSONResponse struct{ N401JSONResponse }
+
+func (response PutSandboxesSandboxIDNetwork401JSONResponse) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutSandboxesSandboxIDNetwork404JSONResponse struct{ N404JSONResponse }
+
+func (response PutSandboxesSandboxIDNetwork404JSONResponse) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutSandboxesSandboxIDNetwork409JSONResponse struct{ N409JSONResponse }
+
+func (response PutSandboxesSandboxIDNetwork409JSONResponse) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutSandboxesSandboxIDNetwork500JSONResponse struct{ N500JSONResponse }
+
+func (response PutSandboxesSandboxIDNetwork500JSONResponse) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -5828,6 +6579,15 @@ func (response PostV3Templates401JSONResponse) VisitPostV3TemplatesResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostV3Templates403JSONResponse struct{ N403JSONResponse }
+
+func (response PostV3Templates403JSONResponse) VisitPostV3TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostV3Templates500JSONResponse struct{ N500JSONResponse }
 
 func (response PostV3Templates500JSONResponse) VisitPostV3TemplatesResponse(w http.ResponseWriter) error {
@@ -6010,6 +6770,12 @@ type StrictServerInterface interface {
 
 	// (DELETE /access-tokens/{accessTokenID})
 	DeleteAccessTokensAccessTokenID(ctx context.Context, request DeleteAccessTokensAccessTokenIDRequestObject) (DeleteAccessTokensAccessTokenIDResponseObject, error)
+	// Create team API key as admin
+	// (POST /admin/teams/{teamID}/api-keys)
+	PostAdminTeamsTeamIDApiKeys(ctx context.Context, request PostAdminTeamsTeamIDApiKeysRequestObject) (PostAdminTeamsTeamIDApiKeysResponseObject, error)
+	// Delete team API key as admin
+	// (DELETE /admin/teams/{teamID}/api-keys/{apiKeyID})
+	DeleteAdminTeamsTeamIDApiKeysApiKeyID(ctx context.Context, request DeleteAdminTeamsTeamIDApiKeysApiKeyIDRequestObject) (DeleteAdminTeamsTeamIDApiKeysApiKeyIDResponseObject, error)
 	// Cancel all builds for a team
 	// (POST /admin/teams/{teamID}/builds/cancel)
 	PostAdminTeamsTeamIDBuildsCancel(ctx context.Context, request PostAdminTeamsTeamIDBuildsCancelRequestObject) (PostAdminTeamsTeamIDBuildsCancelResponseObject, error)
@@ -6064,6 +6830,9 @@ type StrictServerInterface interface {
 
 	// (GET /sandboxes/{sandboxID}/metrics)
 	GetSandboxesSandboxIDMetrics(ctx context.Context, request GetSandboxesSandboxIDMetricsRequestObject) (GetSandboxesSandboxIDMetricsResponseObject, error)
+
+	// (PUT /sandboxes/{sandboxID}/network)
+	PutSandboxesSandboxIDNetwork(ctx context.Context, request PutSandboxesSandboxIDNetworkRequestObject) (PutSandboxesSandboxIDNetworkResponseObject, error)
 
 	// (POST /sandboxes/{sandboxID}/pause)
 	PostSandboxesSandboxIDPause(ctx context.Context, request PostSandboxesSandboxIDPauseRequestObject) (PostSandboxesSandboxIDPauseResponseObject, error)
@@ -6230,6 +6999,69 @@ func (sh *strictHandler) DeleteAccessTokensAccessTokenID(ctx *gin.Context, acces
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(DeleteAccessTokensAccessTokenIDResponseObject); ok {
 		if err := validResponse.VisitDeleteAccessTokensAccessTokenIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostAdminTeamsTeamIDApiKeys operation middleware
+func (sh *strictHandler) PostAdminTeamsTeamIDApiKeys(ctx *gin.Context, teamID openapi_types.UUID) {
+	var request PostAdminTeamsTeamIDApiKeysRequestObject
+
+	request.TeamID = teamID
+
+	var body PostAdminTeamsTeamIDApiKeysJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PostAdminTeamsTeamIDApiKeys(ctx, request.(PostAdminTeamsTeamIDApiKeysRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostAdminTeamsTeamIDApiKeys")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PostAdminTeamsTeamIDApiKeysResponseObject); ok {
+		if err := validResponse.VisitPostAdminTeamsTeamIDApiKeysResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAdminTeamsTeamIDApiKeysApiKeyID operation middleware
+func (sh *strictHandler) DeleteAdminTeamsTeamIDApiKeysApiKeyID(ctx *gin.Context, teamID openapi_types.UUID, apiKeyID ApiKeyID) {
+	var request DeleteAdminTeamsTeamIDApiKeysApiKeyIDRequestObject
+
+	request.TeamID = teamID
+	request.ApiKeyID = apiKeyID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAdminTeamsTeamIDApiKeysApiKeyID(ctx, request.(DeleteAdminTeamsTeamIDApiKeysApiKeyIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAdminTeamsTeamIDApiKeysApiKeyID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(DeleteAdminTeamsTeamIDApiKeysApiKeyIDResponseObject); ok {
+		if err := validResponse.VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {
@@ -6437,8 +7269,10 @@ func (sh *strictHandler) GetHealth(ctx *gin.Context) {
 }
 
 // GetNodes operation middleware
-func (sh *strictHandler) GetNodes(ctx *gin.Context) {
+func (sh *strictHandler) GetNodes(ctx *gin.Context, params GetNodesParams) {
 	var request GetNodesRequestObject
+
+	request.Params = params
 
 	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
 		return sh.ssi.GetNodes(ctx, request.(GetNodesRequestObject))
@@ -6752,6 +7586,41 @@ func (sh *strictHandler) GetSandboxesSandboxIDMetrics(ctx *gin.Context, sandboxI
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(GetSandboxesSandboxIDMetricsResponseObject); ok {
 		if err := validResponse.VisitGetSandboxesSandboxIDMetricsResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutSandboxesSandboxIDNetwork operation middleware
+func (sh *strictHandler) PutSandboxesSandboxIDNetwork(ctx *gin.Context, sandboxID SandboxID) {
+	var request PutSandboxesSandboxIDNetworkRequestObject
+
+	request.SandboxID = sandboxID
+
+	var body PutSandboxesSandboxIDNetworkJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PutSandboxesSandboxIDNetwork(ctx, request.(PutSandboxesSandboxIDNetworkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutSandboxesSandboxIDNetwork")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PutSandboxesSandboxIDNetworkResponseObject); ok {
+		if err := validResponse.VisitPutSandboxesSandboxIDNetworkResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {
