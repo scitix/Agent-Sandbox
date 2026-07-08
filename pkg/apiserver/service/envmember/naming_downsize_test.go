@@ -155,9 +155,9 @@ func TestAdd_Downsize_FitsWithin(t *testing.T) {
 		t.Errorf("reservation-replica-quota = %q, want {\"sci.c23-2\":\"1\"}", v)
 	}
 
-	// Grouping is by the envelope shape (1c16Gi), not the downsized request.
-	if res.Name != "env-x-1c16gi" {
-		t.Errorf("pool name = %q, want env-x-1c16gi (grouped by envelope)", res.Name)
+	// Grouping/name reflects the actual (downsized) request, not the envelope.
+	if res.Name != "env-x-1c4gi" {
+		t.Errorf("pool name = %q, want env-x-1c4gi (named by actual request)", res.Name)
 	}
 }
 

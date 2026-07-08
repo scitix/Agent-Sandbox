@@ -867,8 +867,9 @@ components:
             reservation still charges quota for the whole instance.
           - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
             per-Pool resource requests/limits.
-        `scalingGroup` / pool name are derived from the envelope shape when an `instanceType`
-        is supplied, so Pools sharing an instanceType group together regardless of downsizing.
+        `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+        `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+        real size and Pools downsized differently land in distinct scaling groups.
       properties:
         instanceType:
           type: string

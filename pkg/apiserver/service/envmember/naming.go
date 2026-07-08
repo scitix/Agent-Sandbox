@@ -57,10 +57,10 @@ import (
 //   - Otherwise the caller must supply Config.InlineResources directly.
 //   - Both paths empty → BadRequest.
 //
-// Grouping: with an InstanceType, ScalingGroup / PoolName are derived from the
-// envelope shape (instanceType × multiplier), NOT the rounded-down request, so
-// Pools sharing an instanceType cluster into one group regardless of per-Pool
-// downsizing.
+// Grouping: ScalingGroup / PoolName are derived from the effective Pod request
+// (the rounded-down InlineResources when downsized, else the full envelope), so
+// the name reflects the Pod's real size (e.g. "1c2gi") and Pools downsized
+// differently land in distinct scaling groups.
 //
 // envName is checked against the 24-char limit (matches openapi.yaml) so
 // the composed PoolName stays under the 63-char DNS-label cap.
@@ -106,8 +106,13 @@ func derivePoolMember(
 			cfg.InlineResources = envelope.DeepCopy()
 		}
 
-		// Group/name by the envelope shape, not the rounded-down request.
-		resources = envelope
+		// Group/name by the ACTUAL request so a downsized Pool surfaces its real
+		// size (e.g. "1c2gi"), not the reserved envelope. cfg.InlineResources now
+		// holds the effective request in both branches (caller-supplied when
+		// downsized, else the full envelope). Two Pools of the same instance
+		// downsized differently are genuinely different effective sizes, so they
+		// belong to different scaling groups.
+		resources = *cfg.InlineResources
 
 		// Carry the real multiplier to the reservation plugin (charges quota
 		// per whole instance even when the request is rounded down).
