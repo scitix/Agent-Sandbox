@@ -50,13 +50,10 @@ import {
 } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import type { AgentSandboxEnv, AgentSandboxTemplateSummary } from "@/lib/api/client"
-import {
-  envQueryOptions,
-  templatesQueryOptions,
-  useCreateEnv,
-  useUpdateEnv,
-} from "@/lib/queries"
+import { envQueryOptions, templatesQueryOptions, useCreateEnv, useUpdateEnv } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 
 interface Props {
@@ -89,19 +86,72 @@ const registryRowSchema = z.object({
   password: z.preprocess(emptyToUndef, z.string().optional()),
 })
 
-const formSchema = z.object({
-  name: z
-    .string()
-    .min(1, "envs.form.errors.nameRequired")
-    .max(24, "envs.form.errors.nameTooLong")
-    .regex(dnsLabel, "envs.form.errors.nameDnsLabel"),
-  templateName: z.string().min(1, "envs.form.errors.templateRequired"),
-  image: z.preprocess(emptyToUndef, z.string().optional()),
-  podCreationImagePolicy: z.enum(["PoolDefaultImage", "IdleImage"]).optional(),
-  imagePullSecretRows: z.array(registryRowSchema),
-  defaultStartupTimeout: z.preprocess(emptyToUndef, z.string().optional()),
-  defaultIdleTimeout: z.preprocess(emptyToUndef, z.string().optional()),
-})
+// splitLines turns a textarea value into a trimmed, de-duplicated list, split on
+// newlines or commas. Shared by validation, payload assembly, and read-back.
+function splitLines(s?: string): string[] {
+  const seen = new Set<string>()
+  return (s ?? "")
+    .split(/[\n,]+/)
+    .map((x) => x.trim())
+    .filter((x) => x !== "" && !seen.has(x) && seen.add(x) !== undefined)
+}
+
+const domainRe = /^(\*|\*\.([a-z0-9-]+\.)+[a-z]{2,}|([a-z0-9-]+\.)+[a-z]{2,})$/i
+
+function isCIDRorIP(s: string): boolean {
+  if (s.includes(":")) return true // IPv6 (incl. CIDR) — accept loosely
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(\/(\d{1,2}))?$/.exec(s)
+  if (!m) return false
+  if (m[1]! > "255" || [m[1], m[2], m[3], m[4]].some((o) => Number(o) > 255)) return false
+  if (m[6] !== undefined && Number(m[6]) > 32) return false
+  return true
+}
+
+const formSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, "envs.form.errors.nameRequired")
+      .max(24, "envs.form.errors.nameTooLong")
+      .regex(dnsLabel, "envs.form.errors.nameDnsLabel"),
+    templateName: z.string().min(1, "envs.form.errors.templateRequired"),
+    image: z.preprocess(emptyToUndef, z.string().optional()),
+    podCreationImagePolicy: z.enum(["PoolDefaultImage", "IdleImage"]).optional(),
+    imagePullSecretRows: z.array(registryRowSchema),
+    defaultStartupTimeout: z.preprocess(emptyToUndef, z.string().optional()),
+    defaultIdleTimeout: z.preprocess(emptyToUndef, z.string().optional()),
+    // Network policy: a 3-way mode gates the egress rules.
+    networkPolicyMode: z.enum(["unrestricted", "disable", "allowlist"]),
+    allowedDomains: z.preprocess(emptyToUndef, z.string().optional()),
+    allowedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
+    deniedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
+    allowPrivateNetworks: z.boolean(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.networkPolicyMode !== "allowlist") return
+    for (const d of splitLines(v.allowedDomains)) {
+      if (!domainRe.test(d)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["allowedDomains"],
+          message: "envs.form.errors.invalidDomain",
+        })
+        break
+      }
+    }
+    for (const key of ["allowedCIDRs", "deniedCIDRs"] as const) {
+      for (const c of splitLines(v[key])) {
+        if (!isCIDRorIP(c)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: "envs.form.errors.invalidCidr",
+          })
+          break
+        }
+      }
+    }
+  })
 
 type FormValues = z.infer<typeof formSchema>
 
@@ -114,9 +164,7 @@ export function UpsertEnvSheet({ envName, open, onOpenChange }: Props) {
         side="right"
         className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-2xl"
       >
-        {open && (
-          <UpsertEnvLoader envName={envName ?? null} onClose={() => onOpenChange(false)} />
-        )}
+        {open && <UpsertEnvLoader envName={envName ?? null} onClose={() => onOpenChange(false)} />}
       </SheetContent>
     </Sheet>
   )
@@ -343,6 +391,10 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                     <Separator />
 
                     <ImagePullSecretSection control={control} register={register} />
+
+                    <Separator />
+
+                    <NetworkPolicySection control={control} register={register} errors={errors} />
                   </div>
                 </AccordionContent>
               </AccordionItem>
@@ -544,6 +596,128 @@ function ImagePullSecretSection({ control, register }: ImagePullSecretSectionPro
   )
 }
 
+// ─── Network policy section ─────────────────────────────────────────────────
+
+interface NetworkPolicySectionProps {
+  control: ReturnType<typeof useForm<FormValues>>["control"]
+  register: ReturnType<typeof useForm<FormValues>>["register"]
+  errors: ReturnType<typeof useForm<FormValues>>["formState"]["errors"]
+}
+
+function NetworkPolicySection({ control, register, errors }: NetworkPolicySectionProps) {
+  const { t } = useTranslation()
+  const mode = useWatch({ control, name: "networkPolicyMode" })
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
+          {t("envs.form.section.networkPolicy")}
+        </h3>
+        <p className="text-muted-foreground mt-1 text-xs">{t("envs.form.networkPolicy.hint")}</p>
+      </div>
+
+      <Field>
+        <FieldLabel>{t("envs.form.networkPolicy.mode")}</FieldLabel>
+        <Controller
+          control={control}
+          name="networkPolicyMode"
+          render={({ field }) => (
+            <Select value={field.value} onValueChange={field.onChange}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="unrestricted">
+                  {t("envs.form.networkPolicy.modeUnrestricted")}
+                </SelectItem>
+                <SelectItem value="disable">{t("envs.form.networkPolicy.modeDisable")}</SelectItem>
+                <SelectItem value="allowlist">
+                  {t("envs.form.networkPolicy.modeAllowlist")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        />
+        <FieldDescription>{t("envs.form.networkPolicy.modeDescription")}</FieldDescription>
+      </Field>
+
+      {mode === "allowlist" && (
+        <>
+          <Field>
+            <FieldLabel htmlFor="np-domains">
+              {t("envs.form.networkPolicy.allowedDomains")}
+            </FieldLabel>
+            <Textarea
+              id="np-domains"
+              rows={3}
+              placeholder={"pypi.org\n*.pythonhosted.org"}
+              className="font-mono text-sm"
+              {...register("allowedDomains")}
+            />
+            {errors.allowedDomains && (
+              <FieldError>{t(errors.allowedDomains.message as never)}</FieldError>
+            )}
+            <FieldDescription>
+              {t("envs.form.networkPolicy.allowedDomainsDescription")}
+            </FieldDescription>
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field>
+              <FieldLabel htmlFor="np-allow-cidr">
+                {t("envs.form.networkPolicy.allowedCIDRs")}
+              </FieldLabel>
+              <Textarea
+                id="np-allow-cidr"
+                rows={2}
+                placeholder="8.8.8.8/32"
+                className="font-mono text-sm"
+                {...register("allowedCIDRs")}
+              />
+              {errors.allowedCIDRs && (
+                <FieldError>{t(errors.allowedCIDRs.message as never)}</FieldError>
+              )}
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="np-deny-cidr">
+                {t("envs.form.networkPolicy.deniedCIDRs")}
+              </FieldLabel>
+              <Textarea
+                id="np-deny-cidr"
+                rows={2}
+                placeholder="1.2.3.4/32"
+                className="font-mono text-sm"
+                {...register("deniedCIDRs")}
+              />
+              {errors.deniedCIDRs && (
+                <FieldError>{t(errors.deniedCIDRs.message as never)}</FieldError>
+              )}
+            </Field>
+          </div>
+        </>
+      )}
+
+      {mode !== "unrestricted" && (
+        <Controller
+          control={control}
+          name="allowPrivateNetworks"
+          render={({ field }) => (
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="space-y-0.5 pr-3">
+                <FieldLabel>{t("envs.form.networkPolicy.allowPrivateNetworks")}</FieldLabel>
+                <FieldDescription>
+                  {t("envs.form.networkPolicy.allowPrivateNetworksDescription")}
+                </FieldDescription>
+              </div>
+              <Switch checked={field.value} onCheckedChange={field.onChange} />
+            </div>
+          )}
+        />
+      )}
+    </section>
+  )
+}
+
 // ─── Form ↔ API mapping ──────────────────────────────────────────────────────
 
 function envToFormValues(env: AgentSandboxEnv | null): FormValues {
@@ -556,9 +730,20 @@ function envToFormValues(env: AgentSandboxEnv | null): FormValues {
       defaultStartupTimeout: undefined,
       defaultIdleTimeout: undefined,
       imagePullSecretRows: [],
+      networkPolicyMode: "unrestricted",
+      allowedDomains: undefined,
+      allowedCIDRs: undefined,
+      deniedCIDRs: undefined,
+      allowPrivateNetworks: false,
     }
   }
   const overrides = env.spec.overrides
+  const np = overrides?.networkPolicy
+  const mode: FormValues["networkPolicyMode"] = np?.disableEgress
+    ? "disable"
+    : np?.egress
+      ? "allowlist"
+      : "unrestricted"
   return {
     name: env.name,
     templateName: env.spec.templateRef.name,
@@ -567,6 +752,11 @@ function envToFormValues(env: AgentSandboxEnv | null): FormValues {
     defaultStartupTimeout: overrides?.defaultStartupTimeout,
     defaultIdleTimeout: overrides?.defaultIdleTimeout,
     imagePullSecretRows: [],
+    networkPolicyMode: mode,
+    allowedDomains: (np?.egress?.allowedDomains ?? []).join("\n") || undefined,
+    allowedCIDRs: (np?.egress?.allowedCIDRs ?? []).join("\n") || undefined,
+    deniedCIDRs: (np?.egress?.deniedCIDRs ?? []).join("\n") || undefined,
+    allowPrivateNetworks: np?.allowPrivateNetworks ?? false,
   }
 }
 
@@ -597,7 +787,31 @@ function buildOverrides(v: FormValues) {
   if (registries.length > 0) {
     o.imagePullSecret = { registries }
   }
+  const np = buildNetworkPolicy(v)
+  if (np) o.networkPolicy = np
   return Object.keys(o).length ? o : undefined
+}
+
+// buildNetworkPolicy maps the form's mode + fields onto the wire networkPolicy
+// object, or undefined for "unrestricted" (omit the field).
+function buildNetworkPolicy(v: FormValues): Record<string, unknown> | undefined {
+  if (v.networkPolicyMode === "unrestricted") return undefined
+  const np: Record<string, unknown> = {}
+  if (v.allowPrivateNetworks) np.allowPrivateNetworks = true
+  if (v.networkPolicyMode === "disable") {
+    np.disableEgress = true
+    return np
+  }
+  // allowlist
+  const egress: Record<string, string[]> = {}
+  const domains = splitLines(v.allowedDomains)
+  const allow = splitLines(v.allowedCIDRs)
+  const deny = splitLines(v.deniedCIDRs)
+  if (domains.length) egress.allowedDomains = domains
+  if (allow.length) egress.allowedCIDRs = allow
+  if (deny.length) egress.deniedCIDRs = deny
+  np.egress = egress
+  return np
 }
 
 function extractError(err: unknown): string {
