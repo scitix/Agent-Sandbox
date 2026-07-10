@@ -114,9 +114,43 @@ func TestPreCreatePod_RejectsProxyUIDCollision(t *testing.T) {
 }
 
 func TestPreCreatePod_MissingImageFailsClosed(t *testing.T) {
+	// No flag image AND no pool idle image => fail-closed.
 	p := New(Config{Image: ""})
 	_, err := p.PreCreatePod(context.Background(), sandboxPod(), poolWithPolicy())
 	if err == nil {
-		t.Fatal("policy with no configured image must fail pod creation (fail-closed)")
+		t.Fatal("policy with no image (flag or idleImage) must fail pod creation (fail-closed)")
+	}
+}
+
+func TestPreCreatePod_FallsBackToIdleImage(t *testing.T) {
+	// No flag image, but the pool's idle image (which bundles egress-proxy) is used.
+	p := New(Config{Image: ""})
+	pool := poolWithPolicy()
+	pool.Spec.IdleImage = "reg/agent-sandbox-idle:egress"
+	pod := sandboxPod()
+	updated, err := p.PreCreatePod(context.Background(), pod, pool)
+	if err != nil || !updated {
+		t.Fatalf("should inject using idleImage fallback; got updated=%v err=%v", updated, err)
+	}
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Image != "reg/agent-sandbox-idle:egress" {
+			t.Errorf("injected container %q should use idleImage, got %q",
+				pod.Spec.InitContainers[i].Name, pod.Spec.InitContainers[i].Image)
+		}
+	}
+}
+
+func TestPreCreatePod_FlagImageOverridesIdle(t *testing.T) {
+	p := New(Config{Image: "flag/img:1"})
+	pool := poolWithPolicy()
+	pool.Spec.IdleImage = "idle/img:1"
+	pod := sandboxPod()
+	if _, err := p.PreCreatePod(context.Background(), pod, pool); err != nil {
+		t.Fatal(err)
+	}
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Image != "flag/img:1" {
+			t.Errorf("flag image must take priority over idleImage, got %q", pod.Spec.InitContainers[i].Image)
+		}
 	}
 }

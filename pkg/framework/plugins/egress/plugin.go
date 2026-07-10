@@ -71,8 +71,17 @@ func (p *Plugin) PreCreatePod(_ context.Context, pod *corev1.Pod, pool *agentsv1
 	if hasContainer(pod.Spec.InitContainers, proxyContainerName) {
 		return false, nil // already injected (defensive; createPod builds a fresh Pod)
 	}
-	if p.cfg.Image == "" {
-		return false, plugins.NewInternal("egress plugin: no proxy image configured", nil)
+
+	// Resolve the sidecar/init image: the operator's --egress-proxy-image flag
+	// takes priority; otherwise fall back to the Pool's idle image, which bundles
+	// the egress-proxy binary. This lets egress work without any extra operator
+	// config. If neither is set, fail pod creation (fail-closed).
+	img := p.cfg.Image
+	if img == "" {
+		img = pool.Spec.IdleImage
+	}
+	if img == "" {
+		return false, plugins.NewInternal("egress plugin: no sidecar image (set --egress-proxy-image or the pool's idleImage)", nil)
 	}
 
 	// A sandbox process running as the proxy uid would be exempted from the
@@ -95,14 +104,14 @@ func (p *Plugin) PreCreatePod(_ context.Context, pod *corev1.Pod, pool *agentsv1
 	// containers (tini/envd) still run with unfiltered network; the redirect is
 	// installed last, immediately before the native sidecar comes up and the app
 	// containers start.
-	pod.Spec.InitContainers = append(pod.Spec.InitContainers, p.initContainer(), p.sidecar())
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, p.initContainer(img), p.sidecar(img))
 	return true, nil
 }
 
-func (p *Plugin) initContainer() corev1.Container {
+func (p *Plugin) initContainer(img string) corev1.Container {
 	return corev1.Container{
 		Name:            initContainerName,
-		Image:           p.cfg.Image,
+		Image:           img,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"/egress-proxy", "install-redirect"},
 		SecurityContext: &corev1.SecurityContext{
@@ -117,11 +126,11 @@ func (p *Plugin) initContainer() corev1.Container {
 	}
 }
 
-func (p *Plugin) sidecar() corev1.Container {
+func (p *Plugin) sidecar(img string) corev1.Container {
 	always := corev1.ContainerRestartPolicyAlways
 	return corev1.Container{
 		Name:            proxyContainerName,
-		Image:           p.cfg.Image,
+		Image:           img,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"/egress-proxy", "serve"},
 		RestartPolicy:   &always, // native sidecar (k8s >= 1.29)
