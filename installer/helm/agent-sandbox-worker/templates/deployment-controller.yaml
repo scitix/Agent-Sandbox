@@ -34,6 +34,9 @@ spec:
             - --e2b-domain={{ include "agent-sandbox-worker.e2bDomain" . }}
             - --apikey-namespace={{ .Release.Namespace }}
             - --clusters-configmap-name={{ include "agent-sandbox-worker.clustersConfigMapName" . }}
+            {{- if .Values.controller.egressProxyImage }}
+            - --egress-proxy-image={{ .Values.controller.egressProxyImage }}
+            {{- end }}
             {{- if .Values.extensionsConfig.create }}
             - --extension-config=/etc/agentbox/extensions.yaml
             {{- end }}

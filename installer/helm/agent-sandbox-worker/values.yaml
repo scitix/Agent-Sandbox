@@ -53,6 +53,13 @@ extensionsConfig:
 # Controller (sandbox operator + API server)
 # ---------------------------------------------------------------------------
 controller:
+  # egressProxyImage is the image carrying the egress-proxy binary. The egress
+  # network-policy plugin injects it as the filter sidecar + init container into
+  # sandbox Pods of Pools whose networkPolicy is set. Empty disables the flag —
+  # such a Pool then fails pod creation (fail-closed). Set to the idle image,
+  # which bundles egress-proxy.
+  egressProxyImage: ""
+
   # appName is the value placed in app.kubernetes.io/name for the controller
   # Deployment + its Services + ServiceMonitor. Empty means "use the chart
   # name" (current behavior). Override when migrating from a non-Helm install
