@@ -642,7 +642,36 @@ func envOverridesToGen(o *agentsv1alpha1.EnvOverridesSpec) *gen.EnvOverrides {
 	if o.DefaultIdleTimeout != nil {
 		out.DefaultIdleTimeout = ptr.To(o.DefaultIdleTimeout.Duration.String())
 	}
+	out.NetworkPolicy = networkPolicyToGen(o.NetworkPolicy)
 	return out
+}
+
+// networkPolicyToGen maps the CRD egress policy onto the wire shape (GET).
+func networkPolicyToGen(np *agentsv1alpha1.SandboxNetworkPolicy) *gen.SandboxNetworkPolicy {
+	if np == nil {
+		return nil
+	}
+	g := &gen.SandboxNetworkPolicy{}
+	if np.DisableEgress {
+		g.DisableEgress = ptr.To(true)
+	}
+	if np.AllowPrivateNetworks {
+		g.AllowPrivateNetworks = ptr.To(true)
+	}
+	if np.Egress != nil {
+		e := &gen.EgressRules{}
+		if len(np.Egress.AllowedDomains) > 0 {
+			e.AllowedDomains = ptr.To(np.Egress.AllowedDomains)
+		}
+		if len(np.Egress.AllowedCIDRs) > 0 {
+			e.AllowedCIDRs = ptr.To(np.Egress.AllowedCIDRs)
+		}
+		if len(np.Egress.DeniedCIDRs) > 0 {
+			e.DeniedCIDRs = ptr.To(np.Egress.DeniedCIDRs)
+		}
+		g.Egress = e
+	}
+	return g
 }
 
 // inlineResourcesToGen flattens corev1.ResourceRequirements into the wire

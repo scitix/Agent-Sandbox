@@ -28,6 +28,7 @@ from typing import cast
 
 if TYPE_CHECKING:
   from ..models.image_pull_secret_input import ImagePullSecretInput
+  from ..models.sandbox_network_policy import SandboxNetworkPolicy
 
 
 
@@ -55,6 +56,8 @@ class EnvOverrides:
             image_pull_secret (ImagePullSecretInput | Unset):
             image_pull_secret_configured (bool | Unset): Server-set on GET: true when the ips-{envName} Secret exists in the
                 Env's namespace. Write attempts via PATCH are ignored.
+            network_policy (SandboxNetworkPolicy | Unset): Sandbox egress network policy, enforced by an in-Pod transparent
+                proxy sidecar (supports domain matching, which the cluster CNIs cannot). Allowlist / default-deny semantics.
      """
 
     image: str | Unset = UNSET
@@ -63,6 +66,7 @@ class EnvOverrides:
     default_idle_timeout: str | Unset = UNSET
     image_pull_secret: ImagePullSecretInput | Unset = UNSET
     image_pull_secret_configured: bool | Unset = UNSET
+    network_policy: SandboxNetworkPolicy | Unset = UNSET
 
 
 
@@ -70,6 +74,7 @@ class EnvOverrides:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.image_pull_secret_input import ImagePullSecretInput
+        from ..models.sandbox_network_policy import SandboxNetworkPolicy
         image = self.image
 
         pod_creation_image_policy: str | Unset = UNSET
@@ -86,6 +91,10 @@ class EnvOverrides:
             image_pull_secret = self.image_pull_secret.to_dict()
 
         image_pull_secret_configured = self.image_pull_secret_configured
+
+        network_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.network_policy, Unset):
+            network_policy = self.network_policy.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -104,6 +113,8 @@ class EnvOverrides:
             field_dict["imagePullSecret"] = image_pull_secret
         if image_pull_secret_configured is not UNSET:
             field_dict["imagePullSecretConfigured"] = image_pull_secret_configured
+        if network_policy is not UNSET:
+            field_dict["networkPolicy"] = network_policy
 
         return field_dict
 
@@ -112,6 +123,7 @@ class EnvOverrides:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.image_pull_secret_input import ImagePullSecretInput
+        from ..models.sandbox_network_policy import SandboxNetworkPolicy
         d = dict(src_dict)
         image = d.pop("image", UNSET)
 
@@ -141,6 +153,16 @@ class EnvOverrides:
 
         image_pull_secret_configured = d.pop("imagePullSecretConfigured", UNSET)
 
+        _network_policy = d.pop("networkPolicy", UNSET)
+        network_policy: SandboxNetworkPolicy | Unset
+        if isinstance(_network_policy,  Unset):
+            network_policy = UNSET
+        else:
+            network_policy = SandboxNetworkPolicy.from_dict(_network_policy)
+
+
+
+
         env_overrides = cls(
             image=image,
             pod_creation_image_policy=pod_creation_image_policy,
@@ -148,6 +170,7 @@ class EnvOverrides:
             default_idle_timeout=default_idle_timeout,
             image_pull_secret=image_pull_secret,
             image_pull_secret_configured=image_pull_secret_configured,
+            network_policy=network_policy,
         )
 
         return env_overrides

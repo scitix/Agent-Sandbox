@@ -141,9 +141,19 @@ def sync_detailed(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
-            be supplied. The two paths are mutually exclusive — the server picks
-            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,9 +196,19 @@ def sync(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
-            be supplied. The two paths are mutually exclusive — the server picks
-            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -226,9 +246,19 @@ async def asyncio_detailed(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
-            be supplied. The two paths are mutually exclusive — the server picks
-            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -271,9 +301,19 @@ async def asyncio(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
-            be supplied. The two paths are mutually exclusive — the server picks
-            `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

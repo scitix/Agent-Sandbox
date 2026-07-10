@@ -637,7 +637,36 @@ func envOverridesFromGen(o *gen.EnvOverrides) (*agentsv1alpha1.EnvOverridesSpec,
 		}
 		out.DefaultIdleTimeout = &metav1.Duration{Duration: d}
 	}
+	out.NetworkPolicy = networkPolicyFromGen(o.NetworkPolicy)
 	return out, nil
+}
+
+// networkPolicyFromGen maps the wire egress policy onto the CRD spec.
+func networkPolicyFromGen(g *gen.SandboxNetworkPolicy) *agentsv1alpha1.SandboxNetworkPolicy {
+	if g == nil {
+		return nil
+	}
+	np := &agentsv1alpha1.SandboxNetworkPolicy{}
+	if g.DisableEgress != nil {
+		np.DisableEgress = *g.DisableEgress
+	}
+	if g.AllowPrivateNetworks != nil {
+		np.AllowPrivateNetworks = *g.AllowPrivateNetworks
+	}
+	if g.Egress != nil {
+		e := &agentsv1alpha1.EgressRules{}
+		if g.Egress.AllowedDomains != nil {
+			e.AllowedDomains = *g.Egress.AllowedDomains
+		}
+		if g.Egress.AllowedCIDRs != nil {
+			e.AllowedCIDRs = *g.Egress.AllowedCIDRs
+		}
+		if g.Egress.DeniedCIDRs != nil {
+			e.DeniedCIDRs = *g.Egress.DeniedCIDRs
+		}
+		np.Egress = e
+	}
+	return np
 }
 
 // inlineResourcesFromGen projects the wire ResourceRequirements (Quantity

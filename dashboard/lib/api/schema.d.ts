@@ -1178,19 +1178,29 @@ export interface components {
          *     `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
          *     Members in the same `scalingGroup` share an autoscaling policy.
          *
-         *     Exactly one of (`instanceType` + optional `multiplier`) or `inlineResources` must
-         *     be supplied. The two paths are mutually exclusive — the server picks
-         *     `instanceType` when the InstanceType catalog is enabled, else `inlineResources`.
+         *     Sizing accepts three shapes:
+         *       - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+         *         `instanceType × multiplier` envelope (default `multiplier` = 1).
+         *       - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+         *         multiplier` is the reservation/billing envelope, while `inlineResources` is the
+         *         actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+         *         must be ≤ the envelope (round down allowed, round up rejected with 400); the
+         *         reservation still charges quota for the whole instance.
+         *       - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+         *         per-Pool resource requests/limits.
+         *     `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+         *     `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+         *     real size and Pools downsized differently land in distinct scaling groups.
          */
         CreateEnvSandboxPoolRequest: {
-            /** @description InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. */
+            /** @description InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod. */
             instanceType?: string;
             /**
              * Format: int32
-             * @description Multiplier applied to the InstanceType base resources. Defaults to 1.
+             * @description Multiplier applied to the InstanceType base resources to form the reservation envelope. Defaults to 1.
              */
             multiplier?: number;
-            /** @description Explicit per-Pool resource requests/limits. Used when instanceType is not supplied. Sets both requests and limits. */
+            /** @description Explicit per-Pool resource requests/limits. Used alone when instanceType is not supplied, or combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits. */
             inlineResources?: components["schemas"]["ResourceRequirements"];
             /**
              * Format: int32
@@ -1460,6 +1470,31 @@ export interface components {
             imagePullSecret?: components["schemas"]["ImagePullSecretInput"];
             /** @description Server-set on GET: true when the ips-{envName} Secret exists in the Env's namespace. Write attempts via PATCH are ignored. */
             readonly imagePullSecretConfigured?: boolean;
+            /**
+             * @description Egress network policy applied uniformly to every member Pool's sandbox
+             *     Pods. When set, the operator injects a transparent egress-filter sidecar
+             *     and enforces the policy (default-deny allowlist). Omit for unrestricted
+             *     egress. Per-sandbox overrides are available via the E2B create body.
+             */
+            networkPolicy?: components["schemas"]["SandboxNetworkPolicy"];
+        };
+        /** @description Sandbox egress network policy, enforced by an in-Pod transparent proxy sidecar (supports domain matching, which the cluster CNIs cannot). Allowlist / default-deny semantics. */
+        SandboxNetworkPolicy: {
+            /** @description Block all outbound traffic (DNS still resolves). A quick 'no internet' switch; takes precedence over egress. */
+            disableEgress?: boolean;
+            /** @description Allowlist. When disableEgress is false and egress is omitted, egress is unrestricted (subject to the anti-SSRF baseline). */
+            egress?: components["schemas"]["EgressRules"];
+            /** @description Disable the default deny of private / link-local / cloud-metadata ranges (RFC1918, 169.254.0.0/16, ...). Default false — the anti-SSRF baseline stays on. */
+            allowPrivateNetworks?: boolean;
+        };
+        /** @description Allow/deny rules for sandbox outbound traffic. */
+        EgressRules: {
+            /** @description Permit egress to matching hostnames. Exact ('pypi.org'), wildcard-all ('*'), or suffix ('*.pythonhosted.org'). Matched via TLS SNI (443) / HTTP Host (80). */
+            allowedDomains?: string[];
+            /** @description Permit egress to these CIDR blocks / bare IPs (promoted to /32). */
+            allowedCIDRs?: string[];
+            /** @description Block egress to these CIDR blocks / bare IPs. Domains are not supported for deny. */
+            deniedCIDRs?: string[];
         };
         EnvClusterSpec: {
             /** @description Cluster identifier that owns this segment. Each Worker only mutates the segment matching its own clusterID. */

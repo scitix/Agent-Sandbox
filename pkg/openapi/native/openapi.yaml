@@ -1228,6 +1228,49 @@ components:
           type: boolean
           readOnly: true
           description: "Server-set on GET: true when the ips-{envName} Secret exists in the Env's namespace. Write attempts via PATCH are ignored."
+        networkPolicy:
+          $ref: "#/components/schemas/SandboxNetworkPolicy"
+          description: |
+            Egress network policy applied uniformly to every member Pool's sandbox
+            Pods. When set, the operator injects a transparent egress-filter sidecar
+            and enforces the policy (default-deny allowlist). Omit for unrestricted
+            egress. Per-sandbox overrides are available via the E2B create body.
+      additionalProperties: false
+
+    SandboxNetworkPolicy:
+      type: object
+      description: "Sandbox egress network policy, enforced by an in-Pod transparent proxy sidecar (supports domain matching, which the cluster CNIs cannot). Allowlist / default-deny semantics."
+      properties:
+        disableEgress:
+          type: boolean
+          description: "Block all outbound traffic (DNS still resolves). A quick 'no internet' switch; takes precedence over egress."
+        egress:
+          $ref: "#/components/schemas/EgressRules"
+          description: "Allowlist. When disableEgress is false and egress is omitted, egress is unrestricted (subject to the anti-SSRF baseline)."
+        allowPrivateNetworks:
+          type: boolean
+          description: "Disable the default deny of private / link-local / cloud-metadata ranges (RFC1918, 169.254.0.0/16, ...). Default false — the anti-SSRF baseline stays on."
+      additionalProperties: false
+
+    EgressRules:
+      type: object
+      description: "Allow/deny rules for sandbox outbound traffic."
+      properties:
+        allowedDomains:
+          type: array
+          items:
+            type: string
+          description: "Permit egress to matching hostnames. Exact ('pypi.org'), wildcard-all ('*'), or suffix ('*.pythonhosted.org'). Matched via TLS SNI (443) / HTTP Host (80)."
+        allowedCIDRs:
+          type: array
+          items:
+            type: string
+          description: "Permit egress to these CIDR blocks / bare IPs (promoted to /32)."
+        deniedCIDRs:
+          type: array
+          items:
+            type: string
+          description: "Block egress to these CIDR blocks / bare IPs. Domains are not supported for deny."
       additionalProperties: false
 
     EnvClusterSpec:

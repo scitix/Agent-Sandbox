@@ -36,6 +36,7 @@ from .delete_sandbox_env_result import DeleteSandboxEnvResult
 from .delete_sandbox_pool_result import DeleteSandboxPoolResult
 from .delete_sandbox_result import DeleteSandboxResult
 from .delete_sandbox_template_result import DeleteSandboxTemplateResult
+from .egress_rules import EgressRules
 from .env_autoscaling_group import EnvAutoscalingGroup
 from .env_autoscaling_group_envelope import EnvAutoscalingGroupEnvelope
 from .env_autoscaling_spec import EnvAutoscalingSpec
@@ -111,6 +112,7 @@ from .sandbox_log_entry import SandboxLogEntry
 from .sandbox_logs_result import SandboxLogsResult
 from .sandbox_logs_result_source import SandboxLogsResultSource
 from .sandbox_metadata import SandboxMetadata
+from .sandbox_network_policy import SandboxNetworkPolicy
 from .sandbox_pool import SandboxPool
 from .sandbox_pool_envelope import SandboxPoolEnvelope
 from .sandbox_pool_spec import SandboxPoolSpec
@@ -170,6 +172,7 @@ __all__ = (
     "DeleteSandboxPoolResult",
     "DeleteSandboxResult",
     "DeleteSandboxTemplateResult",
+    "EgressRules",
     "EnvAutoscalingGroup",
     "EnvAutoscalingGroupEnvelope",
     "EnvAutoscalingSpec",
@@ -245,6 +248,7 @@ __all__ = (
     "SandboxLogsResult",
     "SandboxLogsResultSource",
     "SandboxMetadata",
+    "SandboxNetworkPolicy",
     "SandboxPool",
     "SandboxPoolEnvelope",
     "SandboxPoolSpec",
