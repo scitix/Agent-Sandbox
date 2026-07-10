@@ -46,3 +46,11 @@ type IdleNotifier interface {
 type SandboxReadyHook interface {
 	OnSandboxReady(ctx context.Context, pod *corev1.Pod)
 }
+
+// SandboxReleaseHook is called in a goroutine after a Stopping pod completes its
+// return to the pool (Stopping → Idle). Used to reset per-sandbox in-Pod state
+// (e.g. the egress filter sidecar) so a reused pod does not carry the previous
+// sandbox's configuration. Implementations must be goroutine-safe.
+type SandboxReleaseHook interface {
+	OnSandboxRelease(ctx context.Context, pod *corev1.Pod)
+}

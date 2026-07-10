@@ -92,6 +92,9 @@ type SandboxPoolReconciler struct {
 	// SandboxReadyHook is called (in a goroutine) after a Starting pod is
 	// successfully marked Running via MarkUpdateCompleted. nil = disabled.
 	SandboxReadyHook SandboxReadyHook
+	// SandboxReleaseHook is called (in a goroutine) after a Stopping pod
+	// completes its return to the pool (Stopping → Idle). nil = disabled.
+	SandboxReleaseHook SandboxReleaseHook
 	// DigestResolver resolves image tags to content digests for in-place
 	// update completion detection. nil = disabled (digest-based comparison
 	// will fail and updates may not complete).

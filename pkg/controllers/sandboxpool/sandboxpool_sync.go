@@ -272,6 +272,13 @@ func (r *SandboxPoolReconciler) syncInplaceUpdatePhases(ctx context.Context, san
 					return err
 				}
 
+				// Reset the egress filter sidecar to fail-closed now that the pod
+				// is back in the pool, so the next claim starts from a clean deny
+				// state until its policy push lands.
+				if r.SandboxReleaseHook != nil {
+					go r.SandboxReleaseHook.OnSandboxRelease(context.Background(), podSnap.DeepCopy())
+				}
+
 				recycledAt := time.Now().UTC()
 
 				if record.TerminatedAt != nil {

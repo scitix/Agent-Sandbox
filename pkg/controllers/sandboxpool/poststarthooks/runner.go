@@ -99,9 +99,57 @@ func NewRunner(gatewayBaseURL string, clientset kubernetes.Interface, restConfig
 	}
 }
 
+// egressProxyContainerName is the filter sidecar the egress plugin injects.
+// Kept in sync with pkg/framework/plugins/egress.
+const egressProxyContainerName = "egress-proxy"
+
 // OnSandboxReady implements sandboxpool.SandboxReadyHook.
 // It is called in a goroutine; errors are logged but never propagated.
 func (r *Runner) OnSandboxReady(ctx context.Context, pod *corev1.Pod) {
+	r.runPostStartHooks(ctx, pod)
+	r.pushEgressPolicy(ctx, pod)
+}
+
+// OnSandboxRelease implements sandboxpool.SandboxReleaseHook. When the pod
+// returns to the pool (Stopping → Idle), it resets the filter sidecar to
+// fail-closed so a reused pod never carries the previous sandbox's egress rules
+// into the window before the next claim's policy push lands.
+func (r *Runner) OnSandboxRelease(ctx context.Context, pod *corev1.Pod) {
+	if !hasInitContainer(pod, egressProxyContainerName) {
+		return
+	}
+	err := retry.OnError(defaultBackoff, func(error) bool { return true }, func() error {
+		return r.execInContainer(ctx, pod, egressProxyContainerName, []string{"/egress-proxy", "reset"}, nil)
+	})
+	if err != nil {
+		klog.ErrorS(err, "egress: failed to reset policy on release", "pod", klog.KObj(pod))
+	}
+}
+
+// pushEgressPolicy pushes the effective egress policy (from the egress-policy
+// annotation) into the filter sidecar via exec. No-op when the pod has no
+// policy annotation or no sidecar.
+func (r *Runner) pushEgressPolicy(ctx context.Context, pod *corev1.Pod) {
+	raw := pod.Annotations[agentsv1alpha1.SandboxEgressPolicyAnnotationKey]
+	if raw == "" {
+		return
+	}
+	if !hasInitContainer(pod, egressProxyContainerName) {
+		klog.ErrorS(nil, "egress: policy annotation present but no egress-proxy sidecar; pod egress stays fail-closed",
+			"pod", klog.KObj(pod))
+		return
+	}
+	err := retry.OnError(defaultBackoff, func(error) bool { return true }, func() error {
+		return r.execInContainer(ctx, pod, egressProxyContainerName, []string{"/egress-proxy", "set-policy"}, strings.NewReader(raw))
+	})
+	if err != nil {
+		klog.ErrorS(err, "egress: failed to push policy to sidecar; pod egress stays fail-closed", "pod", klog.KObj(pod))
+	}
+}
+
+// runPostStartHooks executes the user-declared post-start hooks recorded on the
+// pod's annotation.
+func (r *Runner) runPostStartHooks(ctx context.Context, pod *corev1.Pod) {
 	raw, ok := pod.Annotations[agentsv1alpha1.SandboxPostStartHooksAnnotationKey]
 	if !ok || raw == "" {
 		return
@@ -150,17 +198,23 @@ func (r *Runner) executeHook(ctx context.Context, pod *corev1.Pod, sandboxID str
 
 // execHook runs a shell command inside the sandbox's first container.
 func (r *Runner) execHook(ctx context.Context, pod *corev1.Pod, action *ExecAction) error {
-	if r.clientset == nil || r.restConfig == nil {
-		return fmt.Errorf("exec hook skipped: kubernetes clientset or rest config not configured")
-	}
 	if len(pod.Spec.Containers) == 0 {
 		return fmt.Errorf("exec hook skipped: pod has no containers")
+	}
+	return r.execInContainer(ctx, pod, pod.Spec.Containers[0].Name, []string{"sh", "-c", action.Command}, nil)
+}
+
+// execInContainer runs command in the named container, optionally piping stdin.
+// Used both for user post-start hooks (sandbox container) and control-plane
+// egress policy push/reset (egress-proxy sidecar).
+func (r *Runner) execInContainer(ctx context.Context, pod *corev1.Pod, container string, command []string, stdin io.Reader) error {
+	if r.clientset == nil || r.restConfig == nil {
+		return fmt.Errorf("exec skipped: kubernetes clientset or rest config not configured")
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	container := pod.Spec.Containers[0].Name
 	execReq := r.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(pod.Name).
@@ -168,8 +222,8 @@ func (r *Runner) execHook(ctx context.Context, pod *corev1.Pod, action *ExecActi
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: container,
-			Command:   []string{"sh", "-c", action.Command},
-			Stdin:     false,
+			Command:   command,
+			Stdin:     stdin != nil,
 			Stdout:    true,
 			Stderr:    true,
 			TTY:       false,
@@ -177,18 +231,28 @@ func (r *Runner) execHook(ctx context.Context, pod *corev1.Pod, action *ExecActi
 
 	executor, err := remotecommand.NewSPDYExecutor(r.restConfig, http.MethodPost, execReq.URL())
 	if err != nil {
-		return fmt.Errorf("exec hook: failed to create executor: %w", err)
+		return fmt.Errorf("exec: failed to create executor: %w", err)
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	if err := executor.StreamWithContext(execCtx, remotecommand.StreamOptions{
+		Stdin:  stdin,
 		Stdout: &stdoutBuf,
 		Stderr: &stderrBuf,
 		Tty:    false,
 	}); err != nil {
-		return fmt.Errorf("exec hook: command failed: %w (stderr: %s)", err, strings.TrimSpace(stderrBuf.String()))
+		return fmt.Errorf("exec: command %v in %s failed: %w (stderr: %s)", command, container, err, strings.TrimSpace(stderrBuf.String()))
 	}
 	return nil
+}
+
+func hasInitContainer(pod *corev1.Pod, name string) bool {
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // httpPostHook sends a POST request through the gateway to an in-sandbox HTTP endpoint.

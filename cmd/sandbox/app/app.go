@@ -433,6 +433,7 @@ func Run(opts Options) {
 		IdleNotifier:             idleNotifier,
 		DigestResolver:           digestResolver,
 		SandboxReadyHook:         hooksRunner,
+		SandboxReleaseHook:       hooksRunner,
 		AutoscalingLoader:        autoscalingLoader,
 		AutoscalingEventRecorder: mgr.GetEventRecorder("sandboxpool-autoscaler"),
 		ScaleDown:                scaleDownTracker,
