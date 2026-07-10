@@ -42,6 +42,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat"
 	"github.com/scitix/agent-sandbox/pkg/framework"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
+	"github.com/scitix/agent-sandbox/pkg/framework/plugins/egress"
 	plugininstancetype "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	pluginquota "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/framework/providerset"
@@ -101,6 +102,7 @@ func Run(opts Options) {
 		secret                                           string
 		localClusterID                                   string
 		clustersConfigMapName                            string
+		egressProxyImage                                 string
 		tlsOpts                                          []func(*tls.Config)
 	)
 
@@ -150,6 +152,10 @@ func Run(opts Options) {
 		"Identifier of the local cluster. When empty, cross-cluster features are disabled.")
 	flag.StringVar(&clustersConfigMapName, "clusters-configmap-name", "agentbox-clusters-config",
 		"Name of the ConfigMap containing cross-cluster gateway configuration.")
+	flag.StringVar(&egressProxyImage, "egress-proxy-image", os.Getenv("AGENTBOX_EGRESS_PROXY_IMAGE"),
+		"Container image carrying the egress-proxy binary, injected as the filter sidecar/init into "+
+			"sandbox Pods of Pools with a networkPolicy. Defaults to the idle image. Required when "+
+			"egress filtering is used; a Pool with a networkPolicy but no image fails pod creation (fail-closed).")
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -281,6 +287,11 @@ func Run(opts Options) {
 	}.Normalize()
 
 	builtPlugins := buildPlugins(setupLog, opts.OutOfTreePlugins, extCfg, handle, providerSet)
+
+	// The egress filter is an in-tree plugin, always registered. It self-gates
+	// on pool.Spec.NetworkPolicy, so Pools without a policy are untouched; a
+	// policy-bearing Pool with no configured image fails pod creation (closed).
+	builtPlugins = append(builtPlugins, egress.New(egress.Config{Image: egressProxyImage}))
 
 	pluginManager := plugins.NewPluginManager(builtPlugins...)
 	if err := pluginManager.Start(ctx, handle); err != nil {
