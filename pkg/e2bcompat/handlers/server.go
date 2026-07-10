@@ -256,6 +256,16 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	if req.Body.Timeout != nil && *req.Body.Timeout > 0 {
 		input.IdleTimeout = time.Duration(*req.Body.Timeout) * time.Second
 	}
+	// Egress network policy: map E2B network / allow_internet_access onto the
+	// AgentBox SandboxNetworkPolicy. Unsupported E2B features (SOCKS5 egress
+	// proxy, per-domain transform rules) are rejected rather than silently
+	// dropped — matching E2B's own feature gating. The service layer rejects a
+	// policy targeting a pool without egress filtering enabled.
+	np, npErr := parseE2BNetworkPolicy(req.Body)
+	if npErr != nil {
+		return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(*npErr)}, nil
+	}
+	input.NetworkPolicy = np
 	// Inject team/user from auth into labels so they are recorded on the pod
 	// and metrics (agentbox_sandbox_create_total) carry the correct dimensions.
 	input.Labels = make(map[string]string)
