@@ -1,10 +1,28 @@
 # The idle image is the minimal image that pre-warmed sandbox pods run while
 # sitting in the pool. It must respond to `exec` and run indefinitely so the
 # operator can in-place upgrade it to a runtime image when a sandbox is claimed.
+#
+# It also carries the egress-proxy binary: the egress network-policy plugin
+# injects this same image as an init container (installs the iptables redirect,
+# needs the bundled iptables) and a native sidecar (runs the filter proxy).
+# Bundling here avoids a separate image — the idle image is already resident on
+# every pool node and is versioned with this repo.
+
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# GOOS/GOARCH default to the build stage's platform. Under buildx multi-platform
+# this stage runs per-target (emulated), so the binary matches the runtime arch.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/egress-proxy ./cmd/egressproxy
+
 FROM alpine:3.23
 
 ENV AGENTBOX_IS_IDLE_IMAGE=true
 RUN touch /etc/agentbox_is_idle_image \
-    && apk add --no-cache bash coreutils
+    && apk add --no-cache bash coreutils iptables
+
+COPY --from=build /out/egress-proxy /egress-proxy
 
 CMD ["sleep", "infinity"]

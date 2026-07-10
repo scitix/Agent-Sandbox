@@ -1,7 +1,8 @@
 name: Build Idle Image
 
 # The idle image is what every pre-warmed sandbox pod runs while sitting in the
-# pool. Rebuilt only when its Dockerfile changes — it has no source tree.
+# pool. It also bundles the egress-proxy binary (compiled from cmd/egressproxy),
+# so it is rebuilt when its Dockerfile OR the egress-proxy source changes.
 
 on:
   push:
@@ -10,10 +11,18 @@ on:
     paths:
       - "installer/dockerfile/Dockerfile.idleimage"
       - ".github/workflows/build-idleimage.yml"
+      - "cmd/egressproxy/**"
+      - "pkg/egressproxy/**"
+      - "go.mod"
+      - "go.sum"
   pull_request:
     paths:
       - "installer/dockerfile/Dockerfile.idleimage"
       - ".github/workflows/build-idleimage.yml"
+      - "cmd/egressproxy/**"
+      - "pkg/egressproxy/**"
+      - "go.mod"
+      - "go.sum"
 
 env:
   REGISTRY: ghcr.io
