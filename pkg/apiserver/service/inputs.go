@@ -17,6 +17,7 @@ package service
 import (
 	"time"
 
+	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 )
 
@@ -55,4 +56,9 @@ type CreateSandboxInput struct {
 	// PostStartHooks are actions to run after the sandbox transitions Starting → Running.
 	// Serialized to a pod annotation at claim time; consumed by the controller.
 	PostStartHooks []poststarthooks.Action
+
+	// NetworkPolicy, when non-nil, overrides the Pool's Env-default egress policy
+	// for this sandbox only (E2B create body: network / allow_internet_access).
+	// Rejected when the target Pool has no networkPolicy (no filter sidecar).
+	NetworkPolicy *agentsv1alpha1.SandboxNetworkPolicy
 }

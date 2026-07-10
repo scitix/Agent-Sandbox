@@ -467,6 +467,18 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		}
 	}
 
+	// Egress network policy: resolve the effective policy (per-sandbox override
+	// else the Pool's Env-default) and stamp it as a managed annotation. The
+	// SandboxReady hook pushes it into the filter sidecar; release strips it.
+	egressPolicyJSON, egressOn, egressErr := buildEgressPolicyAnnotation(input.NetworkPolicy, pool, sandboxID)
+	if egressErr != nil {
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
+		return nil, egressErr
+	}
+	if egressOn {
+		annotations[agentsv1alpha1.SandboxEgressPolicyAnnotationKey] = egressPolicyJSON
+	}
+
 	// Compute managed label keys from the caller-supplied labels, excluding
 	// system labels that must survive ReleaseSandboxPod so that the controller
 	// can write them into the history store record.
@@ -483,7 +495,14 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewBadRequest(fmt.Sprintf("failed to encode managed labels: %v", encErr))
 	}
-	managedAnnotationKeys, encErr := json.Marshal(sortedKeys(input.Annotations))
+	managedAnnoKeyList := sortedKeys(input.Annotations)
+	if egressOn {
+		// The derived egress-policy annotation must also be stripped on release
+		// so a reused pod does not carry a prior sandbox's egress rules.
+		managedAnnoKeyList = append(managedAnnoKeyList, agentsv1alpha1.SandboxEgressPolicyAnnotationKey)
+		sort.Strings(managedAnnoKeyList)
+	}
+	managedAnnotationKeys, encErr := json.Marshal(managedAnnoKeyList)
 	if encErr != nil {
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewBadRequest(fmt.Sprintf("failed to encode managed annotations: %v", encErr))
