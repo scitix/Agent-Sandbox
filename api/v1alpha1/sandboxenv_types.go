@@ -113,6 +113,13 @@ type EnvOverridesSpec struct {
 	// Applied to Sandboxes that don't carry an explicit idleTimeout.
 	// +optional
 	DefaultIdleTimeout *metav1.Duration `json:"defaultIdleTimeout,omitempty"`
+
+	// NetworkPolicy, when set, enables sandbox egress filtering for every member
+	// Pool of this Env. The operator injects a transparent filter sidecar into
+	// each sandbox Pod; this policy is the Env-wide default, overridable per
+	// sandbox at create time. Nil disables egress filtering (no sidecar).
+	// +optional
+	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 // SandboxEnvTemplateRef points at a cluster-scoped SandboxTemplate.

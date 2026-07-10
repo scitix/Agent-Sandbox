@@ -115,6 +115,13 @@ type SandboxPoolSpec struct {
 	// +kubebuilder:default=IdleImage
 	PodCreationImagePolicy PodCreationImagePolicy `json:"podCreationImagePolicy,omitempty"`
 
+	// NetworkPolicy, when set, enables sandbox egress filtering for Pods in this
+	// Pool: the operator injects a transparent filter sidecar. For Env-owned
+	// Pools this is projected from the Env's overrides.networkPolicy and serves
+	// as the default ruleset; per-sandbox create requests may override it.
+	// +optional
+	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
+
 	EmbeddedSandboxTemplate `json:",inline"`
 }
 

@@ -146,6 +146,7 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 		pool.Spec.PodCreationImagePolicy = envOv.PodCreationImagePolicy
 		pool.Spec.DefaultStartupTimeout = envOv.DefaultStartupTimeout
 		pool.Spec.DefaultIdleTimeout = envOv.DefaultIdleTimeout
+		pool.Spec.NetworkPolicy = envOv.NetworkPolicy.DeepCopy()
 	}
 	return pool, nil
 }

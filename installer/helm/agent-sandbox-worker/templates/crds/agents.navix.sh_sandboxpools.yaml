@@ -130,6 +130,64 @@ spec:
                   If not specified, the image from Template.Spec.Containers[0].Image
                   will be used.'
                 type: string
+              networkPolicy:
+                description: 'NetworkPolicy, when set, enables sandbox egress filtering
+                  for Pods in this
+
+                  Pool: the operator injects a transparent filter sidecar. For Env-owned
+
+                  Pools this is projected from the Env''s overrides.networkPolicy
+                  and serves
+
+                  as the default ruleset; per-sandbox create requests may override
+                  it.'
+                properties:
+                  allowPrivateNetworks:
+                    description: "AllowPrivateNetworks disables the default deny of\
+                      \ private / link-local /\ncloud-metadata ranges (RFC1918, 169.254.0.0/16,\
+                      \ etc.). Default false \u2014 the\nanti-SSRF baseline stays\
+                      \ on. Enable only for trusted intra-cluster access."
+                    type: boolean
+                  disableEgress:
+                    description: 'DisableEgress blocks all outbound traffic (DNS still
+                      resolves so lookups
+
+                      do not hang). Takes precedence over Egress. A quick "no internet"
+                      switch.'
+                    type: boolean
+                  egress:
+                    description: 'Egress is the allowlist. When DisableEgress is false
+                      and Egress is nil,
+
+                      egress is unrestricted except for the anti-SSRF baseline below.'
+                    properties:
+                      allowedCIDRs:
+                        description: AllowedCIDRs permits egress to these CIDR blocks
+                          / bare IPs (as /32).
+                        items:
+                          type: string
+                        type: array
+                      allowedDomains:
+                        description: 'AllowedDomains permits egress to matching hostnames.
+                          Supports exact
+
+                          ("pypi.org"), wildcard-all ("*"), and suffix ("*.pythonhosted.org").
+
+                          Matched via TLS SNI (443) / HTTP Host (80); other ports
+                          are IP-only.'
+                        items:
+                          type: string
+                        type: array
+                      deniedCIDRs:
+                        description: 'DeniedCIDRs blocks egress to these CIDR blocks
+                          / bare IPs. Domains are not
+
+                          supported for deny (a domain resolves to many changing IPs).'
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                type: object
               podCreationImagePolicy:
                 allOf:
                 - enum:

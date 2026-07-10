@@ -83,6 +83,14 @@ const (
 	// update resets the pod to idle and clears StableContainerStatuses.
 	SandboxContainerIDAnnotationKey = "agentbox.navix.sh/container-id"
 
+	// SandboxEgressPolicyAnnotationKey carries the JSON-encoded effective egress
+	// policy (pkg/egressproxy.Policy) resolved for a claimed sandbox: the merge
+	// of the per-sandbox override and the Pool's Env-default networkPolicy. The
+	// SandboxReady hook reads it and pushes it into the filter sidecar via exec.
+	// Registered as a managed annotation key so it is stripped on release,
+	// giving free reset-on-recycle.
+	SandboxEgressPolicyAnnotationKey = "agentbox.navix.sh/egress-policy"
+
 	// SI Scheduler labels and annotations
 	LabelTeam = "scheduling.navix.sh/team"
 	LabelUser = "scheduling.navix.sh/user"
