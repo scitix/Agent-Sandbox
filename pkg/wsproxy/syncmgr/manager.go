@@ -154,6 +154,11 @@ func (m *SyncManager) Run(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	// Bootstrap the images-catalog ConfigMap before serving. When the chart
+	// does not ship the object (imagesCatalog.manageConfigMap=false), ws-proxy
+	// is its sole owner; when the chart does, this is a no-op.
+	m.ensureImagesCatalog(ctx)
+
 	m.dialAll(ctx)
 
 	for {

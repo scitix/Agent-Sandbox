@@ -158,7 +158,17 @@ globalApiKey:
   adminKey: "" # AGENTBOX_ADMIN_KEY: wsproxy admin key for API key auth; empty = dev mode
 
 # Images Catalog configuration.
-# When enabled, the catalog ConfigMap is managed by ws-proxy at runtime.
+# When enabled, the catalog is runtime-mutable state written by ws-proxy.
 # Requires globalApiKey.enabled: true.
 imagesCatalog:
   enabled: true
+  # manageConfigMap controls whether the chart ships the catalog ConfigMap.
+  #   true  (default): the chart renders the ConfigMap and preserves live data
+  #                    across `helm upgrade` via `lookup` + resource-policy:keep.
+  #                    Correct for server-side installs (helm install/upgrade).
+  #   false: the chart does NOT render the ConfigMap; ws-proxy (syncmgr) becomes
+  #          its sole owner — it bootstraps an empty object on startup and only
+  #          the CRUD endpoints mutate it. Use this when the chart is rendered to
+  #          static YAML and `kubectl apply`-ed, because `helm template` cannot
+  #          `lookup` live data and would otherwise reset the catalog on re-apply.
+  manageConfigMap: true

@@ -1,4 +1,4 @@
-{{- if .Values.imagesCatalog.enabled }}
+{{- if and .Values.imagesCatalog.enabled .Values.imagesCatalog.manageConfigMap }}
 {{- $name := include "agent-sandbox-hub.imagesCatalogConfigMapName" . }}
 {{- /*
 The catalog is runtime-mutable state: ws-proxy's images-catalog CRUD endpoints

@@ -16,6 +16,14 @@ package syncmgr
 
 // Images Catalog CRUD — stored as a single ConfigMap in the master cluster.
 //
+// Ownership: the catalog is runtime-mutable state written here. When the Helm
+// chart is deployed with imagesCatalog.manageConfigMap=false (e.g. installers
+// that render static YAML and `kubectl apply` it, where Helm's `lookup` cannot
+// preserve live data), the chart does NOT ship the ConfigMap — ws-proxy is its
+// sole owner: ensureImagesCatalog bootstraps an empty object on startup and the
+// CRUD handlers below are the only writers, so re-applying the installer never
+// clobbers runtime data.
+//
 // Endpoints (all under the /internal prefix, manager-token auth):
 //   GET    /internal/images-catalog          → list all datasets
 //   POST   /internal/images-catalog          → upsert a single dataset
@@ -48,6 +56,45 @@ type ImageDataset struct {
 	HuggingFaceURL string            `json:"huggingFaceUrl"`
 	Tags           []string          `json:"tags"`
 	ClusterDocs    map[string]string `json:"clusterDocs"`
+}
+
+// ensureImagesCatalog bootstraps the images-catalog ConfigMap if it does not
+// yet exist, seeding it with an empty dataset list. It NEVER overwrites an
+// existing ConfigMap, so runtime data written via the CRUD handlers survives
+// ws-proxy restarts and (when the chart does not manage the object) installer
+// re-applies. Idempotent and best-effort: errors are logged, not fatal.
+func (m *SyncManager) ensureImagesCatalog(ctx context.Context) {
+	if m.deps.TemplateClient == nil {
+		return
+	}
+	cm := &corev1.ConfigMap{}
+	err := m.deps.TemplateClient.Get(ctx, client.ObjectKey{
+		Namespace: m.deps.ImagesCatalogNamespace,
+		Name:      m.deps.ImagesCatalogConfigMap,
+	}, cm)
+	if err == nil {
+		return // already exists; leave runtime data intact
+	}
+	if !apierrors.IsNotFound(err) {
+		log.Printf("wsproxy: images catalog ensure get error: %v", err)
+		return
+	}
+	newCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.deps.ImagesCatalogConfigMap,
+			Namespace: m.deps.ImagesCatalogNamespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "agentbox-dashboard",
+			},
+		},
+		Data: map[string]string{imagesCatalogKey: "[]"},
+	}
+	if err := m.deps.TemplateClient.Create(ctx, newCM); err != nil && !apierrors.IsAlreadyExists(err) {
+		log.Printf("wsproxy: images catalog ensure create error: %v", err)
+		return
+	}
+	log.Printf("wsproxy: bootstrapped images catalog ConfigMap %s/%s",
+		m.deps.ImagesCatalogNamespace, m.deps.ImagesCatalogConfigMap)
 }
 
 func (m *SyncManager) loadCatalog(ctx context.Context) ([]ImageDataset, error) {
