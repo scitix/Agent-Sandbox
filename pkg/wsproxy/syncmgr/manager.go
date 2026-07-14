@@ -82,6 +82,7 @@ type clusterSyncConn struct {
 	keyCh  chan *syncv1.KeyEvent
 	tmplCh chan *syncv1.TemplateEvent
 	cfgCh  chan *syncv1.ClusterConfigEvent
+	fedCh  chan *syncv1.FederationBroadcast
 
 	done          chan struct{}
 	connectedAt   time.Time // immutable after creation
@@ -114,6 +115,9 @@ type SyncManager struct {
 	lastConnected     map[string]time.Time
 	lastDisconnected  map[string]time.Time
 	lastBroadcastHash [32]byte
+
+	// fed holds the cross-cluster capacity soft state relayed between Workers.
+	fed *federationStore
 }
 
 // Deps bundles all optional dependencies injected into SyncManager.
@@ -145,6 +149,7 @@ func New(clusters *cluster.Store, syncToken, managerToken string, deps Deps) *Sy
 		registry:         make(map[string]*clusterSyncConn),
 		lastConnected:    make(map[string]time.Time),
 		lastDisconnected: make(map[string]time.Time),
+		fed:              newFederationStore(),
 	}
 }
 
@@ -210,6 +215,7 @@ func (m *SyncManager) dialCluster(entry cluster.ClusterEntry) {
 		keyCh:       make(chan *syncv1.KeyEvent, broadcastBuffer),
 		tmplCh:      make(chan *syncv1.TemplateEvent, broadcastBuffer),
 		cfgCh:       make(chan *syncv1.ClusterConfigEvent, broadcastBuffer),
+		fedCh:       make(chan *syncv1.FederationBroadcast, broadcastBuffer),
 		done:        make(chan struct{}),
 		connectedAt: time.Now(),
 	}
@@ -218,6 +224,7 @@ func (m *SyncManager) dialCluster(entry cluster.ClusterEntry) {
 		syncv1.RegisterAPIKeyServiceServer(s, newAPIKeyServer(m, sc))
 		syncv1.RegisterTemplateServiceServer(s, newTemplateServer(m, sc))
 		syncv1.RegisterClusterConfigServiceServer(s, newClusterConfigServer(m, sc))
+		syncv1.RegisterFederationServiceServer(s, newFederationServer(m, sc))
 	})
 	if err != nil {
 		log.Printf("syncManager: ServeGRPC for %s failed: %v", entry.ID, err)
@@ -279,12 +286,18 @@ func (m *SyncManager) dialCluster(entry cluster.ClusterEntry) {
 		m.lastDisconnected[entry.ID] = time.Now()
 		m.mu.Unlock()
 
+		// A cluster that drops off must not linger in the federation store,
+		// or new subscribers would receive its stale capacity. Purge it before
+		// closing channels; surviving Workers also age it out on their own TTL.
+		m.fed.purgeCluster(entry.ID)
+
 		close(sc.done)
 		// Drain channels by closing them; pending Watch loops exit via
 		// the chan-closed case in their select.
 		close(sc.keyCh)
 		close(sc.tmplCh)
 		close(sc.cfgCh)
+		close(sc.fedCh)
 
 		_ = conn.Close()
 		WSSyncConnectionsActive.Dec()
@@ -359,6 +372,25 @@ func (m *SyncManager) broadcastTemplateDelete(name string) {
 		default:
 			WSSyncEventsDroppedTotal.WithLabelValues(sc.clusterID, "template_delete").Inc()
 			log.Printf("syncManager: dropped template_delete for cluster %s (buffer full)", sc.clusterID)
+		}
+	}
+}
+
+// broadcastFederation fans one capacity batch out to every connected Worker,
+// including the originating one (a Worker filters its own cluster out when it
+// answers foreign-capacity queries, so the echo is harmless).
+func (m *SyncManager) broadcastFederation(items []*syncv1.EnvCapacity) {
+	if len(items) == 0 {
+		return
+	}
+	ev := &syncv1.FederationBroadcast{Items: items}
+	for _, sc := range m.snapshotConns() {
+		select {
+		case sc.fedCh <- ev:
+			WSSyncEventsTotal.WithLabelValues(sc.clusterID, "federation").Inc()
+		default:
+			WSSyncEventsDroppedTotal.WithLabelValues(sc.clusterID, "federation").Inc()
+			log.Printf("syncManager: dropped federation for cluster %s (buffer full)", sc.clusterID)
 		}
 	}
 }

@@ -33,6 +33,7 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	syncv1 "github.com/scitix/agent-sandbox/pkg/proto/sandbox/sync/v1"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -129,9 +130,18 @@ type syncServiceImpl struct {
 	keyClient    syncv1.APIKeyServiceClient
 	tmplClient   syncv1.TemplateServiceClient
 	configClient syncv1.ClusterConfigServiceClient
+	fedClient    syncv1.FederationServiceClient
 
 	templateSvc SandboxTemplateService // may be nil when template sync is not configured
 	clusterSink ClusterConfigSink      // may be nil when cluster config sync is not configured
+
+	// Cross-cluster capacity federation. All nil when federation is not
+	// configured (single-cluster deployments), in which case the report/watch
+	// goroutines are not started.
+	fedRegistry       *federation.Registry
+	fedSource         federation.CapacitySource
+	localClusterID    string
+	fedReportInterval time.Duration
 }
 
 // NewSyncService creates a new SyncService.
@@ -178,6 +188,8 @@ func (s *syncServiceImpl) OnConnect(conn *grpc.ClientConn) uint64 {
 	s.keyClient = syncv1.NewAPIKeyServiceClient(conn)
 	s.tmplClient = syncv1.NewTemplateServiceClient(conn)
 	s.configClient = syncv1.NewClusterConfigServiceClient(conn)
+	s.fedClient = syncv1.NewFederationServiceClient(conn)
+	fedEnabled := s.fedRegistry != nil && s.fedSource != nil
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
@@ -192,6 +204,10 @@ func (s *syncServiceImpl) OnConnect(conn *grpc.ClientConn) uint64 {
 	go s.runWatchKeys(ctx, id)
 	go s.runWatchTemplates(ctx, id)
 	go s.runWatchClusterConfig(ctx, id)
+	if fedEnabled {
+		go s.runWatchFederation(ctx, id)
+		go s.runReportFederation(ctx, id)
+	}
 	return id
 }
 
@@ -210,6 +226,7 @@ func (s *syncServiceImpl) OnDisconnect(connID uint64) {
 	s.keyClient = nil
 	s.tmplClient = nil
 	s.configClient = nil
+	s.fedClient = nil
 	s.mu.Unlock()
 	s.log.Info("ws-proxy connection lost", "connID", connID)
 }

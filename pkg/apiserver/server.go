@@ -31,6 +31,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
@@ -88,6 +89,12 @@ type Config struct {
 	// ServerVersion is the build-time version string stamped on every response
 	// via X-AgentBox-Server-Version. Set from pkg/version.Version in app.go.
 	ServerVersion string
+	// FederationRegistry / FederationSource enable cross-cluster capacity
+	// federation on the sync service. Both nil in single-cluster deployments,
+	// which disables federation entirely. Only consulted when Secret is set
+	// (federation rides the same ws-proxy sync connection).
+	FederationRegistry *federation.Registry
+	FederationSource   federation.CapacitySource
 }
 
 // Server is the HTTP API server.
@@ -127,6 +134,15 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		} else {
 			syncSvc = service.NewSyncServiceWithTemplate(cfg.KeyStore, templateSvc)
 			log.Info("sync mode enabled: template and API key writes will be forwarded to ws-proxy")
+		}
+		// Wire cross-cluster federation onto the sync service when configured.
+		if cfg.FederationRegistry != nil && cfg.FederationSource != nil {
+			if fs, ok := syncSvc.(interface {
+				SetFederation(*federation.Registry, federation.CapacitySource, string, time.Duration)
+			}); ok {
+				fs.SetFederation(cfg.FederationRegistry, cfg.FederationSource, cfg.LocalClusterID, 0)
+				log.Info("cross-cluster capacity federation enabled", "localCluster", cfg.LocalClusterID)
+			}
 		}
 	} else {
 		log.Info("sync mode disabled: template and API key writes are local-only")

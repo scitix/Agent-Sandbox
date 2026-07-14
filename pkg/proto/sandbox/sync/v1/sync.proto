@@ -261,3 +261,52 @@ message WatchClusterConfigRequest {}
 service ClusterConfigService {
   rpc WatchClusterConfig(WatchClusterConfigRequest) returns (stream ClusterConfigEvent);
 }
+
+// ── Cross-cluster capacity federation ─────────────────────────────────────────
+//
+// Each Worker independently owns its own SandboxEnv objects. When Envs of the
+// same (namespace, name) exist in more than one cluster, this service shares a
+// soft-state capacity view across them so a Worker's router can see whether a
+// same-named Env in another cluster currently has idle capacity.
+//
+// The federation is pure soft state: every record carries a relative freshness
+// (observed_for_ms) rather than an absolute timestamp so it survives cross-node
+// clock skew, and each Worker ages records out on a local TTL. A cluster that
+// stops reporting simply ages out everywhere — no explicit delete is needed.
+
+// EnvCapacity is a single cluster's runtime capacity for one (namespace, env,
+// scaling_group) triple. scaling_group == "" is the whole-Env aggregate.
+message EnvCapacity {
+  string cluster_id      = 1;
+  string namespace       = 2;
+  string env_name        = 3;
+  string scaling_group   = 4;
+  int32  idle            = 5;
+  int32  running         = 6;
+  int32  pending         = 7;
+  int32  desired         = 8;
+  // capacity is how many more sandboxes this cluster could admit for the
+  // triple; -1 means unknown / unbounded.
+  int32  capacity        = 9;
+  // saturated_for is the remaining saturation window in seconds (0 = not
+  // saturated). Relative to avoid cross-cluster clock skew.
+  int32  saturated_for   = 10;
+  // observed_for_ms is the age of this sample in milliseconds at send time.
+  int64  observed_for_ms = 11;
+}
+
+message ReportFederationRequest  { repeated EnvCapacity items = 1; }
+message ReportFederationResponse {}
+message FederationBroadcast       { repeated EnvCapacity items = 1; }
+message WatchFederationRequest    {}
+
+service FederationService {
+  // ReportFederation is a Worker→Hub client stream: the Worker pushes its
+  // local per-Env capacity (5 s diff / 30 s full resync). The Hub merges each
+  // batch into its soft-state store and fans it out to every other Worker.
+  rpc ReportFederation(stream ReportFederationRequest) returns (ReportFederationResponse);
+
+  // WatchFederation is a Hub→Worker server stream: the Worker receives a full
+  // snapshot on connect and then every subsequent batch of foreign capacity.
+  rpc WatchFederation(WatchFederationRequest) returns (stream FederationBroadcast);
+}

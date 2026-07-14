@@ -549,3 +549,149 @@ var ClusterConfigService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "sandbox/sync/v1/sync.proto",
 }
+
+const (
+	FederationService_ReportFederation_FullMethodName = "/sandbox.sync.v1.FederationService/ReportFederation"
+	FederationService_WatchFederation_FullMethodName  = "/sandbox.sync.v1.FederationService/WatchFederation"
+)
+
+// FederationServiceClient is the client API for FederationService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type FederationServiceClient interface {
+	// ReportFederation is a Worker→Hub client stream: the Worker pushes its
+	// local per-Env capacity (5 s diff / 30 s full resync). The Hub merges each
+	// batch into its soft-state store and fans it out to every other Worker.
+	ReportFederation(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReportFederationRequest, ReportFederationResponse], error)
+	// WatchFederation is a Hub→Worker server stream: the Worker receives a full
+	// snapshot on connect and then every subsequent batch of foreign capacity.
+	WatchFederation(ctx context.Context, in *WatchFederationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FederationBroadcast], error)
+}
+
+type federationServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewFederationServiceClient(cc grpc.ClientConnInterface) FederationServiceClient {
+	return &federationServiceClient{cc}
+}
+
+func (c *federationServiceClient) ReportFederation(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReportFederationRequest, ReportFederationResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &FederationService_ServiceDesc.Streams[0], FederationService_ReportFederation_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReportFederationRequest, ReportFederationResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FederationService_ReportFederationClient = grpc.ClientStreamingClient[ReportFederationRequest, ReportFederationResponse]
+
+func (c *federationServiceClient) WatchFederation(ctx context.Context, in *WatchFederationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FederationBroadcast], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &FederationService_ServiceDesc.Streams[1], FederationService_WatchFederation_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchFederationRequest, FederationBroadcast]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FederationService_WatchFederationClient = grpc.ServerStreamingClient[FederationBroadcast]
+
+// FederationServiceServer is the server API for FederationService service.
+// All implementations must embed UnimplementedFederationServiceServer
+// for forward compatibility.
+type FederationServiceServer interface {
+	// ReportFederation is a Worker→Hub client stream: the Worker pushes its
+	// local per-Env capacity (5 s diff / 30 s full resync). The Hub merges each
+	// batch into its soft-state store and fans it out to every other Worker.
+	ReportFederation(grpc.ClientStreamingServer[ReportFederationRequest, ReportFederationResponse]) error
+	// WatchFederation is a Hub→Worker server stream: the Worker receives a full
+	// snapshot on connect and then every subsequent batch of foreign capacity.
+	WatchFederation(*WatchFederationRequest, grpc.ServerStreamingServer[FederationBroadcast]) error
+	mustEmbedUnimplementedFederationServiceServer()
+}
+
+// UnimplementedFederationServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedFederationServiceServer struct{}
+
+func (UnimplementedFederationServiceServer) ReportFederation(grpc.ClientStreamingServer[ReportFederationRequest, ReportFederationResponse]) error {
+	return status.Error(codes.Unimplemented, "method ReportFederation not implemented")
+}
+func (UnimplementedFederationServiceServer) WatchFederation(*WatchFederationRequest, grpc.ServerStreamingServer[FederationBroadcast]) error {
+	return status.Error(codes.Unimplemented, "method WatchFederation not implemented")
+}
+func (UnimplementedFederationServiceServer) mustEmbedUnimplementedFederationServiceServer() {}
+func (UnimplementedFederationServiceServer) testEmbeddedByValue()                           {}
+
+// UnsafeFederationServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to FederationServiceServer will
+// result in compilation errors.
+type UnsafeFederationServiceServer interface {
+	mustEmbedUnimplementedFederationServiceServer()
+}
+
+func RegisterFederationServiceServer(s grpc.ServiceRegistrar, srv FederationServiceServer) {
+	// If the following call panics, it indicates UnimplementedFederationServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&FederationService_ServiceDesc, srv)
+}
+
+func _FederationService_ReportFederation_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(FederationServiceServer).ReportFederation(&grpc.GenericServerStream[ReportFederationRequest, ReportFederationResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FederationService_ReportFederationServer = grpc.ClientStreamingServer[ReportFederationRequest, ReportFederationResponse]
+
+func _FederationService_WatchFederation_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchFederationRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(FederationServiceServer).WatchFederation(m, &grpc.GenericServerStream[WatchFederationRequest, FederationBroadcast]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FederationService_WatchFederationServer = grpc.ServerStreamingServer[FederationBroadcast]
+
+// FederationService_ServiceDesc is the grpc.ServiceDesc for FederationService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var FederationService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "sandbox.sync.v1.FederationService",
+	HandlerType: (*FederationServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ReportFederation",
+			Handler:       _FederationService_ReportFederation_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "WatchFederation",
+			Handler:       _FederationService_WatchFederation_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "sandbox/sync/v1/sync.proto",
+}
