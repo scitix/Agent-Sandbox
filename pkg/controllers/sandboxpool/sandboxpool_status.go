@@ -134,6 +134,26 @@ func (r *SandboxPoolReconciler) calculatePodStatus(poolKey string, pods []corev1
 		unavailableIdle,
 	)
 
+	// Revision tracking: UpdateRevision is the Pool template's target hash;
+	// UpdatedReplicas counts Pods already at it; CurrentRevision is the single
+	// hash all Pods share (empty while a rollout straddles revisions).
+	desiredHash := sandboxPool.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey]
+	var updatedReplicas int32
+	distinctHashes := make(map[string]struct{}, 2)
+	for i := range pods {
+		h := pods[i].Labels[agentsv1alpha1.TemplateHashLabelKey]
+		distinctHashes[h] = struct{}{}
+		if h == desiredHash {
+			updatedReplicas++
+		}
+	}
+	currentRevision := ""
+	if len(distinctHashes) == 1 {
+		for h := range distinctHashes {
+			currentRevision = h
+		}
+	}
+
 	return agentsv1alpha1.SandboxPoolStatus{
 		Phase:                   poolPhase,
 		IdleReplicas:            idle,
@@ -142,6 +162,9 @@ func (r *SandboxPoolReconciler) calculatePodStatus(poolKey string, pods []corev1
 		StartingReplicas:        starting,
 		StoppingReplicas:        stopping,
 		FailedReplicas:          failed,
+		UpdateRevision:          desiredHash,
+		CurrentRevision:         currentRevision,
+		UpdatedReplicas:         updatedReplicas,
 		Conditions:              conditions,
 	}
 }
@@ -170,6 +193,15 @@ func (r *SandboxPoolReconciler) statusEquals(sandboxPool *agentsv1alpha1.Sandbox
 		return false
 	}
 	if old.FailedReplicas != newStatus.FailedReplicas {
+		return false
+	}
+	if old.UpdateRevision != newStatus.UpdateRevision {
+		return false
+	}
+	if old.CurrentRevision != newStatus.CurrentRevision {
+		return false
+	}
+	if old.UpdatedReplicas != newStatus.UpdatedReplicas {
 		return false
 	}
 	return conditionsEqual(old.Conditions, newStatus.Conditions)

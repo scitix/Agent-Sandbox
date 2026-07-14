@@ -53,6 +53,10 @@ class EnvObservedMember:
             saturated_until (datetime.datetime | Unset): Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil.
                 Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot
                 fit additional replicas.
+            update_revision (str | Unset): Mirror of the member Pool's status.updateRevision — the target revision the Pool
+                is rolling towards.
+            updated_replicas (int | Unset): Mirror of the member Pool's status.updatedReplicas. A rollout is in progress
+                while this is below the member's replica count.
      """
 
     name: str
@@ -65,6 +69,8 @@ class EnvObservedMember:
     current_replicas: int | Unset = UNSET
     pending_requests: int | Unset = UNSET
     saturated_until: datetime.datetime | Unset = UNSET
+    update_revision: str | Unset = UNSET
+    updated_replicas: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -97,6 +103,10 @@ class EnvObservedMember:
         if not isinstance(self.saturated_until, Unset):
             saturated_until = self.saturated_until.isoformat()
 
+        update_revision = self.update_revision
+
+        updated_replicas = self.updated_replicas
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -121,6 +131,10 @@ class EnvObservedMember:
             field_dict["pendingRequests"] = pending_requests
         if saturated_until is not UNSET:
             field_dict["saturatedUntil"] = saturated_until
+        if update_revision is not UNSET:
+            field_dict["updateRevision"] = update_revision
+        if updated_replicas is not UNSET:
+            field_dict["updatedReplicas"] = updated_replicas
 
         return field_dict
 
@@ -165,6 +179,10 @@ class EnvObservedMember:
 
 
 
+        update_revision = d.pop("updateRevision", UNSET)
+
+        updated_replicas = d.pop("updatedReplicas", UNSET)
+
         env_observed_member = cls(
             name=name,
             instance_type=instance_type,
@@ -176,6 +194,8 @@ class EnvObservedMember:
             current_replicas=current_replicas,
             pending_requests=pending_requests,
             saturated_until=saturated_until,
+            update_revision=update_revision,
+            updated_replicas=updated_replicas,
         )
 
 

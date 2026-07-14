@@ -54,6 +54,7 @@ from .env_observed_member_state import EnvObservedMemberState
 from .env_overrides import EnvOverrides
 from .env_overrides_pod_creation_image_policy import EnvOverridesPodCreationImagePolicy
 from .env_scaling_group_status import EnvScalingGroupStatus
+from .env_update_strategy import EnvUpdateStrategy
 from .error_response import ErrorResponse
 from .exec_command_request import ExecCommandRequest
 from .exec_command_result import ExecCommandResult
@@ -190,6 +191,7 @@ __all__ = (
     "EnvOverrides",
     "EnvOverridesPodCreationImagePolicy",
     "EnvScalingGroupStatus",
+    "EnvUpdateStrategy",
     "ErrorResponse",
     "ExecCommandRequest",
     "ExecCommandResult",

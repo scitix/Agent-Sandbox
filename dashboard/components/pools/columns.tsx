@@ -523,6 +523,33 @@ export function createPoolColumns(
       t("pools.col.failedTooltip"),
     ),
     {
+      id: "rollout",
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t("envs.detail.member.col.rollout")} />
+      ),
+      cell: ({ row }) => {
+        const st = row.original.status
+        const target = st?.updateRevision ?? ""
+        if (!target) return <span className="text-muted-foreground text-xs">---</span>
+        const rolling = (st?.currentRevision ?? "") !== target
+        if (!rolling) {
+          return (
+            <Badge variant="outline" className="font-mono text-[10px]">
+              {t("envs.detail.member.upToDate")}
+            </Badge>
+          )
+        }
+        return (
+          <Badge className="font-mono text-[10px]">
+            {t("envs.detail.member.rolloutInProgress", {
+              updated: st?.updatedReplicas ?? 0,
+              total: row.original.spec?.replicas ?? 0,
+            })}
+          </Badge>
+        )
+      },
+    },
+    {
       id: "cpu",
       accessorFn: (row) => parseCpuToCore(row.cpu),
       header: ({ column }) => (

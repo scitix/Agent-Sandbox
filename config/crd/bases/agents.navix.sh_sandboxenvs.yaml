@@ -427,6 +427,31 @@ spec:
                                   (= InstanceType × Multiplier or identical InlineResources). Empty
                                   means the member is excluded from autoscaling.
                                 type: string
+                              updateStrategy:
+                                description: |-
+                                  UpdateStrategy overrides the Env-wide overrides.updateStrategy for this
+                                  member only. Unset fields inherit from the Env default, then from the
+                                  hard-coded default (autoUpdate=true, maxUnavailable="20%"). See
+                                  ResolveAutoUpdate / ResolveMaxUnavailable.
+                                properties:
+                                  autoUpdate:
+                                    description: |-
+                                      AutoUpdate toggles automatic rollout. When nil the value is inherited
+                                      (member → env → default true). Set false to freeze a member on its
+                                      current revision (e.g. to pin a fleet during an incident).
+                                    type: boolean
+                                  maxUnavailable:
+                                    anyOf:
+                                    - type: integer
+                                    - type: string
+                                    description: |-
+                                      MaxUnavailable bounds how many of a member Pool's desired idle Pods may be
+                                      unavailable at once during a rollout, as an absolute number or a
+                                      percentage of desired replicas (e.g. "20%"). Rounded down, floored at 1 so
+                                      small pools still make progress. When nil the value is inherited
+                                      (member → env → default "20%").
+                                    x-kubernetes-int-or-string: true
+                                type: object
                             type: object
                           metadata:
                             description: |-
@@ -495,6 +520,18 @@ spec:
                                   IdleImage is the image to use when Pods are in the idle state.
                                   If not specified, the image from Template.Spec.Containers[0].Image will be used.
                                 type: string
+                              maxUnavailable:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: |-
+                                  MaxUnavailable bounds how many of this Pool's desired idle Pods may be
+                                  unavailable at once while it rolls stale idle Pods onto a new revision
+                                  (see status.updateRevision). Absolute number or percentage of replicas
+                                  (e.g. "20%"), rounded down and floored at 1. For Env-owned Pools this is
+                                  projected from the Env's (member/overrides) updateStrategy; nil disables
+                                  rollout throttling and is treated as "20%".
+                                x-kubernetes-int-or-string: true
                               networkPolicy:
                                 description: |-
                                   NetworkPolicy, when set, enables sandbox egress filtering for Pods in this
@@ -907,6 +944,32 @@ spec:
                       PodCreationImagePolicy overrides the Template's
                       spec.podCreationImagePolicy. Applied to every member Pool.
                     type: string
+                  updateStrategy:
+                    description: |-
+                      UpdateStrategy is the Env-wide default rollout policy: when a member's
+                      effective idle-Pod identity changes (Template edit, image / networkPolicy
+                      override), whether and how fast its idle Pods are rebuilt. Per-member
+                      EnvClusterMemberConfig.UpdateStrategy overrides this; see ResolveAutoUpdate
+                      / ResolveMaxUnavailable for the resolution order.
+                    properties:
+                      autoUpdate:
+                        description: |-
+                          AutoUpdate toggles automatic rollout. When nil the value is inherited
+                          (member → env → default true). Set false to freeze a member on its
+                          current revision (e.g. to pin a fleet during an incident).
+                        type: boolean
+                      maxUnavailable:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          MaxUnavailable bounds how many of a member Pool's desired idle Pods may be
+                          unavailable at once during a rollout, as an absolute number or a
+                          percentage of desired replicas (e.g. "20%"). Rounded down, floored at 1 so
+                          small pools still make progress. When nil the value is inherited
+                          (member → env → default "20%").
+                        x-kubernetes-int-or-string: true
+                    type: object
                 type: object
               templateRef:
                 description: |-
@@ -1084,6 +1147,18 @@ spec:
                             - Missing
                             - Inconsistent
                             type: string
+                          updateRevision:
+                            description: |-
+                              UpdateRevision is the target revision hash the member Pool is rolling
+                              towards, mirrored from SandboxPool.Status.UpdateRevision.
+                            type: string
+                          updatedReplicas:
+                            description: |-
+                              UpdatedReplicas is the number of the member Pool's Pods already at
+                              UpdateRevision, mirrored from SandboxPool.Status.UpdatedReplicas. A
+                              rollout is in progress while UpdatedReplicas < the member's replicas.
+                            format: int32
+                            type: integer
                         required:
                         - name
                         type: object

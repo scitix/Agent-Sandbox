@@ -28,18 +28,16 @@ import {
   KeyRound,
   Loader2,
   Pencil,
-  RefreshCw,
   TrendingUp,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { DetailHeader } from "@/components/custom/detail-header"
 import { DetailTabsNav } from "@/components/custom/detail-tabs-nav"
 import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
-import { envQueryOptions, useSyncEnvTemplate } from "@/lib/queries"
+import { envQueryOptions } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
@@ -72,18 +70,6 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
-  const syncTemplate = useSyncEnvTemplate()
-
-  const handleSync = () => {
-    syncTemplate.mutate(
-      { params: { path: { name } } },
-      {
-        onSuccess: () => toast.success(t("envs.detail.actions.syncTemplateToast", { name })),
-        onError: (err) => toast.error(err?.error ?? String(err)),
-      },
-    )
-  }
-
   // A specific child detail route (`…/pools/{poolName}` or
   // `…/autoscaling/{group}`) renders its own header, so the Env shell yields
   // its chrome and just forwards the child subtree. The bare list routes
@@ -109,16 +95,6 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
         kind="SandboxEnv"
         actions={
           <>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!env || syncTemplate.isPending}
-              onClick={handleSync}
-              className="h-8 gap-1 text-xs"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              {t("envs.detail.actions.syncTemplate")}
-            </Button>
             <Button
               variant="outline"
               size="sm"

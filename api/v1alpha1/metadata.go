@@ -29,6 +29,15 @@ const (
 	SandboxIDLabelKey    = "agentbox.navix.sh/sandbox-id"
 	ManagedByLabelKey    = "agentbox.navix.sh/managed-by"
 
+	// TemplateHashLabelKey carries the fnv32 revision hash of a Pool's
+	// materialised idle-Pod identity (IdleImage + pod-spec body + NetworkPolicy
+	// + template metadata; see ComputeRevisionHash). Stamped by the Env
+	// renderer onto both SandboxPool.metadata.labels and
+	// SandboxPool.spec.template.metadata.labels, from where it flows to every
+	// Pod. The SandboxPool reconciler compares a Pod's value against the Pool
+	// template's to decide which idle Pods are stale and must be rolled.
+	TemplateHashLabelKey = "agentbox.navix.sh/template-hash"
+
 	// SandboxPhase values for the agentbox sandbox lifecycle.
 	SandboxPhaseIdle     = "idle"
 	SandboxPhaseRunning  = "running"

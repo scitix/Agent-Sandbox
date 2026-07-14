@@ -56,6 +56,11 @@ class SandboxPoolStatus:
             pending_requests (int | Unset): Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s
                 when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability —
                 the Env autoscaler reads the live in-process Snapshot instead.
+            update_revision (str | Unset): Target revision hash of the current Pool template. Idle pods whose own hash
+                differs are stale and get rolled onto this revision.
+            current_revision (str | Unset): The single revision hash all pods currently share; equals updateRevision once a
+                rollout converges, empty while pods straddle revisions.
+            updated_replicas (int | Unset): Number of pods already at updateRevision.
             autoscaling (PoolAutoScalingStatus | Unset): Per-Pool autoscaler decision state. Sole writer is the SandboxPool
                 reconciler running the autoscaling decision pipeline.
      """
@@ -68,6 +73,9 @@ class SandboxPoolStatus:
     stopping_replicas: int | Unset = UNSET
     failed_replicas: int | Unset = UNSET
     pending_requests: int | Unset = UNSET
+    update_revision: str | Unset = UNSET
+    current_revision: str | Unset = UNSET
+    updated_replicas: int | Unset = UNSET
     autoscaling: PoolAutoScalingStatus | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -96,6 +104,12 @@ class SandboxPoolStatus:
 
         pending_requests = self.pending_requests
 
+        update_revision = self.update_revision
+
+        current_revision = self.current_revision
+
+        updated_replicas = self.updated_replicas
+
         autoscaling: dict[str, Any] | Unset = UNSET
         if not isinstance(self.autoscaling, Unset):
             autoscaling = self.autoscaling.to_dict()
@@ -121,6 +135,12 @@ class SandboxPoolStatus:
             field_dict["failedReplicas"] = failed_replicas
         if pending_requests is not UNSET:
             field_dict["pendingRequests"] = pending_requests
+        if update_revision is not UNSET:
+            field_dict["updateRevision"] = update_revision
+        if current_revision is not UNSET:
+            field_dict["currentRevision"] = current_revision
+        if updated_replicas is not UNSET:
+            field_dict["updatedReplicas"] = updated_replicas
         if autoscaling is not UNSET:
             field_dict["autoscaling"] = autoscaling
 
@@ -156,6 +176,12 @@ class SandboxPoolStatus:
 
         pending_requests = d.pop("pendingRequests", UNSET)
 
+        update_revision = d.pop("updateRevision", UNSET)
+
+        current_revision = d.pop("currentRevision", UNSET)
+
+        updated_replicas = d.pop("updatedReplicas", UNSET)
+
         _autoscaling = d.pop("autoscaling", UNSET)
         autoscaling: PoolAutoScalingStatus | Unset
         if isinstance(_autoscaling,  Unset):
@@ -175,6 +201,9 @@ class SandboxPoolStatus:
             stopping_replicas=stopping_replicas,
             failed_replicas=failed_replicas,
             pending_requests=pending_requests,
+            update_revision=update_revision,
+            current_revision=current_revision,
+            updated_replicas=updated_replicas,
             autoscaling=autoscaling,
         )
 

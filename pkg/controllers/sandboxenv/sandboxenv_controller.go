@@ -124,6 +124,7 @@ type SandboxEnvReconciler struct {
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxenvs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools/status,verbs=get
+// +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxtemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is the entry point of the controller-runtime reconcile loop.
@@ -156,6 +157,16 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// group set in the same reconcile pass.
 	if err := r.reconcileScalingGroups(ctx, env); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Detect Template / Env-overrides changes and re-render auto-update members'
+	// frozen Spec snapshots (revision-hash gated). Runs before reconcilePools so
+	// the drift loop propagates the refreshed spec; when it patched the Env we
+	// requeue rather than continue against the now-stale in-memory copy.
+	if changed, err := r.refreshAutoUpdateMembers(ctx, env); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Materialise / reconcile member Pools from spec.Clusters[local].Members.
@@ -204,6 +215,19 @@ func (r *SandboxEnvReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Recorder = mgr.GetEventRecorder("sandboxenv-controller")
 	}
 
+	// Index Envs by their referenced Template name so a SandboxTemplate change
+	// fans out to every referencing Env (cluster-scoped Template → all namespaces).
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &agentsv1alpha1.SandboxEnv{}, templateRefNameIndexKey,
+		func(obj client.Object) []string {
+			env, ok := obj.(*agentsv1alpha1.SandboxEnv)
+			if !ok || env.Spec.TemplateRef.Name == "" {
+				return nil
+			}
+			return []string{env.Spec.TemplateRef.Name}
+		}); err != nil {
+		return err
+	}
+
 	enqueueByName := func(obj client.Object, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 		q.Add(reconcile.Request{NamespacedName: types.NamespacedName{
 			Namespace: obj.GetNamespace(),
@@ -228,7 +252,13 @@ func (r *SandboxEnvReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			GenericFunc: func(_ context.Context, e event.GenericEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 				enqueueByName(e.Object, q)
 			},
-		})
+		}).
+		// SandboxTemplate (cluster-scoped): a spec change enqueues every Env
+		// that references it so refreshAutoUpdateMembers can re-render. Gated on
+		// GenerationChanged so status-only template writes don't churn.
+		Watches(&agentsv1alpha1.SandboxTemplate{},
+			handler.EnqueueRequestsFromMapFunc(r.mapTemplateToEnvs),
+			ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	return builder.Complete(r)
 }

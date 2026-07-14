@@ -692,6 +692,16 @@ components:
           type: integer
           format: int32
           description: "Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability — the Env autoscaler reads the live in-process Snapshot instead."
+        updateRevision:
+          type: string
+          description: "Target revision hash of the current Pool template. Idle pods whose own hash differs are stale and get rolled onto this revision."
+        currentRevision:
+          type: string
+          description: "The single revision hash all pods currently share; equals updateRevision once a rollout converges, empty while pods straddle revisions."
+        updatedReplicas:
+          type: integer
+          format: int32
+          description: "Number of pods already at updateRevision."
         autoscaling:
           $ref: "#/components/schemas/PoolAutoScalingStatus"
 
@@ -906,15 +916,18 @@ components:
           additionalProperties:
             type: string
           description: "Annotations stamped onto this member's SandboxPool."
+        updateStrategy:
+          $ref: "#/components/schemas/EnvUpdateStrategy"
+          description: "Per-member rollout policy override. Unset inherits the Env overrides.updateStrategy, then autoUpdate=true / maxUnavailable=20%."
 
     UpdateEnvSandboxPoolRequest:
       type: object
       description: |
         Update a member SandboxPool. Resource shape, instanceType, labels and
-        annotations are immutable post-create; this PUT only accepts replica
-        adjustments. When the scalingGroup has autoscaling enabled (via
-        env.spec.autoscaling.enabled + a matching group entry), only
-        `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+        annotations are immutable post-create; this PUT accepts replica
+        adjustments and updateStrategy changes. When the scalingGroup has
+        autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
+        entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
       properties:
         replicas:
           type: integer
@@ -930,6 +943,9 @@ components:
           type: integer
           format: int32
           description: "Upper bound on this pool's replicas. Always accepted."
+        updateStrategy:
+          $ref: "#/components/schemas/EnvUpdateStrategy"
+          description: "Per-member rollout policy override. Mutable post-create — e.g. set autoUpdate=false to freeze this member during an incident."
 
     ImagePullSecretInput:
       type: object
@@ -1181,6 +1197,20 @@ components:
           type: integer
           format: int32
           description: "Scale-down order within the scaling group — lower shrunk first. When omitted, falls back to priority."
+        updateStrategy:
+          $ref: "#/components/schemas/EnvUpdateStrategy"
+          description: "Per-member override of the Env-wide overrides.updateStrategy. Unset fields inherit from the Env default, then autoUpdate=true / maxUnavailable=20%."
+
+    EnvUpdateStrategy:
+      type: object
+      description: "Automatic rollout policy for member Pools when their rendered idle-Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle."
+      properties:
+        autoUpdate:
+          type: boolean
+          description: "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+        maxUnavailable:
+          type: string
+          description: "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
 
     ResourceRequirements:
       type: object
@@ -1235,6 +1265,9 @@ components:
             Pods. When set, the operator injects a transparent egress-filter sidecar
             and enforces the policy (default-deny allowlist). Omit for unrestricted
             egress. Per-sandbox overrides are available via the E2B create body.
+        updateStrategy:
+          $ref: "#/components/schemas/EnvUpdateStrategy"
+          description: "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy."
       additionalProperties: false
 
     SandboxNetworkPolicy:
@@ -1375,6 +1408,13 @@ components:
           type: string
           format: date-time
           description: "Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil. Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot fit additional replicas."
+        updateRevision:
+          type: string
+          description: "Mirror of the member Pool's status.updateRevision — the target revision the Pool is rolling towards."
+        updatedReplicas:
+          type: integer
+          format: int32
+          description: "Mirror of the member Pool's status.updatedReplicas. A rollout is in progress while this is below the member's replica count."
 
     EnvClusterStatus:
       type: object
@@ -2995,57 +3035,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/UpdateSandboxEnvRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxEnvEnvelope"
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /envs/{name}/sync-template:
-    post:
-      operationId: SyncSandboxEnvTemplate
-      summary: Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current overrides.
-      description: |
-        Forces every member SandboxPool to pick up the current `spec.embedded` from
-        the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
-        after an admin edits the underlying Template — Env-level overrides edits
-        propagate automatically through `PATCH /envs/{name}`.
-
-        Per-Pool changes are independent; partial failure leaves successful members
-        synced and surfaces the offending member in the response error.
-      tags: [sandbox-envs]
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
       responses:
         "200":
           description: OK

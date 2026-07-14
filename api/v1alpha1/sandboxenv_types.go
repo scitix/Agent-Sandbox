@@ -17,6 +17,7 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // SandboxEnvMode controls how the Env satisfies sandbox-create requests.
@@ -120,6 +121,36 @@ type EnvOverridesSpec struct {
 	// sandbox at create time. Nil disables egress filtering (no sidecar).
 	// +optional
 	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
+
+	// UpdateStrategy is the Env-wide default rollout policy: when a member's
+	// effective idle-Pod identity changes (Template edit, image / networkPolicy
+	// override), whether and how fast its idle Pods are rebuilt. Per-member
+	// EnvClusterMemberConfig.UpdateStrategy overrides this; see ResolveAutoUpdate
+	// / ResolveMaxUnavailable for the resolution order.
+	// +optional
+	UpdateStrategy *EnvUpdateStrategy `json:"updateStrategy,omitempty"`
+}
+
+// EnvUpdateStrategy controls automatic rollout of member Pools when their
+// rendered idle-Pod identity (revision hash) changes. The only rollout mode is
+// Recreate: stale idle Pods are deleted and re-created from the new spec; Pods
+// that have been claimed (Running/Starting) are never disrupted — they roll on
+// the next reconcile after they return to Idle.
+type EnvUpdateStrategy struct {
+	// AutoUpdate toggles automatic rollout. When nil the value is inherited
+	// (member → env → default true). Set false to freeze a member on its
+	// current revision (e.g. to pin a fleet during an incident).
+	// +optional
+	AutoUpdate *bool `json:"autoUpdate,omitempty"`
+
+	// MaxUnavailable bounds how many of a member Pool's desired idle Pods may be
+	// unavailable at once during a rollout, as an absolute number or a
+	// percentage of desired replicas (e.g. "20%"). Rounded down, floored at 1 so
+	// small pools still make progress. When nil the value is inherited
+	// (member → env → default "20%").
+	// +optional
+	// +kubebuilder:validation:XIntOrString
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
 }
 
 // SandboxEnvTemplateRef points at a cluster-scoped SandboxTemplate.
@@ -336,6 +367,13 @@ type EnvClusterMemberConfig struct {
 	// When nil, EffectiveScaleDownPriority falls back to Priority.
 	// +optional
 	ScaleDownPriority *int32 `json:"scaleDownPriority,omitempty"`
+
+	// UpdateStrategy overrides the Env-wide overrides.updateStrategy for this
+	// member only. Unset fields inherit from the Env default, then from the
+	// hard-coded default (autoUpdate=true, maxUnavailable="20%"). See
+	// ResolveAutoUpdate / ResolveMaxUnavailable.
+	// +optional
+	UpdateStrategy *EnvUpdateStrategy `json:"updateStrategy,omitempty"`
 }
 
 // EffectiveScaleUpPriority returns ScaleUpPriority when set, otherwise
@@ -358,6 +396,42 @@ func (c EnvClusterMemberConfig) EffectiveScaleDownPriority() int32 {
 		return *c.ScaleDownPriority
 	}
 	return c.Priority
+}
+
+// DefaultMaxUnavailable is the rollout unavailability budget applied when
+// neither the member nor the Env overrides specify one.
+var DefaultMaxUnavailable = intstr.FromString("20%")
+
+// ResolveAutoUpdate returns whether the given member auto-rolls when its
+// revision changes. Resolution order: member.Config.UpdateStrategy →
+// env.Spec.Overrides.UpdateStrategy → default true. A cross-field default like
+// this cannot be expressed with kubebuilder markers, so it lives in code
+// alongside EffectiveScaleUpPriority.
+func ResolveAutoUpdate(env *SandboxEnv, member EnvClusterMember) bool {
+	if s := member.Config.UpdateStrategy; s != nil && s.AutoUpdate != nil {
+		return *s.AutoUpdate
+	}
+	if env != nil && env.Spec.Overrides != nil {
+		if s := env.Spec.Overrides.UpdateStrategy; s != nil && s.AutoUpdate != nil {
+			return *s.AutoUpdate
+		}
+	}
+	return true
+}
+
+// ResolveMaxUnavailable returns the rollout unavailability budget for the given
+// member. Resolution order: member.Config.UpdateStrategy →
+// env.Spec.Overrides.UpdateStrategy → DefaultMaxUnavailable ("20%").
+func ResolveMaxUnavailable(env *SandboxEnv, member EnvClusterMember) intstr.IntOrString {
+	if s := member.Config.UpdateStrategy; s != nil && s.MaxUnavailable != nil {
+		return *s.MaxUnavailable
+	}
+	if env != nil && env.Spec.Overrides != nil {
+		if s := env.Spec.Overrides.UpdateStrategy; s != nil && s.MaxUnavailable != nil {
+			return *s.MaxUnavailable
+		}
+	}
+	return DefaultMaxUnavailable
 }
 
 // EnvAutoscalingSpec configures the Env-level autoscaler. The Enabled
@@ -545,6 +619,17 @@ type EnvObservedMember struct {
 	// when no fresh member can accept the request.
 	// +optional
 	SaturatedUntil *metav1.Time `json:"saturatedUntil,omitempty"`
+
+	// UpdateRevision is the target revision hash the member Pool is rolling
+	// towards, mirrored from SandboxPool.Status.UpdateRevision.
+	// +optional
+	UpdateRevision string `json:"updateRevision,omitempty"`
+
+	// UpdatedReplicas is the number of the member Pool's Pods already at
+	// UpdateRevision, mirrored from SandboxPool.Status.UpdatedReplicas. A
+	// rollout is in progress while UpdatedReplicas < the member's replicas.
+	// +optional
+	UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
 }
 
 // EnvScalingGroupStatus aggregates a scalingGroup's runtime state across all

@@ -148,6 +148,21 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 		pool.Spec.DefaultIdleTimeout = envOv.DefaultIdleTimeout
 		pool.Spec.NetworkPolicy = envOv.NetworkPolicy.DeepCopy()
 	}
+	mu := agentsv1alpha1.ResolveMaxUnavailable(in.Env, in.Member)
+	pool.Spec.MaxUnavailable = &mu
+
+	// Stamp the revision hash last, once the spec is fully assembled. It is
+	// written to both the pod-template labels (so it flows onto every Pod via
+	// createPod's SyncLabelsFromTemplate) and the Pool-level labels (so it
+	// survives createPod's pool-label overlay and shows up in `kubectl get
+	// sbp -L`). Both carry the same value; ComputeRevisionHash ignores the hash
+	// label itself, so this is not self-referential.
+	h := agentsv1alpha1.ComputeRevisionHash(&pool.Spec)
+	if pool.Spec.Template.Labels == nil {
+		pool.Spec.Template.Labels = map[string]string{}
+	}
+	pool.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey] = h
+	pool.Labels[agentsv1alpha1.TemplateHashLabelKey] = h
 	return pool, nil
 }
 

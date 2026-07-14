@@ -28,6 +28,7 @@ from typing import cast
 if TYPE_CHECKING:
   from ..models.env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations
   from ..models.env_cluster_member_config_labels import EnvClusterMemberConfigLabels
+  from ..models.env_update_strategy import EnvUpdateStrategy
   from ..models.resource_requirements import ResourceRequirements
 
 
@@ -67,6 +68,9 @@ class EnvClusterMemberConfig:
                 falls back to priority. Same-value tiebreak by name.
             scale_down_priority (int | Unset): Scale-down order within the scaling group — lower shrunk first. When omitted,
                 falls back to priority.
+            update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
+                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
+                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
      """
 
     labels: EnvClusterMemberConfigLabels | Unset = UNSET
@@ -80,6 +84,7 @@ class EnvClusterMemberConfig:
     priority: int | Unset = UNSET
     scale_up_priority: int | Unset = UNSET
     scale_down_priority: int | Unset = UNSET
+    update_strategy: EnvUpdateStrategy | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -89,6 +94,7 @@ class EnvClusterMemberConfig:
     def to_dict(self) -> dict[str, Any]:
         from ..models.env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations
         from ..models.env_cluster_member_config_labels import EnvClusterMemberConfigLabels
+        from ..models.env_update_strategy import EnvUpdateStrategy
         from ..models.resource_requirements import ResourceRequirements
         labels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.labels, Unset):
@@ -118,6 +124,10 @@ class EnvClusterMemberConfig:
 
         scale_down_priority = self.scale_down_priority
 
+        update_strategy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.update_strategy, Unset):
+            update_strategy = self.update_strategy.to_dict()
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -145,6 +155,8 @@ class EnvClusterMemberConfig:
             field_dict["scaleUpPriority"] = scale_up_priority
         if scale_down_priority is not UNSET:
             field_dict["scaleDownPriority"] = scale_down_priority
+        if update_strategy is not UNSET:
+            field_dict["updateStrategy"] = update_strategy
 
         return field_dict
 
@@ -154,6 +166,7 @@ class EnvClusterMemberConfig:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations
         from ..models.env_cluster_member_config_labels import EnvClusterMemberConfigLabels
+        from ..models.env_update_strategy import EnvUpdateStrategy
         from ..models.resource_requirements import ResourceRequirements
         d = dict(src_dict)
         _labels = d.pop("labels", UNSET)
@@ -202,6 +215,16 @@ class EnvClusterMemberConfig:
 
         scale_down_priority = d.pop("scaleDownPriority", UNSET)
 
+        _update_strategy = d.pop("updateStrategy", UNSET)
+        update_strategy: EnvUpdateStrategy | Unset
+        if isinstance(_update_strategy,  Unset):
+            update_strategy = UNSET
+        else:
+            update_strategy = EnvUpdateStrategy.from_dict(_update_strategy)
+
+
+
+
         env_cluster_member_config = cls(
             labels=labels,
             annotations=annotations,
@@ -214,6 +237,7 @@ class EnvClusterMemberConfig:
             priority=priority,
             scale_up_priority=scale_up_priority,
             scale_down_priority=scale_down_priority,
+            update_strategy=update_strategy,
         )
 
 

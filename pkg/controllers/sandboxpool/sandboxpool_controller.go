@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/workqueue"
@@ -627,7 +629,127 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		return reconcile.Result{RequeueAfter: RequeueAfter}, nil
 	}
 
-	return reconcile.Result{}, nil
+	// ── Roll stale idle Pods ───────────────────────────────────────────────────
+	// Reached only when current == desired (scale-up / scale-down returned
+	// above). Rebuild idle Pods whose revision hash lags the Pool template,
+	// throttled by MaxUnavailable; never touches Running/Starting Pods.
+	return r.rollStaleIdlePods(ctx, sandboxPool, pods, status, desiredReplicas, currentReplicas, poolKey)
+}
+
+// rollStaleIdlePods deletes idle Pods whose template-hash label differs from the
+// Pool template's, within the MaxUnavailable budget. Deleted Pods are recreated
+// by the scale-up branch on the next reconcile (current < desired), materialised
+// from the current Pool template and thus carrying the new revision. Running and
+// Starting Pods are never disrupted — they roll after they return to Idle.
+func (r *SandboxPoolReconciler) rollStaleIdlePods(
+	ctx context.Context,
+	sandboxPool *agentsv1alpha1.SandboxPool,
+	pods []corev1.Pod,
+	status agentsv1alpha1.SandboxPoolStatus,
+	desiredReplicas, currentReplicas int32,
+	poolKey types.NamespacedName,
+) (ctrl.Result, error) {
+	desiredHash := sandboxPool.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey]
+	if desiredHash == "" {
+		// Legacy / un-rendered Pool: no revision to converge towards.
+		return reconcile.Result{}, nil
+	}
+
+	// Don't act until previous in-flight deletes have landed in the informer.
+	if r.expectations != nil && !r.expectations.Satisfied(poolKey) {
+		return reconcile.Result{}, nil
+	}
+
+	// Collect stale idle Pods (idle phase, hash mismatch), oldest first.
+	var staleIdle []*corev1.Pod
+	for i := range pods {
+		p := &pods[i]
+		if inplaceupdate.GetSandboxPhase(p) != agentsv1alpha1.SandboxPhaseIdle {
+			continue
+		}
+		if p.Labels[agentsv1alpha1.TemplateHashLabelKey] == desiredHash {
+			continue
+		}
+		staleIdle = append(staleIdle, p)
+	}
+	if len(staleIdle) == 0 {
+		return reconcile.Result{}, nil
+	}
+	sort.SliceStable(staleIdle, func(i, j int) bool {
+		return staleIdle[i].CreationTimestamp.Before(&staleIdle[j].CreationTimestamp)
+	})
+
+	// Budget: at most MaxUnavailable of the desired idle Pods may be unavailable
+	// at once. Subtract capacity already unavailable so a rollout plus an
+	// unrelated disruption don't jointly exceed the budget.
+	maxUnav := resolveMaxUnavailableCount(sandboxPool.Spec.MaxUnavailable, int(desiredReplicas))
+	unavailable := int(status.UnavailableIdleReplicas+status.FailedReplicas+status.StartingReplicas+status.StoppingReplicas) +
+		max(0, int(desiredReplicas-currentReplicas))
+	deletable := maxUnav - unavailable
+	if deletable <= 0 {
+		return reconcile.Result{RequeueAfter: RequeueAfter}, nil
+	}
+	if deletable > len(staleIdle) {
+		deletable = len(staleIdle)
+	}
+
+	deletedCount := int32(0)
+	for _, pod := range staleIdle[:deletable] {
+		// Remove the protection finalizer before delete (idle Pods normally
+		// have none after Stopping→Idle, but be defensive).
+		if err := r.removeSandboxProtectionFinalizer(ctx, pod); err != nil && !errors.IsNotFound(err) {
+			klog.ErrorS(err, "Failed to remove finalizer from stale idle pod",
+				"namespace", pod.Namespace, "name", pod.Name)
+			return reconcile.Result{}, err
+		}
+		// UID+ResourceVersion preconditions guard against a claim CAS that
+		// flipped the pod Idle→Starting after the snapshot: the delete is
+		// rejected as Conflict and skipped rather than killing a live sandbox.
+		delOpts := []client.DeleteOption{client.Preconditions{
+			UID:             &pod.UID,
+			ResourceVersion: &pod.ResourceVersion,
+		}}
+		if err := r.Delete(ctx, pod, delOpts...); err != nil {
+			if errors.IsNotFound(err) {
+				// Already gone.
+			} else if errors.IsConflict(err) {
+				klog.V(2).InfoS("Rollout delete skipped: idle pod was claimed after snapshot",
+					"namespace", pod.Namespace, "name", pod.Name)
+				continue
+			} else {
+				klog.ErrorS(err, "Failed to delete stale idle Pod", "namespace", pod.Namespace, "name", pod.Name)
+				return reconcile.Result{}, err
+			}
+		}
+		deletedCount++
+		klog.V(2).InfoS("Rolled stale idle Pod", "namespace", pod.Namespace, "name", pod.Name,
+			"podHash", pod.Labels[agentsv1alpha1.TemplateHashLabelKey], "desiredHash", desiredHash)
+	}
+
+	if deletedCount == 0 {
+		return reconcile.Result{}, nil
+	}
+	if r.expectations != nil {
+		r.expectations.ExpectDeletions(poolKey, int(deletedCount))
+	}
+	// Requeue: next pass sees current < desired and scale-up recreates the Pods
+	// from the new template.
+	return reconcile.Result{RequeueAfter: RequeueAfter}, nil
+}
+
+// resolveMaxUnavailableCount converts a MaxUnavailable int-or-percent into an
+// absolute count against desired, rounded down and floored at 1 so small pools
+// still make progress. A nil value defaults to the shared "20%" default.
+func resolveMaxUnavailableCount(mu *intstr.IntOrString, desired int) int {
+	v := agentsv1alpha1.DefaultMaxUnavailable
+	if mu != nil {
+		v = *mu
+	}
+	n, err := intstr.GetScaledValueFromIntOrPercent(&v, desired, false)
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
 }
 
 // SetupWithManager sets up the controller with the Manager.
