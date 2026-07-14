@@ -211,6 +211,7 @@ func TestSandboxService_Create_PoolNotFound(t *testing.T) {
 type fakeEnvRouter struct {
 	resolveFn func(ns, clusterID, poolName string) envscheduler.ResolveResult
 	pickFn    func(types.NamespacedName, string) string
+	clusterFn func(types.NamespacedName, string) string
 }
 
 func (f *fakeEnvRouter) Resolve(ns, clusterID, poolName string) envscheduler.ResolveResult {
@@ -218,6 +219,12 @@ func (f *fakeEnvRouter) Resolve(ns, clusterID, poolName string) envscheduler.Res
 }
 func (f *fakeEnvRouter) SelectPool(key types.NamespacedName, scalingGroup string) string {
 	return f.pickFn(key, scalingGroup)
+}
+func (f *fakeEnvRouter) SelectClusterForCreate(key types.NamespacedName, scalingGroup string) string {
+	if f.clusterFn == nil {
+		return ""
+	}
+	return f.clusterFn(key, scalingGroup)
 }
 
 // TestSandboxService_Create_EnvRouter_BareNameMissing_Returns404 verifies the

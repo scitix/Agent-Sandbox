@@ -220,6 +220,35 @@ func (s *Server) isCrossCluster(clusterID string) bool {
 	return s.forwarder.IsCrossCluster(clusterID)
 }
 
+// forwardEnvCreateIfRemote handles Env-based cross-cluster placement for a
+// Sandbox.Create. For a bare Env name (no explicit "cluster::" prefix) that is
+// not itself a forwarded request, it asks the router whether a same-named Env
+// in another cluster should serve this create because the local Env has no
+// idle capacity; if so it forwards the raw request and returns true. The
+// X-Source-Cluster header marks an already-forwarded request and blocks a
+// second hop, so a forward never chains beyond one cluster.
+func (s *Server) forwardEnvCreateIfRemote(ctx context.Context, parsed cluster.ParsedPoolRef, namespace, scalingGroup string, body *gen.CreateSandboxRequest) bool {
+	if parsed.ClusterID != "" {
+		return false
+	}
+	gc := httpctx.GinFromCtx(ctx)
+	if gc.GetHeader(service.SourceClusterHeader) != "" {
+		return false
+	}
+	r, ok := s.sandbox.(interface {
+		ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) string
+	})
+	if !ok {
+		return false
+	}
+	target := r.ResolveCreateTarget(namespace, parsed.PoolName, scalingGroup)
+	if target == "" || !s.isCrossCluster(target) {
+		return false
+	}
+	s.forwarder.Forward(gc, target, service.URLKindNative, jsonBody(body))
+	return true
+}
+
 func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequestObject) (gen.CreateSandboxResponseObject, error) {
 	auth := authFrom(ctx)
 	if req.Body == nil || strings.TrimSpace(req.Body.PoolName) == "" {
@@ -284,6 +313,12 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 			return gen.CreateSandbox400JSONResponse{Error: "startupTimeout must be a positive duration"}, nil
 		}
 		input.StartupTimeout = d
+	}
+
+	// Env-based cross-cluster placement: forward to a same-named Env in
+	// another cluster when the local Env has no idle capacity.
+	if s.forwardEnvCreateIfRemote(ctx, parsed, input.Namespace, input.RequestedScalingGroup, req.Body) {
+		return nil, nil
 	}
 
 	result, appErr := s.sandbox.Create(ctx, input)
