@@ -34,6 +34,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envscheduler"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolmigration"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
@@ -316,6 +317,17 @@ func Run(opts Options) {
 		setupLog.Info("cluster config sink enabled", "configmap", clustersConfigMapName)
 	}
 
+	// Cross-cluster capacity federation shares same-named SandboxEnv runtime
+	// capacity between clusters over the ws-proxy sync connection. Enabled only
+	// in multi-cluster mode (sync secret + local cluster ID both set).
+	var fedRegistry *federation.Registry
+	var fedSource federation.CapacitySource
+	if secret != "" && localClusterID != "" {
+		fedRegistry = federation.NewRegistry(localClusterID, 30*time.Second)
+		fedSource = federation.NewCapacitySource(mgr.GetClient(), localClusterID)
+		setupLog.Info("cross-cluster capacity federation enabled", "localCluster", localClusterID)
+	}
+
 	// ---- services ------------------------------------------------------------
 	// ExtProc control-plane client. Shared between sandboxSvc (for route push
 	// on Create) and the IdleTimeoutReconciler (for polling last-active).
@@ -502,6 +514,8 @@ func Run(opts Options) {
 		QuotaProvider:        quotaPluginProvider,
 		InstanceTypeProvider: itProvider,
 		ServerVersion:        version.Version,
+		FederationRegistry:   fedRegistry,
+		FederationSource:     fedSource,
 	}, mgr.GetClient(), clientset, sandboxStore, pluginManager, envoyGatewayBaseURL, sandboxSvc)
 
 	numProcesses := 2
