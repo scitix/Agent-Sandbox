@@ -48,6 +48,39 @@ func (m *Manager) WithFramework(f *Framework) *Manager {
 	return m
 }
 
+// SetFederationView wires the cross-cluster capacity view used by
+// SelectClusterForCreate. nil (the default) disables cross-cluster placement,
+// so every create is served locally.
+func (m *Manager) SetFederationView(fed FederationView) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fed = fed
+}
+
+// SelectClusterForCreate decides whether a create for the given Env and
+// scaling group should be forwarded to another cluster. It returns a foreign
+// cluster ID only when the local cluster has no idle capacity for the triple
+// AND some foreign cluster does; otherwise it returns "" (serve locally, which
+// parks the claim and lets the local autoscaler react). group == "" selects
+// the whole-Env aggregate. Safe to call on the hot path — one RLock plus the
+// registry's own locking.
+func (m *Manager) SelectClusterForCreate(envKey types.NamespacedName, scalingGroup string) string {
+	m.mu.RLock()
+	fed := m.fed
+	m.mu.RUnlock()
+	if fed == nil {
+		return ""
+	}
+	if fed.LocalIdle(envKey.Namespace, envKey.Name, scalingGroup) > 0 {
+		return ""
+	}
+	cluster, idle := fed.BestForeignCluster(envKey.Namespace, envKey.Name, scalingGroup)
+	if idle <= 0 {
+		return ""
+	}
+	return cluster
+}
+
 // Resolve maps a parsed Sandbox.Create template to the routing target. See
 // ResolveKind for the four outcomes. The result is computed under a single
 // RLock + one map lookup; safe to call from the hot path.

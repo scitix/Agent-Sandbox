@@ -63,6 +63,19 @@ type EnvGetter interface {
 	GetEnv(ns, name string) (*agentsv1alpha1.SandboxEnv, bool)
 }
 
+// FederationView is the read-only slice of the cross-cluster capacity
+// registry the router needs to decide whether a create should be served
+// locally or forwarded to a same-named Env in another cluster. Backed by
+// federation.Registry in production; nil disables cross-cluster placement.
+type FederationView interface {
+	// LocalIdle is the local cluster's idle capacity for the Env and scaling
+	// group (group == "" is the whole-Env aggregate).
+	LocalIdle(namespace, env, group string) int32
+	// BestForeignCluster is the foreign cluster with the most idle capacity
+	// for the Env and scaling group, and that idle count; ("", 0) when none.
+	BestForeignCluster(namespace, env, group string) (string, int32)
+}
+
 // Manager owns the env → route-table mapping. There is one Manager per
 // apiserver process. Methods are safe for concurrent use; the request hot
 // path takes only the read lock.
@@ -73,6 +86,7 @@ type Manager struct {
 	envGetter EnvGetter
 	local     string
 	framework *Framework
+	fed       FederationView
 }
 
 // envEntry is the cached router-relevant projection of a SandboxEnv spec.

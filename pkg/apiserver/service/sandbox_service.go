@@ -114,6 +114,10 @@ type EnvRouter interface {
 	// hard-scopes the choice to that autoscaling group (returns "" when the
 	// group has no member). Empty = no constraint.
 	SelectPool(envKey types.NamespacedName, scalingGroup string) string
+	// SelectClusterForCreate returns a foreign cluster ID when a create for
+	// envKey should be forwarded there (local has no idle capacity for the
+	// group, a foreign cluster does); "" means serve locally.
+	SelectClusterForCreate(envKey types.NamespacedName, scalingGroup string) string
 }
 
 type k8sSandboxService struct {
@@ -167,6 +171,27 @@ func (s *k8sSandboxService) SetLastCreateTracker(t LastCreateBumper) {
 // direct Pool dispatch. Safe to call at most once during startup.
 func (s *k8sSandboxService) SetEnvRouter(r EnvRouter) {
 	s.envRouter = r
+}
+
+// SourceClusterHeader marks a request that has already been cross-cluster
+// forwarded once, so the receiving cluster serves it locally instead of
+// forwarding again (single-hop guarantee).
+const SourceClusterHeader = "X-Source-Cluster"
+
+// ResolveCreateTarget reports the foreign cluster a bare-name Env create should
+// be forwarded to, or "" to serve locally. The handler calls it before Create
+// so cross-cluster forwarding stays in the handler layer. Returns "" when the
+// router is unwired, the name is not a known Env, or no foreign cluster has
+// spare idle capacity for the requested scaling group.
+func (s *k8sSandboxService) ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) string {
+	if s.envRouter == nil {
+		return ""
+	}
+	res := s.envRouter.Resolve(namespace, "", poolOrEnvName)
+	if res.Kind != envscheduler.ResolveEnv {
+		return ""
+	}
+	return s.envRouter.SelectClusterForCreate(res.EnvKey, scalingGroup)
 }
 
 // GetScheduler implements envscheduler.SchedulerLookup. Returns the

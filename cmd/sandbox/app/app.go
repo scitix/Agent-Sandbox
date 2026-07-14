@@ -389,6 +389,12 @@ func Run(opts Options) {
 		if r, ok := sandboxSvc.(interface{ SetEnvRouter(service.EnvRouter) }); ok {
 			r.SetEnvRouter(envRouter)
 		}
+		// Feed the cross-cluster capacity view so the router can forward a
+		// create to a same-named Env in another cluster when the local one has
+		// no idle capacity. nil in single-cluster mode → local-only routing.
+		if fedRegistry != nil {
+			envRouter.SetFederationView(fedRegistry)
+		}
 		// Subscribe to SandboxEnv changes so the router's cache stays fresh.
 		// The Reconciler also calls OnEnvUpsert at the end of Reconcile as a
 		// belt-and-braces guarantee, but the informer event is faster.

@@ -151,6 +151,45 @@ func (r *Registry) ForeignIdle(namespace, env, group string) int32 {
 	return total
 }
 
+// LocalIdle returns the local cluster's idle capacity for the Env and scaling
+// group (group == "" is the whole-Env aggregate row). Zero when the local
+// cluster has no fresh record for the triple.
+func (r *Registry) LocalIdle(namespace, env, group string) int32 {
+	now := r.now()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	c, ok := r.items[key(r.localClusterID, namespace, env, group)]
+	if !ok || !r.fresh(c, now) {
+		return 0
+	}
+	return c.Idle
+}
+
+// BestForeignCluster returns the foreign cluster with the most idle capacity
+// for the Env and scaling group, and that idle count. Returns ("", 0) when no
+// foreign cluster has a fresh record with idle > 0. Ties break on clusterID
+// for determinism.
+func (r *Registry) BestForeignCluster(namespace, env, group string) (string, int32) {
+	now := r.now()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	bestCluster := ""
+	bestIdle := int32(0)
+	for _, c := range r.items {
+		if c.ClusterID == r.localClusterID || c.Namespace != namespace || c.EnvName != env || c.ScalingGroup != group {
+			continue
+		}
+		if !r.fresh(c, now) || c.Idle <= 0 {
+			continue
+		}
+		if c.Idle > bestIdle || (c.Idle == bestIdle && (bestCluster == "" || c.ClusterID < bestCluster)) {
+			bestIdle = c.Idle
+			bestCluster = c.ClusterID
+		}
+	}
+	return bestCluster, bestIdle
+}
+
 // Snapshot returns every non-expired record (local and foreign) for
 // observability and debugging.
 func (r *Registry) Snapshot() []Capacity {
