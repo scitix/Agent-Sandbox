@@ -23,7 +23,10 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
+from typing import cast
 
+if TYPE_CHECKING:
+  from ..models.env_update_strategy import EnvUpdateStrategy
 
 
 
@@ -36,10 +39,10 @@ T = TypeVar("T", bound="UpdateEnvSandboxPoolRequest")
 @_attrs_define
 class UpdateEnvSandboxPoolRequest:
     """ Update a member SandboxPool. Resource shape, instanceType, labels and
-    annotations are immutable post-create; this PUT only accepts replica
-    adjustments. When the scalingGroup has autoscaling enabled (via
-    env.spec.autoscaling.enabled + a matching group entry), only
-    `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+    annotations are immutable post-create; this PUT accepts replica
+    adjustments and updateStrategy changes. When the scalingGroup has
+    autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
+    entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
 
         Attributes:
             replicas (int | Unset): Initial / desired replica count. Rejected when this pool's scalingGroup has autoscaling
@@ -47,11 +50,15 @@ class UpdateEnvSandboxPoolRequest:
             min_replicas (int | Unset): Lower bound on this pool's replicas, enforced as a per-member scale-down floor by
                 the Env autoscaler. Always accepted.
             max_replicas (int | Unset): Upper bound on this pool's replicas. Always accepted.
+            update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
+                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
+                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
      """
 
     replicas: int | Unset = UNSET
     min_replicas: int | Unset = UNSET
     max_replicas: int | Unset = UNSET
+    update_strategy: EnvUpdateStrategy | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -59,11 +66,16 @@ class UpdateEnvSandboxPoolRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.env_update_strategy import EnvUpdateStrategy
         replicas = self.replicas
 
         min_replicas = self.min_replicas
 
         max_replicas = self.max_replicas
+
+        update_strategy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.update_strategy, Unset):
+            update_strategy = self.update_strategy.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -76,6 +88,8 @@ class UpdateEnvSandboxPoolRequest:
             field_dict["minReplicas"] = min_replicas
         if max_replicas is not UNSET:
             field_dict["maxReplicas"] = max_replicas
+        if update_strategy is not UNSET:
+            field_dict["updateStrategy"] = update_strategy
 
         return field_dict
 
@@ -83,6 +97,7 @@ class UpdateEnvSandboxPoolRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.env_update_strategy import EnvUpdateStrategy
         d = dict(src_dict)
         replicas = d.pop("replicas", UNSET)
 
@@ -90,10 +105,21 @@ class UpdateEnvSandboxPoolRequest:
 
         max_replicas = d.pop("maxReplicas", UNSET)
 
+        _update_strategy = d.pop("updateStrategy", UNSET)
+        update_strategy: EnvUpdateStrategy | Unset
+        if isinstance(_update_strategy,  Unset):
+            update_strategy = UNSET
+        else:
+            update_strategy = EnvUpdateStrategy.from_dict(_update_strategy)
+
+
+
+
         update_env_sandbox_pool_request = cls(
             replicas=replicas,
             min_replicas=min_replicas,
             max_replicas=max_replicas,
+            update_strategy=update_strategy,
         )
 
 

@@ -33,7 +33,6 @@ import (
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envautoscaler"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envmember"
-	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolrender"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
@@ -66,12 +65,6 @@ type EnvShellService interface {
 	// cascade-deleted via OwnerReferences (controller=true,
 	// blockOwnerDeletion=true) stamped by the Env Reconciler.
 	Delete(ctx context.Context, namespace, name string) (*gen.DeleteSandboxEnvResult, *domain.AppError)
-	// SyncTemplate re-renders every member SandboxPool against the current
-	// SandboxTemplate body + the Env's overrides, advancing each Pool's
-	// template-version annotation. Use this after an admin edits the
-	// underlying Template — Env-level overrides edits propagate
-	// automatically via Update().
-	SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
 	// ListEvents returns recent K8s Events emitted against the Env and its
 	// member SandboxPools, merged and sorted descending by lastTimestamp.
 	// Drives the activity timeline on the Env detail page in the dashboard.
@@ -363,143 +356,6 @@ func (s *k8sSandboxEnvService) Delete(ctx context.Context, namespace, name strin
 	}, nil
 }
 
-// SyncTemplate re-renders every member Pool of the Env against the current
-// linked SandboxTemplate body and the Env's overrides. Each member's
-// template-name / -version annotations are advanced and its
-// EmbeddedSandboxTemplate is patched in place.
-//
-// Errors from individual members are aggregated — a partial failure leaves
-// successful members synced and reports the first failure to the caller so
-// it can be retried.
-func (s *k8sSandboxEnvService) SyncTemplate(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError) {
-	env := &agentsv1alpha1.SandboxEnv{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, env); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", name, namespace))
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
-	templateName := env.Spec.TemplateRef.Name
-	if templateName == "" {
-		return nil, domain.NewBadRequest("env.spec.templateRef.name is empty")
-	}
-	tmpl := &agentsv1alpha1.SandboxTemplate{}
-	if err := s.client.Get(ctx, client.ObjectKey{Name: templateName}, tmpl); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, domain.NewNotFound(fmt.Sprintf("source template %q not found", templateName))
-		}
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
-	pools := &agentsv1alpha1.SandboxPoolList{}
-	if err := s.client.List(ctx, pools, client.InNamespace(namespace)); err != nil {
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-
-	// Index member-by-name so each pool can be re-rendered with the
-	// Env-level overrides + that pool's per-Member resource sizing.
-	memberByName := map[string]*agentsv1alpha1.EnvClusterMember{}
-	for _, c := range env.Spec.Clusters {
-		for i := range c.Members {
-			m := &c.Members[i]
-			memberByName[m.Name] = m
-		}
-	}
-
-	ipsExists, _ := poolrender.ImagePullSecretExists(ctx, s.client, env.Namespace, agentsv1alpha1.EnvImagePullSecretName(env.Name))
-
-	var firstErr *domain.AppError
-	for i := range pools.Items {
-		p := &pools.Items[i]
-		if !poolOwnedByEnv(p, env) {
-			continue
-		}
-		// Reuse the same RenderSandboxPool the Reconciler runs so
-		// sync-template and steady-state reconciles converge to identical
-		// pod specs. Members declared in spec.clusters[].members[] have a
-		// matching entry in memberByName; legacy pools that predate that
-		// spec fall back to a namesake member shape just like the
-		// Reconciler's desiredLocalMembers does.
-		member := agentsv1alpha1.EnvClusterMember{Name: p.Name}
-		if m, ok := memberByName[p.Name]; ok {
-			member = *m
-		}
-		rendered, err := poolrender.RenderSandboxPool(poolrender.Inputs{
-			Env:                   env,
-			Template:              tmpl,
-			Member:                member,
-			ImagePullSecretExists: ipsExists,
-		})
-		if err != nil {
-			if firstErr == nil {
-				firstErr = domain.NewBadRequest(err.Error())
-			}
-			continue
-		}
-		if appErr := s.syncMemberPoolToRendered(ctx, p, tmpl, rendered); appErr != nil && firstErr == nil {
-			firstErr = appErr
-		}
-	}
-	if firstErr != nil {
-		return nil, firstErr
-	}
-
-	updated := &agentsv1alpha1.SandboxEnv{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, updated); err != nil {
-		return nil, domain.NewInternal(err.Error(), err)
-	}
-	result := envToGen(updated)
-	return &result, nil
-}
-
-// syncMemberPoolToRendered patches the live Pool to match the freshly
-// rendered want (produced by poolrender.RenderSandboxPool against the
-// current Template body + Env overrides) and advances the template-version
-// annotation to reflect the Template the caller targeted. Retries on
-// conflict. A concurrent delete is treated as success — the Reconciler
-// will pick up the divergence on the next pass.
-func (s *k8sSandboxEnvService) syncMemberPoolToRendered(
-	ctx context.Context,
-	pool *agentsv1alpha1.SandboxPool,
-	tmpl *agentsv1alpha1.SandboxTemplate,
-	want *agentsv1alpha1.SandboxPool,
-) *domain.AppError {
-	key := types.NamespacedName{Namespace: pool.Namespace, Name: pool.Name}
-	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current := &agentsv1alpha1.SandboxPool{}
-		if err := s.client.Get(ctx, key, current); err != nil {
-			return err
-		}
-		base := current.DeepCopy()
-		current.Spec.EmbeddedSandboxTemplate = *want.Spec.EmbeddedSandboxTemplate.DeepCopy()
-		if current.Annotations == nil {
-			current.Annotations = map[string]string{}
-		}
-		current.Annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = tmpl.Name
-		current.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] = tmpl.Spec.Version
-		return s.client.Patch(ctx, current, client.MergeFrom(base))
-	})
-	if retryErr != nil {
-		if k8serrors.IsNotFound(retryErr) {
-			return nil // Pool was deleted concurrently — treat as success.
-		}
-		return domain.NewInternal(retryErr.Error(), retryErr)
-	}
-	return nil
-}
-
-// poolOwnedByEnv returns true when pool.OwnerReferences includes a
-// reference back to env (matched by Kind, Name, and UID).
-func poolOwnedByEnv(pool *agentsv1alpha1.SandboxPool, env *agentsv1alpha1.SandboxEnv) bool {
-	for _, ref := range pool.OwnerReferences {
-		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind && ref.Name == env.Name && ref.UID == env.UID {
-			return true
-		}
-	}
-	return false
-}
-
 // envToGen projects a CRD SandboxEnv into the wire shape consumed by the
 // dashboard. Mirrors PoolToGen in sandboxpool_service.go.
 func envToGen(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnv {
@@ -643,6 +499,20 @@ func envOverridesToGen(o *agentsv1alpha1.EnvOverridesSpec) *gen.EnvOverrides {
 		out.DefaultIdleTimeout = ptr.To(o.DefaultIdleTimeout.Duration.String())
 	}
 	out.NetworkPolicy = networkPolicyToGen(o.NetworkPolicy)
+	out.UpdateStrategy = updateStrategyToGen(o.UpdateStrategy)
+	return out
+}
+
+// updateStrategyToGen maps the CRD rollout policy onto the wire shape (GET).
+// MaxUnavailable is serialised to its int-or-percent string form ("3" / "20%").
+func updateStrategyToGen(s *agentsv1alpha1.EnvUpdateStrategy) *gen.EnvUpdateStrategy {
+	if s == nil {
+		return nil
+	}
+	out := &gen.EnvUpdateStrategy{AutoUpdate: s.AutoUpdate}
+	if s.MaxUnavailable != nil {
+		out.MaxUnavailable = ptr.To(s.MaxUnavailable.String())
+	}
 	return out
 }
 
@@ -749,6 +619,10 @@ func envMemberConfigToGen(c agentsv1alpha1.EnvClusterMemberConfig) *gen.EnvClust
 	}
 	if c.ScaleDownPriority != nil {
 		out.ScaleDownPriority = ptr.To(*c.ScaleDownPriority)
+		populated = true
+	}
+	if c.UpdateStrategy != nil {
+		out.UpdateStrategy = updateStrategyToGen(c.UpdateStrategy)
 		populated = true
 	}
 	if c.InlineResources != nil {
@@ -884,6 +758,12 @@ func envObservedMemberToGen(m agentsv1alpha1.EnvObservedMember) gen.EnvObservedM
 	if m.SaturatedUntil != nil {
 		t := m.SaturatedUntil.UTC()
 		out.SaturatedUntil = &t
+	}
+	if m.UpdateRevision != "" {
+		out.UpdateRevision = ptr.To(m.UpdateRevision)
+	}
+	if m.UpdatedReplicas > 0 {
+		out.UpdatedReplicas = ptr.To(m.UpdatedReplicas)
 	}
 	return out
 }

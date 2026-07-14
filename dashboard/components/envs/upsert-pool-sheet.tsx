@@ -120,6 +120,10 @@ const baseObject = z.object({
   replicas: intGte0,
   minReplicas: intGte0,
   maxReplicas: intGte0,
+  // Per-member auto-update override. autoUpdate defaults to inheriting the Env
+  // (represented as `undefined` = inherit); maxUnavailable is int-or-percent.
+  autoUpdate: z.boolean().optional(),
+  maxUnavailable: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
 })
 
 // minReplicas must not exceed maxReplicas when both are supplied. Shared by
@@ -559,6 +563,13 @@ function UpsertPoolInner({
               <FieldLabel>{t("envs.poolForm.maxReplicas")}</FieldLabel>
               <Input type="number" min={0} placeholder="—" {...register("maxReplicas")} />
             </Field>
+            <Field>
+              <FieldLabel>{t("envs.form.updateStrategy.maxUnavailable")}</FieldLabel>
+              <Input placeholder={t("envs.poolForm.inheritPlaceholder")} {...register("maxUnavailable")} />
+              <FieldDescription>
+                {t("envs.form.updateStrategy.maxUnavailableDescription")}
+              </FieldDescription>
+            </Field>
           </div>
         </div>
 
@@ -871,6 +882,8 @@ function buildDefaultValues(
       replicas: 1,
       minReplicas: undefined,
       maxReplicas: undefined,
+      autoUpdate: undefined,
+      maxUnavailable: undefined,
     }
   }
   // Edit mode — extract from the matching env member.
@@ -899,6 +912,8 @@ function buildDefaultValues(
     replicas: pool.spec.replicas,
     minReplicas: cfg?.minReplicas,
     maxReplicas: cfg?.maxReplicas,
+    autoUpdate: cfg?.updateStrategy?.autoUpdate,
+    maxUnavailable: cfg?.updateStrategy?.maxUnavailable,
   }
 }
 
@@ -943,6 +958,8 @@ function formValuesToCreateBody(v: FormValues) {
   if (v.replicas !== undefined) body.replicas = v.replicas
   if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
   if (v.maxReplicas !== undefined) body.maxReplicas = v.maxReplicas
+  const us = buildMemberUpdateStrategy(v)
+  if (us) body.updateStrategy = us
   return body
 }
 
@@ -951,7 +968,18 @@ function formValuesToUpdateBody(v: FormValues) {
   if (v.replicas !== undefined) body.replicas = v.replicas
   if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
   if (v.maxReplicas !== undefined) body.maxReplicas = v.maxReplicas
+  const us = buildMemberUpdateStrategy(v)
+  if (us) body.updateStrategy = us
   return body
+}
+
+// buildMemberUpdateStrategy emits a per-member rollout override only when the
+// user set a field; an all-empty result inherits the Env-level strategy.
+function buildMemberUpdateStrategy(v: FormValues): Record<string, unknown> | undefined {
+  const us: Record<string, unknown> = {}
+  if (v.autoUpdate !== undefined) us.autoUpdate = v.autoUpdate
+  if (v.maxUnavailable) us.maxUnavailable = v.maxUnavailable
+  return Object.keys(us).length ? us : undefined
 }
 
 function extractError(err: unknown): string {

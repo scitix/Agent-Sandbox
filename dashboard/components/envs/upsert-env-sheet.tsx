@@ -126,6 +126,10 @@ const formSchema = z
     allowedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
     deniedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
     allowPrivateNetworks: z.boolean(),
+    // Auto-update rollout policy (Env-level default; per-member override lives
+    // on the pool sheet). maxUnavailable is a free-form int-or-percent string.
+    autoUpdate: z.boolean(),
+    maxUnavailable: z.preprocess(emptyToUndef, z.string().optional()),
   })
   .superRefine((v, ctx) => {
     if (v.networkPolicyMode !== "allowlist") return
@@ -395,6 +399,10 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                     <Separator />
 
                     <NetworkPolicySection control={control} register={register} errors={errors} />
+
+                    <Separator />
+
+                    <UpdateStrategySection control={control} register={register} />
                   </div>
                 </AccordionContent>
               </AccordionItem>
@@ -718,6 +726,54 @@ function NetworkPolicySection({ control, register, errors }: NetworkPolicySectio
   )
 }
 
+interface UpdateStrategySectionProps {
+  control: ReturnType<typeof useForm<FormValues>>["control"]
+  register: ReturnType<typeof useForm<FormValues>>["register"]
+}
+
+function UpdateStrategySection({ control, register }: UpdateStrategySectionProps) {
+  const { t } = useTranslation()
+  const autoUpdate = useWatch({ control, name: "autoUpdate" })
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
+          {t("envs.form.section.updateStrategy")}
+        </h3>
+        <p className="text-muted-foreground mt-1 text-xs">{t("envs.form.updateStrategy.hint")}</p>
+      </div>
+
+      <Controller
+        control={control}
+        name="autoUpdate"
+        render={({ field }) => (
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div className="space-y-0.5 pr-3">
+              <FieldLabel>{t("envs.form.updateStrategy.autoUpdate")}</FieldLabel>
+              <FieldDescription>
+                {t("envs.form.updateStrategy.autoUpdateDescription")}
+              </FieldDescription>
+            </div>
+            <Switch checked={field.value} onCheckedChange={field.onChange} />
+          </div>
+        )}
+      />
+
+      {autoUpdate && (
+        <Field>
+          <FieldLabel htmlFor="us-max-unavailable">
+            {t("envs.form.updateStrategy.maxUnavailable")}
+          </FieldLabel>
+          <Input id="us-max-unavailable" placeholder="20%" {...register("maxUnavailable")} />
+          <FieldDescription>
+            {t("envs.form.updateStrategy.maxUnavailableDescription")}
+          </FieldDescription>
+        </Field>
+      )}
+    </section>
+  )
+}
+
 // ─── Form ↔ API mapping ──────────────────────────────────────────────────────
 
 function envToFormValues(env: AgentSandboxEnv | null): FormValues {
@@ -735,6 +791,8 @@ function envToFormValues(env: AgentSandboxEnv | null): FormValues {
       allowedCIDRs: undefined,
       deniedCIDRs: undefined,
       allowPrivateNetworks: false,
+      autoUpdate: true,
+      maxUnavailable: undefined,
     }
   }
   const overrides = env.spec.overrides
@@ -757,6 +815,8 @@ function envToFormValues(env: AgentSandboxEnv | null): FormValues {
     allowedCIDRs: (np?.egress?.allowedCIDRs ?? []).join("\n") || undefined,
     deniedCIDRs: (np?.egress?.deniedCIDRs ?? []).join("\n") || undefined,
     allowPrivateNetworks: np?.allowPrivateNetworks ?? false,
+    autoUpdate: overrides?.updateStrategy?.autoUpdate ?? true,
+    maxUnavailable: overrides?.updateStrategy?.maxUnavailable,
   }
 }
 
@@ -789,7 +849,18 @@ function buildOverrides(v: FormValues) {
   }
   const np = buildNetworkPolicy(v)
   if (np) o.networkPolicy = np
+  const us = buildUpdateStrategy(v)
+  if (us) o.updateStrategy = us
   return Object.keys(o).length ? o : undefined
+}
+
+// buildUpdateStrategy emits the rollout override only when it deviates from the
+// inherited defaults (autoUpdate=true, maxUnavailable=20%), keeping the CR clean.
+function buildUpdateStrategy(v: FormValues): Record<string, unknown> | undefined {
+  const us: Record<string, unknown> = {}
+  if (v.autoUpdate === false) us.autoUpdate = false
+  if (v.maxUnavailable) us.maxUnavailable = v.maxUnavailable
+  return Object.keys(us).length ? us : undefined
 }
 
 // buildNetworkPolicy maps the form's mode + fields onto the wire networkPolicy

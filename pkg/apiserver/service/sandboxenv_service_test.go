@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -224,90 +223,5 @@ func TestPoolToGen_OwningEnvNilWhenNoOwnerRef(t *testing.T) {
 	result := envcommon.PoolToGen(context.Background(), pool)
 	if result.OwningEnv != nil {
 		t.Errorf("OwningEnv = %v, want nil", *result.OwningEnv)
-	}
-}
-
-// envSyncTestSetup builds an Env + a matching SandboxTemplate + one member
-// pool referencing the template, suitable for exercising SyncTemplate.
-func envSyncTestSetup(t *testing.T, podImage string) (SandboxEnvService, *agentsv1alpha1.SandboxEnv) {
-	t.Helper()
-	env := newEnv(envTestName, "team-1", "user-1")
-	env.UID = types.UID("env-uid-sync")
-	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{
-		Image: "ghcr.io/foo:override",
-	}
-	tmpl := &agentsv1alpha1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "envd-runtime"},
-		Spec: agentsv1alpha1.SandboxTemplateSpec{
-			Version: "2.0.0",
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				IdleImage: "pause:3.10",
-				Template:  podTemplateWithImage(podImage),
-			},
-		},
-	}
-	pool := &agentsv1alpha1.SandboxPool{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "env-a-foo",
-			Namespace: envTestNamespace,
-			Annotations: map[string]string{
-				agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey:    "envd-runtime",
-				agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey: "1.0.0",
-			},
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: agentsv1alpha1.GroupVersion.String(),
-				Kind:       agentsv1alpha1.SandboxEnvOwnerKind,
-				Name:       env.Name,
-				UID:        env.UID,
-			}},
-		},
-		Spec: agentsv1alpha1.SandboxPoolSpec{
-			TemplateName: "envd-runtime",
-			EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
-				IdleImage: "pause:3.10",
-				Template:  podTemplateWithImage("stale:v0"),
-			},
-		},
-	}
-
-	cb, err := indexer.GetFakeClientBuilderWithIndexers()
-	if err != nil {
-		t.Fatalf("client builder: %v", err)
-	}
-	cli := cb.WithObjects(env, tmpl, pool).Build()
-	return NewSandboxEnvService(cli, nil, nil, nil), env
-}
-
-func podTemplateWithImage(image string) corev1.PodTemplateSpec {
-	return corev1.PodTemplateSpec{
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "sandbox", Image: image}},
-		},
-	}
-}
-
-func TestSandboxEnvService_SyncTemplate_PatchesMemberPools(t *testing.T) {
-	svc, env := envSyncTestSetup(t, "base:v2")
-	if _, err := svc.SyncTemplate(context.Background(), envTestNamespace, env.Name); err != nil {
-		t.Fatalf("SyncTemplate: %v", err)
-	}
-	cli := svc.(*k8sSandboxEnvService).client
-	pool := &agentsv1alpha1.SandboxPool{}
-	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: "env-a-foo"}, pool); err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if pool.Spec.Template.Spec.Containers[0].Image != "ghcr.io/foo:override" {
-		t.Errorf("expected overrides image applied via SyncTemplate, got %+v", pool.Spec.Template)
-	}
-	if pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] != "2.0.0" {
-		t.Errorf("template-version annotation must advance, got %q", pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey])
-	}
-}
-
-func TestSandboxEnvService_SyncTemplate_NotFound(t *testing.T) {
-	svc := newEnvService(t)
-	_, err := svc.SyncTemplate(context.Background(), "default", "ghost")
-	if err == nil || err.Code != domain.ErrCodeNotFound {
-		t.Fatalf("expected NotFound, got %+v", err)
 	}
 }

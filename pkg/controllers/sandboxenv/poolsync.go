@@ -189,8 +189,15 @@ func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 	idleDrift := !durationsEqual(pool.Spec.DefaultIdleTimeout, want.Spec.DefaultIdleTimeout)
 	replicasDrift := pool.Spec.Replicas != want.Spec.Replicas
 	embeddedDrift := !equality.Semantic.DeepEqual(pool.Spec.EmbeddedSandboxTemplate, want.Spec.EmbeddedSandboxTemplate)
+	// NetworkPolicy and MaxUnavailable are SandboxPoolSpec siblings (not part of
+	// EmbeddedSandboxTemplate), so they need explicit drift checks. NetworkPolicy
+	// changes gate egress-sidecar injection on newly rolled Pods; MaxUnavailable
+	// tunes the rollout budget the Pool reconciler enforces.
+	networkPolicyDrift := !equality.Semantic.DeepEqual(pool.Spec.NetworkPolicy, want.Spec.NetworkPolicy)
+	maxUnavailableDrift := !equality.Semantic.DeepEqual(pool.Spec.MaxUnavailable, want.Spec.MaxUnavailable)
 
-	if !labelDrift && !annotationDrift && !policyDrift && !startupDrift && !idleDrift && !replicasDrift && !embeddedDrift {
+	if !labelDrift && !annotationDrift && !policyDrift && !startupDrift && !idleDrift &&
+		!replicasDrift && !embeddedDrift && !networkPolicyDrift && !maxUnavailableDrift {
 		return nil
 	}
 
@@ -209,6 +216,8 @@ func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 		current.Spec.DefaultStartupTimeout = want.Spec.DefaultStartupTimeout
 		current.Spec.DefaultIdleTimeout = want.Spec.DefaultIdleTimeout
 		current.Spec.Replicas = want.Spec.Replicas
+		current.Spec.NetworkPolicy = want.Spec.NetworkPolicy
+		current.Spec.MaxUnavailable = want.Spec.MaxUnavailable
 		// Defensive: never overwrite a live Pod template that has
 		// containers with a desired snapshot whose template has none. An
 		// empty Member.Spec snapshot would otherwise wipe out the live

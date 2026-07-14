@@ -130,10 +130,10 @@ def sync_detailed(
         pool_name (str):
         body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
             instanceType, labels and
-            annotations are immutable post-create; this PUT only accepts replica
-            adjustments. When the scalingGroup has autoscaling enabled (via
-            env.spec.autoscaling.enabled + a matching group entry), only
-            `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            annotations are immutable post-create; this PUT accepts replica
+            adjustments and updateStrategy changes. When the scalingGroup has
+            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
+            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,10 +172,10 @@ def sync(
         pool_name (str):
         body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
             instanceType, labels and
-            annotations are immutable post-create; this PUT only accepts replica
-            adjustments. When the scalingGroup has autoscaling enabled (via
-            env.spec.autoscaling.enabled + a matching group entry), only
-            `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            annotations are immutable post-create; this PUT accepts replica
+            adjustments and updateStrategy changes. When the scalingGroup has
+            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
+            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,10 +209,10 @@ async def asyncio_detailed(
         pool_name (str):
         body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
             instanceType, labels and
-            annotations are immutable post-create; this PUT only accepts replica
-            adjustments. When the scalingGroup has autoscaling enabled (via
-            env.spec.autoscaling.enabled + a matching group entry), only
-            `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            annotations are immutable post-create; this PUT accepts replica
+            adjustments and updateStrategy changes. When the scalingGroup has
+            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
+            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -251,10 +251,10 @@ async def asyncio(
         pool_name (str):
         body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
             instanceType, labels and
-            annotations are immutable post-create; this PUT only accepts replica
-            adjustments. When the scalingGroup has autoscaling enabled (via
-            env.spec.autoscaling.enabled + a matching group entry), only
-            `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            annotations are immutable post-create; this PUT accepts replica
+            adjustments and updateStrategy changes. When the scalingGroup has
+            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
+            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

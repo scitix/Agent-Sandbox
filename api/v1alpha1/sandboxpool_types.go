@@ -16,6 +16,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -122,6 +123,16 @@ type SandboxPoolSpec struct {
 	// +optional
 	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 
+	// MaxUnavailable bounds how many of this Pool's desired idle Pods may be
+	// unavailable at once while it rolls stale idle Pods onto a new revision
+	// (see status.updateRevision). Absolute number or percentage of replicas
+	// (e.g. "20%"), rounded down and floored at 1. For Env-owned Pools this is
+	// projected from the Env's (member/overrides) updateStrategy; nil disables
+	// rollout throttling and is treated as "20%".
+	// +optional
+	// +kubebuilder:validation:XIntOrString
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
+
 	EmbeddedSandboxTemplate `json:",inline"`
 }
 
@@ -172,6 +183,22 @@ type SandboxPoolStatus struct {
 	// FailedReplicas is the number of Pods in failed state
 	// +optional
 	FailedReplicas int32 `json:"failedReplicas,omitempty"`
+
+	// UpdateRevision is the target revision hash of the current Pool template
+	// (spec.template.metadata.labels[agentbox.navix.sh/template-hash]). Idle
+	// Pods whose own hash differs are stale and get rolled onto this revision.
+	// +optional
+	UpdateRevision string `json:"updateRevision,omitempty"`
+
+	// CurrentRevision is the revision hash all Pods currently share. It equals
+	// UpdateRevision once a rollout has converged, and is empty while Pods
+	// straddle multiple revisions (rollout in progress).
+	// +optional
+	CurrentRevision string `json:"currentRevision,omitempty"`
+
+	// UpdatedReplicas is the number of Pods already at UpdateRevision.
+	// +optional
+	UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
 
 	// PendingRequests is the throttled mirror of the in-process PoolScheduler
 	// claim queue depth. Patched every ~3 s when the queue length changes by

@@ -27,6 +27,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
+  from ..models.env_update_strategy import EnvUpdateStrategy
   from ..models.image_pull_secret_input import ImagePullSecretInput
   from ..models.sandbox_network_policy import SandboxNetworkPolicy
 
@@ -58,6 +59,9 @@ class EnvOverrides:
                 Env's namespace. Write attempts via PATCH are ignored.
             network_policy (SandboxNetworkPolicy | Unset): Sandbox egress network policy, enforced by an in-Pod transparent
                 proxy sidecar (supports domain matching, which the cluster CNIs cannot). Allowlist / default-deny semantics.
+            update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
+                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
+                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
      """
 
     image: str | Unset = UNSET
@@ -67,12 +71,14 @@ class EnvOverrides:
     image_pull_secret: ImagePullSecretInput | Unset = UNSET
     image_pull_secret_configured: bool | Unset = UNSET
     network_policy: SandboxNetworkPolicy | Unset = UNSET
+    update_strategy: EnvUpdateStrategy | Unset = UNSET
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.env_update_strategy import EnvUpdateStrategy
         from ..models.image_pull_secret_input import ImagePullSecretInput
         from ..models.sandbox_network_policy import SandboxNetworkPolicy
         image = self.image
@@ -96,6 +102,10 @@ class EnvOverrides:
         if not isinstance(self.network_policy, Unset):
             network_policy = self.network_policy.to_dict()
 
+        update_strategy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.update_strategy, Unset):
+            update_strategy = self.update_strategy.to_dict()
+
 
         field_dict: dict[str, Any] = {}
 
@@ -115,6 +125,8 @@ class EnvOverrides:
             field_dict["imagePullSecretConfigured"] = image_pull_secret_configured
         if network_policy is not UNSET:
             field_dict["networkPolicy"] = network_policy
+        if update_strategy is not UNSET:
+            field_dict["updateStrategy"] = update_strategy
 
         return field_dict
 
@@ -122,6 +134,7 @@ class EnvOverrides:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.env_update_strategy import EnvUpdateStrategy
         from ..models.image_pull_secret_input import ImagePullSecretInput
         from ..models.sandbox_network_policy import SandboxNetworkPolicy
         d = dict(src_dict)
@@ -163,6 +176,16 @@ class EnvOverrides:
 
 
 
+        _update_strategy = d.pop("updateStrategy", UNSET)
+        update_strategy: EnvUpdateStrategy | Unset
+        if isinstance(_update_strategy,  Unset):
+            update_strategy = UNSET
+        else:
+            update_strategy = EnvUpdateStrategy.from_dict(_update_strategy)
+
+
+
+
         env_overrides = cls(
             image=image,
             pod_creation_image_policy=pod_creation_image_policy,
@@ -171,6 +194,7 @@ class EnvOverrides:
             image_pull_secret=image_pull_secret,
             image_pull_secret_configured=image_pull_secret_configured,
             network_policy=network_policy,
+            update_strategy=update_strategy,
         )
 
         return env_overrides

@@ -47,6 +47,9 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 	// Env-wide rollup across every member regardless of scaling group, backing
 	// the top-level status scalars (and the printer columns built on them).
 	var envIdle, envRunning, envDesired int32
+	// rolloutInProgress is set when any member Pool has not yet converged onto
+	// its target revision; drives the TemplateConsistent condition's reason.
+	rolloutInProgress := false
 	for _, member := range localSpec.Members {
 		pool := &agentsv1alpha1.SandboxPool{}
 		err := r.Get(ctx, types.NamespacedName{Namespace: env.Namespace, Name: member.Name}, pool)
@@ -79,6 +82,14 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 			DesiredReplicas:    pool.Spec.Replicas,
 			CurrentReplicas:    pool.Spec.Replicas,
 			PendingRequests:    pool.Status.PendingRequests,
+			UpdateRevision:     pool.Status.UpdateRevision,
+			UpdatedReplicas:    pool.Status.UpdatedReplicas,
+		}
+		// A member is mid-rollout while its Pods straddle revisions (or all sit
+		// on an older single revision): CurrentRevision lags UpdateRevision.
+		if pool.Spec.Replicas > 0 && pool.Status.UpdateRevision != "" &&
+			pool.Status.CurrentRevision != pool.Status.UpdateRevision {
+			rolloutInProgress = true
 		}
 		// SaturatedUntil is derived for the router's convenience. The
 		// per-Pool autoscaler records LastScaleUpAttemptTime +
@@ -126,7 +137,7 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 
 	// Conditions
 	setReadyCondition(env, observed)
-	setTemplateConsistentCondition(env, observed)
+	setTemplateConsistentCondition(env, observed, rolloutInProgress)
 
 	if equality.Semantic.DeepEqual(base.Status, env.Status) {
 		return nil
@@ -283,8 +294,11 @@ func setReadyCondition(env *agentsv1alpha1.SandboxEnv, observed []agentsv1alpha1
 }
 
 // setTemplateConsistentCondition marks TemplateConsistent True iff every
-// observed member's template matches the Env's templateRef.
-func setTemplateConsistentCondition(env *agentsv1alpha1.SandboxEnv, observed []agentsv1alpha1.EnvObservedMember) {
+// observed member's template matches the Env's templateRef AND no member is
+// mid-rollout onto a new revision. A template-name/version mismatch
+// (TemplateMismatch) takes precedence over an in-progress rollout
+// (RolloutInProgress) in the reported reason.
+func setTemplateConsistentCondition(env *agentsv1alpha1.SandboxEnv, observed []agentsv1alpha1.EnvObservedMember, rolloutInProgress bool) {
 	status := metav1.ConditionTrue
 	reason := "TemplatesMatch"
 	message := "all members reference " + env.Spec.TemplateRef.Name
@@ -295,6 +309,11 @@ func setTemplateConsistentCondition(env *agentsv1alpha1.SandboxEnv, observed []a
 			message = "at least one member references a different SandboxTemplate"
 			break
 		}
+	}
+	if status == metav1.ConditionTrue && rolloutInProgress {
+		status = metav1.ConditionFalse
+		reason = "RolloutInProgress"
+		message = "at least one member is rolling onto a new template revision"
 	}
 	setCondition(env, agentsv1alpha1.SandboxEnvConditionTemplateConsistent, status, reason, message)
 }

@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -638,7 +639,22 @@ func envOverridesFromGen(o *gen.EnvOverrides) (*agentsv1alpha1.EnvOverridesSpec,
 		out.DefaultIdleTimeout = &metav1.Duration{Duration: d}
 	}
 	out.NetworkPolicy = networkPolicyFromGen(o.NetworkPolicy)
+	out.UpdateStrategy = updateStrategyFromGen(o.UpdateStrategy)
 	return out, nil
+}
+
+// updateStrategyFromGen maps the wire rollout policy onto the CRD spec.
+// MaxUnavailable is parsed from its int-or-percent string form ("3" / "20%").
+func updateStrategyFromGen(s *gen.EnvUpdateStrategy) *agentsv1alpha1.EnvUpdateStrategy {
+	if s == nil {
+		return nil
+	}
+	out := &agentsv1alpha1.EnvUpdateStrategy{AutoUpdate: s.AutoUpdate}
+	if s.MaxUnavailable != nil && *s.MaxUnavailable != "" {
+		v := intstr.Parse(*s.MaxUnavailable)
+		out.MaxUnavailable = &v
+	}
+	return out
 }
 
 // networkPolicyFromGen maps the wire egress policy onto the CRD spec.
@@ -706,26 +722,6 @@ func quantityMapFromGen(m map[string]string) corev1.ResourceList {
 }
 
 // ---------------------------------------------------------------------------
-// SandboxEnv sync template
-// ---------------------------------------------------------------------------
-
-func (s *Server) SyncSandboxEnvTemplate(ctx context.Context, req gen.SyncSandboxEnvTemplateRequestObject) (gen.SyncSandboxEnvTemplateResponseObject, error) {
-	auth := authFrom(ctx)
-	result, appErr := s.env.SyncTemplate(ctx, auth.Namespace, req.Name)
-	if appErr != nil {
-		switch appErr.Code {
-		case domain.ErrCodeNotFound:
-			return gen.SyncSandboxEnvTemplate404JSONResponse(errResp(ctx, appErr)), nil
-		case domain.ErrCodeBadRequest:
-			return gen.SyncSandboxEnvTemplate400JSONResponse(errResp(ctx, appErr)), nil
-		default:
-			return gen.SyncSandboxEnvTemplate500JSONResponse(errResp(ctx, appErr)), nil
-		}
-	}
-	return gen.SyncSandboxEnvTemplate200JSONResponse{Env: *result}, nil
-}
-
-// ---------------------------------------------------------------------------
 // SandboxEnv events
 // ---------------------------------------------------------------------------
 
@@ -790,6 +786,7 @@ func memberFromCreateEnvPoolRequest(body *gen.CreateEnvSandboxPoolRequest) agent
 	if body.Annotations != nil {
 		cm.Config.Annotations = *body.Annotations
 	}
+	cm.Config.UpdateStrategy = updateStrategyFromGen(body.UpdateStrategy)
 	return cm
 }
 
@@ -867,6 +864,9 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 	if req.Body.MaxReplicas != nil {
 		v := *req.Body.MaxReplicas
 		patch.MaxReplicas = &v
+	}
+	if req.Body.UpdateStrategy != nil {
+		patch.UpdateStrategy = updateStrategyFromGen(req.Body.UpdateStrategy)
 	}
 	result, appErr := s.env.UpdateMember(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID(), patch)
 	if appErr != nil {

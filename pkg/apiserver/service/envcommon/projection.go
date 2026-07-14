@@ -66,6 +66,13 @@ func PoolToSummary(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sa
 		StoppingReplicas:        ptr.To(pool.Status.StoppingReplicas),
 		FailedReplicas:          ptr.To(pool.Status.FailedReplicas),
 		PendingRequests:         ptr.To(pool.Status.PendingRequests),
+		UpdatedReplicas:         ptr.To(pool.Status.UpdatedReplicas),
+	}
+	if pool.Status.UpdateRevision != "" {
+		status.UpdateRevision = ptr.To(pool.Status.UpdateRevision)
+	}
+	if pool.Status.CurrentRevision != "" {
+		status.CurrentRevision = ptr.To(pool.Status.CurrentRevision)
 	}
 	if pool.Status.Phase != "" {
 		phase := gen.SandboxPoolStatusPhase(pool.Status.Phase)
@@ -108,7 +115,7 @@ func PoolToSummary(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sa
 
 // PoolToGen converts a CRD SandboxPool to the full gen wire shape. It is the
 // PoolToSummary projection plus SpecYaml (the full EmbeddedSandboxTemplate
-// serialised to YAML), which the SyncTemplate diff view consumes. Use this on
+// serialised to YAML), which the Pool detail view consumes. Use this on
 // the Get path; the List path uses PoolToSummary to keep the payload lean.
 func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.SandboxPool {
 	s := PoolToSummary(ctx, pool)
@@ -131,7 +138,7 @@ func PoolToGen(ctx context.Context, pool *agentsv1alpha1.SandboxPool) gen.Sandbo
 
 // embeddedTemplateToYAML serialises the EmbeddedSandboxTemplate fields
 // (idleImage, runtimes, template) to a YAML string for use in the
-// SyncTemplate diff view. Returns an empty string if marshalling fails.
+// Pool detail view. Returns an empty string if marshalling fails.
 func embeddedTemplateToYAML(emb agentsv1alpha1.EmbeddedSandboxTemplate) string {
 	type diffable struct {
 		IdleImage string                              `json:"idleImage,omitempty"`

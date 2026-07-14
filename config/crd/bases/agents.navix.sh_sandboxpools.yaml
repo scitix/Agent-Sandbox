@@ -100,6 +100,18 @@ spec:
                   IdleImage is the image to use when Pods are in the idle state.
                   If not specified, the image from Template.Spec.Containers[0].Image will be used.
                 type: string
+              maxUnavailable:
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  MaxUnavailable bounds how many of this Pool's desired idle Pods may be
+                  unavailable at once while it rolls stale idle Pods onto a new revision
+                  (see status.updateRevision). Absolute number or percentage of replicas
+                  (e.g. "20%"), rounded down and floored at 1. For Env-owned Pools this is
+                  projected from the Env's (member/overrides) updateStrategy; nil disables
+                  rollout throttling and is treated as "20%".
+                x-kubernetes-int-or-string: true
               networkPolicy:
                 description: |-
                   NetworkPolicy, when set, enables sandbox egress filtering for Pods in this
@@ -519,6 +531,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              currentRevision:
+                description: |-
+                  CurrentRevision is the revision hash all Pods currently share. It equals
+                  UpdateRevision once a rollout has converged, and is empty while Pods
+                  straddle multiple revisions (rollout in progress).
+                type: string
               failedReplicas:
                 description: FailedReplicas is the number of Pods in failed state
                 format: int32
@@ -639,6 +657,16 @@ spec:
                   condition is not True (e.g. Pending, CrashLoopBackOff, ErrImagePull).
                   These Pods are counted in IdleReplicas but cannot accept sandbox requests.
                   A non-zero value causes the pool to enter the Degraded phase.
+                format: int32
+                type: integer
+              updateRevision:
+                description: |-
+                  UpdateRevision is the target revision hash of the current Pool template
+                  (spec.template.metadata.labels[agentbox.navix.sh/template-hash]). Idle
+                  Pods whose own hash differs are stale and get rolled onto this revision.
+                type: string
+              updatedReplicas:
+                description: UpdatedReplicas is the number of Pods already at UpdateRevision.
                 format: int32
                 type: integer
             type: object

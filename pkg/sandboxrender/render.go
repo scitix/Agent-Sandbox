@@ -16,7 +16,7 @@
 // concrete Pool spec consumed by the SandboxPool controller.
 //
 // Callers are:
-//   - SandboxEnv Reconciler / SyncTemplate endpoint (renders member pools)
+//   - SandboxEnv Reconciler (renders member pools from the Template + overrides)
 //   - any other path that needs to apply pool-level overrides on top of a
 //     template snapshot
 //

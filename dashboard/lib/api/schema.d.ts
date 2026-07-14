@@ -223,32 +223,6 @@ export interface paths {
         patch: operations["UpdateSandboxEnv"];
         trace?: never;
     };
-    "/envs/{name}/sync-template": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Re-render every member SandboxPool against the latest SandboxTemplate and the Env's current overrides.
-         * @description Forces every member SandboxPool to pick up the current `spec.embedded` from
-         *     the linked SandboxTemplate, with `env.spec.overrides` re-applied on top. Use this
-         *     after an admin edits the underlying Template — Env-level overrides edits
-         *     propagate automatically through `PATCH /envs/{name}`.
-         *
-         *     Per-Pool changes are independent; partial failure leaves successful members
-         *     synced and surfaces the offending member in the response error.
-         */
-        post: operations["SyncSandboxEnvTemplate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/envs/{name}/autoscaling": {
         parameters: {
             query?: never;
@@ -1044,6 +1018,15 @@ export interface components {
              * @description Throttled mirror of the in-process PoolScheduler queue depth. Patched every ~3s when the queue length changes by at least 20% or crosses the 0/>0 boundary. Useful for Dashboard observability — the Env autoscaler reads the live in-process Snapshot instead.
              */
             pendingRequests?: number;
+            /** @description Target revision hash of the current Pool template. Idle pods whose own hash differs are stale and get rolled onto this revision. */
+            updateRevision?: string;
+            /** @description The single revision hash all pods currently share; equals updateRevision once a rollout converges, empty while pods straddle revisions. */
+            currentRevision?: string;
+            /**
+             * Format: int32
+             * @description Number of pods already at updateRevision.
+             */
+            updatedReplicas?: number;
             autoscaling?: components["schemas"]["PoolAutoScalingStatus"];
         };
         /** @description Per-Pool autoscaler decision state. Sole writer is the SandboxPool reconciler running the autoscaling decision pipeline. */
@@ -1225,13 +1208,15 @@ export interface components {
             annotations?: {
                 [key: string]: string;
             };
+            /** @description Per-member rollout policy override. Unset inherits the Env overrides.updateStrategy, then autoUpdate=true / maxUnavailable=20%. */
+            updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
         };
         /**
          * @description Update a member SandboxPool. Resource shape, instanceType, labels and
-         *     annotations are immutable post-create; this PUT only accepts replica
-         *     adjustments. When the scalingGroup has autoscaling enabled (via
-         *     env.spec.autoscaling.enabled + a matching group entry), only
-         *     `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+         *     annotations are immutable post-create; this PUT accepts replica
+         *     adjustments and updateStrategy changes. When the scalingGroup has
+         *     autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
+         *     entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
          */
         UpdateEnvSandboxPoolRequest: {
             /**
@@ -1249,6 +1234,8 @@ export interface components {
              * @description Upper bound on this pool's replicas. Always accepted.
              */
             maxReplicas?: number;
+            /** @description Per-member rollout policy override. Mutable post-create — e.g. set autoUpdate=false to freeze this member during an incident. */
+            updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
         };
         ImagePullSecretInput: {
             registries: components["schemas"]["RegistryCredential"][];
@@ -1433,6 +1420,15 @@ export interface components {
              * @description Scale-down order within the scaling group — lower shrunk first. When omitted, falls back to priority.
              */
             scaleDownPriority?: number;
+            /** @description Per-member override of the Env-wide overrides.updateStrategy. Unset fields inherit from the Env default, then autoUpdate=true / maxUnavailable=20%. */
+            updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
+        };
+        /** @description Automatic rollout policy for member Pools when their rendered idle-Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle. */
+        EnvUpdateStrategy: {
+            /** @description Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision. */
+            autoUpdate?: boolean;
+            /** @description Rollout unavailability budget as an absolute count ("3") or a percentage of desired idle replicas ("20%"). Rounded down, floored at 1. Resolution order: member → env → default "20%". */
+            maxUnavailable?: string;
         };
         /** @description Subset of Kubernetes corev1.ResourceRequirements used for per-Pool resource sizing on EnvClusterMember.inlineResources. */
         ResourceRequirements: {
@@ -1477,6 +1473,8 @@ export interface components {
              *     egress. Per-sandbox overrides are available via the E2B create body.
              */
             networkPolicy?: components["schemas"]["SandboxNetworkPolicy"];
+            /** @description Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy. */
+            updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
         };
         /** @description Sandbox egress network policy, enforced by an in-Pod transparent proxy sidecar (supports domain matching, which the cluster CNIs cannot). Allowlist / default-deny semantics. */
         SandboxNetworkPolicy: {
@@ -1562,6 +1560,13 @@ export interface components {
              * @description Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil. Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot fit additional replicas.
              */
             saturatedUntil?: string;
+            /** @description Mirror of the member Pool's status.updateRevision — the target revision the Pool is rolling towards. */
+            updateRevision?: string;
+            /**
+             * Format: int32
+             * @description Mirror of the member Pool's status.updatedReplicas. A rollout is in progress while this is below the member's replica count.
+             */
+            updatedReplicas?: number;
         };
         EnvClusterStatus: {
             clusterID: string;
@@ -3171,64 +3176,6 @@ export interface operations {
                 "application/json": components["schemas"]["UpdateSandboxEnvRequest"];
             };
         };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxEnvEnvelope"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    SyncSandboxEnvTemplate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description OK */
             200: {

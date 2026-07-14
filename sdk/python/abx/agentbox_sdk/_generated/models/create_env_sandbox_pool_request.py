@@ -28,6 +28,7 @@ from typing import cast
 if TYPE_CHECKING:
   from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations
   from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels
+  from ..models.env_update_strategy import EnvUpdateStrategy
   from ..models.resource_requirements import ResourceRequirements
 
 
@@ -80,6 +81,9 @@ class CreateEnvSandboxPoolRequest:
                 plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix).
             annotations (CreateEnvSandboxPoolRequestAnnotations | Unset): Annotations stamped onto this member's
                 SandboxPool.
+            update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
+                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
+                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
      """
 
     instance_type: str | Unset = UNSET
@@ -90,6 +94,7 @@ class CreateEnvSandboxPoolRequest:
     max_replicas: int | Unset = UNSET
     labels: CreateEnvSandboxPoolRequestLabels | Unset = UNSET
     annotations: CreateEnvSandboxPoolRequestAnnotations | Unset = UNSET
+    update_strategy: EnvUpdateStrategy | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -99,6 +104,7 @@ class CreateEnvSandboxPoolRequest:
     def to_dict(self) -> dict[str, Any]:
         from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations
         from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels
+        from ..models.env_update_strategy import EnvUpdateStrategy
         from ..models.resource_requirements import ResourceRequirements
         instance_type = self.instance_type
 
@@ -122,6 +128,10 @@ class CreateEnvSandboxPoolRequest:
         if not isinstance(self.annotations, Unset):
             annotations = self.annotations.to_dict()
 
+        update_strategy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.update_strategy, Unset):
+            update_strategy = self.update_strategy.to_dict()
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -143,6 +153,8 @@ class CreateEnvSandboxPoolRequest:
             field_dict["labels"] = labels
         if annotations is not UNSET:
             field_dict["annotations"] = annotations
+        if update_strategy is not UNSET:
+            field_dict["updateStrategy"] = update_strategy
 
         return field_dict
 
@@ -152,6 +164,7 @@ class CreateEnvSandboxPoolRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations
         from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels
+        from ..models.env_update_strategy import EnvUpdateStrategy
         from ..models.resource_requirements import ResourceRequirements
         d = dict(src_dict)
         instance_type = d.pop("instanceType", UNSET)
@@ -194,6 +207,16 @@ class CreateEnvSandboxPoolRequest:
 
 
 
+        _update_strategy = d.pop("updateStrategy", UNSET)
+        update_strategy: EnvUpdateStrategy | Unset
+        if isinstance(_update_strategy,  Unset):
+            update_strategy = UNSET
+        else:
+            update_strategy = EnvUpdateStrategy.from_dict(_update_strategy)
+
+
+
+
         create_env_sandbox_pool_request = cls(
             instance_type=instance_type,
             multiplier=multiplier,
@@ -203,6 +226,7 @@ class CreateEnvSandboxPoolRequest:
             max_replicas=max_replicas,
             labels=labels,
             annotations=annotations,
+            update_strategy=update_strategy,
         )
 
 

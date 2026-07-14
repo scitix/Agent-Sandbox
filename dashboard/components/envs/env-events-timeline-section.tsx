@@ -62,7 +62,7 @@ const HEALTH_REASONS = new Set([
   "Degraded",
   "SandboxPoolPhaseDegraded",
 ])
-const REFRESH_REASONS = new Set(["RefreshMember", "SyncTemplate"])
+const REFRESH_REASONS = new Set(["RefreshMember", "TemplateRollout"])
 
 function categorize(reason: string): EventCategory {
   if (SCALE_REASONS.has(reason)) return "scale"
@@ -92,7 +92,7 @@ function iconFor(reason: string): { Icon: LucideIcon; color: string } {
   if (reason === "Degraded" || reason === "SandboxPoolPhaseDegraded") {
     return { Icon: AlertTriangle, color: C.error }
   }
-  if (reason === "RefreshMember" || reason === "SyncTemplate") {
+  if (reason === "RefreshMember" || reason === "TemplateRollout") {
     return { Icon: RefreshCw, color: C.desired }
   }
   return { Icon: Circle, color: C.idle }

@@ -115,19 +115,3 @@ export async function deleteEnvImperative(name: string): Promise<void> {
   if (error) throw error
 }
 
-/**
- * Re-render every member SandboxPool against the latest Template body plus
- * the Env's current overrides. Use this after an admin edits the underlying
- * SandboxTemplate — `useUpdateEnv` propagates `env.spec.overrides` edits
- * automatically through the next Reconcile cycle.
- */
-export function useSyncEnvTemplate() {
-  const qc = useQueryClient()
-  return currentApiClient().useMutation("post", "/envs/{name}/sync-template", {
-    onSuccess: () => {
-      delayedInvalidate(qc, ["get", "/envs"])
-      delayedInvalidate(qc, ["get", "/envs/{name}"])
-      delayedInvalidate(qc, ["get", "/envs/{name}/sandboxpools"])
-    },
-  })
-}

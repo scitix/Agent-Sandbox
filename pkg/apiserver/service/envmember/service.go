@@ -88,9 +88,10 @@ type MemberPoolService interface {
 // PUT /v1/sandboxenvs/{name}/sandboxpools/{poolName}. Pointer fields
 // disambiguate "leave unchanged" from "explicit zero".
 type MemberPoolPatch struct {
-	Replicas    *int32
-	MinReplicas *int32
-	MaxReplicas *int32
+	Replicas       *int32
+	MinReplicas    *int32
+	MaxReplicas    *int32
+	UpdateStrategy *agentsv1alpha1.EnvUpdateStrategy
 }
 
 // validateMemberReplicaBounds rejects a member whose per-member MinReplicas
@@ -243,12 +244,37 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 	return s.projectMemberPool(ctx, namespace, envName, member), nil
 }
 
+// applyMemberPoolPatch overlays a MemberPoolPatch onto member in place. Replicas
+// goes into Member.Spec (the Env Reconciler is the sole writer of the live Pool's
+// Spec.Replicas); min/max/updateStrategy go into Member.Config. An updateStrategy
+// change also recomputes Member.Spec.MaxUnavailable so the drift loop pushes the
+// new rollout budget to the live Pool (autoUpdate is read from Config by refresh).
+func applyMemberPoolPatch(env *agentsv1alpha1.SandboxEnv, member *agentsv1alpha1.EnvClusterMember, patch MemberPoolPatch) *domain.AppError {
+	if patch.Replicas != nil {
+		member.Spec.Replicas = *patch.Replicas
+	}
+	if patch.MinReplicas != nil {
+		v := *patch.MinReplicas
+		member.Config.MinReplicas = &v
+	}
+	if patch.MaxReplicas != nil {
+		v := *patch.MaxReplicas
+		member.Config.MaxReplicas = &v
+	}
+	if patch.UpdateStrategy != nil {
+		member.Config.UpdateStrategy = patch.UpdateStrategy
+		mu := agentsv1alpha1.ResolveMaxUnavailable(env, *member)
+		member.Spec.MaxUnavailable = &mu
+	}
+	return validateMemberReplicaBounds(member.Config.MinReplicas, member.Config.MaxReplicas)
+}
+
 func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolName, localClusterID string, patch MemberPoolPatch) (*gen.SandboxPool, *domain.AppError) {
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
-	if patch.Replicas == nil && patch.MinReplicas == nil && patch.MaxReplicas == nil {
-		return nil, domain.NewBadRequest("at least one of replicas, minReplicas or maxReplicas must be provided")
+	if patch.Replicas == nil && patch.MinReplicas == nil && patch.MaxReplicas == nil && patch.UpdateStrategy == nil {
+		return nil, domain.NewBadRequest("at least one of replicas, minReplicas, maxReplicas or updateStrategy must be provided")
 	}
 	key := types.NamespacedName{Namespace: namespace, Name: envName}
 
@@ -285,23 +311,10 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	}
 
 	// Build the updated member by overlaying patch onto existing — preserves
-	// Metadata, Config (other than Min/MaxReplicas), name. Replicas goes
-	// directly into Member.Spec because the Env Reconciler is the sole writer
-	// of the live Pool's Spec.Replicas and it reads it from Member.Spec.Replicas.
+	// Metadata, Config (other than the patched fields), name.
 	member := *existing.DeepCopy()
-	if patch.Replicas != nil {
-		member.Spec.Replicas = *patch.Replicas
-	}
-	if patch.MinReplicas != nil {
-		v := *patch.MinReplicas
-		member.Config.MinReplicas = &v
-	}
-	if patch.MaxReplicas != nil {
-		v := *patch.MaxReplicas
-		member.Config.MaxReplicas = &v
-	}
-	if err := validateMemberReplicaBounds(member.Config.MinReplicas, member.Config.MaxReplicas); err != nil {
-		return nil, err
+	if appErr := applyMemberPoolPatch(env, &member, patch); appErr != nil {
+		return nil, appErr
 	}
 
 	// Candidate Pool used by PreUpdatePool admission: start from the
