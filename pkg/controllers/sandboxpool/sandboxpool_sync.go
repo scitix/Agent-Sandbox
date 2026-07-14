@@ -453,3 +453,73 @@ func (r *SandboxPoolReconciler) syncRestartedRunningPods(
 	}
 	return pods, nil
 }
+
+// defaultStoppingTimeout bounds how long a Pod may sit in the Stopping phase
+// (the Running→Idle in-place reset) before it is force-recycled. A reset that
+// can never complete — e.g. the idle image no longer resolves in the registry,
+// so IsInplaceUpdateCompleted can't confirm the swap — would otherwise wedge the
+// Pod in Stopping forever, since the roller only ever touches idle Pods.
+const defaultStoppingTimeout = 5 * time.Minute
+
+// stoppingTimeout returns the Stopping-phase deadline for a Pool. The reset is
+// bounded by the same work as a cold start (idle-image pull + container restart),
+// so the Pool's DefaultStartupTimeout is reused when set; otherwise a safe default.
+func stoppingTimeout(pool *agentsv1alpha1.SandboxPool) time.Duration {
+	if pool != nil && pool.Spec.DefaultStartupTimeout != nil && pool.Spec.DefaultStartupTimeout.Duration > 0 {
+		return pool.Spec.DefaultStartupTimeout.Duration
+	}
+	return defaultStoppingTimeout
+}
+
+// isStoppingStuck reports whether a Pod has been in the Stopping phase longer than
+// timeout. Pure helper (no client), testable in isolation.
+func isStoppingStuck(pod *corev1.Pod, timeout time.Duration, now time.Time) bool {
+	if inplaceupdate.GetSandboxPhase(pod) != agentsv1alpha1.SandboxPhaseStopping {
+		return false
+	}
+	since, ok, err := inplaceupdate.GetPodPhaseSince(pod, agentsv1alpha1.SandboxPhaseStopping)
+	if err != nil || !ok {
+		return false
+	}
+	return now.Sub(since) > timeout
+}
+
+// syncStuckStoppingPods force-recycles Pods wedged in the Stopping phase past the
+// stopping timeout (see isStoppingStuck). It issues a Delete but leaves the
+// sandbox-protection finalizer in place, so syncDeletingPods writes the terminal
+// store record before GC on a subsequent pass; the Pod is kept counted this cycle
+// so scale-up doesn't over-provision before GC completes. The UID+ResourceVersion
+// precondition skips a Pod that changed since the snapshot (e.g. the reset finally
+// completed to Idle), so a legitimately-completing Pod is never deleted.
+func (r *SandboxPoolReconciler) syncStuckStoppingPods(ctx context.Context, sandboxPool *agentsv1alpha1.SandboxPool, pods []corev1.Pod) ([]corev1.Pod, error) {
+	timeout := stoppingTimeout(sandboxPool)
+	now := time.Now().UTC()
+	result := pods[:0:len(pods)]
+	for i := range pods {
+		pod := &pods[i]
+		if pod.DeletionTimestamp != nil || !isStoppingStuck(pod, timeout, now) {
+			result = append(result, pods[i])
+			continue
+		}
+		klog.InfoS("Pod stuck in Stopping past timeout, force-recycling",
+			"namespace", pod.Namespace, "name", pod.Name, "timeout", timeout,
+			"hash", pod.Labels[agentsv1alpha1.TemplateHashLabelKey])
+		delOpts := []client.DeleteOption{client.Preconditions{
+			UID:             &pod.UID,
+			ResourceVersion: &pod.ResourceVersion,
+		}}
+		err := r.Delete(ctx, pod, delOpts...)
+		switch {
+		case err == nil || errors.IsConflict(err):
+			// Deleted (DeletionTimestamp set; finalizer intact → syncDeletingPods
+			// finalizes next pass) or changed since snapshot: keep it counted so
+			// scale-up doesn't over-provision before GC.
+			result = append(result, pods[i])
+		case errors.IsNotFound(err):
+			// Already gone — drop from the working set.
+		default:
+			return pods, err
+		}
+	}
+	return result, nil
+}

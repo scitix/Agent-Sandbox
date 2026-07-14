@@ -385,6 +385,14 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		return reconcile.Result{}, err
 	}
 
+	// Force-recycle Pods wedged in Stopping past the timeout (e.g. the idle image
+	// no longer resolves so the in-place reset can never complete). Runs after
+	// syncDeletingPods/syncFailedPods so it only sees still-live Pods.
+	pods, err = r.syncStuckStoppingPods(ctx, sandboxPool, pods)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
 	pods, err = r.syncInplaceUpdatePhases(ctx, sandboxPool, pods)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -633,20 +641,22 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 	// Reached only when current == desired (scale-up / scale-down returned
 	// above). Rebuild idle Pods whose revision hash lags the Pool template,
 	// throttled by MaxUnavailable; never touches Running/Starting Pods.
-	return r.rollStaleIdlePods(ctx, sandboxPool, pods, status, desiredReplicas, currentReplicas, poolKey)
+	return r.rollStaleIdlePods(ctx, sandboxPool, pods, status, desiredReplicas, poolKey)
 }
 
-// rollStaleIdlePods deletes idle Pods whose template-hash label differs from the
-// Pool template's, within the MaxUnavailable budget. Deleted Pods are recreated
-// by the scale-up branch on the next reconcile (current < desired), materialised
-// from the current Pool template and thus carrying the new revision. Running and
-// Starting Pods are never disrupted — they roll after they return to Idle.
+// rollStaleIdlePods recycles idle Pods whose template-hash label differs from the
+// Pool template's. MaxUnavailable protects serving capacity (idle && Ready); stale
+// Pods that are idle-but-NotReady are recycled for free so broken Pods can't block
+// their own replacement (see planStaleIdleRoll). Deleted Pods are recreated by the
+// scale-up branch on the next reconcile (current < desired), materialised from the
+// current Pool template and thus carrying the new revision. Running and Starting
+// Pods are never disrupted; Stopping Pods are handled by syncStuckStoppingPods.
 func (r *SandboxPoolReconciler) rollStaleIdlePods(
 	ctx context.Context,
 	sandboxPool *agentsv1alpha1.SandboxPool,
 	pods []corev1.Pod,
 	status agentsv1alpha1.SandboxPoolStatus,
-	desiredReplicas, currentReplicas int32,
+	desiredReplicas int32,
 	poolKey types.NamespacedName,
 ) (ctrl.Result, error) {
 	desiredHash := sandboxPool.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey]
@@ -660,41 +670,19 @@ func (r *SandboxPoolReconciler) rollStaleIdlePods(
 		return reconcile.Result{}, nil
 	}
 
-	// Collect stale idle Pods (idle phase, hash mismatch), oldest first.
-	var staleIdle []*corev1.Pod
-	for i := range pods {
-		p := &pods[i]
-		if inplaceupdate.GetSandboxPhase(p) != agentsv1alpha1.SandboxPhaseIdle {
-			continue
-		}
-		if p.Labels[agentsv1alpha1.TemplateHashLabelKey] == desiredHash {
-			continue
-		}
-		staleIdle = append(staleIdle, p)
-	}
-	if len(staleIdle) == 0 {
-		return reconcile.Result{}, nil
-	}
-	sort.SliceStable(staleIdle, func(i, j int) bool {
-		return staleIdle[i].CreationTimestamp.Before(&staleIdle[j].CreationTimestamp)
-	})
-
-	// Budget: at most MaxUnavailable of the desired idle Pods may be unavailable
-	// at once. Subtract capacity already unavailable so a rollout plus an
-	// unrelated disruption don't jointly exceed the budget.
+	// Plan which stale idle Pods to recycle this cycle. MaxUnavailable protects
+	// *serving* capacity (idle && Ready): non-serving stale Pods (idle but
+	// NotReady, e.g. ImagePullBackOff) are recycled for free, so already-broken
+	// Pods can never consume the whole budget and block their own replacement.
 	maxUnav := resolveMaxUnavailableCount(sandboxPool.Spec.MaxUnavailable, int(desiredReplicas))
-	unavailable := int(status.UnavailableIdleReplicas+status.FailedReplicas+status.StartingReplicas+status.StoppingReplicas) +
-		max(0, int(desiredReplicas-currentReplicas))
-	deletable := maxUnav - unavailable
-	if deletable <= 0 {
-		return reconcile.Result{RequeueAfter: RequeueAfter}, nil
-	}
-	if deletable > len(staleIdle) {
-		deletable = len(staleIdle)
+	readyIdle := int(status.IdleReplicas - status.UnavailableIdleReplicas)
+	victims := planStaleIdleRoll(pods, desiredHash, maxUnav, int(desiredReplicas), readyIdle)
+	if len(victims) == 0 {
+		return reconcile.Result{}, nil
 	}
 
 	deletedCount := int32(0)
-	for _, pod := range staleIdle[:deletable] {
+	for _, pod := range victims {
 		// Remove the protection finalizer before delete (idle Pods normally
 		// have none after Stopping→Idle, but be defensive).
 		if err := r.removeSandboxProtectionFinalizer(ctx, pod); err != nil && !errors.IsNotFound(err) {
@@ -750,6 +738,55 @@ func resolveMaxUnavailableCount(mu *intstr.IntOrString, desired int) int {
 		return 1
 	}
 	return n
+}
+
+// planStaleIdleRoll selects which stale idle Pods (hash != desiredHash) to recycle
+// this cycle, partitioned by whether they currently serve claims:
+//
+//   - serving (idle && Ready): budgeted — at most (readyIdle - (desired - maxUnav))
+//     are taken down, so at least (desired - maxUnav) Ready-idle Pods keep serving.
+//   - non-serving (idle && !Ready, e.g. ImagePullBackOff): recycled "for free"
+//     (capped at maxUnav/cycle for gentleness). They aren't serving, so replacing
+//     them can't reduce capacity — this breaks the deadlock where already-broken
+//     Pods consume the whole budget and block their own replacement.
+//
+// Stopping/Running/Starting are never returned (Stopping is force-recycled by the
+// stuck-stopping sweep; Running/Starting are never disrupted). Non-serving victims
+// come first so a budget-starved pool still makes progress on its broken Pods;
+// oldest-first within each set. Recreated Pods carry the new hash, so they are
+// never re-selected → the roll strictly converges.
+func planStaleIdleRoll(pods []corev1.Pod, desiredHash string, maxUnav, desired, readyIdle int) []*corev1.Pod {
+	var serving, free []*corev1.Pod
+	for i := range pods {
+		p := &pods[i]
+		if inplaceupdate.GetSandboxPhase(p) != agentsv1alpha1.SandboxPhaseIdle {
+			continue
+		}
+		if p.Labels[agentsv1alpha1.TemplateHashLabelKey] == desiredHash {
+			continue
+		}
+		if isIdlePodUnavailable(p) {
+			free = append(free, p)
+		} else {
+			serving = append(serving, p)
+		}
+	}
+	oldestFirst := func(s []*corev1.Pod) {
+		sort.SliceStable(s, func(i, j int) bool {
+			return s[i].CreationTimestamp.Before(&s[j].CreationTimestamp)
+		})
+	}
+	oldestFirst(free)
+	oldestFirst(serving)
+
+	freeCount := min(len(free), maxUnav)
+	servingBudget := max(0, readyIdle-max(0, desired-maxUnav))
+	servingCount := min(len(serving), servingBudget)
+
+	victims := make([]*corev1.Pod, 0, freeCount+servingCount)
+	victims = append(victims, free[:freeCount]...)
+	victims = append(victims, serving[:servingCount]...)
+	return victims
 }
 
 // SetupWithManager sets up the controller with the Manager.
