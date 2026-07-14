@@ -58,22 +58,18 @@ import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { useCreateSandbox } from "@/lib/queries/sandbox"
 import { envsQueryOptions } from "@/lib/queries"
-import type { AgentSandboxEnv } from "@/lib/api/client"
+import type { AgentSandboxEnvSummary } from "@/lib/api/client"
 import { useTranslation } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Sum idle replicas across every scaling group on the Env's status. The
-// router dispatches Sandbox.Create requests to the first pool with capacity,
-// so the user only cares about the aggregate — picking the first group (as
-// the table on the Envs page does) would under-count multi-group Envs.
-function totalIdleFor(env: AgentSandboxEnv): number {
-  let sum = 0
-  for (const g of env.status?.scalingGroups ?? []) {
-    sum += g.totalIdle ?? 0
-  }
-  return sum
+// The env-wide idle rollup the create form cares about. GET /envs returns the
+// SandboxEnvSummary shape, which carries this aggregate as a flat scalar; the
+// nested status.scalingGroups[].totalIdle only exists on the full SandboxEnv
+// from GET /envs/{name}, so it is absent here and must not be read.
+function totalIdleFor(env: AgentSandboxEnvSummary): number {
+  return env.idleReplicas ?? 0
 }
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -188,7 +184,7 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
                     <ComboboxContent>
                       <ComboboxEmpty>{t("common.noResultsFound")}</ComboboxEmpty>
                       <ComboboxList>
-                        {(e) => {
+                        {(e: AgentSandboxEnvSummary) => {
                           const idle = totalIdleFor(e)
                           return (
                             <ComboboxItem key={e.name} value={e}>
