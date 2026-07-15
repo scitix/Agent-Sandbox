@@ -188,5 +188,5 @@ jobs:
           package-name: agent-sandbox-dashboard
           delete-untagged: true
           keep-at-most: 3
-          skip-tags: v*
+          skip-tags: "*.*.*,latest"
         continue-on-error: true

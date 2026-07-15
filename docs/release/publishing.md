@@ -138,11 +138,21 @@ All five container image workflows run a `cleanup` job after each push (not on P
 
 - `delete-untagged: true` — remove any digest with no tag
 - `keep-at-most: 3` — retain the 3 most recent non-skipped versions
-- `skip-tags: v*` — never delete release-tagged versions
+- `skip-tags: "*.*.*,latest"` — never delete release-tagged versions or the rolling `latest`
 
-This means develop builds accumulate at most 3 versions per image; formal releases (`v*`) are kept indefinitely.
+> **Why `*.*.*` and not `v*`:** `docker/metadata-action`'s `type=semver,pattern={{version}}`
+> **strips** the leading `v`, so a git tag `v0.0.7` produces image tags `0.0.7`, `0.0`, `0`
+> (no `v`). A `skip-tags: v*` pattern therefore matched none of them, and release images were
+> silently pruned once three newer dev builds accumulated. `ghcr-cleaner`'s `skip-tags` accepts
+> comma-separated Unix shell globs; `*.*.*` matches the full-semver image tag every release
+> carries. Older releases keep only their `x.y.z` tag (the moving `x.y` / `x` / `latest` tags
+> repoint to the newest release), and that `x.y.z` tag alone keeps the digest protected.
 
-The `helm-chart-publish.yml` uses the same cleaner with `keep-at-most: 10` for Helm charts.
+This means develop builds accumulate at most 3 versions per image; formal releases are kept
+indefinitely.
+
+The `helm-chart-publish.yml` uses the same cleaner with `keep-at-most: 10` for Helm charts, and
+the same `skip-tags` (chart versions are semver with no `v`, so they need the same protection).
 
 ---
 
