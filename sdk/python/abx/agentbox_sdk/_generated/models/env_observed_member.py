@@ -53,6 +53,18 @@ class EnvObservedMember:
             saturated_until (datetime.datetime | Unset): Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil.
                 Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot
                 fit additional replicas.
+            scaling_group (str | Unset): Autoscaling group this member belongs to on its owning cluster, echoed from spec.
+                Empty when the member is in no group. Present on foreign (cross-cluster) members too, so a viewer without the
+                foreign cluster's spec can still attribute the member to a group and link to that cluster's group detail.
+            autoscaling_enabled (bool | Unset): Whether this member's scalingGroup has the autoscaler on in its owning
+                cluster. Each cluster scales independently, so a same-named group may be enabled in one cluster and off in
+                another; this is the per-pool, per-cluster truth. Disambiguates scaleUpHeadroom == 0 (at ceiling) from
+                autoscaling being off.
+            scale_up_headroom (int | Unset): Estimated replicas this member can still add on its owning cluster before
+                hitting the smaller of its own MaxReplicas and its group's aggregate MaxReplicas. Meaningful only when
+                autoscalingEnabled: omitted = off, or on with no finite ceiling (unbounded); 0 = at ceiling; >0 = room left.
+                Advisory estimate — the group ceiling is shared across members and quota is not folded in; for foreign members
+                it also lags by the federation TTL.
             update_revision (str | Unset): Mirror of the member Pool's status.updateRevision — the target revision the Pool
                 is rolling towards.
             updated_replicas (int | Unset): Mirror of the member Pool's status.updatedReplicas. A rollout is in progress
@@ -69,6 +81,9 @@ class EnvObservedMember:
     current_replicas: int | Unset = UNSET
     pending_requests: int | Unset = UNSET
     saturated_until: datetime.datetime | Unset = UNSET
+    scaling_group: str | Unset = UNSET
+    autoscaling_enabled: bool | Unset = UNSET
+    scale_up_headroom: int | Unset = UNSET
     update_revision: str | Unset = UNSET
     updated_replicas: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -103,6 +118,12 @@ class EnvObservedMember:
         if not isinstance(self.saturated_until, Unset):
             saturated_until = self.saturated_until.isoformat()
 
+        scaling_group = self.scaling_group
+
+        autoscaling_enabled = self.autoscaling_enabled
+
+        scale_up_headroom = self.scale_up_headroom
+
         update_revision = self.update_revision
 
         updated_replicas = self.updated_replicas
@@ -131,6 +152,12 @@ class EnvObservedMember:
             field_dict["pendingRequests"] = pending_requests
         if saturated_until is not UNSET:
             field_dict["saturatedUntil"] = saturated_until
+        if scaling_group is not UNSET:
+            field_dict["scalingGroup"] = scaling_group
+        if autoscaling_enabled is not UNSET:
+            field_dict["autoscalingEnabled"] = autoscaling_enabled
+        if scale_up_headroom is not UNSET:
+            field_dict["scaleUpHeadroom"] = scale_up_headroom
         if update_revision is not UNSET:
             field_dict["updateRevision"] = update_revision
         if updated_replicas is not UNSET:
@@ -179,6 +206,12 @@ class EnvObservedMember:
 
 
 
+        scaling_group = d.pop("scalingGroup", UNSET)
+
+        autoscaling_enabled = d.pop("autoscalingEnabled", UNSET)
+
+        scale_up_headroom = d.pop("scaleUpHeadroom", UNSET)
+
         update_revision = d.pop("updateRevision", UNSET)
 
         updated_replicas = d.pop("updatedReplicas", UNSET)
@@ -194,6 +227,9 @@ class EnvObservedMember:
             current_replicas=current_replicas,
             pending_requests=pending_requests,
             saturated_until=saturated_until,
+            scaling_group=scaling_group,
+            autoscaling_enabled=autoscaling_enabled,
+            scale_up_headroom=scale_up_headroom,
             update_revision=update_revision,
             updated_replicas=updated_replicas,
         )

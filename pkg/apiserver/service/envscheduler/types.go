@@ -71,9 +71,15 @@ type FederationView interface {
 	// LocalIdle is the local cluster's idle capacity for the Env across
 	// members matching the scaling group (empty group = all members).
 	LocalIdle(namespace, env, group string) int32
-	// BestForeignMember is the cluster ID and member pool of the member in
-	// another cluster with the most idle capacity for the Env and scaling
-	// group; ok is false when none has spare idle.
+	// LocalCanGrow reports whether any local member in the group could scale
+	// up (autoscaling on and not at ceiling), letting the router keep a create
+	// local instead of spilling to a foreign cluster that can also only scale.
+	LocalCanGrow(namespace, env, group string) bool
+	// BestForeignMember is the cluster ID and member pool of the best
+	// schedulable member in another cluster for the Env and scaling group —
+	// idle Pods preferred over scale-up room; ok is false when none can serve.
+	// The returned idle is the chosen member's idle count (0 when chosen via
+	// scale-up headroom).
 	BestForeignMember(namespace, env, group string) (clusterID, memberPool string, idle int32, ok bool)
 }
 

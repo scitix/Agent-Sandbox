@@ -39,6 +39,13 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 	localSpec, _ := findLocalClusterSpec(env, r.LocalClusterID)
 
 	observed := make([]agentsv1alpha1.EnvObservedMember, 0, len(localSpec.Members))
+	// Member name → its spec, for the post-loop autoscaling headroom pass
+	// (which needs each member's group + MaxReplicas). Indexed to keep stable
+	// pointers into the slice.
+	memberByName := make(map[string]*agentsv1alpha1.EnvClusterMember, len(localSpec.Members))
+	for i := range localSpec.Members {
+		memberByName[localSpec.Members[i].Name] = &localSpec.Members[i]
+	}
 	// Per-scaling-group rollup. Each member contributes to the group named by
 	// member.ScalingGroup. Empty group names are skipped — those entries are
 	// legacy / pre-migration and the autoscaler ignores them anyway.
@@ -115,6 +122,31 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		}
 	}
 
+	// Second pass: annotate each member with its autoscaling group + scale-up
+	// headroom. Deferred until byGroup is complete because per-member headroom
+	// is bounded by the group's aggregate MaxReplicas vs the group's total
+	// desired across all its members.
+	for i := range observed {
+		om := &observed[i]
+		member := memberByName[om.Name]
+		if member == nil {
+			continue
+		}
+		om.ScalingGroup = member.Config.ScalingGroup
+		groupDesired := int32(0)
+		if g, ok := byGroup[member.Config.ScalingGroup]; ok {
+			groupDesired = g.desired
+		}
+		enabled, headroom := memberScaleUpHeadroom(env, member, om.DesiredReplicas, groupDesired)
+		om.AutoscalingEnabled = enabled
+		// nil ScaleUpHeadroom means "off, or enabled-but-unbounded"; a set
+		// value (incl. 0 = at ceiling) means enabled with a finite estimate.
+		if enabled && headroom >= 0 {
+			v := headroom
+			om.ScaleUpHeadroom = &v
+		}
+	}
+
 	base := env.DeepCopy()
 	now := metav1.Now()
 	mutateLocalClusterStatus(env, r.LocalClusterID, func(local *agentsv1alpha1.EnvClusterStatus) {
@@ -178,15 +210,25 @@ func (r *SandboxEnvReconciler) mirrorForeignSegments(env *agentsv1alpha1.Sandbox
 		if _, ok := byCluster[m.ClusterID]; !ok {
 			order = append(order, m.ClusterID)
 		}
-		byCluster[m.ClusterID] = append(byCluster[m.ClusterID], agentsv1alpha1.EnvObservedMember{
-			Name:            m.MemberPool,
-			State:           agentsv1alpha1.ObservedMemberStateActive,
-			IdleCount:       m.Idle,
-			RunningCount:    m.Running,
-			DesiredReplicas: m.Desired,
-			CurrentReplicas: m.Desired,
-			PendingRequests: m.Pending,
-		})
+		om := agentsv1alpha1.EnvObservedMember{
+			Name:               m.MemberPool,
+			State:              agentsv1alpha1.ObservedMemberStateActive,
+			IdleCount:          m.Idle,
+			RunningCount:       m.Running,
+			DesiredReplicas:    m.Desired,
+			CurrentReplicas:    m.Desired,
+			PendingRequests:    m.Pending,
+			ScalingGroup:       m.ScalingGroup,
+			AutoscalingEnabled: m.AutoscalingEnabled,
+		}
+		// Capacity carries the foreign cluster's scale-up headroom: -1 =
+		// enabled-but-unbounded (leave nil), >=0 = finite estimate (0 = at
+		// ceiling). Only meaningful when autoscaling is enabled there.
+		if m.AutoscalingEnabled && m.Capacity >= 0 {
+			v := m.Capacity
+			om.ScaleUpHeadroom = &v
+		}
+		byCluster[m.ClusterID] = append(byCluster[m.ClusterID], om)
 	}
 
 	// Keep the local segment; replace all foreign segments with fresh ones.
@@ -292,6 +334,67 @@ func saturationCooldownForMember(env *agentsv1alpha1.SandboxEnv, member *agentsv
 		return time.Duration(g.ScaleUpPolicy.SaturationCooldownSeconds) * time.Second
 	}
 	return 0
+}
+
+// headroomUnbounded is the sentinel scale-up headroom for an autoscaling
+// group with no finite ceiling — it can grow without a computable limit.
+const headroomUnbounded int32 = -1
+
+// memberScaleUpHeadroom reports, for a single member, whether its scaling
+// group has autoscaling enabled on this cluster and how much scale-up room
+// remains. headroom semantics:
+//   - enabled == false                → headroom 0 (ignored; the member cannot autoscale)
+//   - enabled, headroomUnbounded (-1)  → enabled with no finite ceiling
+//   - enabled, >= 0                    → finite remaining replicas (0 = at ceiling)
+//
+// The estimate takes the smaller of the member's own MaxReplicas room
+// (max − its desired) and the group's aggregate MaxReplicas room
+// (group max − group total desired). A nil cap on either side is treated as
+// unbounded on that side. It is intentionally approximate: the group ceiling
+// is shared across members and quota/node capacity are not folded in.
+func memberScaleUpHeadroom(env *agentsv1alpha1.SandboxEnv, member *agentsv1alpha1.EnvClusterMember, memberDesired, groupDesiredTotal int32) (enabled bool, headroom int32) {
+	if env.Spec.Autoscaling == nil || member.Config.ScalingGroup == "" {
+		return false, 0
+	}
+	var g *agentsv1alpha1.EnvAutoscalingGroup
+	for i := range env.Spec.Autoscaling.Groups {
+		if env.Spec.Autoscaling.Groups[i].Name == member.Config.ScalingGroup {
+			g = &env.Spec.Autoscaling.Groups[i]
+			break
+		}
+	}
+	if g == nil || !g.Enabled {
+		return false, 0
+	}
+
+	memberRoom := headroomUnbounded
+	if member.Config.MaxReplicas != nil {
+		if r := *member.Config.MaxReplicas - memberDesired; r > 0 {
+			memberRoom = r
+		} else {
+			memberRoom = 0
+		}
+	}
+	groupRoom := headroomUnbounded
+	if g.MaxReplicas != nil {
+		if r := *g.MaxReplicas - groupDesiredTotal; r > 0 {
+			groupRoom = r
+		} else {
+			groupRoom = 0
+		}
+	}
+	switch {
+	case memberRoom == headroomUnbounded && groupRoom == headroomUnbounded:
+		return true, headroomUnbounded
+	case memberRoom == headroomUnbounded:
+		return true, groupRoom
+	case groupRoom == headroomUnbounded:
+		return true, memberRoom
+	case memberRoom < groupRoom:
+		return true, memberRoom
+	default:
+		return true, groupRoom
+	}
 }
 
 // effectiveResources resolves the member's effective Pod resources. Phase 1

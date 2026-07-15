@@ -1673,8 +1673,13 @@ type EnvCapacity struct {
 	Desired      int32                  `protobuf:"varint,8,opt,name=desired,proto3" json:"desired,omitempty"`
 	// member_pool is the SandboxPool name of this member within its cluster.
 	MemberPool string `protobuf:"bytes,12,opt,name=member_pool,json=memberPool,proto3" json:"member_pool,omitempty"`
-	// capacity is how many more sandboxes this cluster could admit for the
-	// triple; -1 means unknown / unbounded.
+	// autoscaling_enabled reports whether this member's scaling group has the
+	// autoscaler on in its owning cluster (per-member, per-cluster). Gates
+	// whether capacity below is meaningful.
+	AutoscalingEnabled bool `protobuf:"varint,13,opt,name=autoscaling_enabled,json=autoscalingEnabled,proto3" json:"autoscaling_enabled,omitempty"`
+	// capacity is the member's remaining scale-up headroom on its owning
+	// cluster, meaningful only when autoscaling_enabled: -1 = unbounded (no
+	// finite ceiling), 0 = at ceiling (cannot grow now), >0 = room left.
 	Capacity int32 `protobuf:"varint,9,opt,name=capacity,proto3" json:"capacity,omitempty"`
 	// saturated_for is the remaining saturation window in seconds (0 = not
 	// saturated). Relative to avoid cross-cluster clock skew.
@@ -1776,6 +1781,13 @@ func (x *EnvCapacity) GetMemberPool() string {
 		return x.MemberPool
 	}
 	return ""
+}
+
+func (x *EnvCapacity) GetAutoscalingEnabled() bool {
+	if x != nil {
+		return x.AutoscalingEnabled
+	}
+	return false
 }
 
 func (x *EnvCapacity) GetCapacity() int32 {
@@ -2091,7 +2103,7 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\fhost_aliases\x18\x02 \x03(\v2\x1a.sandbox.sync.v1.HostAliasR\vhostAliases\"P\n" +
 	"\x12ClusterConfigEvent\x12:\n" +
 	"\bsnapshot\x18\x01 \x01(\v2\x1e.sandbox.sync.v1.ClusterConfigR\bsnapshot\"\x1b\n" +
-	"\x19WatchClusterConfigRequest\"\xf6\x02\n" +
+	"\x19WatchClusterConfigRequest\"\xa7\x03\n" +
 	"\vEnvCapacity\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x1c\n" +
@@ -2103,7 +2115,8 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\apending\x18\a \x01(\x05R\apending\x12\x18\n" +
 	"\adesired\x18\b \x01(\x05R\adesired\x12\x1f\n" +
 	"\vmember_pool\x18\f \x01(\tR\n" +
-	"memberPool\x12\x1a\n" +
+	"memberPool\x12/\n" +
+	"\x13autoscaling_enabled\x18\r \x01(\bR\x12autoscalingEnabled\x12\x1a\n" +
 	"\bcapacity\x18\t \x01(\x05R\bcapacity\x12#\n" +
 	"\rsaturated_for\x18\n" +
 	" \x01(\x05R\fsaturatedFor\x12&\n" +

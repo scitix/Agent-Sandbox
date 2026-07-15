@@ -105,14 +105,20 @@ export function EnvPoolsSection({
   fixed?: boolean
 }) {
   const { t } = useTranslation()
+  const currentCluster = useClusterID()
+  const poolsQuery = useQuery(envPoolsQueryOptions(env.name))
 
   // Build scalingGroup + observed lookups from the Env spec/status so the
   // pool table can surface autoscaler-derived info that the bare /sandboxpools
   // response doesn't carry.
   const { observedByPool, scalingGroupByPool, autoscalingGroups, memberCount } = useMemo(() => {
+    // Local-only: keyed by pool name, which is unique within a cluster. Foreign
+    // members are attached per-row instead (their names can collide with local
+    // ones across clusters), so this map stays unambiguous for local rows.
     const observed = new Map<string, AgentEnvObservedMember>()
     const groups = new Map<string, string>()
     for (const cluster of env.status?.clusters ?? []) {
+      if (cluster.isLocal === false && cluster.clusterID !== currentCluster) continue
       for (const om of cluster.observedMembers ?? []) {
         observed.set(om.name, om)
       }
@@ -133,20 +139,20 @@ export function EnvPoolsSection({
       autoscalingGroups: ag,
       memberCount: count,
     }
-  }, [env])
-
-  const currentCluster = useClusterID()
-  const poolsQuery = useQuery(envPoolsQueryOptions(env.name))
+  }, [env, currentCluster])
 
   // Merge local pools with foreign members surfaced in status.clusters[] so a
   // single table shows the whole cross-cluster picture. Local rows sort first;
   // foreign rows carry only the counts available in status (idle/running/
   // desired), tagged with their owning cluster for the "owning cluster" column.
+  // Each row also carries its Env observed-member view so the autoscaling
+  // columns (group / on-off / headroom) render uniformly across clusters.
   const rows = useMemo<PoolRow[]>(() => {
     const localRows: PoolRow[] = (poolsQuery.data ?? []).map((p) => ({
       ...p,
       owningClusterID: currentCluster,
       foreignCluster: false,
+      observed: observedByPool.get(p.name),
     }))
     const foreignRows: PoolRow[] = []
     for (const cluster of env.status?.clusters ?? []) {
@@ -159,11 +165,12 @@ export function EnvPoolsSection({
           foreignCluster: true,
           spec: { replicas: om.desiredReplicas },
           status: { idleReplicas: om.idleCount, runningReplicas: om.runningCount },
+          observed: om,
         } as PoolRow)
       }
     }
     return [...localRows, ...foreignRows]
-  }, [poolsQuery.data, env, currentCluster])
+  }, [poolsQuery.data, env, currentCluster, observedByPool])
 
   const columns = useMemo(
     () =>

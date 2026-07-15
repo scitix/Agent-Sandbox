@@ -89,18 +89,19 @@ func (s *syncServiceImpl) applyFederationBroadcast(reg *federation.Registry, ev 
 	batch := make([]federation.Capacity, 0, len(ev.Items))
 	for _, it := range ev.Items {
 		batch = append(batch, federation.Capacity{
-			ClusterID:    it.ClusterId,
-			Namespace:    it.Namespace,
-			EnvName:      it.EnvName,
-			MemberPool:   it.MemberPool,
-			ScalingGroup: it.ScalingGroup,
-			Idle:         it.Idle,
-			Running:      it.Running,
-			Pending:      it.Pending,
-			Desired:      it.Desired,
-			Capacity:     it.Capacity,
-			SaturatedFor: time.Duration(it.SaturatedFor) * time.Second,
-			ObservedAt:   now.Add(-time.Duration(it.ObservedForMs) * time.Millisecond),
+			ClusterID:          it.ClusterId,
+			Namespace:          it.Namespace,
+			EnvName:            it.EnvName,
+			MemberPool:         it.MemberPool,
+			ScalingGroup:       it.ScalingGroup,
+			Idle:               it.Idle,
+			Running:            it.Running,
+			Pending:            it.Pending,
+			Desired:            it.Desired,
+			AutoscalingEnabled: it.AutoscalingEnabled,
+			Capacity:           it.Capacity,
+			SaturatedFor:       time.Duration(it.SaturatedFor) * time.Second,
+			ObservedAt:         now.Add(-time.Duration(it.ObservedForMs) * time.Millisecond),
 		})
 	}
 	reg.Upsert(batch)
@@ -166,18 +167,19 @@ func toFederationProto(caps []federation.Capacity) *syncv1.ReportFederationReque
 	for _, c := range caps {
 		ageMs := max(now.Sub(c.ObservedAt).Milliseconds(), 0)
 		items = append(items, &syncv1.EnvCapacity{
-			ClusterId:     c.ClusterID,
-			Namespace:     c.Namespace,
-			EnvName:       c.EnvName,
-			MemberPool:    c.MemberPool,
-			ScalingGroup:  c.ScalingGroup,
-			Idle:          c.Idle,
-			Running:       c.Running,
-			Pending:       c.Pending,
-			Desired:       c.Desired,
-			Capacity:      c.Capacity,
-			SaturatedFor:  int32(c.SaturatedFor.Seconds()),
-			ObservedForMs: ageMs,
+			ClusterId:          c.ClusterID,
+			Namespace:          c.Namespace,
+			EnvName:            c.EnvName,
+			MemberPool:         c.MemberPool,
+			ScalingGroup:       c.ScalingGroup,
+			Idle:               c.Idle,
+			Running:            c.Running,
+			Pending:            c.Pending,
+			Desired:            c.Desired,
+			AutoscalingEnabled: c.AutoscalingEnabled,
+			Capacity:           c.Capacity,
+			SaturatedFor:       int32(c.SaturatedFor.Seconds()),
+			ObservedForMs:      ageMs,
 		})
 	}
 	return &syncv1.ReportFederationRequest{Items: items}

@@ -25,11 +25,16 @@
 package federation
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+// headroomUnbounded is the Capacity value meaning "autoscaling enabled with no
+// finite ceiling" — the member can grow without a computable limit.
+const headroomUnbounded int32 = -1
 
 // Capacity is one cluster's runtime capacity for a single member pool of a
 // same-named SandboxEnv. The (ClusterID, Namespace, EnvName, MemberPool) tuple
@@ -45,8 +50,16 @@ type Capacity struct {
 	Running      int32
 	Pending      int32
 	Desired      int32
-	// Capacity is how many more sandboxes this member could admit; -1 means
-	// unknown / unbounded.
+	// AutoscalingEnabled reports whether this member's scaling group has the
+	// autoscaler on in its owning cluster. Because each cluster scales
+	// independently, this is a per-member, per-cluster fact; it gates whether
+	// Capacity below is meaningful.
+	AutoscalingEnabled bool
+	// Capacity is the member's remaining scale-up headroom on its owning
+	// cluster, meaningful only when AutoscalingEnabled: -1 = enabled but
+	// unbounded (no finite ceiling), 0 = enabled but at ceiling (cannot grow
+	// now), >0 = enabled with this much room. When AutoscalingEnabled is
+	// false it is 0 and ignored.
 	Capacity int32
 	// SaturatedFor is the remaining saturation window; zero means not saturated.
 	SaturatedFor time.Duration
@@ -64,6 +77,21 @@ func key(clusterID, namespace, env, memberPool string) string {
 // An empty request matches every member (no group constraint).
 func matchesGroup(c Capacity, group string) bool {
 	return group == "" || c.ScalingGroup == group
+}
+
+// CanGrow reports whether the member could accept a new sandbox by scaling
+// up: autoscaling is on and it is not already at its ceiling (Capacity != 0).
+// Capacity == -1 (unbounded) and Capacity > 0 both count as room.
+func (c Capacity) CanGrow() bool {
+	return c.AutoscalingEnabled && c.Capacity != 0
+}
+
+// Schedulable reports whether a create routed here would be served without an
+// open-ended wait: either an idle Pod is ready now, or the member can scale up
+// to make one. A member with no idle and no scale-up room is excluded — routing
+// there would park the request until it times out.
+func (c Capacity) Schedulable() bool {
+	return c.Idle > 0 || c.CanGrow()
 }
 
 // Registry is the Worker's in-memory federation store. It is safe for
@@ -136,30 +164,105 @@ func (r *Registry) LocalIdle(namespace, env, group string) int32 {
 	return total
 }
 
-// BestForeignMember returns the cluster ID and member pool of the member in
-// another cluster with the most idle capacity for the Env and requested
-// scaling group. ok is false when no foreign member has a fresh record with
-// idle > 0. Ties break on (clusterID, memberPool) for determinism.
+// BestForeignMember returns the cluster ID and member pool of the best
+// schedulable member in another cluster for the Env and requested scaling
+// group. A member is schedulable when it can serve without an open-ended wait:
+// an idle Pod ready now, or autoscaling room to make one (see Schedulable).
+// Members that are neither (no idle, cannot grow) are excluded — routing there
+// would park the request until it times out.
+//
+// Ranking prefers immediacy: any member with idle > 0 outranks any pure
+// scale-up member (an idle Pod serves instantly; a scale-up incurs a cold
+// start). Within the idle tier, more idle wins; within the scale-up tier, more
+// headroom wins (unbounded ranks highest). Ties break on (clusterID,
+// memberPool) for determinism.
+//
+// The returned idle is the chosen member's idle count — 0 when it was chosen
+// via scale-up headroom. ok is false when no foreign member is schedulable.
 func (r *Registry) BestForeignMember(namespace, env, group string) (clusterID, memberPool string, idle int32, ok bool) {
 	now := r.now()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	var best Capacity
 	for _, c := range r.items {
 		if c.ClusterID == r.localClusterID || c.Namespace != namespace || c.EnvName != env {
 			continue
 		}
-		if !matchesGroup(c, group) || !r.fresh(c, now) || c.Idle <= 0 {
+		if !matchesGroup(c, group) || !r.fresh(c, now) || !c.Schedulable() {
 			continue
 		}
-		better := c.Idle > idle ||
-			(c.Idle == idle && (!ok ||
-				c.ClusterID < clusterID ||
-				(c.ClusterID == clusterID && c.MemberPool < memberPool)))
-		if better {
-			clusterID, memberPool, idle, ok = c.ClusterID, c.MemberPool, c.Idle, true
+		if !ok || foreignBetter(c, best) {
+			best, ok = c, true
 		}
 	}
-	return clusterID, memberPool, idle, ok
+	if !ok {
+		return "", "", 0, false
+	}
+	return best.ClusterID, best.MemberPool, best.Idle, true
+}
+
+// foreignBetter reports whether routing candidate a is preferable to b. Both
+// are assumed schedulable. See BestForeignMember for the ranking rationale.
+func foreignBetter(a, b Capacity) bool {
+	at, bt := scheduleTier(a), scheduleTier(b)
+	if at != bt {
+		return at < bt // lower tier (0 = immediate) is better
+	}
+	if at == tierImmediate {
+		if a.Idle != b.Idle {
+			return a.Idle > b.Idle
+		}
+	} else {
+		if ah, bh := headroomRank(a.Capacity), headroomRank(b.Capacity); ah != bh {
+			return ah > bh
+		}
+	}
+	if a.ClusterID != b.ClusterID {
+		return a.ClusterID < b.ClusterID
+	}
+	return a.MemberPool < b.MemberPool
+}
+
+const (
+	tierImmediate = 0 // has an idle Pod ready now
+	tierScaleUp   = 1 // no idle, but can autoscale
+)
+
+func scheduleTier(c Capacity) int {
+	if c.Idle > 0 {
+		return tierImmediate
+	}
+	return tierScaleUp
+}
+
+// headroomRank orders scale-up headroom with unbounded (-1) ranking highest.
+func headroomRank(h int32) int64 {
+	if h == headroomUnbounded {
+		return math.MaxInt64
+	}
+	return int64(h)
+}
+
+// LocalCanGrow reports whether any local member of the Env in the requested
+// group could scale up (autoscaling on and not at ceiling). Lets the router
+// keep a create local — letting the local autoscaler react — instead of
+// spilling to a foreign cluster that can also only scale up.
+func (r *Registry) LocalCanGrow(namespace, env, group string) bool {
+	now := r.now()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, c := range r.items {
+		if c.ClusterID != r.localClusterID || c.Namespace != namespace || c.EnvName != env {
+			continue
+		}
+		if !matchesGroup(c, group) || !r.fresh(c, now) {
+			continue
+		}
+		if c.CanGrow() {
+			return true
+		}
+	}
+	return false
 }
 
 // ForeignMembers returns every non-expired member record for the Env that
