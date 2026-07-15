@@ -290,8 +290,13 @@ message EnvCapacity {
   int32  desired         = 8;
   // member_pool is the SandboxPool name of this member within its cluster.
   string member_pool     = 12;
-  // capacity is how many more sandboxes this cluster could admit for the
-  // triple; -1 means unknown / unbounded.
+  // autoscaling_enabled reports whether this member's scaling group has the
+  // autoscaler on in its owning cluster (per-member, per-cluster). Gates
+  // whether capacity below is meaningful.
+  bool   autoscaling_enabled = 13;
+  // capacity is the member's remaining scale-up headroom on its owning
+  // cluster, meaningful only when autoscaling_enabled: -1 = unbounded (no
+  // finite ceiling), 0 = at ceiling (cannot grow now), >0 = room left.
   int32  capacity        = 9;
   // saturated_for is the remaining saturation window in seconds (0 = not
   // saturated). Relative to avoid cross-cluster clock skew.

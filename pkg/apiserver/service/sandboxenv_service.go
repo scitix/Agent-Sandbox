@@ -759,6 +759,15 @@ func envObservedMemberToGen(m agentsv1alpha1.EnvObservedMember) gen.EnvObservedM
 		t := m.SaturatedUntil.UTC()
 		out.SaturatedUntil = &t
 	}
+	if m.ScalingGroup != "" {
+		out.ScalingGroup = ptr.To(m.ScalingGroup)
+	}
+	if m.AutoscalingEnabled {
+		out.AutoscalingEnabled = ptr.To(true)
+	}
+	if m.ScaleUpHeadroom != nil {
+		out.ScaleUpHeadroom = ptr.To(*m.ScaleUpHeadroom)
+	}
 	if m.UpdateRevision != "" {
 		out.UpdateRevision = ptr.To(m.UpdateRevision)
 	}

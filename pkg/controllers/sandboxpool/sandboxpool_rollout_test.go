@@ -111,7 +111,7 @@ func TestPlanStaleIdleRoll_BreaksBrokenPodDeadlock(t *testing.T) {
 	// 14 idle-NotReady(old, ImagePullBackOff). readyIdle=14. The old budget
 	// (unavailable 14+... >= 15) deadlocked; now the 14 broken get free-recycled
 	// and serving is protected (servingBudget = 14 - max(0,30-15)=15 -> 0).
-	var pods []corev1.Pod
+	pods := make([]corev1.Pod, 0, 28)
 	for i := range 14 {
 		pods = append(pods, rtIdlePod("ready-old-"+string(rune('a'+i)), "old", true, i))
 	}
@@ -137,7 +137,7 @@ func TestPlanStaleIdleRoll_BreaksBrokenPodDeadlock(t *testing.T) {
 
 func TestPlanStaleIdleRoll_HealthyPoolBudgeted(t *testing.T) {
 	// 10 desired, maxUnav 2, all 10 stale idle-Ready. servingBudget = 10 - 8 = 2.
-	var pods []corev1.Pod
+	pods := make([]corev1.Pod, 0, 10)
 	for i := range 10 {
 		pods = append(pods, rtIdlePod("p"+string(rune('a'+i)), "old", true, 10-i)) // varying age
 	}
@@ -178,7 +178,7 @@ func TestPlanStaleIdleRoll_NeverTouchesRunningStoppingStartingOrCurrent(t *testi
 
 func TestPlanStaleIdleRoll_FreeRecycleCappedPerCycle(t *testing.T) {
 	// 20 broken stale idle, maxUnav 5 -> free-recycle capped at 5/cycle.
-	var pods []corev1.Pod
+	pods := make([]corev1.Pod, 0, 20)
 	for i := range 20 {
 		pods = append(pods, rtIdlePod("b"+string(rune('a'+i)), "old", false, 20-i))
 	}

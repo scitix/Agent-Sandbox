@@ -53,9 +53,16 @@ import type { TranslationKey } from "@/messages/_schema"
 // Env pools view merges local pools with foreign members surfaced from
 // status.clusters[]; foreign rows set owningClusterID (a peer cluster) and
 // foreignCluster=true. Plain pool tables leave both unset (→ current cluster).
+//
+// observed carries the owning Env's per-member view (SandboxEnv.status
+// observedMembers) for this row: scalingGroup, autoscalingEnabled and
+// scaleUpHeadroom are the per-pool, per-cluster autoscaling facts that live on
+// the Env status, not on the bare SandboxPool. Attaching it here lets the
+// autoscaling columns render identically for local and peer-cluster rows.
 export type PoolRow = AgentSandboxPool & {
   owningClusterID?: string
   foreignCluster?: boolean
+  observed?: AgentEnvObservedMember
 }
 
 export const POOL_PHASE_COLORS: StatusBadgeColorMap = {
@@ -197,37 +204,53 @@ export interface PoolScalingContext {
   groups?: Map<string, AgentEnvAutoscalingGroup>
 }
 
-// Autoscaling cell: a single Enabled/Disabled badge that links to the scaling
-// group's detail page. Enabled badges show the group's min~max range inside a
-// blue badge (0~∞ when unbounded); disabled show a gray "Disabled". Autoscaler
-// runtime detail (observed state, saturation window, last scale-up result) is
-// tucked into the badge's hover tooltip. The group name itself is not shown —
-// it is reachable by clicking through.
+// scalingInfo resolves a row's autoscaling facts, preferring the per-cluster
+// Env observed-member view (which is correct for both local and peer-cluster
+// rows) and falling back to the local Env spec. Each cluster scales
+// independently, so `enabled` is a per-pool, per-cluster truth — never inferred
+// from another cluster's group config.
+function scalingInfo(pool: AgentSandboxPool, ctx: PoolScalingContext) {
+  const row = pool as PoolRow
+  const observed = row.observed ?? ctx.observedByPool?.get(pool.name)
+  const group = observed?.scalingGroup || ctx.scalingGroupByPool?.get(pool.name) || pool.scalingGroup || ""
+  const groupConfig = group ? ctx.groups?.get(group) : undefined
+  // Prefer the observed per-cluster truth; fall back to local spec for rows
+  // that predate a status refresh.
+  const enabled = observed?.autoscalingEnabled ?? groupConfig?.enabled ?? false
+  return { row, observed, group, groupConfig, enabled }
+}
+
+// Autoscaling cell: an Enabled/Disabled badge linking to the owning cluster's
+// scaling-group detail page. Gray "Disabled" when the group's autoscaler is
+// off; blue "Enabled" otherwise (with the local group's min~max range folded
+// into the hover tooltip). Runtime detail (observed state, saturation window,
+// last scale-up result) also lives in the tooltip. The group name is shown in
+// its own column.
 function ScalingCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingContext }) {
-  const clusterID = useClusterID()
+  const currentCluster = useClusterID()
   const locale = useLocale()
   const { t } = useTranslation()
 
-  const group = ctx.scalingGroupByPool?.get(pool.name) ?? pool.scalingGroup ?? ""
+  const { row, observed, group, groupConfig, enabled } = scalingInfo(pool, ctx)
   if (!group) return <span className="text-muted-foreground text-xs">—</span>
 
-  const groupConfig = ctx.groups?.get(group)
-  const observed = ctx.observedByPool?.get(pool.name)
-  const enabled = groupConfig?.enabled ?? false
-  const min = groupConfig?.minReplicas ?? 0
-  const max = groupConfig?.maxReplicas
-
-  const label = enabled ? `${min} ~ ${max ?? UNBOUNDED}` : t("pools.scaling.disabled")
+  const label = enabled ? t("pools.scaling.enabled") : t("pools.scaling.disabled")
   const color = enabled ? SCALING_STATUS_COLORS.enabled : SCALING_STATUS_COLORS.disabled
 
+  // Replica range comes from the local Env spec, so it is only known for
+  // local-cluster rows; peer rows omit it (their spec lives on another cluster).
+  const range = groupConfig
+    ? `${groupConfig.minReplicas ?? 0} ~ ${groupConfig.maxReplicas ?? UNBOUNDED}`
+    : undefined
   const state = observed?.state
   const saturatedUntil = observed?.saturatedUntil
   const lastResult = pool.status?.autoscaling?.lastScaleUpAttemptResult
   const showLastResult = Boolean(lastResult && lastResult !== "Enough")
-  const hasTooltip = Boolean(state || saturatedUntil || showLastResult)
+  const hasTooltip = Boolean(range || state || saturatedUntil || showLastResult)
 
+  const cid = row.owningClusterID || currentCluster
   const href = pool.owningEnv
-    ? `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/autoscaling/${encodeURIComponent(group)}`
+    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/autoscaling/${encodeURIComponent(group)}`
     : undefined
 
   const badge = (
@@ -263,6 +286,12 @@ function ScalingCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingCo
         {badge}
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-60 space-y-1 text-xs">
+        {range && (
+          <div>
+            <span className="text-muted-foreground">{t("pools.scaling.tooltip.range")}: </span>
+            {range}
+          </div>
+        )}
         {state && (
           <div>
             <span className="text-muted-foreground">{t("pools.scaling.tooltip.state")}: </span>
@@ -285,6 +314,46 @@ function ScalingCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingCo
         )}
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+// ScalingGroupCell renders the pool's scaling-group name, linking to that
+// group's detail page on the pool's owning cluster. Peer-cluster rows link into
+// the peer cluster; local rows into the current one. No group → "—".
+function ScalingGroupCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingContext }) {
+  const currentCluster = useClusterID()
+  const locale = useLocale()
+  const { row, group } = scalingInfo(pool, ctx)
+  if (!group) return <span className="text-muted-foreground text-xs">—</span>
+  const cid = row.owningClusterID || currentCluster
+  const href = pool.owningEnv
+    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/autoscaling/${encodeURIComponent(group)}`
+    : undefined
+  return <ResourceLink value={group} href={href} copyable={false} tone="muted" />
+}
+
+// HeadroomCell renders the estimated scale-up room from the Env observed-member
+// view: "—" when autoscaling is off (nothing to scale), ∞ when enabled with no
+// finite ceiling, "At ceiling" when at 0, else the remaining replica estimate.
+function HeadroomCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingContext }) {
+  const { t } = useTranslation()
+  const { observed, enabled } = scalingInfo(pool, ctx)
+  if (!enabled) return <span className="text-muted-foreground text-xs">—</span>
+  const headroom = observed?.scaleUpHeadroom
+  if (headroom == null) {
+    return <span className="text-foreground font-mono text-sm font-semibold">{UNBOUNDED}</span>
+  }
+  if (headroom === 0) {
+    return (
+      <Badge variant="outline" className={cn("font-mono text-[10px]", SCALING_STATUS_COLORS.disabled)}>
+        {t("pools.scaling.full")}
+      </Badge>
+    )
+  }
+  return (
+    <span className="inline-flex min-w-8 font-mono text-sm font-semibold text-blue-700 dark:text-blue-400">
+      +{headroom}
+    </span>
   )
 }
 
@@ -394,6 +463,23 @@ export function createPoolColumns(
   }
 
   const scalingCtx = options?.scaling
+  const scalingGroupColumn: ColumnDef<AgentSandboxPool> = {
+    id: "scalingGroup",
+    accessorFn: (row) =>
+      (row as PoolRow).observed?.scalingGroup ??
+      scalingCtx?.scalingGroupByPool?.get(row.name) ??
+      row.scalingGroup ??
+      "",
+    enableSorting: false,
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title={t("pools.col.scalingGroup")}
+        tooltip={t("pools.col.scalingGroupTooltip")}
+      />
+    ),
+    cell: ({ row }) => <ScalingGroupCell pool={row.original} ctx={scalingCtx ?? {}} />,
+  }
   const scalingColumn: ColumnDef<AgentSandboxPool> = {
     id: "scaling",
     enableSorting: false,
@@ -401,6 +487,18 @@ export function createPoolColumns(
       <DataTableColumnHeader column={column} title={t("pools.col.scaling")} />
     ),
     cell: ({ row }) => <ScalingCell pool={row.original} ctx={scalingCtx ?? {}} />,
+  }
+  const headroomColumn: ColumnDef<AgentSandboxPool> = {
+    id: "headroom",
+    enableSorting: false,
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title={t("pools.col.headroom")}
+        tooltip={t("pools.col.headroomTooltip")}
+      />
+    ),
+    cell: ({ row }) => <HeadroomCell pool={row.original} ctx={scalingCtx ?? {}} />,
   }
 
   const createdAtColumn: ColumnDef<AgentSandboxPool> = {
@@ -489,7 +587,7 @@ export function createPoolColumns(
             cell: ({ row }) => <OwningEnvCell envName={row.original.owningEnv} />,
           } satisfies ColumnDef<AgentSandboxPool>,
         ]),
-    ...(options?.scaling ? [scalingColumn] : []),
+    ...(options?.scaling ? [scalingGroupColumn, scalingColumn, headroomColumn] : []),
     {
       id: "replicas",
       accessorFn: (row) => row.spec?.replicas,

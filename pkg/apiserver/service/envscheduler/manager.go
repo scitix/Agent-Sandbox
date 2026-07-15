@@ -58,13 +58,22 @@ func (m *Manager) SetFederationView(fed FederationView) {
 }
 
 // SelectForeignTarget decides whether a create for the given Env and scaling
-// group should be forwarded to a specific member pool in another cluster. It
-// returns (clusterID, memberPool, ok=true) only when the local cluster has no
-// idle capacity for the group AND some foreign cluster's member does — the
-// origin pins the exact pool so the forward reuses the explicit
-// "cluster::pool" path (deterministic, structurally single-hop). Otherwise ok
-// is false (serve locally: the claim parks and the local autoscaler reacts).
-// group == "" means no group constraint. Safe on the hot path.
+// group should be forwarded to a specific member pool in another cluster. When
+// it returns ok=true, the origin has pinned the exact target pool so the
+// forward reuses the explicit "cluster::pool" path (deterministic,
+// structurally single-hop). ok=false means serve locally (the claim parks and
+// the local autoscaler reacts). group == "" means no group constraint. Safe on
+// the hot path.
+//
+// The decision prefers the fastest option and never forwards into a dead end:
+//
+//  1. Local has an idle Pod            → serve locally (instant).
+//  2. A foreign member has an idle Pod → forward there (instant; local has none).
+//  3. Neither has idle, but local can  → serve locally (scale in place; avoids
+//     scale up                            an unnecessary cross-cluster hop).
+//  4. Neither has idle, local cannot   → forward to the best schedulable
+//     grow, a foreign can scale up        foreign member (only place that can serve).
+//  5. Nobody can serve                 → serve locally (park; nothing better).
 func (m *Manager) SelectForeignTarget(envKey types.NamespacedName, scalingGroup string) (clusterID, memberPool string, ok bool) {
 	m.mu.RLock()
 	fed := m.fed
@@ -72,11 +81,20 @@ func (m *Manager) SelectForeignTarget(envKey types.NamespacedName, scalingGroup 
 	if fed == nil {
 		return "", "", false
 	}
-	if fed.LocalIdle(envKey.Namespace, envKey.Name, scalingGroup) > 0 {
-		return "", "", false
+	ns, env := envKey.Namespace, envKey.Name
+	if fed.LocalIdle(ns, env, scalingGroup) > 0 {
+		return "", "", false // (1) local instant
 	}
-	cluster, pool, idle, found := fed.BestForeignMember(envKey.Namespace, envKey.Name, scalingGroup)
-	if !found || idle <= 0 {
+	cluster, pool, idle, found := fed.BestForeignMember(ns, env, scalingGroup)
+	if !found {
+		return "", "", false // (5) nobody can serve — park locally
+	}
+	if idle > 0 {
+		return cluster, pool, true // (2) foreign instant
+	}
+	// Foreign is scale-up-only. Keep it local if the local cluster can also
+	// scale (3); otherwise forward to the foreign that can (4).
+	if fed.LocalCanGrow(ns, env, scalingGroup) {
 		return "", "", false
 	}
 	return cluster, pool, true

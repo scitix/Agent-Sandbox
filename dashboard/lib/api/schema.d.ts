@@ -1560,6 +1560,15 @@ export interface components {
              * @description Read-only mirror of SandboxPool.status.autoscaling.saturatedUntil. Until this time, the router deprioritises the member because the per-Pool autoscaler reported the cluster cannot fit additional replicas.
              */
             saturatedUntil?: string;
+            /** @description Autoscaling group this member belongs to on its owning cluster, echoed from spec. Empty when the member is in no group. Present on foreign (cross-cluster) members too, so a viewer without the foreign cluster's spec can still attribute the member to a group and link to that cluster's group detail. */
+            scalingGroup?: string;
+            /** @description Whether this member's scalingGroup has the autoscaler on in its owning cluster. Each cluster scales independently, so a same-named group may be enabled in one cluster and off in another; this is the per-pool, per-cluster truth. Disambiguates scaleUpHeadroom == 0 (at ceiling) from autoscaling being off. */
+            autoscalingEnabled?: boolean;
+            /**
+             * Format: int32
+             * @description Estimated replicas this member can still add on its owning cluster before hitting the smaller of its own MaxReplicas and its group's aggregate MaxReplicas. Meaningful only when autoscalingEnabled: omitted = off, or on with no finite ceiling (unbounded); 0 = at ceiling; >0 = room left. Advisory estimate — the group ceiling is shared across members and quota is not folded in; for foreign members it also lags by the federation TTL.
+             */
+            scaleUpHeadroom?: number;
             /** @description Mirror of the member Pool's status.updateRevision — the target revision the Pool is rolling towards. */
             updateRevision?: string;
             /**

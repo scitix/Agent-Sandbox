@@ -620,6 +620,38 @@ type EnvObservedMember struct {
 	// +optional
 	SaturatedUntil *metav1.Time `json:"saturatedUntil,omitempty"`
 
+	// ScalingGroup is the autoscaling group this member belongs to on its
+	// owning cluster, echoed from spec for convenience. Empty when the
+	// member is not in any group. Lets a cross-cluster view (where the
+	// consumer does not hold the foreign cluster's spec) still attribute
+	// the member to a group and link to that cluster's group detail.
+	// +optional
+	ScalingGroup string `json:"scalingGroup,omitempty"`
+
+	// AutoscalingEnabled reports whether this member's ScalingGroup has the
+	// autoscaler turned on in its owning cluster. Because each cluster
+	// controls its own scaling independently, a same-named group may be
+	// enabled in one cluster and disabled in another; this is the per-pool,
+	// per-cluster truth. It disambiguates ScaleUpHeadroom == 0 (at ceiling)
+	// from autoscaling being off entirely.
+	// +optional
+	AutoscalingEnabled bool `json:"autoscalingEnabled,omitempty"`
+
+	// ScaleUpHeadroom estimates how many more replicas this member can still
+	// add on its owning cluster before hitting the smaller of its own
+	// MaxReplicas and its group's aggregate MaxReplicas (given the group's
+	// current total desired). It is meaningful only when AutoscalingEnabled
+	// is true:
+	//   - nil  → autoscaling off, or enabled with no finite ceiling (unbounded)
+	//   - 0    → enabled but already at the ceiling (cannot grow now)
+	//   - >0   → enabled with this much room left
+	// The value is an estimate: the group ceiling is shared across members
+	// and quota/node capacity are not folded in, so treat it as advisory
+	// (like idle counts, it also lags by the federation TTL for foreign
+	// members).
+	// +optional
+	ScaleUpHeadroom *int32 `json:"scaleUpHeadroom,omitempty"`
+
 	// UpdateRevision is the target revision hash the member Pool is rolling
 	// towards, mirrored from SandboxPool.Status.UpdateRevision.
 	// +optional

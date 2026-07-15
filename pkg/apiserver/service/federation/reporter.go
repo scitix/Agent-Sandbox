@@ -53,9 +53,9 @@ func (s *k8sCapacitySource) Collect(ctx context.Context) ([]Capacity, error) {
 	var out []Capacity
 	for i := range envs.Items {
 		env := &envs.Items[i]
-		// Member name → scaling group, from the local cluster's spec segment.
-		// ObservedMember does not carry the group, so join it from config.
-		groupOf := memberScalingGroups(env, s.localClusterID)
+		// The Env reconciler already stamps ScalingGroup + AutoscalingEnabled +
+		// ScaleUpHeadroom onto each local observed member, so this source reads
+		// them straight back — no re-derivation from spec needed.
 		for ci := range env.Status.Clusters {
 			cs := &env.Status.Clusters[ci]
 			if !cs.IsLocal {
@@ -64,17 +64,18 @@ func (s *k8sCapacitySource) Collect(ctx context.Context) ([]Capacity, error) {
 			for mi := range cs.ObservedMembers {
 				m := &cs.ObservedMembers[mi]
 				out = append(out, Capacity{
-					ClusterID:    s.localClusterID,
-					Namespace:    env.Namespace,
-					EnvName:      env.Name,
-					MemberPool:   m.Name,
-					ScalingGroup: groupOf[m.Name],
-					Idle:         m.IdleCount,
-					Running:      m.RunningCount,
-					Desired:      m.DesiredReplicas,
-					Pending:      m.PendingRequests,
-					Capacity:     -1,
-					ObservedAt:   now,
+					ClusterID:          s.localClusterID,
+					Namespace:          env.Namespace,
+					EnvName:            env.Name,
+					MemberPool:         m.Name,
+					ScalingGroup:       m.ScalingGroup,
+					Idle:               m.IdleCount,
+					Running:            m.RunningCount,
+					Desired:            m.DesiredReplicas,
+					Pending:            m.PendingRequests,
+					AutoscalingEnabled: m.AutoscalingEnabled,
+					Capacity:           headroomOf(m),
+					ObservedAt:         now,
 				})
 			}
 		}
@@ -82,18 +83,16 @@ func (s *k8sCapacitySource) Collect(ctx context.Context) ([]Capacity, error) {
 	return out, nil
 }
 
-// memberScalingGroups maps member pool name → scaling group for the local
-// cluster's spec segment.
-func memberScalingGroups(env *agentsv1alpha1.SandboxEnv, localClusterID string) map[string]string {
-	out := map[string]string{}
-	for ci := range env.Spec.Clusters {
-		cs := &env.Spec.Clusters[ci]
-		if cs.ClusterID != localClusterID {
-			continue
-		}
-		for mi := range cs.Members {
-			out[cs.Members[mi].Name] = cs.Members[mi].Config.ScalingGroup
-		}
+// headroomOf maps an observed member's ScaleUpHeadroom pointer onto the
+// federation Capacity convention: 0 when autoscaling is off, -1 (unbounded)
+// when enabled with no finite ceiling (nil pointer while enabled), else the
+// finite estimate (0 = at ceiling).
+func headroomOf(m *agentsv1alpha1.EnvObservedMember) int32 {
+	if !m.AutoscalingEnabled {
+		return 0
 	}
-	return out
+	if m.ScaleUpHeadroom == nil {
+		return -1
+	}
+	return *m.ScaleUpHeadroom
 }
