@@ -276,11 +276,32 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 		input.Labels[agentsv1alpha1.LabelUser] = auth.User
 	}
 
-	// Cross-cluster forwarding: if the pool references a remote cluster, forward
-	// the request to that cluster's E2B API.
+	// Cross-cluster forwarding: if the template explicitly references a remote
+	// cluster ("cluster::template"), forward the request to that cluster's E2B API.
 	if s.isCrossCluster(input.ClusterID) {
 		s.forwarder.Forward(httpctx.GinFromCtx(ctx), input.ClusterID, service.URLKindE2B, jsonBody(req.Body))
 		return nil, nil
+	}
+
+	// Env-based cross-cluster placement: for a bare template name whose local
+	// Env has no idle capacity, pin the foreign member pool and forward the
+	// request rewritten as "cluster::pool" (preserving any image override), so
+	// the receiver resolves a direct local pool and prefixes the sandbox ID.
+	if parsed.ClusterID == "" {
+		if r, ok := s.sandbox.(interface {
+			ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) (string, string, bool)
+		}); ok {
+			if tc, tp, found := r.ResolveCreateTarget(input.Namespace, parsed.PoolName, input.RequestedScalingGroup); found && s.isCrossCluster(tc) {
+				ref := tc + "::" + tp
+				if parsed.ImageOverride != "" {
+					ref += "//" + parsed.ImageOverride
+				}
+				fwd := *req.Body
+				fwd.TemplateID = ref
+				s.forwarder.Forward(httpctx.GinFromCtx(ctx), tc, service.URLKindE2B, jsonBody(&fwd))
+				return nil, nil
+			}
+		}
 	}
 
 	result, appErr := s.sandbox.Create(ctx, input)
