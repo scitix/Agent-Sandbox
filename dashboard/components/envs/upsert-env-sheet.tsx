@@ -16,9 +16,10 @@
 
 "use client"
 
-import { Fragment, useMemo } from "react"
+import { Fragment, useMemo, useState } from "react"
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueries } from "@tanstack/react-query"
+import { useAtomValue } from "jotai"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { toast } from "sonner"
@@ -51,8 +52,12 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import type { AgentSandboxEnv, AgentSandboxTemplateSummary } from "@/lib/api/client"
+import { getApiClient } from "@/lib/api/client"
+import { clustersAtom } from "@/lib/atoms"
+import { useClusterID } from "@/hooks/use-cluster-id"
 import { envQueryOptions, templatesQueryOptions, useCreateEnv, useUpdateEnv } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 
@@ -215,6 +220,7 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
     control,
     register,
     handleSubmit,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -223,6 +229,42 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
 
   const createMutation = useCreateEnv()
   const updateMutation = useUpdateEnv()
+
+  // Create mode. "new" builds a fresh Env; "extend" pins the name to an Env
+  // that already exists in another cluster — creating a same-named Env here
+  // joins its cross-cluster federation. The extend picker fans GET /envs out
+  // across every other cluster.
+  const [createMode, setCreateMode] = useState<"new" | "extend">("new")
+  const [extendSel, setExtendSel] = useState<{
+    clusterID: string
+    clusterName: string
+    name: string
+  } | null>(null)
+  const clustersData = useAtomValue(clustersAtom)
+  const currentCluster = useClusterID()
+  const otherClusters = useMemo(
+    () => (clustersData?.clusters ?? []).filter((c) => c.id && c.id !== currentCluster),
+    [clustersData, currentCluster],
+  )
+  const otherEnvQueries = useQueries({
+    queries: otherClusters.map((c) => ({
+      ...getApiClient(c.id).queryOptions("get", "/envs", undefined, {
+        select: (d: { items?: { name: string }[] }) => d.items ?? [],
+      }),
+      enabled: !isEdit && createMode === "extend",
+    })),
+  })
+  const otherEnvs = useMemo(
+    () =>
+      otherClusters.flatMap((c, i) =>
+        ((otherEnvQueries[i]?.data as { name: string }[] | undefined) ?? []).map((e) => ({
+          clusterID: c.id,
+          clusterName: c.name ?? c.id,
+          name: e.name,
+        })),
+      ),
+    [otherClusters, otherEnvQueries],
+  )
 
   const onSubmit = handleSubmit(async (values) => {
     if (isEdit) {
@@ -271,17 +313,72 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
         <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
           {/* Basics — always visible */}
           <section className="space-y-4">
+            {!isEdit && otherClusters.length > 0 && (
+              <Tabs
+                value={createMode}
+                onValueChange={(v) => {
+                  setCreateMode(v as "new" | "extend")
+                  setExtendSel(null)
+                  setValue("name", "", { shouldValidate: false })
+                }}
+              >
+                <TabsList className="w-full">
+                  <TabsTrigger value="new" className="flex-1 text-xs">
+                    {t("envs.form.tab.new")}
+                  </TabsTrigger>
+                  <TabsTrigger value="extend" className="flex-1 text-xs">
+                    {t("envs.form.tab.extend")}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
             <Field>
               <FieldLabel htmlFor="env-name">{t("envs.form.name")}</FieldLabel>
-              <Input
-                id="env-name"
-                disabled={isEdit}
-                {...register("name")}
-                placeholder="my-env"
-                maxLength={24}
-              />
+              {!isEdit && createMode === "extend" ? (
+                <Combobox
+                  autoHighlight
+                  value={extendSel}
+                  onValueChange={(v: { clusterID: string; clusterName: string; name: string } | null) => {
+                    setExtendSel(v)
+                    setValue("name", v?.name ?? "", { shouldValidate: true })
+                  }}
+                  items={otherEnvs}
+                  itemToStringLabel={(e: { clusterID: string; clusterName: string; name: string }) =>
+                    e.name
+                  }
+                >
+                  <ComboboxInput
+                    aria-invalid={!!errors.name}
+                    placeholder={t("envs.form.extendPlaceholder")}
+                    className="h-9 font-mono text-sm"
+                  />
+                  <ComboboxContent>
+                    <ComboboxEmpty>{t("common.noResultsFound")}</ComboboxEmpty>
+                    <ComboboxList>
+                      {(e: { clusterID: string; clusterName: string; name: string }) => (
+                        <ComboboxItem key={`${e.clusterID}/${e.name}`} value={e}>
+                          <span className="font-mono text-sm">{e.name}</span>
+                          <span className="text-muted-foreground ml-2 text-xs">{e.clusterName}</span>
+                        </ComboboxItem>
+                      )}
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
+              ) : (
+                <Input
+                  id="env-name"
+                  disabled={isEdit}
+                  {...register("name")}
+                  placeholder="my-env"
+                  maxLength={24}
+                />
+              )}
               {errors.name && <FieldError>{t(errors.name.message as never)}</FieldError>}
-              <FieldDescription>{t("envs.form.nameDescription")}</FieldDescription>
+              <FieldDescription>
+                {createMode === "extend"
+                  ? t("envs.form.extendDescription")
+                  : t("envs.form.nameDescription")}
+              </FieldDescription>
             </Field>
 
             <Field>
