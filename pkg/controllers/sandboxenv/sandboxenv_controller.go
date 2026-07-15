@@ -30,8 +30,9 @@
 //     bookkeeping (LastScale*Time, IdleZeroSince, ...) lives on
 //     SandboxPool.Status.AutoScaling, not here.
 //
-// Adoption (Pool → same-named Env) is handled by an independent transitional
-// reconciler in poolmigration/ — see that package for migration semantics.
+// Every SandboxPool is derived from a SandboxEnv: the Env is the source of
+// truth and this Reconciler materialises member Pools from it. There is no
+// reverse path that creates an Env from a pre-existing Pool.
 //
 // Multi-cluster prep:
 //   - Spec/status segments are organised by ClusterID; the Reconciler only
@@ -148,9 +149,8 @@ type FederationReader interface {
 // under the Env's name via the secondary Watch; the resolver handles both
 // "Env exists" and "Pool changed, refresh Env status" cases.)
 //
-// Adoption — creating the Env in the first place — is owned by the
-// PoolAdoptionReconciler in poolmigration/. This Reconciler treats a missing
-// Env as "nothing to do here yet".
+// A missing Env is "nothing to do here": the Env is created through the
+// platform API, and member Pools are materialised from it — never the reverse.
 func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := klog.FromContext(ctx).WithValues("env", req.NamespacedName)
 
