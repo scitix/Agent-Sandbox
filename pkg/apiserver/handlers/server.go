@@ -271,6 +271,11 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 		PoolName:  parsed.PoolName,
 		Namespace: auth.Namespace,
 		Image:     derefString(req.Body.Image),
+		// When this request was forwarded here by another cluster's Env router
+		// (bare Env name, no explicit prefix), record the origin so the created
+		// sandbox ID is prefixed with our cluster — making subsequent ops route
+		// back. Empty for direct and origin-side requests.
+		ForwardedFromCluster: httpctx.GinFromCtx(ctx).GetHeader(service.SourceClusterHeader),
 	}
 	if req.Body.ContainerImages != nil {
 		input.ContainerImages = *req.Body.ContainerImages

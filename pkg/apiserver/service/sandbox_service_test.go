@@ -17,6 +17,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,26 @@ func newTestSandboxService(t *testing.T, objs ...any) SandboxService {
 		}
 	}
 	return NewSandboxService(builder.Build(), nil, nil, nil, "", "", nil, nil)
+}
+
+// newTestSandboxServiceWithCluster is newTestSandboxService with a non-empty
+// localClusterID so sandbox-ID prefixing can be exercised.
+func newTestSandboxServiceWithCluster(t *testing.T, localClusterID string, objs ...any) SandboxService {
+	t.Helper()
+	cb, err := indexer.GetFakeClientBuilderWithIndexers()
+	if err != nil {
+		t.Fatalf("get fake client builder: %v", err)
+	}
+	builder := cb
+	for _, o := range objs {
+		switch v := o.(type) {
+		case *agentsv1alpha1.SandboxPool:
+			builder = builder.WithObjects(v)
+		case *corev1.Pod:
+			builder = builder.WithObjects(v)
+		}
+	}
+	return NewSandboxService(builder.Build(), nil, nil, nil, "", localClusterID, nil, nil)
 }
 
 func newTestSandboxServiceWithStore(t *testing.T, s store.SandboxStore, objs ...any) SandboxService {
@@ -187,6 +208,29 @@ func TestSandboxService_Create_Success(t *testing.T) {
 	}
 	if result.PoolName != testPoolName {
 		t.Fatalf("expected poolName pool-a, got %s", result.PoolName)
+	}
+}
+
+// A create forwarded here by another cluster's Env router (bare Env name,
+// ForwardedFromCluster set) must return a sandbox ID prefixed with this
+// cluster's ID — identical to an explicit cluster::pool request — so
+// subsequent operations route back.
+func TestSandboxService_Create_ForwardedFromCluster_PrefixesID(t *testing.T) {
+	pool := makePool("pool-a", "tenant-a")
+	pod := makeIdlePod("pod-a", "tenant-a", "pool-a")
+	svc := newTestSandboxServiceWithCluster(t, "gw-a", pool, pod)
+
+	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
+		PoolName:             "pool-a",
+		Namespace:            "tenant-a",
+		Image:                "busybox:1.37",
+		ForwardedFromCluster: "gw-b",
+	})
+	if appErr != nil {
+		t.Fatalf("unexpected error: %v", appErr)
+	}
+	if !strings.HasPrefix(result.SandboxId, "gw-a.") {
+		t.Fatalf("expected sandbox ID prefixed with 'gw-a.', got %q", result.SandboxId)
 	}
 }
 

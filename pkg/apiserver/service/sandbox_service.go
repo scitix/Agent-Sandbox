@@ -648,10 +648,13 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("success")).Inc()
 
 	result := sandboxFromPod(pod)
-	// When the caller explicitly targeted a cluster (cross-cluster request),
-	// prefix the returned sandbox ID so that subsequent data-plane requests
-	// carry the cluster info for routing. Same-cluster requests return a plain UUID.
-	if input.ClusterID != "" {
+	// Prefix the returned sandbox ID with this cluster's ID so subsequent
+	// data-plane and control-plane operations route back here. Two cases need
+	// it: an explicit "cluster::pool" request (input.ClusterID set), and a
+	// bare-Env create that the origin cluster forwarded to us
+	// (ForwardedFromCluster set) — both are cross-cluster placements from the
+	// caller's perspective. A genuinely local request returns a plain UUID.
+	if input.ClusterID != "" || input.ForwardedFromCluster != "" {
 		result.SandboxId = s.prefixSandboxID(result.SandboxId)
 	}
 	if eps := buildEndpoints(pool, result.SandboxId, s.gatewayBaseURL); len(eps) > 0 {
