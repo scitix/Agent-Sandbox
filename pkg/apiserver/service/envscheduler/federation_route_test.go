@@ -21,35 +21,41 @@ import (
 )
 
 type fakeFederationView struct {
-	localIdle   int32
-	bestCluster string
-	bestIdle    int32
+	localIdle  int32
+	bestClustr string
+	bestPool   string
+	bestIdle   int32
 }
 
 func (f fakeFederationView) LocalIdle(_, _, _ string) int32 { return f.localIdle }
-func (f fakeFederationView) BestForeignCluster(_, _, _ string) (string, int32) {
-	return f.bestCluster, f.bestIdle
+func (f fakeFederationView) BestForeignMember(_, _, _ string) (string, string, int32, bool) {
+	return f.bestClustr, f.bestPool, f.bestIdle, f.bestIdle > 0
 }
 
-func TestSelectClusterForCreate(t *testing.T) {
+func TestSelectForeignTarget(t *testing.T) {
 	key := types.NamespacedName{Namespace: "ns", Name: "env"}
 
 	cases := []struct {
-		name string
-		fed  FederationView
-		want string
+		name        string
+		fed         FederationView
+		wantCluster string
+		wantPool    string
 	}{
-		{"no federation view → local", nil, ""},
-		{"local has idle → local", fakeFederationView{localIdle: 3, bestCluster: "cluster-b", bestIdle: 9}, ""},
-		{"local empty, foreign has idle → forward", fakeFederationView{localIdle: 0, bestCluster: "cluster-b", bestIdle: 4}, "cluster-b"},
-		{"local empty, no foreign idle → local (park/autoscale)", fakeFederationView{localIdle: 0, bestCluster: "", bestIdle: 0}, ""},
+		{"no federation view → local", nil, "", ""},
+		{"local has idle → local", fakeFederationView{localIdle: 3, bestClustr: "cluster-b", bestPool: "p", bestIdle: 9}, "", ""},
+		{"local empty, foreign has idle → forward to pinned pool", fakeFederationView{localIdle: 0, bestClustr: "cluster-b", bestPool: "p-b", bestIdle: 4}, "cluster-b", "p-b"},
+		{"local empty, no foreign idle → local (park/autoscale)", fakeFederationView{localIdle: 0, bestClustr: "", bestPool: "", bestIdle: 0}, "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := New("cluster-a", nil, nil)
 			m.SetFederationView(tc.fed)
-			if got := m.SelectClusterForCreate(key, ""); got != tc.want {
-				t.Fatalf("SelectClusterForCreate = %q, want %q", got, tc.want)
+			gotCluster, gotPool, ok := m.SelectForeignTarget(key, "")
+			if gotCluster != tc.wantCluster || gotPool != tc.wantPool {
+				t.Fatalf("SelectForeignTarget = (%q,%q), want (%q,%q)", gotCluster, gotPool, tc.wantCluster, tc.wantPool)
+			}
+			if ok != (tc.wantCluster != "") {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantCluster != "")
 			}
 		})
 	}

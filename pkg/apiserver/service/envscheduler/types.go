@@ -68,12 +68,13 @@ type EnvGetter interface {
 // locally or forwarded to a same-named Env in another cluster. Backed by
 // federation.Registry in production; nil disables cross-cluster placement.
 type FederationView interface {
-	// LocalIdle is the local cluster's idle capacity for the Env and scaling
-	// group (group == "" is the whole-Env aggregate).
+	// LocalIdle is the local cluster's idle capacity for the Env across
+	// members matching the scaling group (empty group = all members).
 	LocalIdle(namespace, env, group string) int32
-	// BestForeignCluster is the foreign cluster with the most idle capacity
-	// for the Env and scaling group, and that idle count; ("", 0) when none.
-	BestForeignCluster(namespace, env, group string) (string, int32)
+	// BestForeignMember is the cluster ID and member pool of the member in
+	// another cluster with the most idle capacity for the Env and scaling
+	// group; ok is false when none has spare idle.
+	BestForeignMember(namespace, env, group string) (clusterID, memberPool string, idle int32, ok bool)
 }
 
 // Manager owns the env → route-table mapping. There is one Manager per

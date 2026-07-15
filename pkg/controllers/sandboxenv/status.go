@@ -122,6 +122,12 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		local.LastSnapshotTime = &now
 	})
 
+	// Mirror the cross-cluster capacity view (same-named Envs in other
+	// clusters, learned over the federation channel) into the non-local status
+	// segments so the federated routing input is visible via kubectl. Top-level
+	// rollups stay local-only to preserve their existing meaning.
+	r.mirrorForeignSegments(env, now)
+
 	// Group rollup by member.ScalingGroup. Per-Pool autoscaling
 	// bookkeeping lives on SandboxPool.Status.AutoScaling, so the group
 	// status here only carries cross-member aggregates.
@@ -151,6 +157,54 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 		return err
 	}
 	return nil
+}
+
+// mirrorForeignSegments rebuilds env.Status.Clusters so it holds the local
+// segment (already populated by mutateLocalClusterStatus) plus one read-only
+// segment per other cluster that reports a same-named Env over the federation
+// channel. Foreign segments carry IsLocal=false and the observed member idle/
+// running/desired counts, giving a human-visible cross-cluster capacity view.
+// When federation is unconfigured or reports nothing, only the local segment
+// remains.
+func (r *SandboxEnvReconciler) mirrorForeignSegments(env *agentsv1alpha1.SandboxEnv, now metav1.Time) {
+	if r.Federation == nil {
+		return
+	}
+	members := r.Federation.ForeignMembers(env.Namespace, env.Name)
+
+	byCluster := map[string][]agentsv1alpha1.EnvObservedMember{}
+	var order []string
+	for _, m := range members {
+		if _, ok := byCluster[m.ClusterID]; !ok {
+			order = append(order, m.ClusterID)
+		}
+		byCluster[m.ClusterID] = append(byCluster[m.ClusterID], agentsv1alpha1.EnvObservedMember{
+			Name:            m.MemberPool,
+			State:           agentsv1alpha1.ObservedMemberStateActive,
+			IdleCount:       m.Idle,
+			RunningCount:    m.Running,
+			DesiredReplicas: m.Desired,
+			CurrentReplicas: m.Desired,
+			PendingRequests: m.Pending,
+		})
+	}
+
+	// Keep the local segment; replace all foreign segments with fresh ones.
+	out := make([]agentsv1alpha1.EnvClusterStatus, 0, 1+len(order))
+	for i := range env.Status.Clusters {
+		if env.Status.Clusters[i].ClusterID == r.LocalClusterID {
+			out = append(out, env.Status.Clusters[i])
+		}
+	}
+	for _, cid := range order {
+		out = append(out, agentsv1alpha1.EnvClusterStatus{
+			ClusterID:        cid,
+			IsLocal:          false,
+			ObservedMembers:  byCluster[cid],
+			LastSnapshotTime: &now,
+		})
+	}
+	env.Status.Clusters = out
 }
 
 // setScalingGroupStatus upserts the named group's totals in

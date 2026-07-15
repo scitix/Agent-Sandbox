@@ -114,10 +114,11 @@ type EnvRouter interface {
 	// hard-scopes the choice to that autoscaling group (returns "" when the
 	// group has no member). Empty = no constraint.
 	SelectPool(envKey types.NamespacedName, scalingGroup string) string
-	// SelectClusterForCreate returns a foreign cluster ID when a create for
-	// envKey should be forwarded there (local has no idle capacity for the
-	// group, a foreign cluster does); "" means serve locally.
-	SelectClusterForCreate(envKey types.NamespacedName, scalingGroup string) string
+	// SelectForeignTarget returns the cluster ID and member pool a create for
+	// envKey should be forwarded to (local has no idle capacity for the group,
+	// a foreign cluster's member does); ok is false when it should be served
+	// locally.
+	SelectForeignTarget(envKey types.NamespacedName, scalingGroup string) (clusterID, memberPool string, ok bool)
 }
 
 type k8sSandboxService struct {
@@ -173,25 +174,22 @@ func (s *k8sSandboxService) SetEnvRouter(r EnvRouter) {
 	s.envRouter = r
 }
 
-// SourceClusterHeader marks a request that has already been cross-cluster
-// forwarded once, so the receiving cluster serves it locally instead of
-// forwarding again (single-hop guarantee).
-const SourceClusterHeader = "X-Source-Cluster"
-
-// ResolveCreateTarget reports the foreign cluster a bare-name Env create should
-// be forwarded to, or "" to serve locally. The handler calls it before Create
-// so cross-cluster forwarding stays in the handler layer. Returns "" when the
-// router is unwired, the name is not a known Env, or no foreign cluster has
-// spare idle capacity for the requested scaling group.
-func (s *k8sSandboxService) ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) string {
+// ResolveCreateTarget reports the cluster and member pool a bare-name Env
+// create should be forwarded to, or ok=false to serve locally. The handler
+// calls it before Create so cross-cluster forwarding stays in the handler
+// layer and reuses the explicit "cluster::pool" path (which pins the pool,
+// prefixes the sandbox ID, and is structurally single-hop). Returns ok=false
+// when the router is unwired, the name is not a known Env, or no foreign
+// member has spare idle capacity for the requested scaling group.
+func (s *k8sSandboxService) ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) (clusterID, memberPool string, ok bool) {
 	if s.envRouter == nil {
-		return ""
+		return "", "", false
 	}
 	res := s.envRouter.Resolve(namespace, "", poolOrEnvName)
 	if res.Kind != envscheduler.ResolveEnv {
-		return ""
+		return "", "", false
 	}
-	return s.envRouter.SelectClusterForCreate(res.EnvKey, scalingGroup)
+	return s.envRouter.SelectForeignTarget(res.EnvKey, scalingGroup)
 }
 
 // GetScheduler implements envscheduler.SchedulerLookup. Returns the
@@ -648,13 +646,12 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("success")).Inc()
 
 	result := sandboxFromPod(pod)
-	// Prefix the returned sandbox ID with this cluster's ID so subsequent
-	// data-plane and control-plane operations route back here. Two cases need
-	// it: an explicit "cluster::pool" request (input.ClusterID set), and a
-	// bare-Env create that the origin cluster forwarded to us
-	// (ForwardedFromCluster set) — both are cross-cluster placements from the
-	// caller's perspective. A genuinely local request returns a plain UUID.
-	if input.ClusterID != "" || input.ForwardedFromCluster != "" {
+	// When the caller explicitly targeted a cluster (cross-cluster request,
+	// including an Env-routed forward that the origin rewrote to
+	// "<cluster>::<pool>"), prefix the returned sandbox ID so subsequent
+	// data-plane and control-plane requests carry the cluster info for routing.
+	// Same-cluster requests return a plain UUID.
+	if input.ClusterID != "" {
 		result.SandboxId = s.prefixSandboxID(result.SandboxId)
 	}
 	if eps := buildEndpoints(pool, result.SandboxId, s.gatewayBaseURL); len(eps) > 0 {

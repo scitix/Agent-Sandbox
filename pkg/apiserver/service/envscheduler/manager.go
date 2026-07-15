@@ -57,28 +57,29 @@ func (m *Manager) SetFederationView(fed FederationView) {
 	m.fed = fed
 }
 
-// SelectClusterForCreate decides whether a create for the given Env and
-// scaling group should be forwarded to another cluster. It returns a foreign
-// cluster ID only when the local cluster has no idle capacity for the triple
-// AND some foreign cluster does; otherwise it returns "" (serve locally, which
-// parks the claim and lets the local autoscaler react). group == "" selects
-// the whole-Env aggregate. Safe to call on the hot path — one RLock plus the
-// registry's own locking.
-func (m *Manager) SelectClusterForCreate(envKey types.NamespacedName, scalingGroup string) string {
+// SelectForeignTarget decides whether a create for the given Env and scaling
+// group should be forwarded to a specific member pool in another cluster. It
+// returns (clusterID, memberPool, ok=true) only when the local cluster has no
+// idle capacity for the group AND some foreign cluster's member does — the
+// origin pins the exact pool so the forward reuses the explicit
+// "cluster::pool" path (deterministic, structurally single-hop). Otherwise ok
+// is false (serve locally: the claim parks and the local autoscaler reacts).
+// group == "" means no group constraint. Safe on the hot path.
+func (m *Manager) SelectForeignTarget(envKey types.NamespacedName, scalingGroup string) (clusterID, memberPool string, ok bool) {
 	m.mu.RLock()
 	fed := m.fed
 	m.mu.RUnlock()
 	if fed == nil {
-		return ""
+		return "", "", false
 	}
 	if fed.LocalIdle(envKey.Namespace, envKey.Name, scalingGroup) > 0 {
-		return ""
+		return "", "", false
 	}
-	cluster, idle := fed.BestForeignCluster(envKey.Namespace, envKey.Name, scalingGroup)
-	if idle <= 0 {
-		return ""
+	cluster, pool, idle, found := fed.BestForeignMember(envKey.Namespace, envKey.Name, scalingGroup)
+	if !found || idle <= 0 {
+		return "", "", false
 	}
-	return cluster
+	return cluster, pool, true
 }
 
 // Resolve maps a parsed Sandbox.Create template to the routing target. See
