@@ -18,7 +18,7 @@
 
 import { useMemo } from "react"
 import { type ColumnDef, type Row } from "@tanstack/react-table"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { MoreVertical, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -32,13 +32,12 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { DataTable } from "@/components/custom/query-table/table-without-query"
 import { DataTableColumnHeader } from "@/components/custom/query-table/column-header"
-import { QueryTable } from "@/components/custom/query-table/table-with-query"
 import { ResourceLink } from "@/components/custom/resource-link"
 import { clusterPath } from "@/lib/cluster-path"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import type { MultipleHandler } from "@/components/custom/query-table/pagination"
-import { createPoolColumns, poolNumberFilterOptions } from "@/components/pools/columns"
+import { createPoolColumns, poolNumberFilterOptions, type PoolRow } from "@/components/pools/columns"
 import {
   deleteEnvAutoscalingGroupImperative,
   deleteEnvPoolImperative,
@@ -136,10 +135,41 @@ export function EnvPoolsSection({
     }
   }, [env])
 
+  const currentCluster = useClusterID()
+  const poolsQuery = useQuery(envPoolsQueryOptions(env.name))
+
+  // Merge local pools with foreign members surfaced in status.clusters[] so a
+  // single table shows the whole cross-cluster picture. Local rows sort first;
+  // foreign rows carry only the counts available in status (idle/running/
+  // desired), tagged with their owning cluster for the "owning cluster" column.
+  const rows = useMemo<PoolRow[]>(() => {
+    const localRows: PoolRow[] = (poolsQuery.data ?? []).map((p) => ({
+      ...p,
+      owningClusterID: currentCluster,
+      foreignCluster: false,
+    }))
+    const foreignRows: PoolRow[] = []
+    for (const cluster of env.status?.clusters ?? []) {
+      if (cluster.isLocal === true || cluster.clusterID === currentCluster) continue
+      for (const om of cluster.observedMembers ?? []) {
+        foreignRows.push({
+          name: om.name,
+          owningEnv: env.name,
+          owningClusterID: cluster.clusterID,
+          foreignCluster: true,
+          spec: { replicas: om.desiredReplicas },
+          status: { idleReplicas: om.idleCount, runningReplicas: om.runningCount },
+        } as PoolRow)
+      }
+    }
+    return [...localRows, ...foreignRows]
+  }, [poolsQuery.data, env, currentCluster])
+
   const columns = useMemo(
     () =>
       createPoolColumns(t, onViewMetrics, {
         hideOwningEnv: true,
+        owningCluster: true,
         scaling: {
           observedByPool,
           scalingGroupByPool,
@@ -159,7 +189,6 @@ export function EnvPoolsSection({
     ],
   )
 
-  const queryOptions = useMemo(() => envPoolsQueryOptions(env.name), [env.name])
   const qc = useQueryClient()
 
   const multipleHandlers: MultipleHandler<AgentSandboxPool>[] = [
@@ -181,8 +210,12 @@ export function EnvPoolsSection({
         </div>
       ),
       handleSubmit: async (rows: Row<AgentSandboxPool>[]) => {
+        // Only local pools can be deleted from here; peer-cluster rows are
+        // read-only (their pools live on another cluster's API).
+        const local = rows.filter((row) => !(row.original as PoolRow).foreignCluster)
+        if (local.length === 0) return
         const results = await Promise.allSettled(
-          rows.map((row) => deleteEnvPoolImperative(env.name, row.original.name)),
+          local.map((row) => deleteEnvPoolImperative(env.name, row.original.name)),
         )
         const failed = results.filter((r) => r.status === "rejected").length
         const succeeded = results.length - failed
@@ -210,23 +243,26 @@ export function EnvPoolsSection({
     </Button>
   )
 
-  if (fixed) {
-    return (
-      <QueryTable
-        columns={columns}
-        idFn={(row: AgentSandboxPool) => row.name}
-        queryOptions={queryOptions}
-        multipleHandlers={multipleHandlers}
-        toolbarConfig={{
-          filterOptions: poolNumberFilterOptions(t),
-          globalSearch: { placeholder: t("pools.searchAll") },
-        }}
-        className="table-layout-fixed h-full"
-      >
-        {createButton}
-      </QueryTable>
-    )
-  }
+  const table = (
+    <DataTable<AgentSandboxPool>
+      columns={columns}
+      data={rows}
+      idFn={(row) => `${(row as PoolRow).owningClusterID ?? currentCluster}/${row.name}`}
+      isLoading={poolsQuery.isLoading}
+      dataUpdatedAt={poolsQuery.dataUpdatedAt}
+      refetch={poolsQuery.refetch}
+      multipleHandlers={multipleHandlers}
+      toolbarConfig={{
+        filterOptions: poolNumberFilterOptions(t),
+        globalSearch: { placeholder: t("pools.searchAll") },
+      }}
+      className={fixed ? "table-layout-fixed h-full" : undefined}
+    >
+      {createButton}
+    </DataTable>
+  )
+
+  if (fixed) return table
 
   return (
     <section>
@@ -240,18 +276,7 @@ export function EnvPoolsSection({
           </span>
         </div>
       </div>
-      <QueryTable
-        columns={columns}
-        idFn={(row: AgentSandboxPool) => row.name}
-        queryOptions={queryOptions}
-        multipleHandlers={multipleHandlers}
-        toolbarConfig={{
-          filterOptions: poolNumberFilterOptions(t),
-          globalSearch: { placeholder: t("pools.searchAll") },
-        }}
-      >
-        {createButton}
-      </QueryTable>
+      {table}
     </section>
   )
 }

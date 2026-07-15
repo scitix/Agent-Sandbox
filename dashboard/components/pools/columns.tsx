@@ -45,7 +45,18 @@ import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
+import { useAtomValue } from "jotai"
+import { clustersAtom } from "@/lib/atoms"
 import type { TranslationKey } from "@/messages/_schema"
+
+// PoolRow is a SandboxPool row optionally tagged with its owning cluster. The
+// Env pools view merges local pools with foreign members surfaced from
+// status.clusters[]; foreign rows set owningClusterID (a peer cluster) and
+// foreignCluster=true. Plain pool tables leave both unset (→ current cluster).
+export type PoolRow = AgentSandboxPool & {
+  owningClusterID?: string
+  foreignCluster?: boolean
+}
 
 export const POOL_PHASE_COLORS: StatusBadgeColorMap = {
   ready: "bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30",
@@ -140,15 +151,39 @@ function OwningEnvCell({ envName }: { envName?: string }) {
   return <ResourceLink value={envName} href={href} tone="muted" />
 }
 
-// Pool name → the pool's detail page, nested under its owning Env. Pools not
-// yet adopted by an Env (no owningEnv) fall back to a copy-only label.
+// Pool name → the pool's detail page, nested under its owning Env. For a
+// foreign row (owningClusterID set) the link targets that peer cluster's pools
+// page. Pools with no owning Env fall back to a copy-only label.
 function PoolNameCell({ pool }: { pool: AgentSandboxPool }) {
-  const clusterID = useClusterID()
+  const currentCluster = useClusterID()
   const locale = useLocale()
+  const cid = (pool as PoolRow).owningClusterID || currentCluster
   const href = pool.owningEnv
-    ? `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/pools/${encodeURIComponent(pool.name)}`
+    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/pools/${encodeURIComponent(pool.name)}`
     : undefined
   return <ResourceLink value={pool.name} href={href} />
+}
+
+// OwningClusterCell renders the cluster a pool belongs to. The local cluster is
+// shown muted; a peer cluster links to that cluster's SandboxEnv detail page.
+function OwningClusterCell({ pool }: { pool: AgentSandboxPool }) {
+  const currentCluster = useClusterID()
+  const locale = useLocale()
+  const clustersData = useAtomValue(clustersAtom)
+  const cid = (pool as PoolRow).owningClusterID || currentCluster
+  const isLocal = cid === currentCluster
+  const display = clustersData?.clusters?.find((c) => c.id === cid)?.name ?? cid
+  const href = pool.owningEnv
+    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}`
+    : undefined
+  return (
+    <ResourceLink
+      value={display}
+      href={href}
+      copyable={false}
+      tone={isLocal ? "muted" : "default"}
+    />
+  )
 }
 
 // Per-pool autoscaling lookups, all keyed off the owning Env's spec/status.
@@ -266,6 +301,9 @@ export interface PoolColumnsOptions {
   // Env-scoped row actions. Each appears in the row dropdown when set.
   onEditPool?: (pool: AgentSandboxPool) => void
   onDeletePool?: (pool: AgentSandboxPool) => void
+  // When true, adds an "owning cluster" column and makes name/cluster links
+  // cluster-aware. Used by the Env pools view that merges foreign members.
+  owningCluster?: boolean
 }
 
 /**
@@ -388,6 +426,19 @@ export function createPoolColumns(
       cell: ({ row }) => <PoolNameCell pool={row.original} />,
       filterFn: textFilterFn,
     },
+    ...(options?.owningCluster
+      ? [
+          {
+            id: "owningCluster",
+            accessorFn: (row: AgentSandboxPool) => (row as PoolRow).owningClusterID ?? "",
+            header: ({ column }) => (
+              <DataTableColumnHeader column={column} title={t("pools.col.owningCluster")} />
+            ),
+            enableSorting: false,
+            cell: ({ row }) => <OwningClusterCell pool={row.original} />,
+          } satisfies ColumnDef<AgentSandboxPool>,
+        ]
+      : []),
     ...(options?.showOwner ? [ownerColumn] : []),
     {
       id: "phase",
@@ -597,6 +648,9 @@ export function createPoolColumns(
     {
       id: "actions",
       cell: ({ row }) => {
+        // Foreign (peer-cluster) rows are read-only here — edit/delete/metrics
+        // target the local cluster and cannot act on another cluster's pool.
+        if ((row.original as PoolRow).foreignCluster) return null
         const onEditPool = options?.onEditPool
         const onDeletePool = options?.onDeletePool
         const hasAny = onViewMetrics || onEditPool || onDeletePool

@@ -21,10 +21,15 @@ import { useQuery } from "@tanstack/react-query"
 import { Check, Copy } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { MarkdownRenderer } from "@/components/markdown-renderer"
+import { ResourceLink } from "@/components/custom/resource-link"
 import { envQueryOptions } from "@/lib/queries"
 import type { AgentSandboxEnv } from "@/lib/api/client"
 import { useTranslation, type TranslationKey } from "@/lib/i18n"
+import { useClusterID } from "@/hooks/use-cluster-id"
+import { useLocale } from "@/hooks/use-locale"
+import { clusterPath } from "@/lib/cluster-path"
 import { cn } from "@/lib/utils"
 
 interface PageProps {
@@ -81,15 +86,36 @@ function EnvOverview({
   env: AgentSandboxEnv
   t: (key: TranslationKey, params?: Record<string, string | number>) => string
 }) {
+  const clusterID = useClusterID()
+  const locale = useLocale()
   const memberCount =
     env.status?.memberCount ??
     (env.spec.clusters ?? []).reduce((acc, c) => acc + (c.members?.length ?? 0), 0)
   const groups = env.spec.autoscaling?.groups ?? []
   const enabledGroups = groups.filter((g) => g.enabled).length
 
+  // Cross-cluster scheduling is "on" when the federation has surfaced a
+  // same-named Env in another cluster — i.e. status.clusters carries a
+  // non-local (isLocal !== true) segment.
+  const multiCluster = (env.status?.clusters ?? []).some((c) => c.isLocal !== true)
+  const templateHref = `${clusterPath(clusterID, "templates", locale)}/${encodeURIComponent(
+    env.spec.templateRef.name,
+  )}`
+
   const cells: { label: string; value: React.ReactNode }[] = [
-    { label: t("envs.detail.field.template"), value: env.spec.templateRef.name },
+    {
+      label: t("envs.detail.field.template"),
+      value: <ResourceLink value={env.spec.templateRef.name} href={templateHref} copyable={false} />,
+    },
     { label: t("envs.detail.field.mode"), value: env.spec.mode },
+    {
+      label: t("envs.detail.field.multiCluster"),
+      value: (
+        <Badge variant={multiCluster ? "default" : "outline"}>
+          {multiCluster ? t("envs.detail.multiCluster.on") : t("envs.detail.multiCluster.off")}
+        </Badge>
+      ),
+    },
     { label: t("envs.detail.field.members"), value: memberCount },
     {
       label: t("envs.detail.field.autoscaling"),
