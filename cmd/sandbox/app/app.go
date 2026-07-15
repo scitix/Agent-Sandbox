@@ -36,7 +36,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envscheduler"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv"
-	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolmigration"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/autoscalingstate"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
@@ -476,20 +475,6 @@ func Run(opts Options) {
 	}
 	if err := envReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxEnv")
-		os.Exit(1)
-	}
-
-	// PoolAdoptionReconciler is the transitional half of the SandboxEnv Phase 1
-	// migration: it wraps every existing SandboxPool in a same-named
-	// SandboxEnv. Removable once the Env-creates-Pool flow lands. See
-	// pkg/controllers/sandboxenv/poolmigration/README.md.
-	if err := (&poolmigration.PoolAdoptionReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		LocalClusterID: localClusterID,
-		InstanceTypes:  itProvider,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "PoolAdoption")
 		os.Exit(1)
 	}
 

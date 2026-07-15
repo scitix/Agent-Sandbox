@@ -64,9 +64,8 @@ class SandboxPool:
             spec_yaml (str | Unset): Full EmbeddedSandboxTemplate (idleImage, runtimes, reservation, template) serialized as
                 YAML for diff comparison.
             created_at (datetime.datetime | Unset): Creation time of the pool (from metadata.creationTimestamp)
-            owning_env (str | Unset): Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). Empty when
-                the pool has not been adopted by an Env yet — typical during a brief window after pool creation before the
-                PoolAdoptionReconciler runs.
+            owning_env (str | Unset): Name of the SandboxEnv that owns this pool (resolved from OwnerReferences). Every pool
+                is derived from an Env; empty only for a pool with no owning Env.
      """
 
     name: str

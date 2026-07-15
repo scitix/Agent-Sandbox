@@ -232,8 +232,8 @@ func copyMapNonNil(in map[string]string) map[string]string {
 }
 
 // OwnerReferenceForEnv is the canonical controlling OwnerReference stamped
-// onto every member SandboxPool. Exported so the poolmigration adopter and
-// any direct test set-up can produce identical references.
+// onto every member SandboxPool. Exported so direct test set-up can produce
+// identical references.
 func OwnerReferenceForEnv(env *agentsv1alpha1.SandboxEnv) metav1.OwnerReference {
 	return metav1.OwnerReference{
 		APIVersion:         agentsv1alpha1.GroupVersion.String(),

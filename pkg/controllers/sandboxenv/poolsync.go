@@ -123,14 +123,10 @@ func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1
 // through the env-scoped Pool CRUD path (POST /envs/{name}/sandboxpools)
 // so plugin admission (quota reservation etc.) gates each create.
 //
-// Historical note: an earlier revision synthesised a single namesake
-// member when this slice was empty, to preserve the Phase 1 adopter
-// shape. That fallback was removed once the adopter started populating
-// members directly — it produced "ghost" Pools that bypassed quota
-// admission and could not be deleted through the member CRUD endpoints
-// (because no matching member entry existed in spec). See:
-//
-//	pkg/controllers/sandboxenv/poolmigration/adopter.go.
+// Members come exclusively from spec: the reconciler never synthesises a
+// namesake member for an empty segment. A synthesised member would produce a
+// "ghost" Pool that bypassed quota admission and could not be deleted through
+// the member CRUD endpoints, since no matching member entry exists in spec.
 func desiredLocalMembers(env *agentsv1alpha1.SandboxEnv, localClusterID string) []agentsv1alpha1.EnvClusterMember {
 	if env == nil {
 		return nil
@@ -146,7 +142,7 @@ func desiredLocalMembers(env *agentsv1alpha1.SandboxEnv, localClusterID string) 
 // listOwnedPools returns every SandboxPool in env.Namespace whose
 // OwnerReferences include this Env, keyed by Pool name. Stale refs (UID
 // mismatch) are excluded — the OwnerRef will be re-stamped on the next
-// adoption pass.
+// reconcile when the member Pool is materialised.
 func (r *SandboxEnvReconciler) listOwnedPools(ctx context.Context, env *agentsv1alpha1.SandboxEnv) (map[string]*agentsv1alpha1.SandboxPool, error) {
 	pools := &agentsv1alpha1.SandboxPoolList{}
 	if err := r.List(ctx, pools, client.InNamespace(env.Namespace)); err != nil {
@@ -223,8 +219,9 @@ func (r *SandboxEnvReconciler) updateMemberPoolIfDrifted(
 		// empty Member.Spec snapshot would otherwise wipe out the live
 		// Pool's containers, breaking every code path that iterates
 		// Pool.Spec.Template.Spec.Containers (release, idle-image lookup,
-		// pod creation). The Pool stays on its previous spec until
-		// poolmigration's syncMember repopulates the Member snapshot.
+		// pod creation). The Pool stays on its previous spec until the
+		// member's Spec snapshot is repopulated (API-time AddMember /
+		// sync-template).
 		if len(want.Spec.Template.Spec.Containers) > 0 || len(current.Spec.Template.Spec.Containers) == 0 {
 			current.Spec.EmbeddedSandboxTemplate = *want.Spec.EmbeddedSandboxTemplate.DeepCopy()
 		}
