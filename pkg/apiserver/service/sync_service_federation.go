@@ -29,6 +29,10 @@ import (
 
 const defaultFederationReportInterval = 5 * time.Second
 
+// federationMetricsInterval throttles the full gauge Reset+rewrite in
+// applyFederationBroadcast; the registry itself stays current for routing.
+const federationMetricsInterval = 15 * time.Second
+
 // SetFederation enables cross-cluster capacity federation on this sync service.
 // registry is the local soft-state store consumed by the router; source
 // produces this cluster's capacity to advertise. Both must be non-nil for the
@@ -100,8 +104,16 @@ func (s *syncServiceImpl) applyFederationBroadcast(reg *federation.Registry, ev 
 		})
 	}
 	reg.Upsert(batch)
-	federation.PublishMetrics(reg.Snapshot())
-	s.log.Info("federation: applied capacity batch", "items", len(batch))
+	// The registry is always current for routing. Refresh the observability
+	// gauges (a full Reset+rewrite over every member) at most once per
+	// interval so a busy fleet — where each connected cluster relays a batch
+	// every few seconds — does not rewrite all gauges on every batch. No
+	// per-batch logging: these arrive every few seconds per cluster and the
+	// gauges already carry the state.
+	if now.Sub(s.fedMetricsAt) >= federationMetricsInterval {
+		s.fedMetricsAt = now
+		federation.PublishMetrics(reg.Snapshot())
+	}
 }
 
 // runReportFederation advertises this cluster's capacity to the Hub on a ticker

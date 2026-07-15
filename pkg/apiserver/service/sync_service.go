@@ -142,6 +142,9 @@ type syncServiceImpl struct {
 	fedSource         federation.CapacitySource
 	localClusterID    string
 	fedReportInterval time.Duration
+	// fedMetricsAt throttles federation gauge republishing. Accessed only from
+	// the single runWatchFederation goroutine, so it needs no lock.
+	fedMetricsAt time.Time
 }
 
 // NewSyncService creates a new SyncService.

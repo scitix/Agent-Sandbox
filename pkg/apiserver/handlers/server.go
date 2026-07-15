@@ -220,38 +220,11 @@ func (s *Server) isCrossCluster(clusterID string) bool {
 	return s.forwarder.IsCrossCluster(clusterID)
 }
 
-// forwardEnvCreateIfRemote handles Env-based cross-cluster placement for a
-// Sandbox.Create. For a bare Env name (no explicit "cluster::" prefix), it asks
-// the router whether a same-named Env in another cluster has idle capacity
-// while the local Env has none; if so it pins the exact foreign member pool,
-// rewrites the request to "<cluster>::<pool>", and forwards it — returning
-// true. Reusing the explicit cluster::pool form means the receiving cluster
-// resolves it as a direct local pool (never re-forwarding: structurally
-// single-hop) and prefixes the returned sandbox ID with its own cluster, so
-// subsequent operations route back. A request that already carries a cluster
-// prefix is left for the direct-forward path.
-func (s *Server) forwardEnvCreateIfRemote(ctx context.Context, parsed cluster.ParsedPoolRef, namespace, scalingGroup string, body *gen.CreateSandboxRequest) bool {
-	if parsed.ClusterID != "" {
-		return false
-	}
-	r, ok := s.sandbox.(interface {
-		ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) (string, string, bool)
-	})
-	if !ok {
-		return false
-	}
-	targetCluster, targetPool, found := r.ResolveCreateTarget(namespace, parsed.PoolName, scalingGroup)
-	if !found || !s.isCrossCluster(targetCluster) {
-		return false
-	}
-	// Rewrite the forwarded pool reference to the pinned foreign pool so the
-	// receiver treats it as an explicit cluster::pool create.
-	fwd := *body
-	fwd.PoolName = targetCluster + "::" + targetPool
-	s.forwarder.Forward(httpctx.GinFromCtx(ctx), targetCluster, service.URLKindNative, jsonBody(&fwd))
-	return true
-}
-
+// Note: the native API deliberately does NOT perform automatic Env-based
+// cross-cluster placement. A native (UI-facing) create only crosses clusters
+// when the caller is explicit ("cluster::pool", handled below). Automatic
+// same-named-Env spillover to another cluster is an E2B-only behaviour so a
+// UI create never surprises the user with a sandbox on a different cluster.
 func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequestObject) (gen.CreateSandboxResponseObject, error) {
 	auth := authFrom(ctx)
 	if req.Body == nil || strings.TrimSpace(req.Body.PoolName) == "" {
@@ -316,12 +289,6 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 			return gen.CreateSandbox400JSONResponse{Error: "startupTimeout must be a positive duration"}, nil
 		}
 		input.StartupTimeout = d
-	}
-
-	// Env-based cross-cluster placement: forward to a same-named Env in
-	// another cluster when the local Env has no idle capacity.
-	if s.forwardEnvCreateIfRemote(ctx, parsed, input.Namespace, input.RequestedScalingGroup, req.Body) {
-		return nil, nil
 	}
 
 	result, appErr := s.sandbox.Create(ctx, input)
