@@ -91,7 +91,7 @@ jobs:
           package-name: agent-sandbox-worker
           delete-untagged: true
           keep-at-most: 10
-          skip-tags: latest
+          skip-tags: "*.*.*,latest"
         continue-on-error: true
 
       - name: Clean up old agent-sandbox-hub chart versions
@@ -103,5 +103,5 @@ jobs:
           package-name: agent-sandbox-hub
           delete-untagged: true
           keep-at-most: 10
-          skip-tags: latest
+          skip-tags: "*.*.*,latest"
         continue-on-error: true
