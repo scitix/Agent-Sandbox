@@ -19,45 +19,65 @@ import (
 	"time"
 )
 
-func TestForeignForEnvExcludesLocalCluster(t *testing.T) {
+func cap1(cluster, pool, group string, idle int32, at time.Time) Capacity {
+	return Capacity{ClusterID: cluster, Namespace: "ns", EnvName: "env", MemberPool: pool, ScalingGroup: group, Idle: idle, ObservedAt: at}
+}
+
+func TestLocalIdleSumsMatchingGroup(t *testing.T) {
 	now := time.Unix(1000, 0)
 	r := NewRegistry("cluster-a", 30*time.Second)
 	r.SetClock(func() time.Time { return now })
 
 	r.Upsert([]Capacity{
-		{ClusterID: "cluster-a", Namespace: "ns", EnvName: "env", ScalingGroup: "", Idle: 3, ObservedAt: now},
-		{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", ScalingGroup: "", Idle: 5, ObservedAt: now},
-		{ClusterID: "cluster-b", Namespace: "ns", EnvName: "other", ScalingGroup: "", Idle: 9, ObservedAt: now},
+		cap1("cluster-a", "p-cpu", "cpu", 2, now),
+		cap1("cluster-a", "p-gpu", "gpu", 5, now),
+		cap1("cluster-b", "p-cpu", "cpu", 9, now), // foreign, ignored
 	})
 
-	got := r.ForeignForEnv("ns", "env")
-	if len(got) != 1 {
-		t.Fatalf("expected 1 foreign record, got %d: %+v", len(got), got)
+	if got := r.LocalIdle("ns", "env", ""); got != 7 { // all local members
+		t.Fatalf("LocalIdle(all) = %d, want 7", got)
 	}
-	if got[0].ClusterID != "cluster-b" || got[0].Idle != 5 {
-		t.Fatalf("unexpected foreign record: %+v", got[0])
+	if got := r.LocalIdle("ns", "env", "cpu"); got != 2 { // only cpu group
+		t.Fatalf("LocalIdle(cpu) = %d, want 2", got)
 	}
 }
 
-func TestForeignIdleAggregatesFreshOnly(t *testing.T) {
+func TestBestForeignMemberPicksMaxIdlePool(t *testing.T) {
 	now := time.Unix(1000, 0)
 	r := NewRegistry("cluster-a", 30*time.Second)
 	r.SetClock(func() time.Time { return now })
 
 	r.Upsert([]Capacity{
-		// Fresh foreign entries in the same group.
-		{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", ScalingGroup: "cpu", Idle: 2, ObservedAt: now},
-		{ClusterID: "cluster-c", Namespace: "ns", EnvName: "env", ScalingGroup: "cpu", Idle: 4, ObservedAt: now},
-		// Stale entry (observed 40s ago, TTL 30s) must be excluded.
-		{ClusterID: "cluster-d", Namespace: "ns", EnvName: "env", ScalingGroup: "cpu", Idle: 100, ObservedAt: now.Add(-40 * time.Second)},
-		// Different group must be excluded.
-		{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", ScalingGroup: "gpu", Idle: 7, ObservedAt: now},
-		// Local cluster must be excluded.
-		{ClusterID: "cluster-a", Namespace: "ns", EnvName: "env", ScalingGroup: "cpu", Idle: 50, ObservedAt: now},
+		cap1("cluster-a", "p-local", "cpu", 50, now), // local, ignored
+		cap1("cluster-b", "p-b1", "cpu", 2, now),
+		cap1("cluster-c", "p-c1", "cpu", 6, now),
+		cap1("cluster-c", "p-c-gpu", "gpu", 8, now),                    // wrong group when cpu requested
+		cap1("cluster-d", "p-d1", "cpu", 99, now.Add(-40*time.Second)), // stale
 	})
 
-	if got := r.ForeignIdle("ns", "env", "cpu"); got != 6 {
-		t.Fatalf("expected foreign idle 6, got %d", got)
+	cluster, pool, idle, ok := r.BestForeignMember("ns", "env", "cpu")
+	if !ok || cluster != "cluster-c" || pool != "p-c1" || idle != 6 {
+		t.Fatalf("BestForeignMember(cpu) = (%s,%s,%d,%v), want (cluster-c,p-c1,6,true)", cluster, pool, idle, ok)
+	}
+
+	// No group constraint → gpu member (idle 8) wins.
+	cluster, pool, idle, ok = r.BestForeignMember("ns", "env", "")
+	if !ok || cluster != "cluster-c" || pool != "p-c-gpu" || idle != 8 {
+		t.Fatalf("BestForeignMember(all) = (%s,%s,%d,%v), want (cluster-c,p-c-gpu,8,true)", cluster, pool, idle, ok)
+	}
+}
+
+func TestBestForeignMemberNoneWhenAllZeroOrLocal(t *testing.T) {
+	now := time.Unix(1000, 0)
+	r := NewRegistry("cluster-a", 30*time.Second)
+	r.SetClock(func() time.Time { return now })
+
+	r.Upsert([]Capacity{
+		cap1("cluster-a", "p-local", "cpu", 10, now), // local
+		cap1("cluster-b", "p-b1", "cpu", 0, now),     // foreign, no idle
+	})
+	if _, _, _, ok := r.BestForeignMember("ns", "env", ""); ok {
+		t.Fatalf("expected no foreign target")
 	}
 }
 
@@ -67,68 +87,27 @@ func TestTTLExpiry(t *testing.T) {
 	r := NewRegistry("cluster-a", 30*time.Second)
 	r.SetClock(func() time.Time { return cur })
 
-	r.Upsert([]Capacity{
-		{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", Idle: 5, ObservedAt: base},
-	})
-
-	if got := r.ForeignIdle("ns", "env", ""); got != 5 {
-		t.Fatalf("expected 5 before expiry, got %d", got)
+	r.Upsert([]Capacity{cap1("cluster-b", "p-b1", "cpu", 5, base)})
+	if _, _, _, ok := r.BestForeignMember("ns", "env", ""); !ok {
+		t.Fatalf("expected fresh foreign target before expiry")
 	}
-
-	cur = base.Add(31 * time.Second) // advance past TTL
-	if got := r.ForeignIdle("ns", "env", ""); got != 0 {
-		t.Fatalf("expected 0 after TTL expiry, got %d", got)
+	cur = base.Add(31 * time.Second)
+	if _, _, _, ok := r.BestForeignMember("ns", "env", ""); ok {
+		t.Fatalf("expected no target after TTL expiry")
 	}
 	if snap := r.Snapshot(); len(snap) != 0 {
 		t.Fatalf("expected empty snapshot after expiry, got %d", len(snap))
 	}
 }
 
-func TestLocalIdleAndBestForeignCluster(t *testing.T) {
+func TestUpsertReplacesSameMember(t *testing.T) {
 	now := time.Unix(1000, 0)
 	r := NewRegistry("cluster-a", 30*time.Second)
 	r.SetClock(func() time.Time { return now })
 
-	r.Upsert([]Capacity{
-		{ClusterID: "cluster-a", Namespace: "ns", EnvName: "env", ScalingGroup: "", Idle: 0, ObservedAt: now},
-		{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", ScalingGroup: "", Idle: 2, ObservedAt: now},
-		{ClusterID: "cluster-c", Namespace: "ns", EnvName: "env", ScalingGroup: "", Idle: 5, ObservedAt: now},
-		// Stale high-idle foreign entry must be ignored.
-		{ClusterID: "cluster-d", Namespace: "ns", EnvName: "env", ScalingGroup: "", Idle: 99, ObservedAt: now.Add(-40 * time.Second)},
-	})
-
-	if got := r.LocalIdle("ns", "env", ""); got != 0 {
-		t.Fatalf("expected local idle 0, got %d", got)
-	}
-	cluster, idle := r.BestForeignCluster("ns", "env", "")
-	if cluster != "cluster-c" || idle != 5 {
-		t.Fatalf("expected best foreign (cluster-c, 5), got (%s, %d)", cluster, idle)
-	}
-}
-
-func TestBestForeignClusterNoneWhenAllZeroOrLocal(t *testing.T) {
-	now := time.Unix(1000, 0)
-	r := NewRegistry("cluster-a", 30*time.Second)
-	r.SetClock(func() time.Time { return now })
-
-	r.Upsert([]Capacity{
-		{ClusterID: "cluster-a", Namespace: "ns", EnvName: "env", Idle: 10, ObservedAt: now}, // local, ignored
-		{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", Idle: 0, ObservedAt: now},  // foreign but no idle
-	})
-	if cluster, idle := r.BestForeignCluster("ns", "env", ""); cluster != "" || idle != 0 {
-		t.Fatalf("expected no foreign cluster, got (%s, %d)", cluster, idle)
-	}
-}
-
-func TestUpsertReplacesSameKey(t *testing.T) {
-	now := time.Unix(1000, 0)
-	r := NewRegistry("cluster-a", 30*time.Second)
-	r.SetClock(func() time.Time { return now })
-
-	r.Upsert([]Capacity{{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", Idle: 1, ObservedAt: now}})
-	r.Upsert([]Capacity{{ClusterID: "cluster-b", Namespace: "ns", EnvName: "env", Idle: 9, ObservedAt: now}})
-
-	if got := r.ForeignIdle("ns", "env", ""); got != 9 {
-		t.Fatalf("expected latest value 9, got %d", got)
+	r.Upsert([]Capacity{cap1("cluster-b", "p-b1", "cpu", 1, now)})
+	r.Upsert([]Capacity{cap1("cluster-b", "p-b1", "cpu", 9, now)})
+	if _, _, idle, ok := r.BestForeignMember("ns", "env", ""); !ok || idle != 9 {
+		t.Fatalf("expected latest idle 9, got %d (ok=%v)", idle, ok)
 	}
 }

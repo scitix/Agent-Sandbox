@@ -19,7 +19,7 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-var fedLabels = []string{"cluster", "namespace", "env", "group"}
+var fedLabels = []string{"cluster", "namespace", "env", "member", "group"}
 
 var (
 	// federationIdle mirrors the idle capacity each cluster advertises for an
@@ -54,7 +54,7 @@ func PublishMetrics(snapshot []Capacity) {
 	federationRunning.Reset()
 	federationDesired.Reset()
 	for _, c := range snapshot {
-		lv := []string{c.ClusterID, c.Namespace, c.EnvName, c.ScalingGroup}
+		lv := []string{c.ClusterID, c.Namespace, c.EnvName, c.MemberPool, c.ScalingGroup}
 		federationIdle.WithLabelValues(lv...).Set(float64(c.Idle))
 		federationRunning.WithLabelValues(lv...).Set(float64(c.Running))
 		federationDesired.WithLabelValues(lv...).Set(float64(c.Desired))

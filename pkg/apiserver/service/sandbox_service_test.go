@@ -211,20 +211,20 @@ func TestSandboxService_Create_Success(t *testing.T) {
 	}
 }
 
-// A create forwarded here by another cluster's Env router (bare Env name,
-// ForwardedFromCluster set) must return a sandbox ID prefixed with this
-// cluster's ID — identical to an explicit cluster::pool request — so
-// subsequent operations route back.
-func TestSandboxService_Create_ForwardedFromCluster_PrefixesID(t *testing.T) {
+// An Env-routed cross-cluster forward is rewritten by the origin to
+// "<cluster>::<pool>", so the receiving cluster sees a request with
+// ClusterID set and prefixes the returned sandbox ID with its own cluster —
+// so subsequent operations route back.
+func TestSandboxService_Create_ClusterPrefixedRequest_PrefixesID(t *testing.T) {
 	pool := makePool("pool-a", "tenant-a")
 	pod := makeIdlePod("pod-a", "tenant-a", "pool-a")
 	svc := newTestSandboxServiceWithCluster(t, "gw-a", pool, pod)
 
 	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
-		PoolName:             "pool-a",
-		Namespace:            "tenant-a",
-		Image:                "busybox:1.37",
-		ForwardedFromCluster: "gw-b",
+		ClusterID: "gw-a", // as parsed from "gw-a::pool-a"
+		PoolName:  "pool-a",
+		Namespace: "tenant-a",
+		Image:     "busybox:1.37",
 	})
 	if appErr != nil {
 		t.Fatalf("unexpected error: %v", appErr)
@@ -255,7 +255,7 @@ func TestSandboxService_Create_PoolNotFound(t *testing.T) {
 type fakeEnvRouter struct {
 	resolveFn func(ns, clusterID, poolName string) envscheduler.ResolveResult
 	pickFn    func(types.NamespacedName, string) string
-	clusterFn func(types.NamespacedName, string) string
+	targetFn  func(types.NamespacedName, string) (string, string, bool)
 }
 
 func (f *fakeEnvRouter) Resolve(ns, clusterID, poolName string) envscheduler.ResolveResult {
@@ -264,11 +264,11 @@ func (f *fakeEnvRouter) Resolve(ns, clusterID, poolName string) envscheduler.Res
 func (f *fakeEnvRouter) SelectPool(key types.NamespacedName, scalingGroup string) string {
 	return f.pickFn(key, scalingGroup)
 }
-func (f *fakeEnvRouter) SelectClusterForCreate(key types.NamespacedName, scalingGroup string) string {
-	if f.clusterFn == nil {
-		return ""
+func (f *fakeEnvRouter) SelectForeignTarget(key types.NamespacedName, scalingGroup string) (string, string, bool) {
+	if f.targetFn == nil {
+		return "", "", false
 	}
-	return f.clusterFn(key, scalingGroup)
+	return f.targetFn(key, scalingGroup)
 }
 
 // TestSandboxService_Create_EnvRouter_BareNameMissing_Returns404 verifies the

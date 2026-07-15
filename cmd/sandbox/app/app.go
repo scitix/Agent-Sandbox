@@ -469,6 +469,11 @@ func Run(opts Options) {
 	if envRouter != nil {
 		envReconciler.EnvRouterSync = envRouter
 	}
+	// Mirror the cross-cluster capacity view into status.clusters so the
+	// federated routing input is visible via kubectl. nil in single-cluster.
+	if fedRegistry != nil {
+		envReconciler.Federation = fedRegistry
+	}
 	if err := envReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxEnv")
 		os.Exit(1)

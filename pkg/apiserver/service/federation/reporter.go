@@ -53,50 +53,47 @@ func (s *k8sCapacitySource) Collect(ctx context.Context) ([]Capacity, error) {
 	var out []Capacity
 	for i := range envs.Items {
 		env := &envs.Items[i]
-
-		// Whole-Env aggregate row (group == "").
-		out = append(out, Capacity{
-			ClusterID:    s.localClusterID,
-			Namespace:    env.Namespace,
-			EnvName:      env.Name,
-			ScalingGroup: "",
-			Idle:         env.Status.IdleReplicas,
-			Running:      env.Status.RunningReplicas,
-			Desired:      env.Status.DesiredReplicas,
-			Pending:      localPending(env),
-			Capacity:     -1,
-			ObservedAt:   now,
-		})
-
-		// One row per scaling group.
-		for _, g := range env.Status.ScalingGroups {
-			out = append(out, Capacity{
-				ClusterID:    s.localClusterID,
-				Namespace:    env.Namespace,
-				EnvName:      env.Name,
-				ScalingGroup: g.Name,
-				Idle:         g.TotalIdle,
-				Running:      g.TotalRunning,
-				Desired:      g.TotalDesired,
-				Capacity:     -1,
-				ObservedAt:   now,
-			})
+		// Member name → scaling group, from the local cluster's spec segment.
+		// ObservedMember does not carry the group, so join it from config.
+		groupOf := memberScalingGroups(env, s.localClusterID)
+		for ci := range env.Status.Clusters {
+			cs := &env.Status.Clusters[ci]
+			if !cs.IsLocal {
+				continue
+			}
+			for mi := range cs.ObservedMembers {
+				m := &cs.ObservedMembers[mi]
+				out = append(out, Capacity{
+					ClusterID:    s.localClusterID,
+					Namespace:    env.Namespace,
+					EnvName:      env.Name,
+					MemberPool:   m.Name,
+					ScalingGroup: groupOf[m.Name],
+					Idle:         m.IdleCount,
+					Running:      m.RunningCount,
+					Desired:      m.DesiredReplicas,
+					Pending:      m.PendingRequests,
+					Capacity:     -1,
+					ObservedAt:   now,
+				})
+			}
 		}
 	}
 	return out, nil
 }
 
-// localPending sums the claim-queue length across the local cluster segment's
-// observed members.
-func localPending(env *agentsv1alpha1.SandboxEnv) int32 {
-	total := int32(0)
-	for _, c := range env.Status.Clusters {
-		if !c.IsLocal {
+// memberScalingGroups maps member pool name → scaling group for the local
+// cluster's spec segment.
+func memberScalingGroups(env *agentsv1alpha1.SandboxEnv, localClusterID string) map[string]string {
+	out := map[string]string{}
+	for ci := range env.Spec.Clusters {
+		cs := &env.Spec.Clusters[ci]
+		if cs.ClusterID != localClusterID {
 			continue
 		}
-		for _, m := range c.ObservedMembers {
-			total += m.PendingRequests
+		for mi := range cs.Members {
+			out[cs.Members[mi].Name] = cs.Members[mi].Config.ScalingGroup
 		}
 	}
-	return total
+	return out
 }

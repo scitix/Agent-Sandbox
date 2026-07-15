@@ -274,8 +274,11 @@ service ClusterConfigService {
 // clock skew, and each Worker ages records out on a local TTL. A cluster that
 // stops reporting simply ages out everywhere — no explicit delete is needed.
 
-// EnvCapacity is a single cluster's runtime capacity for one (namespace, env,
-// scaling_group) triple. scaling_group == "" is the whole-Env aggregate.
+// EnvCapacity is one cluster's runtime capacity for a single member pool of a
+// same-named SandboxEnv. member_pool identifies the concrete SandboxPool in
+// that cluster so the origin cluster can pin cross-cluster placement to an
+// exact pool (forwarding "<cluster_id>::<member_pool>"); scaling_group lets the
+// origin honour a requested group.
 message EnvCapacity {
   string cluster_id      = 1;
   string namespace       = 2;
@@ -285,6 +288,8 @@ message EnvCapacity {
   int32  running         = 6;
   int32  pending         = 7;
   int32  desired         = 8;
+  // member_pool is the SandboxPool name of this member within its cluster.
+  string member_pool     = 12;
   // capacity is how many more sandboxes this cluster could admit for the
   // triple; -1 means unknown / unbounded.
   int32  capacity        = 9;

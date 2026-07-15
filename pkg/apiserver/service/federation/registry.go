@@ -14,8 +14,10 @@
 
 // Package federation holds the Worker-side soft-state view of cross-cluster
 // SandboxEnv capacity. Same-named SandboxEnvs living in different clusters are
-// independent objects; the federation shares only their runtime capacity so a
-// Worker's router can see whether a same-named Env elsewhere has idle room.
+// independent objects; the federation shares only their per-member runtime
+// capacity so a Worker's Env router can pin a create to an exact member pool
+// in another cluster (forwarding "<cluster>::<pool>"). Env spec is never
+// synced — management stays local to each cluster.
 //
 // The registry is pure soft state: every record has an observation time and is
 // aged out on a TTL, so a cluster that stops reporting simply disappears. No
@@ -29,19 +31,21 @@ import (
 	"time"
 )
 
-// Capacity is one cluster's runtime capacity for a single
-// (Namespace, EnvName, ScalingGroup) triple. ScalingGroup == "" is the
-// whole-Env aggregate.
+// Capacity is one cluster's runtime capacity for a single member pool of a
+// same-named SandboxEnv. The (ClusterID, Namespace, EnvName, MemberPool) tuple
+// is the record's identity; ScalingGroup lets the router honour a requested
+// group.
 type Capacity struct {
 	ClusterID    string
 	Namespace    string
 	EnvName      string
+	MemberPool   string
 	ScalingGroup string
 	Idle         int32
 	Running      int32
 	Pending      int32
 	Desired      int32
-	// Capacity is how many more sandboxes this cluster could admit; -1 means
+	// Capacity is how many more sandboxes this member could admit; -1 means
 	// unknown / unbounded.
 	Capacity int32
 	// SaturatedFor is the remaining saturation window; zero means not saturated.
@@ -52,8 +56,14 @@ type Capacity struct {
 	ObservedAt time.Time
 }
 
-func key(clusterID, namespace, env, group string) string {
-	return strings.Join([]string{clusterID, namespace, env, group}, "\x00")
+func key(clusterID, namespace, env, memberPool string) string {
+	return strings.Join([]string{clusterID, namespace, env, memberPool}, "\x00")
+}
+
+// matchesGroup reports whether a record belongs to the requested scaling group.
+// An empty request matches every member (no group constraint).
+func matchesGroup(c Capacity, group string) bool {
+	return group == "" || c.ScalingGroup == group
 }
 
 // Registry is the Worker's in-memory federation store. It is safe for
@@ -90,7 +100,7 @@ func (r *Registry) SetClock(now func() time.Time) {
 }
 
 // Upsert records a batch of capacity samples, replacing any previous value for
-// the same key.
+// the same member.
 func (r *Registry) Upsert(items []Capacity) {
 	if len(items) == 0 {
 		return
@@ -98,7 +108,7 @@ func (r *Registry) Upsert(items []Capacity) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, it := range items {
-		r.items[key(it.ClusterID, it.Namespace, it.EnvName, it.ScalingGroup)] = it
+		r.items[key(it.ClusterID, it.Namespace, it.EnvName, it.MemberPool)] = it
 	}
 }
 
@@ -107,9 +117,56 @@ func (r *Registry) fresh(c Capacity, now time.Time) bool {
 	return now.Sub(c.ObservedAt) <= r.ttl
 }
 
-// ForeignForEnv returns every non-expired record for the Env that belongs to a
-// cluster other than the local one, sorted deterministically.
-func (r *Registry) ForeignForEnv(namespace, env string) []Capacity {
+// LocalIdle sums this cluster's idle capacity for the Env across members that
+// match the requested scaling group (empty group = all members).
+func (r *Registry) LocalIdle(namespace, env, group string) int32 {
+	now := r.now()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	total := int32(0)
+	for _, c := range r.items {
+		if c.ClusterID != r.localClusterID || c.Namespace != namespace || c.EnvName != env {
+			continue
+		}
+		if !matchesGroup(c, group) || !r.fresh(c, now) {
+			continue
+		}
+		total += c.Idle
+	}
+	return total
+}
+
+// BestForeignMember returns the cluster ID and member pool of the member in
+// another cluster with the most idle capacity for the Env and requested
+// scaling group. ok is false when no foreign member has a fresh record with
+// idle > 0. Ties break on (clusterID, memberPool) for determinism.
+func (r *Registry) BestForeignMember(namespace, env, group string) (clusterID, memberPool string, idle int32, ok bool) {
+	now := r.now()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, c := range r.items {
+		if c.ClusterID == r.localClusterID || c.Namespace != namespace || c.EnvName != env {
+			continue
+		}
+		if !matchesGroup(c, group) || !r.fresh(c, now) || c.Idle <= 0 {
+			continue
+		}
+		better := c.Idle > idle ||
+			(c.Idle == idle && (!ok ||
+				c.ClusterID < clusterID ||
+				(c.ClusterID == clusterID && c.MemberPool < memberPool)))
+		if better {
+			clusterID, memberPool, idle, ok = c.ClusterID, c.MemberPool, c.Idle, true
+		}
+	}
+	return clusterID, memberPool, idle, ok
+}
+
+// ForeignMembers returns every non-expired member record for the Env that
+// belongs to a cluster other than the local one, sorted by (cluster, pool).
+// Used to mirror the cross-cluster view into SandboxEnv.status.clusters so it
+// is visible via kubectl.
+func (r *Registry) ForeignMembers(namespace, env string) []Capacity {
 	now := r.now()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -118,76 +175,17 @@ func (r *Registry) ForeignForEnv(namespace, env string) []Capacity {
 		if c.ClusterID == r.localClusterID || c.Namespace != namespace || c.EnvName != env {
 			continue
 		}
-		if !r.fresh(c, now) {
-			continue
+		if r.fresh(c, now) {
+			out = append(out, c)
 		}
-		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].ScalingGroup != out[j].ScalingGroup {
-			return out[i].ScalingGroup < out[j].ScalingGroup
+		if out[i].ClusterID != out[j].ClusterID {
+			return out[i].ClusterID < out[j].ClusterID
 		}
-		return out[i].ClusterID < out[j].ClusterID
+		return out[i].MemberPool < out[j].MemberPool
 	})
 	return out
-}
-
-// ForeignIdle sums idle capacity across all foreign clusters for the Env and
-// scaling group (group == "" matches the whole-Env aggregate rows).
-func (r *Registry) ForeignIdle(namespace, env, group string) int32 {
-	now := r.now()
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	total := int32(0)
-	for _, c := range r.items {
-		if c.ClusterID == r.localClusterID || c.Namespace != namespace || c.EnvName != env || c.ScalingGroup != group {
-			continue
-		}
-		if !r.fresh(c, now) {
-			continue
-		}
-		total += c.Idle
-	}
-	return total
-}
-
-// LocalIdle returns the local cluster's idle capacity for the Env and scaling
-// group (group == "" is the whole-Env aggregate row). Zero when the local
-// cluster has no fresh record for the triple.
-func (r *Registry) LocalIdle(namespace, env, group string) int32 {
-	now := r.now()
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	c, ok := r.items[key(r.localClusterID, namespace, env, group)]
-	if !ok || !r.fresh(c, now) {
-		return 0
-	}
-	return c.Idle
-}
-
-// BestForeignCluster returns the foreign cluster with the most idle capacity
-// for the Env and scaling group, and that idle count. Returns ("", 0) when no
-// foreign cluster has a fresh record with idle > 0. Ties break on clusterID
-// for determinism.
-func (r *Registry) BestForeignCluster(namespace, env, group string) (string, int32) {
-	now := r.now()
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	bestCluster := ""
-	bestIdle := int32(0)
-	for _, c := range r.items {
-		if c.ClusterID == r.localClusterID || c.Namespace != namespace || c.EnvName != env || c.ScalingGroup != group {
-			continue
-		}
-		if !r.fresh(c, now) || c.Idle <= 0 {
-			continue
-		}
-		if c.Idle > bestIdle || (c.Idle == bestIdle && (bestCluster == "" || c.ClusterID < bestCluster)) {
-			bestIdle = c.Idle
-			bestCluster = c.ClusterID
-		}
-	}
-	return bestCluster, bestIdle
 }
 
 // Snapshot returns every non-expired record (local and foreign) for
@@ -209,7 +207,7 @@ func (r *Registry) Snapshot() []Capacity {
 		if out[i].EnvName != out[j].EnvName {
 			return out[i].EnvName < out[j].EnvName
 		}
-		return out[i].ScalingGroup < out[j].ScalingGroup
+		return out[i].MemberPool < out[j].MemberPool
 	})
 	return out
 }

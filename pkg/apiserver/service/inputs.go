@@ -61,14 +61,4 @@ type CreateSandboxInput struct {
 	// for this sandbox only (E2B create body: network / allow_internet_access).
 	// Rejected when the target Pool has no networkPolicy (no filter sidecar).
 	NetworkPolicy *agentsv1alpha1.SandboxNetworkPolicy
-
-	// ForwardedFromCluster is set (to the source cluster ID) when this create
-	// arrived via cross-cluster forwarding for a bare Env name — i.e. the
-	// origin cluster's Env router chose to place the sandbox here. It carries
-	// no target-pool information (this cluster still resolves the Env and picks
-	// its own member pool); its sole effect is to make the returned sandbox ID
-	// carry this cluster's prefix, exactly like an explicit "cluster::pool"
-	// request, so subsequent data-plane and control-plane operations route back
-	// here. Empty for local and origin-side requests.
-	ForwardedFromCluster string
 }

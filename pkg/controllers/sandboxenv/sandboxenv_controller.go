@@ -60,6 +60,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 )
 
@@ -117,6 +118,20 @@ type SandboxEnvReconciler struct {
 	// Reconcile so the in-process Env router observes the freshest spec
 	// even if it missed an informer event.
 	EnvRouterSync EnvRouterSync
+
+	// Federation, when non-nil, supplies the cross-cluster capacity view so
+	// the reconciler can mirror other clusters' members into
+	// status.clusters[isLocal=false], making the federated decision input
+	// visible via kubectl. nil in single-cluster mode.
+	Federation FederationReader
+}
+
+// FederationReader is the read side of the cross-cluster capacity registry the
+// reconciler mirrors into status. Implemented by federation.Registry.
+type FederationReader interface {
+	// ForeignMembers returns the fresh member records for the Env from every
+	// cluster other than the local one.
+	ForeignMembers(namespace, env string) []federation.Capacity
 }
 
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxenvs,verbs=get;list;watch;create;update;patch;delete

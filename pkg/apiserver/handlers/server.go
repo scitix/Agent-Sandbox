@@ -221,31 +221,34 @@ func (s *Server) isCrossCluster(clusterID string) bool {
 }
 
 // forwardEnvCreateIfRemote handles Env-based cross-cluster placement for a
-// Sandbox.Create. For a bare Env name (no explicit "cluster::" prefix) that is
-// not itself a forwarded request, it asks the router whether a same-named Env
-// in another cluster should serve this create because the local Env has no
-// idle capacity; if so it forwards the raw request and returns true. The
-// X-Source-Cluster header marks an already-forwarded request and blocks a
-// second hop, so a forward never chains beyond one cluster.
+// Sandbox.Create. For a bare Env name (no explicit "cluster::" prefix), it asks
+// the router whether a same-named Env in another cluster has idle capacity
+// while the local Env has none; if so it pins the exact foreign member pool,
+// rewrites the request to "<cluster>::<pool>", and forwards it — returning
+// true. Reusing the explicit cluster::pool form means the receiving cluster
+// resolves it as a direct local pool (never re-forwarding: structurally
+// single-hop) and prefixes the returned sandbox ID with its own cluster, so
+// subsequent operations route back. A request that already carries a cluster
+// prefix is left for the direct-forward path.
 func (s *Server) forwardEnvCreateIfRemote(ctx context.Context, parsed cluster.ParsedPoolRef, namespace, scalingGroup string, body *gen.CreateSandboxRequest) bool {
 	if parsed.ClusterID != "" {
 		return false
 	}
-	gc := httpctx.GinFromCtx(ctx)
-	if gc.GetHeader(service.SourceClusterHeader) != "" {
-		return false
-	}
 	r, ok := s.sandbox.(interface {
-		ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) string
+		ResolveCreateTarget(namespace, poolOrEnvName, scalingGroup string) (string, string, bool)
 	})
 	if !ok {
 		return false
 	}
-	target := r.ResolveCreateTarget(namespace, parsed.PoolName, scalingGroup)
-	if target == "" || !s.isCrossCluster(target) {
+	targetCluster, targetPool, found := r.ResolveCreateTarget(namespace, parsed.PoolName, scalingGroup)
+	if !found || !s.isCrossCluster(targetCluster) {
 		return false
 	}
-	s.forwarder.Forward(gc, target, service.URLKindNative, jsonBody(body))
+	// Rewrite the forwarded pool reference to the pinned foreign pool so the
+	// receiver treats it as an explicit cluster::pool create.
+	fwd := *body
+	fwd.PoolName = targetCluster + "::" + targetPool
+	s.forwarder.Forward(httpctx.GinFromCtx(ctx), targetCluster, service.URLKindNative, jsonBody(&fwd))
 	return true
 }
 
@@ -271,11 +274,6 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 		PoolName:  parsed.PoolName,
 		Namespace: auth.Namespace,
 		Image:     derefString(req.Body.Image),
-		// When this request was forwarded here by another cluster's Env router
-		// (bare Env name, no explicit prefix), record the origin so the created
-		// sandbox ID is prefixed with our cluster — making subsequent ops route
-		// back. Empty for direct and origin-side requests.
-		ForwardedFromCluster: httpctx.GinFromCtx(ctx).GetHeader(service.SourceClusterHeader),
 	}
 	if req.Body.ContainerImages != nil {
 		input.ContainerImages = *req.Body.ContainerImages
