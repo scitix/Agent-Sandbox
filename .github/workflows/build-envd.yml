@@ -24,10 +24,10 @@ on:
       infra_ref:
         description: "e2b-infra git ref to checkout (branch, tag, or commit SHA)"
         required: false
-        # Pinned to envd 0.6.1. MUST match build-envd.sh's INFRA_REF and the
+        # Pinned to envd 0.6.10. MUST match build-envd.sh's INFRA_REF and the
         # base the patches in installer/runtimes/envd/patches/ were generated
         # against — the apply step below fails the build if they drift.
-        default: "1d930ee60fd74b3ad1d5c167165b1005baa471fe"
+        default: "1b19a3bcb37d1fb44171ae8dee3a126cf3d39c34"
       tini_version:
         description: "tini version to package (e.g. v0.19.0)"
         required: false
@@ -60,7 +60,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: e2b-dev/infra
-          ref: ${{ github.event.inputs.infra_ref || '1d930ee60fd74b3ad1d5c167165b1005baa471fe' }}
+          ref: ${{ github.event.inputs.infra_ref || '1b19a3bcb37d1fb44171ae8dee3a126cf3d39c34' }}
           path: e2b-infra
 
       # Apply our carried-forward envd patches BEFORE building. Without this the
