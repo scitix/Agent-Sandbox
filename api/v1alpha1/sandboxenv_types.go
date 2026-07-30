@@ -44,7 +44,14 @@ const (
 	ObservedMemberStateSaturated ObservedMemberState = "Saturated"
 	// ObservedMemberStateMissing: member Pool no longer exists in the cluster.
 	ObservedMemberStateMissing ObservedMemberState = "Missing"
-	// ObservedMemberStateInconsistent: member's Template or InstanceType drifted from Env's expectation.
+	// ObservedMemberStateInconsistent: member Pool references a different
+	// SandboxTemplate than the Env's templateRef.name. Template *version* is
+	// not part of this judgement — the cluster holds a single mutable
+	// SandboxTemplate per name, so spec.version is a human-maintained label
+	// rather than a resolvable revision. Whether a member has converged onto
+	// the Template's current body is answered by the revision hash
+	// (status.updateRevision vs the Pool's currentRevision), surfaced through
+	// the TemplateConsistent condition's RolloutInProgress reason.
 	ObservedMemberStateInconsistent ObservedMemberState = "Inconsistent"
 )
 
@@ -159,9 +166,18 @@ type SandboxEnvTemplateRef struct {
 	// +required
 	Name string `json:"name"`
 
-	// Version optionally pins the Env to a specific Template version. When
-	// empty, the Template's current spec.version is observed and recorded in
-	// status.
+	// Version records the SandboxTemplate spec.version this Env was created
+	// against.
+	//
+	// Legacy: it does not pin anything. A SandboxTemplate is a single mutable
+	// cluster-scoped object — there is no version history and no way to
+	// resolve an older spec.version — so every consumer resolves the Template
+	// by Name alone and members always converge onto its current body. The
+	// version actually in effect is reported per member in
+	// status.clusters[].observedMembers[].templateVersion; read that instead
+	// of this field. Retained so existing objects and manifests keep
+	// round-tripping; real version pinning needs immutable per-version
+	// Template objects first.
 	// +optional
 	Version string `json:"version,omitempty"`
 }
@@ -657,6 +673,15 @@ type EnvObservedMember struct {
 	// +optional
 	UpdateRevision string `json:"updateRevision,omitempty"`
 
+	// TemplateVersion is the SandboxTemplate spec.version the member Pool was
+	// last rendered from, read off the Pool's
+	// agentbox.navix.sh/template-version provenance annotation. It is an
+	// observation, not a constraint: members follow the Template's current
+	// body, so this reports what they actually carry. Empty for foreign
+	// (cross-cluster) members — the federation payload does not carry it.
+	// +optional
+	TemplateVersion string `json:"templateVersion,omitempty"`
+
 	// UpdatedReplicas is the number of the member Pool's Pods already at
 	// UpdateRevision, mirrored from SandboxPool.Status.UpdatedReplicas. A
 	// rollout is in progress while UpdatedReplicas < the member's replicas.
@@ -688,7 +713,8 @@ const (
 	// SandboxEnvConditionReady indicates all members are Active.
 	SandboxEnvConditionReady = "Ready"
 	// SandboxEnvConditionTemplateConsistent indicates every member Pool
-	// references the same Template name (and version, if pinned).
+	// references the Env's Template by name and has finished rolling onto its
+	// current revision hash.
 	SandboxEnvConditionTemplateConsistent = "TemplateConsistent"
 	// SandboxEnvConditionAutoscalingActive indicates the autoscaler is
 	// configured, enabled, and has not stalled due to misconfiguration.

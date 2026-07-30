@@ -69,6 +69,10 @@ class EnvObservedMember:
                 is rolling towards.
             updated_replicas (int | Unset): Mirror of the member Pool's status.updatedReplicas. A rollout is in progress
                 while this is below the member's replica count.
+            template_version (str | Unset): SandboxTemplate spec.version the member Pool was last rendered from, read off
+                its provenance annotation. An observation of what the member actually carries, not a constraint — members follow
+                the Template's current body, and spec.templateRef.version pins nothing. Empty for foreign (cross-cluster)
+                members.
      """
 
     name: str
@@ -86,6 +90,7 @@ class EnvObservedMember:
     scale_up_headroom: int | Unset = UNSET
     update_revision: str | Unset = UNSET
     updated_replicas: int | Unset = UNSET
+    template_version: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -128,6 +133,8 @@ class EnvObservedMember:
 
         updated_replicas = self.updated_replicas
 
+        template_version = self.template_version
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -162,6 +169,8 @@ class EnvObservedMember:
             field_dict["updateRevision"] = update_revision
         if updated_replicas is not UNSET:
             field_dict["updatedReplicas"] = updated_replicas
+        if template_version is not UNSET:
+            field_dict["templateVersion"] = template_version
 
         return field_dict
 
@@ -216,6 +225,8 @@ class EnvObservedMember:
 
         updated_replicas = d.pop("updatedReplicas", UNSET)
 
+        template_version = d.pop("templateVersion", UNSET)
+
         env_observed_member = cls(
             name=name,
             instance_type=instance_type,
@@ -232,6 +243,7 @@ class EnvObservedMember:
             scale_up_headroom=scale_up_headroom,
             update_revision=update_revision,
             updated_replicas=updated_replicas,
+            template_version=template_version,
         )
 
 

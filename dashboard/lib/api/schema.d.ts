@@ -1576,6 +1576,8 @@ export interface components {
              * @description Mirror of the member Pool's status.updatedReplicas. A rollout is in progress while this is below the member's replica count.
              */
             updatedReplicas?: number;
+            /** @description SandboxTemplate spec.version the member Pool was last rendered from, read off its provenance annotation. An observation of what the member actually carries, not a constraint — members follow the Template's current body, and spec.templateRef.version pins nothing. Empty for foreign (cross-cluster) members. */
+            templateVersion?: string;
         };
         EnvClusterStatus: {
             clusterID: string;

@@ -774,5 +774,8 @@ func envObservedMemberToGen(m agentsv1alpha1.EnvObservedMember) gen.EnvObservedM
 	if m.UpdatedReplicas > 0 {
 		out.UpdatedReplicas = ptr.To(m.UpdatedReplicas)
 	}
+	if m.TemplateVersion != "" {
+		out.TemplateVersion = ptr.To(m.TemplateVersion)
+	}
 	return out
 }

@@ -91,6 +91,7 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 			PendingRequests:    pool.Status.PendingRequests,
 			UpdateRevision:     pool.Status.UpdateRevision,
 			UpdatedReplicas:    pool.Status.UpdatedReplicas,
+			TemplateVersion:    pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey],
 		}
 		// A member is mid-rollout while its Pods straddle revisions (or all sit
 		// on an older single revision): CurrentRevision lags UpdateRevision.
@@ -416,16 +417,20 @@ func effectiveResources(member agentsv1alpha1.EnvClusterMember, pool *agentsv1al
 	return nil
 }
 
-// templateConsistent returns true when the member Pool references the same
-// SandboxTemplate (by name and, if pinned, version) the Env requires.
+// templateConsistent returns true when the member Pool references the
+// SandboxTemplate the Env requires, compared by name only.
+//
+// spec.templateRef.version deliberately takes no part: a SandboxTemplate is a
+// single mutable object with no version history, so an older spec.version
+// cannot be resolved or served, and auto-update converges members onto the
+// Template's current body regardless of what the field says. Comparing it
+// would report drift that no reconcile can ever clear — and it would miss real
+// drift whenever a Template body changes without a version bump. Convergence
+// onto the current body is judged by revision hash instead (see the
+// CurrentRevision/UpdateRevision check in syncStatus, surfaced as the
+// TemplateConsistent condition's RolloutInProgress reason).
 func templateConsistent(pool *agentsv1alpha1.SandboxPool, env *agentsv1alpha1.SandboxEnv) bool {
-	if pool.Spec.TemplateName != env.Spec.TemplateRef.Name {
-		return false
-	}
-	if env.Spec.TemplateRef.Version == "" {
-		return true
-	}
-	return pool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] == env.Spec.TemplateRef.Version
+	return pool.Spec.TemplateName == env.Spec.TemplateRef.Name
 }
 
 // setReadyCondition marks the Env Ready iff every observed member is Active.
@@ -451,10 +456,11 @@ func setReadyCondition(env *agentsv1alpha1.SandboxEnv, observed []agentsv1alpha1
 }
 
 // setTemplateConsistentCondition marks TemplateConsistent True iff every
-// observed member's template matches the Env's templateRef AND no member is
-// mid-rollout onto a new revision. A template-name/version mismatch
-// (TemplateMismatch) takes precedence over an in-progress rollout
-// (RolloutInProgress) in the reported reason.
+// observed member references the Env's Template by name AND no member is
+// mid-rollout onto a new revision. A template-name mismatch (TemplateMismatch)
+// takes precedence over an in-progress rollout (RolloutInProgress) in the
+// reported reason. Template versions are not compared — see
+// templateConsistent.
 func setTemplateConsistentCondition(env *agentsv1alpha1.SandboxEnv, observed []agentsv1alpha1.EnvObservedMember, rolloutInProgress bool) {
 	status := metav1.ConditionTrue
 	reason := "TemplatesMatch"

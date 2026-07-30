@@ -981,9 +981,18 @@ spec:
                     type: string
                   version:
                     description: |-
-                      Version optionally pins the Env to a specific Template version. When
-                      empty, the Template's current spec.version is observed and recorded in
-                      status.
+                      Version records the SandboxTemplate spec.version this Env was created
+                      against.
+
+                      Legacy: it does not pin anything. A SandboxTemplate is a single mutable
+                      cluster-scoped object — there is no version history and no way to
+                      resolve an older spec.version — so every consumer resolves the Template
+                      by Name alone and members always converge onto its current body. The
+                      version actually in effect is reported per member in
+                      status.clusters[].observedMembers[].templateVersion; read that instead
+                      of this field. Retained so existing objects and manifests keep
+                      round-tripping; real version pinning needs immutable per-version
+                      Template objects first.
                     type: string
                 required:
                 - name
@@ -1179,6 +1188,15 @@ spec:
                             - Saturated
                             - Missing
                             - Inconsistent
+                            type: string
+                          templateVersion:
+                            description: |-
+                              TemplateVersion is the SandboxTemplate spec.version the member Pool was
+                              last rendered from, read off the Pool's
+                              agentbox.navix.sh/template-version provenance annotation. It is an
+                              observation, not a constraint: members follow the Template's current
+                              body, so this reports what they actually carry. Empty for foreign
+                              (cross-cluster) members — the federation payload does not carry it.
                             type: string
                           updateRevision:
                             description: |-
