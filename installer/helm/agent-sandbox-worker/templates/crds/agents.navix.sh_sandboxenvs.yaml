@@ -1265,13 +1265,17 @@ spec:
                     description: Name of the SandboxTemplate (cluster-scoped).
                     type: string
                   version:
-                    description: 'Version optionally pins the Env to a specific Template
-                      version. When
-
-                      empty, the Template''s current spec.version is observed and
-                      recorded in
-
-                      status.'
+                    description: "Version records the SandboxTemplate spec.version\
+                      \ this Env was created\nagainst.\n\nLegacy: it does not pin\
+                      \ anything. A SandboxTemplate is a single mutable\ncluster-scoped\
+                      \ object \u2014 there is no version history and no way to\n\
+                      resolve an older spec.version \u2014 so every consumer resolves\
+                      \ the Template\nby Name alone and members always converge onto\
+                      \ its current body. The\nversion actually in effect is reported\
+                      \ per member in\nstatus.clusters[].observedMembers[].templateVersion;\
+                      \ read that instead\nof this field. Retained so existing objects\
+                      \ and manifests keep\nround-tripping; real version pinning needs\
+                      \ immutable per-version\nTemplate objects first."
                     type: string
                 required:
                 - name
@@ -1523,6 +1527,16 @@ spec:
                             - Saturated
                             - Missing
                             - Inconsistent
+                            type: string
+                          templateVersion:
+                            description: "TemplateVersion is the SandboxTemplate spec.version\
+                              \ the member Pool was\nlast rendered from, read off\
+                              \ the Pool's\nagentbox.navix.sh/template-version provenance\
+                              \ annotation. It is an\nobservation, not a constraint:\
+                              \ members follow the Template's current\nbody, so this\
+                              \ reports what they actually carry. Empty for foreign\n\
+                              (cross-cluster) members \u2014 the federation payload\
+                              \ does not carry it."
                             type: string
                           updateRevision:
                             description: 'UpdateRevision is the target revision hash
