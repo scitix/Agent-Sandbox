@@ -109,15 +109,32 @@ func TestResolve_BareNameMissingEnv_ReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestResolve_LocalExplicit_BypassesEnv(t *testing.T) {
+func TestResolve_LocalExplicit_EnvNameHitsEnv(t *testing.T) {
+	// "<localID>::<envName>" must go through Env member selection, not be taken
+	// as a Pool name: this is the shape a cross-cluster create arrives in after
+	// the origin forwarded it, so an Env reference has to survive the hop.
 	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
-	mgr.OnEnvUpsert(makeEnv("my-env", agentsv1alpha1.EnvClusterMember{Name: "my-env"}))
+	mgr.OnEnvUpsert(makeEnv("my-env", agentsv1alpha1.EnvClusterMember{Name: "my-env-member"}))
 
 	r := mgr.Resolve("ns", localID, "my-env")
+	if r.Kind != ResolveEnv {
+		t.Fatalf("Kind = %v, want ResolveEnv (%+v)", r.Kind, r)
+	}
+	if r.EnvKey.Name != "my-env" || r.EnvKey.Namespace != "ns" {
+		t.Errorf("EnvKey = %+v", r.EnvKey)
+	}
+}
+
+func TestResolve_LocalExplicit_UnknownEnvIsDirectPool(t *testing.T) {
+	mgr := New(localID, newFakePools(), &fakeEnvGetter{})
+	mgr.OnEnvUpsert(makeEnv("my-env", agentsv1alpha1.EnvClusterMember{Name: "my-env-member"}))
+
+	// A member pool name is not an Env name, so it stays a direct Pool reference.
+	r := mgr.Resolve("ns", localID, "my-env-member")
 	if r.Kind != ResolveLocalPool {
 		t.Errorf("Kind = %v, want ResolveLocalPool", r.Kind)
 	}
-	if r.PoolName != "my-env" {
+	if r.PoolName != "my-env-member" {
 		t.Errorf("PoolName = %q", r.PoolName)
 	}
 }

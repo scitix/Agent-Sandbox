@@ -38,6 +38,51 @@ Workflow for modifying API fields:
 | `visibility` | `SandboxTemplateSpec.Visibility` | 1:1 |
 | `version`, `description`, `idleImage` | Direct string fields | No conversion |
 
+### Template version ordering on Update
+
+`spec.version` must strictly increase on every `PUT /admin/sandboxtemplates/{name}`,
+with one carve-out: an update whose **only** difference is the
+`agentbox.navix.sh/docs` annotation may reuse the current version. Docs are prose
+about using the template — they never reach the rendered Pod (they are not even
+synced onto member Pools), so they name no new template revision. A lower version
+is always rejected.
+
+Implemented in `service/sandboxtemplate_service.go` (`versionRegressed()` /
+`docsOnlyChange()`, shared by the optimistic-lock and retry Update paths). The
+dashboard mirrors the same rule in `lib/utils/template-crd.ts`
+(`isDocsOnlyChange()`) so the editor does not accept what the server rejects.
+
+### Docs placeholders
+
+The docs annotation supports these placeholders, substituted server-side:
+
+| Placeholder | `GET /envs/{name}` (`envDocs`) | `GET /sandboxtemplates/{name}` (`docs`) |
+|---|---|---|
+| `${AGBX_ENV_NAME}` | the Env's name | `YOUR_ENV_NAME` |
+| `${AGBX_POOL_NAME}` | first member Pool that exists in the local cluster, else `<envName>-pool-name` | `YOUR_POOL_NAME` |
+| `${AGBX_API_KEY}` | caller's first key with a recoverable token (else 422 `API_KEY_REQUIRED`) | `YOUR_API_KEY` |
+| `${AGBX_CLUSTER_ID}` | local cluster ID | same |
+| `${AGBX_NATIVE_URL}` / `${AGBX_E2B_URL}` / `${AGBX_DATA_URL}` | the local cluster's `gateway.{nativeURL,e2bURL,dataURL}` | same |
+| `${AGBX_DATA_DOMAIN}` | data URL minus scheme — the E2B SDK's `E2B_DOMAIN` form | same |
+| `${AGBX_HOST}` | gateway hostname (from the data URL) | same |
+| `${AGBX_INNER_IP}` | IP that host is pinned to by `hostAliases` — lets in-cluster clients skip the public gateway | same |
+| `${AGBX_HTTPS}` | `"true"` / `"false"` for the data URL's scheme | same |
+| `${AGBX_REGISTRY_HOST}` | the cluster's first `registries[].host` | same |
+
+Everything from `${AGBX_CLUSTER_ID}` down is a fact about the *serving* cluster
+(read from the cluster-config ConfigMap via `ClusterService.Endpoints`), so both
+renderers substitute the real value; only the env-scoped ones degrade to hints on
+the Template page.
+
+**A placeholder whose value is unknown is left in the output verbatim** — an
+unconfigured gateway, a host with no alias, or a cluster with no registry must
+not render as an empty string, or users would copy a broken URL without noticing.
+
+`handlers/env_docs.go` owns both renderers (`docsVars.apply()` is the single
+substitution point). The pool name comes from `docsPoolName()`, which reads the
+Env's local status segment (a member marked `Missing` has no live Pool) so only
+real, local Pools are named.
+
 ## Testing
 
 ```bash

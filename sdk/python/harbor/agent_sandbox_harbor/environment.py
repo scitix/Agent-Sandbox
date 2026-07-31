@@ -63,7 +63,7 @@ Optional environment variables:
     AGBX_IMAGE_MAP         Path to a ``<task-name> <image>`` map file (see above).
     E2B_DOMAIN             Data-plane gateway host[:port][/path].
     E2B_API_URL            E2B-compatible control-plane URL (scheme://host).
-    AGBX_CLUSTER_ID        Cluster id prefix (e.g. ``bar``); omit for
+    AGBX_CLUSTER_ID        Cluster id prefix (e.g. ``demo``); omit for
                            single-cluster setups.
     AGBX_IMAGE_PREFIX      Internal mirror prefix applied to the task.toml
                            ``docker_image`` (e.g. ``registry.internal/agentbox``).

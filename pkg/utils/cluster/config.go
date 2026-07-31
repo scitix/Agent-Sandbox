@@ -21,6 +21,7 @@ import (
 	"maps"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -216,6 +217,30 @@ func (s *Store) HostAliases() []corev1.HostAlias {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]corev1.HostAlias(nil), s.hostAliases...)
+}
+
+// HostAliasIP returns the in-cluster IP the given hostname is pinned to by the
+// current host-alias set, or ok=false when no alias covers it. Matching is
+// exact (the alias list holds literal hostnames, not wildcards) and
+// case-insensitive, since DNS names are.
+//
+// Callers use this to tell a client "you can reach <host> directly at <ip>" —
+// the same override the sandbox Pods and the cross-cluster forwarder resolve
+// through.
+func (s *Store) HostAliasIP(host string) (string, bool) {
+	if host == "" {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, alias := range s.hostAliases {
+		for _, h := range alias.Hostnames {
+			if strings.EqualFold(h, host) && alias.IP != "" {
+				return alias.IP, true
+			}
+		}
+	}
+	return "", false
 }
 
 // Get returns the ClusterEntry for the given cluster ID.

@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -473,5 +475,35 @@ func TestStoreRegistryIndex_LoadFromFile(t *testing.T) {
 	host, ok := s.RegistryForType("eu-west", "gar")
 	if !ok || host != "eu-docker.pkg.dev" {
 		t.Errorf("RegistryForType after LoadFromFile = (%q, %v), want (eu-docker.pkg.dev, true)", host, ok)
+	}
+}
+
+func TestStoreHostAliasIP(t *testing.T) {
+	s := NewStore()
+	s.ApplyConfig(ClusterConfig{
+		Clusters: []ClusterEntry{{ID: "demo", Name: "Demo"}},
+		HostAliases: []corev1.HostAlias{
+			{IP: "10.0.0.1", Hostnames: []string{"gw.example.com"}},
+			{IP: "10.0.0.2", Hostnames: []string{"gw2.example.com", "gw3.example.com"}},
+			{IP: "", Hostnames: []string{"no-ip.example.com"}},
+		},
+	})
+
+	for _, tc := range []struct {
+		host   string
+		wantIP string
+		wantOK bool
+	}{
+		{"gw.example.com", "10.0.0.1", true},
+		{"GW.EXAMPLE.COM", "10.0.0.1", true}, // DNS names are case-insensitive
+		{"gw3.example.com", "10.0.0.2", true},
+		{"unlisted.example.com", "", false},
+		{"no-ip.example.com", "", false}, // alias with an empty IP is not a usable answer
+		{"", "", false},
+	} {
+		gotIP, gotOK := s.HostAliasIP(tc.host)
+		if gotIP != tc.wantIP || gotOK != tc.wantOK {
+			t.Errorf("HostAliasIP(%q) = (%q, %v), want (%q, %v)", tc.host, gotIP, gotOK, tc.wantIP, tc.wantOK)
+		}
 	}
 }

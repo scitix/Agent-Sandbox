@@ -43,7 +43,14 @@ T = TypeVar("T", bound="CreateSandboxRequest")
 class CreateSandboxRequest:
     """ 
         Attributes:
-            pool_name (str): Name of the SandboxPool to allocate the sandbox from. Example: my-pool.
+            pool_name (str): Where to allocate the sandbox from:
+
+                * `{envName}` — a SandboxEnv; the server picks one of its member Pools.
+                  A bare name must match an Env (every Pool has a same-named Env).
+                * `{clusterID}::{name}` — pinned to one cluster, where `name` is resolved
+                  Env-first and falls back to a Pool of that name. A foreign `clusterID`
+                  forwards the request to that cluster, which resolves `name` itself.
+                 Example: my-env.
             image (str | Unset): Override the main container image for this sandbox. Replaces the pool's default image.
                 Example: docker.io/myorg/myimage:latest.
             container_images (CreateSandboxRequestContainerImages | Unset): Per-container image overrides keyed by container

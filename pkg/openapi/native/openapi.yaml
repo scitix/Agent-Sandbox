@@ -576,8 +576,15 @@ components:
       properties:
         poolName:
           type: string
-          description: "Name of the SandboxPool to allocate the sandbox from."
-          example: "my-pool"
+          description: |
+            Where to allocate the sandbox from:
+
+            * `{envName}` — a SandboxEnv; the server picks one of its member Pools.
+              A bare name must match an Env (every Pool has a same-named Env).
+            * `{clusterID}::{name}` — pinned to one cluster, where `name` is resolved
+              Env-first and falls back to a Pool of that name. A foreign `clusterID`
+              forwards the request to that cluster, which resolves `name` itself.
+          example: "my-env"
         image:
           type: string
           description: "Override the main container image for this sandbox. Replaces the pool's default image."
@@ -1535,7 +1542,28 @@ components:
           format: date-time
         envDocs:
           type: string
-          description: "Rendered Markdown documentation for this Env, sourced from the linked SandboxTemplate's agentbox.navix.sh/docs annotation. The substitutions ${AGBX_ENV_NAME}, ${AGBX_POOL_NAME} (renders the env name for backward compat), ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} are performed server-side before the response is returned. When the docs reference ${AGBX_API_KEY} but the caller has no key with a recoverable plaintext token, GetSandboxEnv returns 422 with errorCode API_KEY_REQUIRED."
+          description: |
+            Rendered Markdown documentation for this Env, sourced from the linked SandboxTemplate's
+            agentbox.navix.sh/docs annotation. These placeholders are substituted server-side:
+
+            * `${AGBX_ENV_NAME}` — this env's name.
+            * `${AGBX_POOL_NAME}` — the first member Pool that exists in the local cluster, or
+              `<envName>-pool-name` when the env has none yet.
+            * `${AGBX_CLUSTER_ID}` — the local cluster ID.
+            * `${AGBX_API_KEY}` — the caller's first API key with a recoverable plaintext token.
+            * `${AGBX_NATIVE_URL}`, `${AGBX_E2B_URL}`, `${AGBX_DATA_URL}` — the local cluster's
+              gateway URLs from the cluster config.
+            * `${AGBX_DATA_DOMAIN}` — the data URL without its scheme (what the E2B SDK's
+              `E2B_DOMAIN` expects).
+            * `${AGBX_HOST}` — the gateway hostname; `${AGBX_INNER_IP}` — the in-cluster IP that
+              host is pinned to by hostAliases, for clients already inside the cluster.
+            * `${AGBX_HTTPS}` — "true"/"false" for the data URL's scheme.
+            * `${AGBX_REGISTRY_HOST}` — the local cluster's first configured image registry.
+
+            A placeholder whose value this deployment does not know (no gateway configured, no host
+            alias, no registry) is left in the output verbatim rather than rendered empty. When the
+            docs reference ${AGBX_API_KEY} but the caller has no key with a recoverable plaintext
+            token, GetSandboxEnv returns 422 with errorCode API_KEY_REQUIRED.
 
     SandboxEnvEnvelope:
       type: object
@@ -1874,7 +1902,16 @@ components:
           description: "Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on worker). Empty for legacy resources."
         docs:
           type: string
-          description: "Markdown documentation for the template, stored in the agentbox.navix.sh/docs annotation. Supports variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} for pool-specific rendering. On Template Get the server substitutes them with human-readable hints (YOUR_POOL_NAME, real cluster ID, YOUR_API_KEY); on Pool Get they are substituted with real values."
+          description: |
+            Markdown documentation for the template, stored in the agentbox.navix.sh/docs annotation.
+            Supports the placeholders listed under SandboxEnv.envDocs. On Template Get the env-scoped
+            ones become readable hints (YOUR_ENV_NAME, YOUR_POOL_NAME, YOUR_API_KEY) because there is
+            no env context, while everything derived from the serving cluster's config
+            (${AGBX_CLUSTER_ID}, the gateway URLs, ${AGBX_HOST}, ${AGBX_INNER_IP}, ${AGBX_HTTPS},
+            ${AGBX_REGISTRY_HOST}) is substituted for real; GetSandboxEnv substitutes everything.
+
+            Editing only the docs does not require bumping spec.version — docs never reach the
+            rendered Pod, so they name no new template revision.
         crdYaml:
           type: string
           description: "Complete raw SandboxTemplate CRD YAML (without managedFields). Includes resourceVersion and uid for optimistic locking on PUT."

@@ -48,9 +48,14 @@ class SandboxTemplate:
             sync_source (str | Unset): Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on
                 worker). Empty for legacy resources.
             docs (str | Unset): Markdown documentation for the template, stored in the agentbox.navix.sh/docs annotation.
-                Supports variables ${AGBX_POOL_NAME}, ${AGBX_CLUSTER_ID}, ${AGBX_API_KEY} for pool-specific rendering. On
-                Template Get the server substitutes them with human-readable hints (YOUR_POOL_NAME, real cluster ID,
-                YOUR_API_KEY); on Pool Get they are substituted with real values.
+                Supports the placeholders listed under SandboxEnv.envDocs. On Template Get the env-scoped
+                ones become readable hints (YOUR_ENV_NAME, YOUR_POOL_NAME, YOUR_API_KEY) because there is
+                no env context, while everything derived from the serving cluster's config
+                (${AGBX_CLUSTER_ID}, the gateway URLs, ${AGBX_HOST}, ${AGBX_INNER_IP}, ${AGBX_HTTPS},
+                ${AGBX_REGISTRY_HOST}) is substituted for real; GetSandboxEnv substitutes everything.
+
+                Editing only the docs does not require bumping spec.version — docs never reach the
+                rendered Pod, so they name no new template revision.
             crd_yaml (str | Unset): Complete raw SandboxTemplate CRD YAML (without managedFields). Includes resourceVersion
                 and uid for optimistic locking on PUT.
      """

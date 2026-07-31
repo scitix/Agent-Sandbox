@@ -56,67 +56,13 @@ import { k8sNameSchema } from "@/lib/utils/validation"
 import { useTranslation } from "@/lib/i18n"
 import { YamlDiffView } from "@/components/templates/yaml-diff-view"
 import { LargeDialog } from "@/components/large-dialog"
-
-// ─── Kubernetes-managed annotations to strip from display / submission ───────────
-
-/** Annotations managed by Kubernetes or kubectl that should never be shown or submitted. */
-const K8S_MANAGED_ANNOTATIONS = new Set(["kubectl.kubernetes.io/last-applied-configuration"])
-
-/** Return a copy of the annotations map without any K8s-managed keys. */
-function stripManagedAnnotations(
-  annotations: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (!annotations) return undefined
-  const filtered = Object.fromEntries(
-    Object.entries(annotations).filter(([k]) => !K8S_MANAGED_ANNOTATIONS.has(k)),
-  )
-  return Object.keys(filtered).length > 0 ? filtered : undefined
-}
-
-/**
- * Strip server-managed read-only metadata fields before showing the diff.
- * Also normalizes the object to match what formToCrdObject produces:
- *   - Ensures apiVersion/kind are present (server YAML may omit them)
- *   - Removes null values recursively (server may serialize omitempty-missing fields as null)
- */
-function stripServerManagedFields(yamlStr: string): string {
-  if (!yamlStr) return yamlStr
-  try {
-    const parsed = yamlParse(yamlStr) as Record<string, unknown>
-
-    // Ensure top-level K8s type fields are present — formToCrdObject always emits them.
-    if (!parsed.apiVersion) parsed.apiVersion = "agents.navix.sh/v1alpha1"
-    if (!parsed.kind) parsed.kind = "SandboxTemplate"
-
-    const meta = parsed.metadata as Record<string, unknown> | undefined
-    if (meta) {
-      const cleaned = { ...meta }
-      delete cleaned.generation
-      delete cleaned.managedFields
-      delete cleaned.selfLink
-      parsed.metadata = cleaned
-    }
-    delete parsed.status
-
-    return yamlStringify(removeNulls(parsed))
-  } catch {
-    return yamlStr
-  }
-}
-
-/** Recursively remove null values from an object/array so the diff doesn't show
- *  noise from server fields serialized as null due to missing omitempty tags. */
-function removeNulls(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(removeNulls)
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, v]) => v !== null)
-        .map(([k, v]) => [k, removeNulls(v)]),
-    )
-  }
-  return value
-}
+import {
+  DOCS_ANNOTATION,
+  LEGACY_POOL_DOCS_ANNOTATION,
+  isDocsOnlyChange,
+  stripManagedAnnotations,
+  stripServerManagedFields,
+} from "@/lib/utils/template-crd"
 
 // ─── Semver helpers ──────────────────────────────────────────────────────────────
 
@@ -162,36 +108,51 @@ const ruleSchema = z.object({
   users: z.array(z.string()).optional(),
 })
 
-const buildSchema = (currentVersion?: string) =>
-  z.object({
-    // Basic — only required on Create
-    name: k8sNameSchema.optional(),
-    version: z
-      .string()
-      .optional()
-      .refine(
-        (v) => !v || /^v?\d+\.\d+\.\d+$/.test(v),
-        "Version must be in x.y.z or vx.y.z format (e.g. 1.2.3 or v1.2.3)",
-      )
-      .refine(
-        (v) => {
-          if (!v || !currentVersion) return true
-          return semverGt(v, currentVersion)
-        },
-        `Version must be greater than current (${currentVersion ?? "none"})`,
-      ),
-    description: z.string().optional(),
-    idleImage: z.string().min(1, "Idle image is required"),
-    // Runtimes
-    runtimes: z.array(runtimeSchema).optional(),
-    // CRD YAML — the primary input
-    crdYaml: z.string().min(1, "CRD YAML is required"),
-    // Visibility
-    rules: z.array(ruleSchema).optional(),
-    visibilityPublic: z.boolean().optional(),
-    // Docs — Markdown documentation stored in annotation
-    docs: z.string().optional(),
-  })
+const buildSchema = (currentVersion?: string, baselineYaml?: string) =>
+  z
+    .object({
+      // Basic — only required on Create
+      name: k8sNameSchema.optional(),
+      version: z
+        .string()
+        .optional()
+        .refine(
+          (v) => !v || /^v?\d+\.\d+\.\d+$/.test(v),
+          "Version must be in x.y.z or vx.y.z format (e.g. 1.2.3 or v1.2.3)",
+        ),
+      description: z.string().optional(),
+      idleImage: z.string().min(1, "Idle image is required"),
+      // Runtimes
+      runtimes: z.array(runtimeSchema).optional(),
+      // CRD YAML — the primary input
+      crdYaml: z.string().min(1, "CRD YAML is required"),
+      // Visibility
+      rules: z.array(ruleSchema).optional(),
+      visibilityPublic: z.boolean().optional(),
+      // Docs — Markdown documentation stored in annotation
+      docs: z.string().optional(),
+    })
+    // Version ordering, checked at the object level because the carve-out below
+    // depends on what else the edit touched. Edit mode only — currentVersion is
+    // undefined on Create.
+    .superRefine((data, ctx) => {
+      if (!currentVersion || !data.version) return
+      if (semverGt(data.version, currentVersion)) return
+      // Documentation-only edits may keep the current version: docs are prose
+      // about using the template, never part of the rendered Pod, so there is
+      // no new revision to name. The server applies the same carve-out.
+      if (
+        data.version === currentVersion &&
+        isDocsOnlyChange(baselineYaml ?? "", data.crdYaml ?? "")
+      ) {
+        return
+      }
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["version"],
+        message: `Version must be greater than current (${currentVersion}) — unchanged is only allowed when the docs are the sole edit`,
+      })
+    })
 
 type FormData = z.infer<ReturnType<typeof buildSchema>>
 
@@ -344,11 +305,11 @@ function formToCrdObject(
   const cleanAnnotations = stripManagedAnnotations(baseAnnotations)
   const mergedAnnotations = { ...cleanAnnotations }
   if (data.docs?.trim()) {
-    mergedAnnotations["agentbox.navix.sh/docs"] = data.docs.trim()
+    mergedAnnotations[DOCS_ANNOTATION] = data.docs.trim()
   } else {
-    delete mergedAnnotations["agentbox.navix.sh/docs"]
+    delete mergedAnnotations[DOCS_ANNOTATION]
   }
-  delete mergedAnnotations["agentbox.navix.sh/pool-docs"]
+  delete mergedAnnotations[LEGACY_POOL_DOCS_ANNOTATION]
   const finalAnnotations = Object.keys(mergedAnnotations).length > 0 ? mergedAnnotations : undefined
 
   // In edit mode, extract optimistic-lock tokens from the original server crdYaml so
@@ -427,7 +388,7 @@ function crdToFormFields(yamlStr: string): Partial<FormData> & { parseError?: st
           users: rule.users ?? [],
         })) ?? [],
       visibilityPublic: !parsedVisibility || (parsedVisibility.rules?.length ?? 0) === 0,
-      docs: annotations?.["agentbox.navix.sh/docs"] ?? "",
+      docs: annotations?.[DOCS_ANNOTATION] ?? "",
     }
   } catch (e) {
     return { parseError: (e as Error).message }
@@ -500,7 +461,7 @@ function UpsertTemplateForm({
     trigger,
     formState: { errors },
   } = useForm<FormData>({
-    resolver: zodResolver(buildSchema(currentVersion)),
+    resolver: zodResolver(buildSchema(currentVersion, template?.crdYaml ?? "")),
     defaultValues: getDefaultValues(),
   })
 
@@ -1009,7 +970,20 @@ function UpsertTemplateForm({
                 <FieldDescription>
                   {t("templates.form.docsDesc")}
                   <span className="mt-1 flex flex-wrap gap-1">
-                    {["${AGBX_POOL_NAME}", "${AGBX_CLUSTER_ID}", "${AGBX_API_KEY}"].map((v) => (
+                    {[
+                      "${AGBX_ENV_NAME}",
+                      "${AGBX_POOL_NAME}",
+                      "${AGBX_CLUSTER_ID}",
+                      "${AGBX_API_KEY}",
+                      "${AGBX_NATIVE_URL}",
+                      "${AGBX_E2B_URL}",
+                      "${AGBX_DATA_URL}",
+                      "${AGBX_DATA_DOMAIN}",
+                      "${AGBX_HOST}",
+                      "${AGBX_INNER_IP}",
+                      "${AGBX_HTTPS}",
+                      "${AGBX_REGISTRY_HOST}",
+                    ].map((v) => (
                       <code
                         key={v}
                         className="bg-secondary rounded px-1 py-0.5 font-mono text-[10px]"

@@ -169,6 +169,76 @@ func TestRenderSandboxPool_TemplateProvenanceAnnotations(t *testing.T) {
 	}
 }
 
+// TestRenderSandboxPool_RevisionHashIgnoresNonPodTemplateEdits pins the
+// property that keeps documentation edits free: the revision hash covers
+// SandboxPoolSpec only, so Template fields that land on the Pool's ObjectMeta
+// (docs annotation, sync-source label, spec.version provenance) cannot flip it
+// and therefore never roll a Pool's idle Pods. Only the version *annotation*
+// moves, which is a metadata-only patch on the live Pool.
+func TestRenderSandboxPool_RevisionHashIgnoresNonPodTemplateEdits(t *testing.T) {
+	renderHash := func(t *testing.T, mutate func(*agentsv1alpha1.SandboxTemplate)) (string, *agentsv1alpha1.SandboxPool) {
+		t.Helper()
+		tmpl := newTestTemplate()
+		mutate(tmpl)
+		pool, err := poolrender.RenderSandboxPool(poolrender.Inputs{
+			Env:      newTestEnv(),
+			Template: tmpl,
+			Member:   agentsv1alpha1.EnvClusterMember{Name: "env-a-foo"},
+		})
+		if err != nil {
+			t.Fatalf("RenderSandboxPool: %v", err)
+		}
+		return pool.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey], pool
+	}
+
+	baseline, basePool := renderHash(t, func(*agentsv1alpha1.SandboxTemplate) {})
+	if baseline == "" {
+		t.Fatal("baseline revision hash is empty")
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*agentsv1alpha1.SandboxTemplate)
+	}{
+		{"docs annotation", func(tm *agentsv1alpha1.SandboxTemplate) {
+			tm.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey] = "# usage\nSandbox.create(...)"
+		}},
+		{"sync-source label", func(tm *agentsv1alpha1.SandboxTemplate) {
+			tm.Labels[agentsv1alpha1.LabelSyncSource] = agentsv1alpha1.LabelSyncSourceGlobal
+		}},
+		{"spec.version", func(tm *agentsv1alpha1.SandboxTemplate) {
+			tm.Spec.Version = "9.9.9"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := renderHash(t, tc.mutate)
+			if got != baseline {
+				t.Errorf("revision hash changed (%s → %s); editing %s must not roll idle Pods", baseline, got, tc.name)
+			}
+		})
+	}
+
+	// The version bump is still observable on the Pool — as an annotation, which
+	// only propagates to Pods created after it.
+	_, bumped := renderHash(t, func(tm *agentsv1alpha1.SandboxTemplate) { tm.Spec.Version = "9.9.9" })
+	if basePool.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] ==
+		bumped.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey] {
+		t.Errorf("template-version annotation should track spec.version, got %q",
+			bumped.Annotations[agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey])
+	}
+	// Docs are not copied onto the Pool at all — the Env/Pool detail APIs read
+	// them live off the Template.
+	_, withDocs := renderHash(t, func(tm *agentsv1alpha1.SandboxTemplate) {
+		tm.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey] = "docs"
+	})
+	if _, ok := withDocs.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]; ok {
+		t.Errorf("docs annotation leaked onto the Pool: %+v", withDocs.Annotations)
+	}
+	if _, ok := withDocs.Labels[agentsv1alpha1.LabelSyncSource]; ok {
+		t.Errorf("sync-source label leaked onto the Pool: %+v", withDocs.Labels)
+	}
+}
+
 func TestRenderSandboxPool_ImageOverrideApplied(t *testing.T) {
 	env := newTestEnv()
 	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{Image: "ghcr.io/foo:v9"}

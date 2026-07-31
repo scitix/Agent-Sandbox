@@ -543,6 +543,108 @@ func TestUpdate_VersionEqualToCurrent_Returns400(t *testing.T) {
 	}
 }
 
+// docsAnnotated returns a copy of tmpl carrying docs as its docs annotation —
+// the only difference a docs edit produces on the wire.
+func docsAnnotated(tmpl *agentsv1alpha1.SandboxTemplate, docs string) *agentsv1alpha1.SandboxTemplate {
+	out := tmpl.DeepCopy()
+	out.ResourceVersion = ""
+	if out.Annotations == nil {
+		out.Annotations = map[string]string{}
+	}
+	out.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey] = docs
+	return out
+}
+
+func TestUpdate_DocsOnlyChange_SameVersionSucceeds(t *testing.T) {
+	// Editing the docs must not force a version bump: docs are prose and never
+	// reach the rendered Pod, so there is no revision for them to belong to.
+	tmpl := makeSandboxTemplate("tmpl-a", "1.2.3")
+	svc := newTestSandboxTemplateService(t, tmpl)
+
+	result, appErr := svc.Update(context.Background(), docsAnnotated(tmpl, "# How to use\nSandbox.create(...)"))
+	if appErr != nil {
+		t.Fatalf("unexpected error for docs-only update: %v", appErr)
+	}
+	if derefStr(result.Version) != "1.2.3" {
+		t.Fatalf("version should be untouched, got %v", result.Version)
+	}
+	if got := derefStr(result.Docs); got != "# How to use\nSandbox.create(...)" {
+		t.Fatalf("docs not persisted, got %q", got)
+	}
+}
+
+func TestUpdate_DocsOnlyChange_OptimisticLock_SameVersionSucceeds(t *testing.T) {
+	tmpl := makeSandboxTemplate("tmpl-lock-docs", "1.2.3")
+	svc := newTestSandboxTemplateService(t, tmpl)
+
+	got, appErr := svc.Get(context.Background(), "tmpl-lock-docs", domain.AuthInfo{}, true)
+	if appErr != nil {
+		t.Fatalf("get: %v", appErr)
+	}
+	next := docsAnnotated(tmpl, "docs v2")
+	next.ResourceVersion = extractResourceVersion(t, derefStr(got.CrdYaml))
+
+	result, appErr := svc.Update(context.Background(), next)
+	if appErr != nil {
+		t.Fatalf("unexpected error for docs-only update: %v", appErr)
+	}
+	if derefStr(result.Docs) != "docs v2" {
+		t.Fatalf("docs not persisted, got %v", result.Docs)
+	}
+}
+
+func TestUpdate_DocsPlusSpecChange_SameVersionReturns400(t *testing.T) {
+	// The carve-out is docs-only: touching the spec in the same request still
+	// requires a version bump.
+	tmpl := makeSandboxTemplate("tmpl-a", "1.2.3")
+	svc := newTestSandboxTemplateService(t, tmpl)
+
+	next := docsAnnotated(tmpl, "new docs")
+	next.Spec.IdleImage = "busybox:1.37"
+
+	_, appErr := svc.Update(context.Background(), next)
+	if appErr == nil {
+		t.Fatal("expected error for spec change at the same version, got nil")
+	}
+	if appErr.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
+	}
+}
+
+func TestUpdate_DocsOnlyChange_LowerVersionReturns400(t *testing.T) {
+	// A downgrade is rejected regardless of what else changed.
+	tmpl := makeSandboxTemplate("tmpl-a", "1.2.3")
+	svc := newTestSandboxTemplateService(t, tmpl)
+
+	next := docsAnnotated(tmpl, "new docs")
+	next.Spec.Version = "1.2.2"
+
+	_, appErr := svc.Update(context.Background(), next)
+	if appErr == nil {
+		t.Fatal("expected error for version downgrade, got nil")
+	}
+	if appErr.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
+	}
+}
+
+func TestUpdate_LabelChange_SameVersionReturns400(t *testing.T) {
+	tmpl := makeSandboxTemplate("tmpl-a", "1.2.3")
+	svc := newTestSandboxTemplateService(t, tmpl)
+
+	next := tmpl.DeepCopy()
+	next.ResourceVersion = ""
+	next.Labels = map[string]string{"team": "ops"}
+
+	_, appErr := svc.Update(context.Background(), next)
+	if appErr == nil {
+		t.Fatal("expected error for label change at the same version, got nil")
+	}
+	if appErr.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("expected ErrCodeBadRequest, got %d", appErr.Code)
+	}
+}
+
 func TestUpdate_VersionHigherThanCurrent_Success(t *testing.T) {
 	tmpl := makeSandboxTemplate("tmpl-a", "1.0.0")
 	svc := newTestSandboxTemplateService(t, tmpl)
