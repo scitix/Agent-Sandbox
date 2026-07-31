@@ -492,7 +492,10 @@ func (s *Server) GetSandboxEnv(ctx context.Context, req gen.GetSandboxEnvRequest
 	if result.EnvDocs != nil {
 		raw = *result.EnvDocs
 	}
-	rendered, renderErr := s.renderEnvDocs(ctx, raw, result.Name, s.forwarder.LocalClusterID(), auth)
+	vars := s.clusterDocsVars()
+	vars.envName = result.Name
+	vars.poolName = docsPoolName(result, vars.clusterID)
+	rendered, renderErr := s.renderEnvDocs(ctx, raw, vars, auth)
 	if renderErr != nil {
 		switch renderErr.Code {
 		case domain.ErrCodeUnprocessableEntity:
@@ -1031,10 +1034,9 @@ func (s *Server) GetSandboxTemplate(ctx context.Context, req gen.GetSandboxTempl
 		return gen.GetSandboxTemplate500JSONResponse(errResp(ctx, appErr)), nil
 	}
 	if result.Docs != nil {
-		rendered := renderTemplateDocs(*result.Docs, s.forwarder.LocalClusterID())
-		result.Docs = ptr.To(rendered)
+		result.Docs = ptr.To(renderTemplateDocs(*result.Docs, s.clusterDocsVars()))
 	} else {
-		result.Docs = ptr.To(renderTemplateDocs("", s.forwarder.LocalClusterID()))
+		result.Docs = ptr.To("")
 	}
 	return gen.GetSandboxTemplate200JSONResponse{Template: *result}, nil
 }

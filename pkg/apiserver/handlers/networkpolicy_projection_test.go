@@ -17,8 +17,9 @@ package handlers
 import (
 	"testing"
 
-	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"k8s.io/utils/ptr"
+
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 )
 
 func TestNetworkPolicyFromGen(t *testing.T) {

@@ -349,7 +349,7 @@ func TestSandboxService_Create_EnvRouter_PassesParsedRefVerbatim(t *testing.T) {
 		wantClusterID string
 		wantPoolName  string
 	}{
-		{name: "qualified", clusterID: "bar", poolName: "pool-x", wantClusterID: "bar", wantPoolName: "pool-x"},
+		{name: "qualified", clusterID: "demo", poolName: "pool-x", wantClusterID: "demo", wantPoolName: "pool-x"},
 		{name: "bare", clusterID: "", poolName: "bare", wantClusterID: "", wantPoolName: "bare"},
 	}
 	for _, tc := range tests {

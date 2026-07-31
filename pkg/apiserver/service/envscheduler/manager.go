@@ -105,23 +105,23 @@ func (m *Manager) SelectForeignTarget(envKey types.NamespacedName, scalingGroup 
 // RLock + one map lookup; safe to call from the hot path.
 //
 // The caller passes the already-split reference: clusterID is the cluster
-// prefix the user supplied verbatim (empty when the user gave a bare name —
-// callers MUST NOT substitute a default, since an empty clusterID is what
-// distinguishes a bare Env-name lookup from an explicit pool reference), and
-// poolOrEnvName is the bare name with any image override already stripped —
-// interpreted as a Pool name when clusterID is set, or an Env name when it is
-// not.
+// prefix the user supplied verbatim (empty when the user gave a bare name),
+// and poolOrEnvName is the bare name with any image override already stripped.
+// The name may be either an Env or a Pool; Env wins when both exist, so a
+// reference pinned at this cluster still gets Env-level member selection.
 //
 // Resolve rules:
-//   - clusterID == localID                 — ResolveLocalPool (bypass Env routing)
-//   - clusterID set but not local          — ResolveCrossCluster
-//   - bare name matching an Env            — ResolveEnv
-//   - bare name with no Env                — ResolveNotFound (no Pool fallback)
+//   - clusterID == localID, name is an Env  — ResolveEnv (Env member selection)
+//   - clusterID == localID, name is no Env  — ResolveLocalPool (direct Pool)
+//   - clusterID set but not local           — ResolveCrossCluster (forward verbatim;
+//     the receiving cluster re-resolves the name, so "<cluster>::<env>" works too)
+//   - bare name matching an Env             — ResolveEnv
+//   - bare name with no Env                 — ResolveNotFound (no Pool fallback)
+//
+// Only the local-cluster prefix consults the Env table: a foreign prefix is a
+// routing instruction, and the target cluster owns the name's meaning.
 func (m *Manager) Resolve(ns, clusterID, poolOrEnvName string) ResolveResult {
-	switch {
-	case clusterID != "" && clusterID == m.local:
-		return ResolveResult{Kind: ResolveLocalPool, PoolName: poolOrEnvName}
-	case clusterID != "":
+	if clusterID != "" && clusterID != m.local {
 		return ResolveResult{Kind: ResolveCrossCluster, ClusterID: clusterID, PoolName: poolOrEnvName}
 	}
 	if poolOrEnvName == "" {
@@ -129,12 +129,17 @@ func (m *Manager) Resolve(ns, clusterID, poolOrEnvName string) ResolveResult {
 	}
 	key := types.NamespacedName{Namespace: ns, Name: poolOrEnvName}
 	m.mu.RLock()
-	_, ok := m.envs[key]
+	_, isEnv := m.envs[key]
 	m.mu.RUnlock()
-	if !ok {
-		return ResolveResult{Kind: ResolveNotFound, PoolName: poolOrEnvName}
+	if isEnv {
+		return ResolveResult{Kind: ResolveEnv, EnvKey: key}
 	}
-	return ResolveResult{Kind: ResolveEnv, EnvKey: key}
+	if clusterID != "" {
+		// Explicit local prefix and no such Env: the name is a direct Pool
+		// reference (Env routing bypassed). A bare name gets no Pool fallback.
+		return ResolveResult{Kind: ResolveLocalPool, PoolName: poolOrEnvName}
+	}
+	return ResolveResult{Kind: ResolveNotFound, PoolName: poolOrEnvName}
 }
 
 // Route dispatches req to one of envKey's member PoolSchedulers.

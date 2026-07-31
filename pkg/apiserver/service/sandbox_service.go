@@ -358,13 +358,14 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	// historical reasons) against the Env router. Three outcomes that we
 	// care about here:
 	//
-	//   - ResolveEnv     — bare name matched a SandboxEnv. Pick one of its
+	//   - ResolveEnv     — the name matched a SandboxEnv (bare, or pinned at
+	//                       this cluster as "<localID>::env"). Pick one of its
 	//                       member Pools via SelectPool and rewrite
 	//                       input.PoolName so the rest of Create sees a
 	//                       concrete pool name. The actual Pool enqueue
 	//                       happens further down on the routine fast path.
-	//   - ResolveLocalPool — explicit "<localID>::pool" bypasses Env. Use
-	//                       the parsed pool name verbatim.
+	//   - ResolveLocalPool — "<localID>::pool" naming no Env bypasses Env
+	//                       routing. Use the parsed pool name verbatim.
 	//   - ResolveNotFound — bare name with no Env. Phase 1 adoption ensures
 	//                       every legacy Pool has a same-named Env, so this
 	//                       branch is a true 404. ResolveCrossCluster is
@@ -375,10 +376,10 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	// is exactly the pre-Env behaviour.
 	if s.envRouter != nil {
 		// The handler already split "[clusterID::]poolName" into ClusterID +
-		// PoolName; hand both to the router verbatim. A non-empty ClusterID
-		// matching the local cluster classifies as ResolveLocalPool (direct
-		// pool, bypassing Env); an empty ClusterID keeps PoolName a bare
-		// Env-name lookup, never an implicit local pool.
+		// PoolName; hand both to the router verbatim. A ClusterID matching the
+		// local cluster resolves Env-first and falls back to a direct pool; an
+		// empty ClusterID keeps PoolName a bare Env-name lookup, never an
+		// implicit local pool.
 		res := s.envRouter.Resolve(input.Namespace, input.ClusterID, input.PoolName)
 		switch res.Kind {
 		case envscheduler.ResolveEnv:

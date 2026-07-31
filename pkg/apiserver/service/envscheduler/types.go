@@ -130,12 +130,13 @@ type memberRef struct {
 type ResolveKind int
 
 const (
-	// ResolveEnv means the template was a bare name matching a known Env.
-	// Caller proceeds to Manager.Route.
+	// ResolveEnv means the name matched a known Env — either bare or pinned
+	// at the local cluster via "<localID>::envName". Caller proceeds to
+	// Manager.Route.
 	ResolveEnv ResolveKind = iota
-	// ResolveLocalPool means the template explicitly named a Pool in the
-	// local cluster via "<localID>::poolName". Caller goes straight to
-	// PoolScheduler — Env layer is bypassed.
+	// ResolveLocalPool means the template named a Pool in the local cluster
+	// via "<localID>::poolName" and no Env goes by that name. Caller goes
+	// straight to PoolScheduler — Env layer is bypassed.
 	ResolveLocalPool
 	// ResolveCrossCluster means the template explicitly named a Pool in
 	// a remote cluster via "<remoteID>::poolName". Caller hands off to

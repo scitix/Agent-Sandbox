@@ -18,11 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
@@ -43,6 +45,61 @@ var errVersionNotIncreasing = errors.New("version not increasing")
 
 func isVersionNotIncreasing(err error) bool {
 	return errors.Is(err, errVersionNotIncreasing)
+}
+
+// versionRegressed reports whether an update must be rejected for failing the
+// version-ordering rule, and the message explaining why.
+//
+// The rule is "spec.version must strictly increase", with one carve-out: an
+// update that touches nothing but the docs annotation may reuse the current
+// version. Docs are prose about how to use the template — they do not change
+// what a Pod rendered from it looks like (they are not even synced onto member
+// Pools), so forcing a version bump to fix a typo prices documentation edits
+// out. A *lower* version is always rejected, docs-only or not.
+//
+// An unparseable version is not treated as a regression; validateSemver
+// already gates the caller-supplied value, and a legacy base version outside
+// semver cannot be meaningfully compared.
+func versionRegressed(base, incoming *agentsv1alpha1.SandboxTemplate) (bool, string) {
+	newVer, curVer := incoming.Spec.Version, base.Spec.Version
+	if newVer == "" || curVer == "" {
+		return false, ""
+	}
+	cmp, err := compareSemver(newVer, curVer)
+	if err != nil || cmp > 0 {
+		return false, ""
+	}
+	if cmp == 0 && docsOnlyChange(base, incoming) {
+		return false, ""
+	}
+	return true, fmt.Sprintf("version %q must be greater than current version %q", newVer, curVer)
+}
+
+// docsOnlyChange reports whether incoming would change nothing about base
+// except its docs annotation. Update replaces exactly Spec + Labels +
+// Annotations, so comparing those three covers everything the caller can
+// affect; the docs keys are masked out of the annotation comparison.
+func docsOnlyChange(base, incoming *agentsv1alpha1.SandboxTemplate) bool {
+	if !equality.Semantic.DeepEqual(base.Spec, incoming.Spec) {
+		return false
+	}
+	if !maps.Equal(base.Labels, incoming.Labels) {
+		return false
+	}
+	return maps.Equal(withoutDocsAnnotations(base.Annotations), withoutDocsAnnotations(incoming.Annotations))
+}
+
+// withoutDocsAnnotations copies annotations minus the docs key, so two
+// annotation maps can be compared for "equal apart from the docs".
+func withoutDocsAnnotations(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		if k == agentsv1alpha1.SandboxTemplateDocsAnnotationKey {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // SandboxTemplateService defines business operations for SandboxTemplates.
@@ -146,11 +203,8 @@ func (s *k8sSandboxTemplateService) Update(ctx context.Context, tmpl *agentsv1al
 			}
 			return nil, domain.NewInternal(err.Error(), err)
 		}
-		if newVer != "" && base.Spec.Version != "" {
-			cmp, cmpErr := compareSemver(newVer, base.Spec.Version)
-			if cmpErr == nil && cmp <= 0 {
-				return nil, domain.NewBadRequest(fmt.Sprintf("version %q must be greater than current version %q", newVer, base.Spec.Version))
-			}
+		if bad, msg := versionRegressed(base, tmpl); bad {
+			return nil, domain.NewBadRequest(msg)
 		}
 		updated := base.DeepCopy()
 		updated.Spec = tmpl.Spec
@@ -180,12 +234,8 @@ func (s *k8sSandboxTemplateService) Update(ctx context.Context, tmpl *agentsv1al
 
 		// Re-check version ordering on each attempt so we always compare against
 		// the freshly fetched resourceVersion.
-		if newVer != "" && base.Spec.Version != "" {
-			cmp, cmpErr := compareSemver(newVer, base.Spec.Version)
-			if cmpErr == nil && cmp <= 0 {
-				return fmt.Errorf("version %q must be greater than current version %q: %w",
-					newVer, base.Spec.Version, errVersionNotIncreasing)
-			}
+		if bad, msg := versionRegressed(base, tmpl); bad {
+			return fmt.Errorf("%s: %w", msg, errVersionNotIncreasing)
 		}
 
 		updated := base.DeepCopy()

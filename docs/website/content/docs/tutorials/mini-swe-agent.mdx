@@ -21,7 +21,7 @@ Refer to the aforementioned documentation to apply for an API Key and create a s
 
 ```bash
 export SCITIX_API_KEY="${AGBX_API_KEY}"       # Please apply for the API Key via the platform
-export SCITIX_POOL_NAME="${AGBX_POOL_NAME}"   # The name of the warm-up pool configured later
+export SCITIX_POOL_NAME="${AGBX_ENV_NAME}"    # The sandbox env to allocate from (a pool name also works)
 ```
 
 Select the corresponding SWE-Bench image registry based on your current cluster:
@@ -73,10 +73,10 @@ The `-w` parameter specifies the number of concurrent workers. It is recommended
 
 ## Cross-Cluster Usage
 
-If the warm-up pool is in a different cluster, prefix the `SCITIX_POOL_NAME` with the cluster ID in the format `clusterId::poolName`:
+If the sandbox env is in a different cluster, prefix `SCITIX_POOL_NAME` with the cluster ID in the format `clusterId::name`, where `name` is an env name (preferred — the receiving cluster then picks a member pool for you) or a concrete pool name:
 
 ```bash
-export SCITIX_POOL_NAME="${AGBX_CLUSTER_ID}::${AGBX_POOL_NAME}"
+export SCITIX_POOL_NAME="${AGBX_CLUSTER_ID}::${AGBX_ENV_NAME}"
 ```
 
 > Cross-cluster requests are automatically forwarded by the AgentBox control plane via the Gateway. Authentication methods are the same as within the local cluster, requiring no additional configuration. If authentication errors occur, please re-apply for your API Key on the platform.

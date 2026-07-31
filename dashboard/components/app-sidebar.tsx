@@ -50,11 +50,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { clearSessionData, isAdminAtom, isActualAdminAtom } from "@/lib/atoms"
 import { ImpersonationSelector } from "@/components/impersonation-selector"
 import AgentBoxIcon from "./icons/agentbox-icon"
@@ -241,10 +239,10 @@ export function AppSidebar({}: AppSidebarProps) {
           ))}
       </SidebarContent>
 
-      <SidebarSeparator className="mx-0 border-t px-0" />
-
-      <SidebarFooter>
-        <SidebarMenu>
+      {/* Footer borders are full-bleed: padding lives on the inner sections so the
+          rules line up with the header's border-b and the main content's h-13 bar. */}
+      <SidebarFooter className="border-border gap-0 border-t p-0">
+        <SidebarMenu className="p-2">
           <SidebarMenuItem>
             <SidebarMenuButton
               render={
@@ -279,9 +277,7 @@ export function AppSidebar({}: AppSidebarProps) {
           </SidebarMenuItem>
         </SidebarMenu>
 
-        <Separator className="my-1" />
-
-        <div className="flex items-center justify-between px-0.5 group-data-[collapsible=icon]:justify-center">
+        <div className="border-border flex h-13 items-center justify-between border-t px-2.5 group-data-[collapsible=icon]:justify-center">
           <Button
             variant="ghost"
             size="icon-sm"

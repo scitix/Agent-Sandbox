@@ -5,7 +5,7 @@ description: Welcome to the ScitiX Agent Sandbox documentation.
 
 Scitix AgentBox is a sandbox service designed for Agentic scenarios, offering secure isolation and flexible deployment to support various use cases such as reasoning evaluation and training rollouts.[E2B](https://e2b.dev/docs) is the sandbox provider behind Manus, and `envd` is the runtime environment provided by E2B. Scitix AgentBox provides compatibility and enhancements for the E2B SDK. This document guides you on how to access Scitix AgentBox resources using the E2B SDK.
 
-By reading this document, we assume you have already completed the sandbox pool pre-warming and API Key application process. To use resources from the sandbox pool `${AGBX_POOL_NAME}`, first install the E2B SDK and the AgentBox patch package:
+By reading this document, we assume you have already completed the sandbox pool pre-warming and API Key application process. To use resources from the sandbox env `${AGBX_ENV_NAME}`, first install the E2B SDK and the AgentBox patch package:
 
 ```bash
 uv pip install e2b agent-sandbox-e2b
@@ -26,21 +26,24 @@ patch_e2b()
 
 from e2b import Sandbox
 
-# Create a sandbox using the pool
-sandbox = Sandbox.create("CLUSTER_ID::POOL_NAME//docker.io/library/ubuntu:22.04", timeout=3000, secure=False)
+# Create a sandbox from an env (ENV_NAME may also be a concrete pool name)
+sandbox = Sandbox.create("CLUSTER_ID::ENV_NAME//docker.io/library/ubuntu:22.04", timeout=3000, secure=False)
 print(sandbox.is_running())
 sandbox.kill()
 ```
 
 ## Cross-Cluster Usage
 
-To access sandbox resources from a different cluster, prefix the `templateID` with the cluster ID in the format `clusterId::poolName`:
+To access sandbox resources from a different cluster, prefix the `templateID` with the cluster ID in the format `clusterId::name`. The name is resolved env-first on the target cluster, so an env name gets you its member-pool selection; a concrete pool name pins one pool:
 
 ```python
-# Standard mode: Use resource pool from the current cluster
-sandbox = Sandbox.create("POOL_NAME", timeout=3000, secure=False)
+# Standard mode: use an env in the current cluster
+sandbox = Sandbox.create("ENV_NAME", timeout=3000, secure=False)
 
-# Cross-cluster mode: Specify the resource pool on a specific cluster
+# Cross-cluster mode: same lookup, pinned to one cluster
+sandbox = Sandbox.create("CLUSTER_ID::ENV_NAME", timeout=3000, secure=False)
+
+# Cross-cluster mode: pin one specific member pool
 sandbox = Sandbox.create("CLUSTER_ID::POOL_NAME", timeout=3000, secure=False)
 ```
 
