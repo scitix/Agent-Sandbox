@@ -24,11 +24,12 @@ import (
 )
 
 const (
-	defaultListenAddr             = ":9003"
-	defaultInternalAddr           = ":9004"
-	defaultClustersFilePath       = "/etc/agentbox/clusters.yaml"
-	defaultAPIKeyNamespace        = "agentbox-system"
-	defaultImagesCatalogConfigMap = "agentbox-images-catalog"
+	defaultListenAddr              = ":9003"
+	defaultInternalAddr            = ":9004"
+	defaultManagedAgentGatewayAddr = ":9005"
+	defaultClustersFilePath        = "/etc/agentbox/clusters.yaml"
+	defaultAPIKeyNamespace         = "agentbox-system"
+	defaultImagesCatalogConfigMap  = "agentbox-images-catalog"
 )
 
 // Config holds all wsproxy runtime settings.
@@ -76,6 +77,36 @@ type Config struct {
 	// Flag: --images-catalog-configmap  Env: AGENTBOX_IMAGES_CATALOG_CONFIGMAP
 	// Default: agentbox-images-catalog
 	ImagesCatalogConfigMap string
+
+	// ManagedAgentEnabled starts the ManagedAgent controller alongside the
+	// proxy. It lives here rather than in the worker binary because a
+	// ManagedAgent is a control-plane object: the worker chart installs on
+	// every cluster, so reconciling it there would run one controller per
+	// cluster for a single set of resources.
+	// Flag: --managed-agent  Env: AGENTBOX_MANAGED_AGENT_ENABLED  Default: false
+	ManagedAgentEnabled bool
+
+	// ManagedAgentGatewayAddr is the listener that serves published agents to
+	// callers outside the cluster. It is separate from the internal API because
+	// that one trusts a manager token: an ingress may only be pointed at a port
+	// where every request carries its own credential. Empty disables publishing.
+	ManagedAgentGatewayAddr string
+
+	// ManagedAgentPublicBaseURL is the shared route published agents answer on,
+	// e.g. "https://console.example.com/agentbox/api/managed-agents". It is
+	// configuration rather than something the controller can derive: only the
+	// chart knows the hostname and base path the ingress was created with.
+	ManagedAgentPublicBaseURL string
+
+	// ManagedAgentProxyService is this process as in-cluster callers address it,
+	// "<service>.<namespace>:<port>". Reported as status.endpoint so nothing
+	// hands out the Brain's own unauthenticated address.
+	ManagedAgentProxyService string
+
+	// ManagedAgentNamespace restricts the controller's cache and watches to one
+	// namespace. Empty watches all namespaces, which needs cluster-wide RBAC.
+	// Flag: --managed-agent-namespace  Env: AGENTBOX_MANAGED_AGENT_NAMESPACE
+	ManagedAgentNamespace string
 }
 
 // FromFlags registers all wsproxy flags on fs and returns a *Config whose
@@ -115,6 +146,26 @@ func FromFlags(fs *flag.FlagSet) *Config {
 	fs.StringVar(&cfg.APIKeyNamespace, "apikey-namespace",
 		envOr("AGENTBOX_APIKEY_NAMESPACE", defaultAPIKeyNamespace),
 		"Kubernetes namespace for API key Secrets.")
+
+	fs.BoolVar(&cfg.ManagedAgentEnabled, "managed-agent",
+		envOr("AGENTBOX_MANAGED_AGENT_ENABLED", "") != "",
+		"Run the ManagedAgent controller in this process (control plane only).")
+
+	fs.StringVar(&cfg.ManagedAgentGatewayAddr, "managed-agent-gateway-addr",
+		envOr("WSPROXY_MANAGED_AGENT_GATEWAY_ADDR", defaultManagedAgentGatewayAddr),
+		"Address serving published ManagedAgents to external callers. Empty disables it.")
+
+	fs.StringVar(&cfg.ManagedAgentProxyService, "managed-agent-proxy-service",
+		envOr("WSPROXY_MANAGED_AGENT_PROXY_SERVICE", ""),
+		"This process as in-cluster callers address it, \"<service>.<namespace>:<port>\".")
+
+	fs.StringVar(&cfg.ManagedAgentPublicBaseURL, "managed-agent-public-base-url",
+		envOr("WSPROXY_MANAGED_AGENT_PUBLIC_BASE_URL", ""),
+		"Public base URL published agents answer on; reported as status.publicURL.")
+
+	fs.StringVar(&cfg.ManagedAgentNamespace, "managed-agent-namespace",
+		os.Getenv("AGENTBOX_MANAGED_AGENT_NAMESPACE"),
+		"Namespace the ManagedAgent controller watches. Empty watches all namespaces.")
 
 	fs.StringVar(&cfg.ImagesCatalogConfigMap, "images-catalog-configmap",
 		envOr("AGENTBOX_IMAGES_CATALOG_CONFIGMAP", defaultImagesCatalogConfigMap),

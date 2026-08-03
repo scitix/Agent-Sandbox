@@ -17,4 +17,9 @@ spec:
     - name: internal
       port: 9004
       targetPort: 9004
+{{- if and .Values.managedAgent.enabled .Values.managedAgent.publish.enabled }}
+    - name: managed-agents
+      port: {{ .Values.managedAgent.publish.port }}
+      targetPort: {{ .Values.managedAgent.publish.port }}
+{{- end }}
       protocol: TCP

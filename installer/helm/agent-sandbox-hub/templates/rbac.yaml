@@ -101,3 +101,84 @@ subjects:
     name: {{ include "agent-sandbox-hub.proxyFullname" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
+
+{{- if .Values.managedAgent.enabled }}
+{{- $maNs := .Values.managedAgent.namespace | default .Release.Namespace }}
+---
+# The ManagedAgent controller needs a ServiceAccount even when the global API
+# key feature is off, so create one here if that block did not.
+{{- if not .Values.globalApiKey.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+---
+{{- end }}
+# Reconciling a ManagedAgent means owning the Brain's Deployment, Service and
+# claim, and reading the Secrets and ConfigMaps it references so a rotation can
+# be detected and rolled out.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-managedagent
+  namespace: {{ $maNs }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+rules:
+  # This Role is held by one ServiceAccount serving two callers: the reconciler,
+  # which only reads agents and writes their status, and the console API, which
+  # is where agents are created and deleted. The verbs are the union of both —
+  # dropping create/delete leaves reconciliation healthy and every console
+  # write failing.
+  - apiGroups: [agents.navix.sh]
+    resources: [managedagents]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [agents.navix.sh]
+    resources: [managedagents/status, managedagents/finalizers]
+    verbs: [get, update, patch]
+  - apiGroups: [agents.navix.sh]
+    resources: [sandboxenvs]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [services, persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # ConfigMaps are read for prompts and for change detection. Secrets are also
+  # written: the platform collects an agent's API keys and materialises them,
+  # and it generates the harness runtime config that pins the model provider.
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  # Leader election keeps a single reconciler active across a rollout, when the
+  # old and new pods overlap.
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-managedagent
+  namespace: {{ $maNs }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agent-sandbox-hub.proxyFullname" . }}-managedagent
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

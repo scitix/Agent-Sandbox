@@ -41,6 +41,13 @@ type RouterDeps struct {
 	JWTSecret    string
 	ManagerToken string
 	IAMService   service.IAMService
+
+	// ManagedAgentAPI serves the console's ManagedAgent CRUD. Nil when the
+	// ManagedAgent controller is not enabled, in which case the routes are not
+	// registered at all rather than answering with an empty list — a console
+	// pointed at a control plane without the feature should see a 404, not the
+	// impression that the tenant simply owns no agents.
+	ManagedAgentAPI *ManagedAgentAPI
 }
 
 // NewInternalServer creates the :9004 management HTTP server.
@@ -77,6 +84,13 @@ func NewInternalServer(cfg *config.Config, deps RouterDeps) *http.Server {
 		BaseURL:     "",
 		Middlewares: []wsproxygen.MiddlewareFunc{wsproxygen.MiddlewareFunc(authMW)},
 	})
+
+	// ManagedAgent CRUD. It sits behind the same JWT-or-manager-token gate as
+	// the generated routes because the console forwards the caller's JWT and
+	// tenant scoping is derived from it.
+	if deps.ManagedAgentAPI != nil {
+		deps.ManagedAgentAPI.RegisterManagedAgentRoutes(r.Group("/internal", authMW))
+	}
 
 	// Legacy /internal/* routes — static manager-token only.
 	if deps.SyncManager != nil {
