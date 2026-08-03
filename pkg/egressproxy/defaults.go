@@ -29,4 +29,9 @@ const (
 	// DefaultPolicyPath is the emptyDir file the control plane writes (exec) and
 	// the proxy reads (fsnotify). Mounted only in the sidecar.
 	DefaultPolicyPath = "/var/run/egress/policy.json"
+
+	// DefaultSecretsPath is the injection config, written 0600 next to the
+	// policy. It holds live credential material and the sandbox's CA key, so it
+	// lives on the same sidecar-only tmpfs and is removed on release.
+	DefaultSecretsPath = "/var/run/egress/secrets.json"
 )

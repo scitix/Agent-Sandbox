@@ -750,6 +750,182 @@ spec:
                                           type: string
                                         type: array
                                     type: object
+                                  secretInjection:
+                                    description: "SecretInjection brokers credentials\
+                                      \ on the way out: the sidecar terminates\nTLS\
+                                      \ for the listed hosts and adds (or substitutes)\
+                                      \ the configured headers,\nso the sandbox can\
+                                      \ use a credential without ever being able to\
+                                      \ read it.\nnil disables it.\n\nSetting this\
+                                      \ alone (with Egress nil) is valid and means\
+                                      \ \"inject, but do\nnot filter\": the sidecar\
+                                      \ is still injected \u2014 which is what makes\
+                                      \ the\ninterception possible \u2014 while egress\
+                                      \ stays unrestricted apart from the\nanti-SSRF\
+                                      \ baseline.\n\nDeclarable only on a SandboxEnv.\
+                                      \ Sandbox-create requests carrying it are\n\
+                                      rejected, because a credential travelling through\
+                                      \ a create request would\nre-introduce exactly\
+                                      \ the exposure this feature removes."
+                                    properties:
+                                      caCertTTL:
+                                        description: 'CACertTTL bounds the lifetime
+                                          of the per-sandbox CA minted for TLS
+
+                                          interception. Defaults to 24h.'
+                                        type: string
+                                      credentials:
+                                        description: Credentials are the named secrets
+                                          rules may reference.
+                                        items:
+                                          description: InjectedCredential is one named
+                                            credential.
+                                          properties:
+                                            exposeAs:
+                                              description: 'ExposeAs turns on placeholder
+                                                mode: the sandbox gets an environment
+
+                                                variable of this name whose value
+                                                is a decoy (see Placeholder), and
+                                                the
+
+                                                proxy swaps the decoy for the real
+                                                value on hosts that allow it. Leave
+
+                                                empty to use the credential through
+                                                header injection only.'
+                                              type: string
+                                            name:
+                                              description: 'Name is how rules refer
+                                                to this credential in a value template
+
+                                                ("{{ name }}").'
+                                              type: string
+                                            placeholder:
+                                              description: "Placeholder is the decoy\
+                                                \ value handed to the sandbox. Empty\
+                                                \ means a fresh\nrandom \"agbx_ph_<32\
+                                                \ hex>\" per claim.\n\nSet it when\
+                                                \ a client validates credential shape\
+                                                \ before sending \u2014 several\n\
+                                                SDKs reject a key that lacks the expected\
+                                                \ prefix or length, so a random\n\
+                                                decoy would fail inside the sandbox\
+                                                \ and never reach the proxy. A fixed\n\
+                                                decoy costs nothing in secrecy (it\
+                                                \ already lives in the sandbox's\n\
+                                                environment); it is merely identical\
+                                                \ across sandboxes.\n\nMust be at\
+                                                \ least 16 characters, and no two\
+                                                \ credentials may share a\nplaceholder\
+                                                \ or have one be a substring of another\
+                                                \ \u2014 overlapping decoys\nwould\
+                                                \ substitute into each other."
+                                              type: string
+                                            valueFrom:
+                                              description: 'ValueFrom points at the
+                                                Secret key holding the credential.
+                                                The Secret
+
+                                                must live in the SandboxEnv''s namespace.'
+                                              properties:
+                                                key:
+                                                  type: string
+                                                name:
+                                                  type: string
+                                              required:
+                                              - key
+                                              - name
+                                              type: object
+                                          required:
+                                          - name
+                                          - valueFrom
+                                          type: object
+                                        type: array
+                                      rules:
+                                        description: Rules declare what to inject,
+                                          per host.
+                                        items:
+                                          description: InjectionRule declares the
+                                            injection applied to one host.
+                                          properties:
+                                            headers:
+                                              description: Headers are the headers
+                                                to inject.
+                                              items:
+                                                description: HeaderInjection is one
+                                                  header to add to matching requests.
+                                                properties:
+                                                  mode:
+                                                    description: Mode defaults to
+                                                      Override.
+                                                    enum:
+                                                    - Override
+                                                    - IfAbsent
+                                                    type: string
+                                                  name:
+                                                    description: Name is the header
+                                                      name, compared case-insensitively.
+                                                    type: string
+                                                  value:
+                                                    description: 'Value is a template
+                                                      that may reference declared
+                                                      credentials as
+
+                                                      "{{ credName }}", e.g. "Bearer
+                                                      {{ openai }}".'
+                                                    type: string
+                                                required:
+                                                - name
+                                                - value
+                                                type: object
+                                              type: array
+                                            host:
+                                              description: 'Host must be an exact
+                                                hostname. Wildcards are rejected:
+                                                anyone able to
+
+                                                control a matching subdomain would
+                                                receive the credential.'
+                                              type: string
+                                            methods:
+                                              description: Methods narrows the rule
+                                                to these HTTP methods. Empty means
+                                                all.
+                                              items:
+                                                type: string
+                                              type: array
+                                            pathPrefixes:
+                                              description: PathPrefixes narrows the
+                                                rule to matching request paths. Empty
+                                                means all.
+                                              items:
+                                                type: string
+                                              type: array
+                                            ports:
+                                              description: 'Ports narrows which destination
+                                                ports the rule covers. Defaults to
+
+                                                [80, 443]; other ports get no L7 handling
+                                                at all.'
+                                              items:
+                                                format: int32
+                                                type: integer
+                                              type: array
+                                            substitute:
+                                              description: 'Substitute lists credentials
+                                                whose placeholder may be swapped for
+                                                the
+
+                                                real value on this host.'
+                                              items:
+                                                type: string
+                                              type: array
+                                          required:
+                                          - host
+                                          type: object
+                                        type: array
+                                    type: object
                                 type: object
                               podCreationImagePolicy:
                                 allOf:
@@ -1208,6 +1384,162 @@ spec:
                               IPs).'
                             items:
                               type: string
+                            type: array
+                        type: object
+                      secretInjection:
+                        description: "SecretInjection brokers credentials on the way\
+                          \ out: the sidecar terminates\nTLS for the listed hosts\
+                          \ and adds (or substitutes) the configured headers,\nso\
+                          \ the sandbox can use a credential without ever being able\
+                          \ to read it.\nnil disables it.\n\nSetting this alone (with\
+                          \ Egress nil) is valid and means \"inject, but do\nnot filter\"\
+                          : the sidecar is still injected \u2014 which is what makes\
+                          \ the\ninterception possible \u2014 while egress stays unrestricted\
+                          \ apart from the\nanti-SSRF baseline.\n\nDeclarable only\
+                          \ on a SandboxEnv. Sandbox-create requests carrying it are\n\
+                          rejected, because a credential travelling through a create\
+                          \ request would\nre-introduce exactly the exposure this\
+                          \ feature removes."
+                        properties:
+                          caCertTTL:
+                            description: 'CACertTTL bounds the lifetime of the per-sandbox
+                              CA minted for TLS
+
+                              interception. Defaults to 24h.'
+                            type: string
+                          credentials:
+                            description: Credentials are the named secrets rules may
+                              reference.
+                            items:
+                              description: InjectedCredential is one named credential.
+                              properties:
+                                exposeAs:
+                                  description: 'ExposeAs turns on placeholder mode:
+                                    the sandbox gets an environment
+
+                                    variable of this name whose value is a decoy (see
+                                    Placeholder), and the
+
+                                    proxy swaps the decoy for the real value on hosts
+                                    that allow it. Leave
+
+                                    empty to use the credential through header injection
+                                    only.'
+                                  type: string
+                                name:
+                                  description: 'Name is how rules refer to this credential
+                                    in a value template
+
+                                    ("{{ name }}").'
+                                  type: string
+                                placeholder:
+                                  description: "Placeholder is the decoy value handed\
+                                    \ to the sandbox. Empty means a fresh\nrandom\
+                                    \ \"agbx_ph_<32 hex>\" per claim.\n\nSet it when\
+                                    \ a client validates credential shape before sending\
+                                    \ \u2014 several\nSDKs reject a key that lacks\
+                                    \ the expected prefix or length, so a random\n\
+                                    decoy would fail inside the sandbox and never\
+                                    \ reach the proxy. A fixed\ndecoy costs nothing\
+                                    \ in secrecy (it already lives in the sandbox's\n\
+                                    environment); it is merely identical across sandboxes.\n\
+                                    \nMust be at least 16 characters, and no two credentials\
+                                    \ may share a\nplaceholder or have one be a substring\
+                                    \ of another \u2014 overlapping decoys\nwould\
+                                    \ substitute into each other."
+                                  type: string
+                                valueFrom:
+                                  description: 'ValueFrom points at the Secret key
+                                    holding the credential. The Secret
+
+                                    must live in the SandboxEnv''s namespace.'
+                                  properties:
+                                    key:
+                                      type: string
+                                    name:
+                                      type: string
+                                  required:
+                                  - key
+                                  - name
+                                  type: object
+                              required:
+                              - name
+                              - valueFrom
+                              type: object
+                            type: array
+                          rules:
+                            description: Rules declare what to inject, per host.
+                            items:
+                              description: InjectionRule declares the injection applied
+                                to one host.
+                              properties:
+                                headers:
+                                  description: Headers are the headers to inject.
+                                  items:
+                                    description: HeaderInjection is one header to
+                                      add to matching requests.
+                                    properties:
+                                      mode:
+                                        description: Mode defaults to Override.
+                                        enum:
+                                        - Override
+                                        - IfAbsent
+                                        type: string
+                                      name:
+                                        description: Name is the header name, compared
+                                          case-insensitively.
+                                        type: string
+                                      value:
+                                        description: 'Value is a template that may
+                                          reference declared credentials as
+
+                                          "{{ credName }}", e.g. "Bearer {{ openai
+                                          }}".'
+                                        type: string
+                                    required:
+                                    - name
+                                    - value
+                                    type: object
+                                  type: array
+                                host:
+                                  description: 'Host must be an exact hostname. Wildcards
+                                    are rejected: anyone able to
+
+                                    control a matching subdomain would receive the
+                                    credential.'
+                                  type: string
+                                methods:
+                                  description: Methods narrows the rule to these HTTP
+                                    methods. Empty means all.
+                                  items:
+                                    type: string
+                                  type: array
+                                pathPrefixes:
+                                  description: PathPrefixes narrows the rule to matching
+                                    request paths. Empty means all.
+                                  items:
+                                    type: string
+                                  type: array
+                                ports:
+                                  description: 'Ports narrows which destination ports
+                                    the rule covers. Defaults to
+
+                                    [80, 443]; other ports get no L7 handling at all.'
+                                  items:
+                                    format: int32
+                                    type: integer
+                                  type: array
+                                substitute:
+                                  description: 'Substitute lists credentials whose
+                                    placeholder may be swapped for the
+
+                                    real value on this host.'
+                                  items:
+                                    type: string
+                                  type: array
+                              required:
+                              - host
+                              type: object
                             type: array
                         type: object
                     type: object

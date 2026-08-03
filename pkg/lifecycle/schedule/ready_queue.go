@@ -93,21 +93,34 @@ func (q *readyQueue) appendFiltered(pods []corev1.Pod, reserved *reservations) (
 	return admitted, skippedProtected
 }
 
+// popOutcome counts the entries a single pop walked past, for metrics.
+type popOutcome struct {
+	// Discarded counts entries dropped because the Pod vanished from the
+	// informer cache or had left Idle. Normal churn.
+	Discarded int
+	// MissingSidecar counts entries rejected because the caller requires
+	// egress enforcement but the Pod predates its Pool's SandboxNetworkPolicy
+	// and therefore carries no filter sidecar. Never normal — see
+	// agentsv1alpha1.PodHasEgressProxy.
+	MissingSidecar int
+}
+
 // popUnreservedAndReserve removes the first queued pod whose name is not
 // currently reserved, fetches the fresh Pod object from the informer cache,
 // and atomically records a reservation for it. Returns the live Pod on success.
 //
 // Pods that are reserved, deleted, or no longer Idle are silently discarded and
-// the next entry is tried. The discarded return value counts how many entries
-// were dropped due to deletion or phase mismatch (not counting reserved skips,
-// which are a normal part of dispatch flow). If no dispatchable pod exists,
-// ok=false.
-func (q *readyQueue) popUnreservedAndReserve(ctx context.Context, c client.Client, reserved *reservations) (pod corev1.Pod, ok bool, discarded int) {
+// the next entry is tried. When requireEgressSidecar is set, Pods without the
+// egress filter sidecar are rejected the same way: the claim would otherwise
+// land on a Pod with no iptables redirect and no proxy, i.e. no enforcement at
+// all, while the API reported success. Parking the request until a rolled Pod
+// appears is the fail-closed choice. If no dispatchable pod exists, ok=false.
+func (q *readyQueue) popUnreservedAndReserve(ctx context.Context, c client.Client, reserved *reservations, requireEgressSidecar bool) (pod corev1.Pod, ok bool, outcome popOutcome) {
 	for {
 		q.mu.Lock()
 		if len(q.items) == 0 {
 			q.mu.Unlock()
-			return corev1.Pod{}, false, discarded
+			return corev1.Pod{}, false, outcome
 		}
 		nn := q.items[0]
 		q.items = q.items[1:]
@@ -126,19 +139,26 @@ func (q *readyQueue) popUnreservedAndReserve(ctx context.Context, c client.Clien
 		if err := c.Get(ctx, nn, &p); err != nil {
 			// Pod is no longer in the cache (deleted during scale-down or
 			// otherwise). Discard and try the next entry.
-			discarded++
+			outcome.Discarded++
 			continue
 		}
 		if p.Labels[agentsv1alpha1.SandboxPhaseLabelKey] != string(agentsv1alpha1.SandboxPhaseIdle) {
 			// Phase has changed since the pod was admitted to the queue
 			// (e.g. another actor already claimed it). Discard.
-			discarded++
+			outcome.Discarded++
+			continue
+		}
+		if requireEgressSidecar && !agentsv1alpha1.PodHasEgressProxy(&p) {
+			// Pod predates its Pool's SandboxNetworkPolicy: it has neither the
+			// redirect nor the proxy, so nothing would enforce the policy. Drop
+			// it and keep looking; the Pool rollout is already rebuilding these.
+			outcome.MissingSidecar++
 			continue
 		}
 		if reserved != nil {
 			reserved.reserve(p.Name)
 		}
-		return p, true, discarded
+		return p, true, outcome
 	}
 }
 

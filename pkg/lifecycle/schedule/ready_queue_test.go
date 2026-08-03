@@ -48,6 +48,17 @@ func mkPod(name, uid string) corev1.Pod {
 	}
 }
 
+// mkPodWithEgressSidecar creates an Idle pod that carries the egress filter
+// sidecar, i.e. one materialised while its Pool already had a networkPolicy.
+func mkPodWithEgressSidecar(name, uid string) corev1.Pod {
+	p := mkPod(name, uid)
+	p.Spec.InitContainers = []corev1.Container{
+		{Name: "envd-injector", Image: "envd"},
+		{Name: agentsv1alpha1.EgressProxyContainerName, Image: "idle"},
+	}
+	return p
+}
+
 // mkProtectedPod creates an Idle pod marked with the scale-down-protection annotation.
 func mkProtectedPod(name, uid string) corev1.Pod {
 	p := mkPod(name, uid)
@@ -76,9 +87,15 @@ func fakeClientWithPods(t *testing.T, pods ...corev1.Pod) client.Client {
 }
 
 // pop is a test helper that calls popUnreservedAndReserve with background ctx
-// and the given client.
+// and the given client, without the egress-sidecar requirement.
 func pop(q *readyQueue, c client.Client, r *reservations) (corev1.Pod, bool, int) {
-	return q.popUnreservedAndReserve(context.Background(), c, r)
+	p, ok, outcome := q.popUnreservedAndReserve(context.Background(), c, r, false)
+	return p, ok, outcome.Discarded
+}
+
+// popRequiringSidecar is pop with the egress-sidecar requirement turned on.
+func popRequiringSidecar(q *readyQueue, c client.Client, r *reservations) (corev1.Pod, bool, popOutcome) {
+	return q.popUnreservedAndReserve(context.Background(), c, r, true)
 }
 
 // ─── core behaviour ──────────────────────────────────────────────────────────
@@ -474,5 +491,67 @@ func TestReadyQueue_HeavyDedup(t *testing.T) {
 	wg.Wait()
 	if got := q.len(); got != unique {
 		t.Fatalf("queue len=%d, want %d (dedup failed)", got, unique)
+	}
+}
+
+// ─── egress-sidecar admission ────────────────────────────────────────────────
+
+// A pod materialised before its Pool gained a networkPolicy has neither the
+// iptables redirect nor the proxy. Handing it to a claim that expects
+// enforcement would be fail-open, so the dispatcher must skip it.
+func TestReadyQueue_SkipsPodsWithoutEgressSidecar(t *testing.T) {
+	t.Parallel()
+	stale := mkPod("stale", "1")
+	rolled := mkPodWithEgressSidecar("rolled", "2")
+	c := fakeClientWithPods(t, stale, rolled)
+	q := newReadyQueue()
+	r := newReservations(time.Minute, nil)
+	q.appendFiltered([]corev1.Pod{stale, rolled}, r)
+
+	pod, ok, outcome := popRequiringSidecar(q, c, r)
+	if !ok {
+		t.Fatal("pop returned no pod; the rolled pod should have been dispatchable")
+	}
+	if pod.Name != "rolled" {
+		t.Fatalf("dispatched %q, want the pod carrying the sidecar", pod.Name)
+	}
+	if outcome.MissingSidecar != 1 {
+		t.Fatalf("MissingSidecar=%d, want 1 (the stale pod)", outcome.MissingSidecar)
+	}
+	if outcome.Discarded != 0 {
+		t.Fatalf("Discarded=%d, want 0 — a missing sidecar is not ordinary churn", outcome.Discarded)
+	}
+}
+
+// When every idle pod predates the policy, the claim must be parked rather than
+// served by an unfiltered pod.
+func TestReadyQueue_AllStaleYieldsNoPod(t *testing.T) {
+	t.Parallel()
+	a, b := mkPod("a", "1"), mkPod("b", "2")
+	c := fakeClientWithPods(t, a, b)
+	q := newReadyQueue()
+	r := newReservations(time.Minute, nil)
+	q.appendFiltered([]corev1.Pod{a, b}, r)
+
+	if _, ok, outcome := popRequiringSidecar(q, c, r); ok {
+		t.Fatal("pop returned a pod without the egress sidecar; that is fail-open")
+	} else if outcome.MissingSidecar != 2 {
+		t.Fatalf("MissingSidecar=%d, want 2", outcome.MissingSidecar)
+	}
+}
+
+// Pools without a networkPolicy must be unaffected: the same stale pods stay
+// perfectly dispatchable when the claim does not require enforcement.
+func TestReadyQueue_NoSidecarRequirementDispatchesAnyPod(t *testing.T) {
+	t.Parallel()
+	stale := mkPod("stale", "1")
+	c := fakeClientWithPods(t, stale)
+	q := newReadyQueue()
+	r := newReservations(time.Minute, nil)
+	q.appendFiltered([]corev1.Pod{stale}, r)
+
+	pod, ok, _ := pop(q, c, r)
+	if !ok || pod.Name != "stale" {
+		t.Fatalf("pop ok=%v name=%q, want the stale pod to dispatch normally", ok, pod.Name)
 	}
 }

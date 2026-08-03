@@ -241,6 +241,9 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 	if input.TemplateRef.Name == "" {
 		return nil, domain.NewBadRequest("templateRef.name is required")
 	}
+	if err := validateEnvOverrides(input.Overrides); err != nil {
+		return nil, err
+	}
 	mode := input.Mode
 	if mode == "" {
 		mode = agentsv1alpha1.SandboxEnvModeWarmPool
@@ -300,6 +303,9 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 // methods (AddMember / UpdateAutoscalingGroup / …) so accidental wholesale
 // replacement isn't possible here.
 func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError) {
+	if err := validateEnvOverrides(input.Overrides); err != nil {
+		return nil, err
+	}
 	key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &agentsv1alpha1.SandboxEnv{}
@@ -541,6 +547,69 @@ func networkPolicyToGen(np *agentsv1alpha1.SandboxNetworkPolicy) *gen.SandboxNet
 		}
 		g.Egress = e
 	}
+	g.SecretInjection = secretInjectionToGen(np.SecretInjection)
+	return g
+}
+
+// secretInjectionToGen maps the CRD credential-injection block onto the wire
+// shape (GET). Credential values are never resolved here — the response carries
+// only the Secret reference and the decoy, which are not secrets.
+func secretInjectionToGen(si *agentsv1alpha1.SecretInjection) *gen.SecretInjection {
+	if si == nil {
+		return nil
+	}
+	g := &gen.SecretInjection{}
+	if si.CACertTTL != nil {
+		g.CaCertTTL = ptr.To(si.CACertTTL.Duration.String())
+	}
+	if len(si.Credentials) > 0 {
+		creds := make([]gen.InjectedCredential, 0, len(si.Credentials))
+		for _, c := range si.Credentials {
+			out := gen.InjectedCredential{
+				Name:      c.Name,
+				ValueFrom: gen.SecretKeyRef{Name: c.ValueFrom.Name, Key: c.ValueFrom.Key},
+			}
+			if c.ExposeAs != "" {
+				out.ExposeAs = ptr.To(c.ExposeAs)
+			}
+			if c.Placeholder != "" {
+				out.Placeholder = ptr.To(c.Placeholder)
+			}
+			creds = append(creds, out)
+		}
+		g.Credentials = &creds
+	}
+	if len(si.Rules) > 0 {
+		rules := make([]gen.InjectionRule, 0, len(si.Rules))
+		for _, r := range si.Rules {
+			out := gen.InjectionRule{Host: r.Host}
+			if len(r.Ports) > 0 {
+				out.Ports = ptr.To(r.Ports)
+			}
+			if len(r.Substitute) > 0 {
+				out.Substitute = ptr.To(r.Substitute)
+			}
+			if len(r.PathPrefixes) > 0 {
+				out.PathPrefixes = ptr.To(r.PathPrefixes)
+			}
+			if len(r.Methods) > 0 {
+				out.Methods = ptr.To(r.Methods)
+			}
+			if len(r.Headers) > 0 {
+				hs := make([]gen.HeaderInjection, 0, len(r.Headers))
+				for _, h := range r.Headers {
+					hi := gen.HeaderInjection{Name: h.Name, Value: h.Value}
+					if h.Mode != "" {
+						hi.Mode = ptr.To(gen.HeaderInjectionMode(h.Mode))
+					}
+					hs = append(hs, hi)
+				}
+				out.Headers = &hs
+			}
+			rules = append(rules, out)
+		}
+		g.Rules = &rules
+	}
 	return g
 }
 
@@ -778,4 +847,18 @@ func envObservedMemberToGen(m agentsv1alpha1.EnvObservedMember) gen.EnvObservedM
 		out.TemplateVersion = ptr.To(m.TemplateVersion)
 	}
 	return out
+}
+
+// validateEnvOverrides rejects Env overrides that would be accepted by the CRD
+// schema but fail — or silently do nothing — at claim time. Running it on the
+// write path means the author sees the error while editing the Env, rather than
+// discovering it when a sandbox is created hours later.
+func validateEnvOverrides(o *agentsv1alpha1.EnvOverridesSpec) *domain.AppError {
+	if o == nil {
+		return nil
+	}
+	if err := agentsv1alpha1.ValidateSecretInjection(o.NetworkPolicy); err != nil {
+		return domain.NewBadRequest(fmt.Sprintf("invalid overrides.networkPolicy: %v", err))
+	}
+	return nil
 }

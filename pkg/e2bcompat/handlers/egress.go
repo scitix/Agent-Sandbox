@@ -47,7 +47,13 @@ func parseE2BNetworkPolicy(body *e2bgen.NewSandbox) (*agentsv1alpha1.SandboxNetw
 		return nil, &e
 	}
 	if ncfg.Rules != nil && len(*ncfg.Rules) > 0 {
-		e := errRespCode(400, "network.rules (per-domain transforms) are not supported by AgentBox")
+		// AgentBox does support per-host header injection, but only as a
+		// SandboxEnv declaration backed by a Secret. E2B's wire shape carries
+		// the header value inline, which would put a credential in the request
+		// body, the access log, and the caller's source — the exposure the
+		// feature exists to eliminate.
+		e := errRespCode(400, "network.rules is not accepted per sandbox; declare credential "+
+			"injection on the SandboxEnv (overrides.networkPolicy.secretInjection) instead")
 		return nil, &e
 	}
 

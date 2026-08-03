@@ -179,6 +179,13 @@ type ClaimRequest struct {
 	// end-to-end dispatch latency via ScheduleDispatchLatencySeconds. Callers
 	// may leave it zero; Enqueue will populate it if so.
 	EnqueuedAt time.Time
+	// RequireEgressSidecar tells the dispatcher to skip idle Pods that carry no
+	// egress filter sidecar. The API layer sets it exactly when it resolved an
+	// effective egress policy for this claim, so the two decisions cannot drift.
+	// Without it a claim can land on a Pod materialised before the Pool gained
+	// its SandboxNetworkPolicy — which has no redirect and no proxy, i.e. no
+	// enforcement at all, while the API reports success.
+	RequireEgressSidecar bool
 }
 
 // isExpired reports whether the request's deadline has passed or its context
@@ -497,10 +504,8 @@ func (s *PoolScheduler) handleRequest(ctx context.Context, req *ClaimRequest, wa
 		return waiting
 	}
 
-	pod, ok, discarded := s.queue.popUnreservedAndReserve(ctx, s.k8sClient, s.reserved)
-	if discarded > 0 {
-		pkgmetrics.ScheduleReadyQueueEvictedTotal.With(s.plabels()).Add(float64(discarded))
-	}
+	pod, ok, outcome := s.queue.popUnreservedAndReserve(ctx, s.k8sClient, s.reserved, req.RequireEgressSidecar)
+	s.recordPopOutcome(outcome)
 	if ok {
 		go s.doCAS(req, pod)
 		s.updateGauges()
@@ -550,10 +555,8 @@ func (s *PoolScheduler) dispatchFromWaiting(ctx context.Context, waiting []*Clai
 			s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "expired while waiting")
 			continue
 		}
-		pod, ok, discarded := s.queue.popUnreservedAndReserve(ctx, s.k8sClient, s.reserved)
-		if discarded > 0 {
-			pkgmetrics.ScheduleReadyQueueEvictedTotal.With(s.plabels()).Add(float64(discarded))
-		}
+		pod, ok, outcome := s.queue.popUnreservedAndReserve(ctx, s.k8sClient, s.reserved, req.RequireEgressSidecar)
+		s.recordPopOutcome(outcome)
 		if !ok {
 			// No more pods — keep this request and everything after
 			// it in their original order.
@@ -593,6 +596,22 @@ func (s *PoolScheduler) requeue(req *ClaimRequest) {
 	case s.reqCh <- req:
 	default:
 		s.failRequest(req, inplaceupdate.ErrNoIdlePodsAvailable, "reqCh full on requeue (retriable CAS)")
+	}
+}
+
+// recordPopOutcome translates a pop walk into metrics. A non-zero
+// MissingSidecar means idle Pods exist but cannot legally serve a policy-bearing
+// claim; it is logged at error level because a sustained non-zero rate means
+// claims are being starved by a stalled Pool rollout.
+func (s *PoolScheduler) recordPopOutcome(o popOutcome) {
+	if o.Discarded > 0 {
+		pkgmetrics.ScheduleReadyQueueEvictedTotal.With(s.plabels()).Add(float64(o.Discarded))
+	}
+	if o.MissingSidecar > 0 {
+		pkgmetrics.EgressMissingSidecarTotal.With(s.plabels()).Add(float64(o.MissingSidecar))
+		klog.ErrorS(nil, "schedule: skipped idle pods without the egress filter sidecar; "+
+			"they predate the pool's networkPolicy and would run UNFILTERED",
+			"pool", s.poolNS+"/"+s.poolName, "skipped", o.MissingSidecar)
 	}
 }
 

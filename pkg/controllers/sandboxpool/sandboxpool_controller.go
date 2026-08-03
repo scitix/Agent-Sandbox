@@ -398,6 +398,11 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		return reconcile.Result{}, err
 	}
 
+	pods, err = r.syncRunningPodCredentials(ctx, sandboxPool, pods)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	pods, err = r.syncRestartedRunningPods(ctx, sandboxPool, pods)
 	if err != nil {
 		return reconcile.Result{}, err

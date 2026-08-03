@@ -36,7 +36,7 @@ import (
 const (
 	pluginName         = "egress-network-policy"
 	initContainerName  = "egress-init"
-	proxyContainerName = "egress-proxy"
+	proxyContainerName = agentsv1alpha1.EgressProxyContainerName
 	policyVolumeName   = "egress-policy"
 	policyMountDir     = "/var/run/egress"
 )
@@ -87,6 +87,14 @@ func (p *Plugin) PreCreatePod(_ context.Context, pod *corev1.Pod, pool *agentsv1
 	// A sandbox process running as the proxy uid would be exempted from the
 	// redirect (owner match) and bypass the filter. Reject explicit collisions.
 	if err := rejectProxyUIDCollision(pod); err != nil {
+		return false, err
+	}
+
+	// The policy volume holds the credential payload and the sandbox's CA
+	// private key. A sandbox container that mounted it could simply read them,
+	// which would defeat the entire point of brokering credentials outside the
+	// sandbox.
+	if err := rejectPolicyVolumeMount(pod); err != nil {
 		return false, err
 	}
 
@@ -159,6 +167,30 @@ func rejectProxyUIDCollision(pod *corev1.Pod) *domain.AppError {
 		}
 	}
 	return nil
+}
+
+// rejectPolicyVolumeMount refuses a Pod whose sandbox containers mount the
+// sidecar's private volume. The volume carries pushed credentials and the
+// per-sandbox CA key; anything that can read it can read the secrets the
+// sandbox is specifically not supposed to see.
+func rejectPolicyVolumeMount(pod *corev1.Pod) *domain.AppError {
+	check := func(kind string, cs []corev1.Container) *domain.AppError {
+		for i := range cs {
+			for _, m := range cs[i].VolumeMounts {
+				if m.Name == policyVolumeName {
+					return plugins.NewInvalidSpec(fmt.Sprintf(
+						"egress network policy is enabled but %s %q mounts the %q volume, "+
+							"which holds the filter's credential payload and CA key; remove the mount",
+						kind, cs[i].Name, policyVolumeName), nil)
+				}
+			}
+		}
+		return nil
+	}
+	if err := check("container", pod.Spec.Containers); err != nil {
+		return err
+	}
+	return check("init container", pod.Spec.InitContainers)
 }
 
 func proxyUIDErr(where string) *domain.AppError {

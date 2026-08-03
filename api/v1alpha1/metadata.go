@@ -100,6 +100,17 @@ const (
 	// giving free reset-on-recycle.
 	SandboxEgressPolicyAnnotationKey = "agentbox.navix.sh/egress-policy"
 
+	// SandboxEgressInjectAnnotationKey carries the JSON-encoded credential
+	// injection block (v1alpha1.SecretInjection) resolved for a claimed sandbox,
+	// with per-claim placeholders filled in.
+	//
+	// It holds rule shapes, credential names, Secret references and decoys —
+	// never a credential value. The SandboxReady hook resolves the referenced
+	// Secrets and delivers the plaintext straight to the sidecar over exec, so
+	// no credential is ever written to etcd or returned by the API. Registered
+	// as a managed annotation key so release strips it.
+	SandboxEgressInjectAnnotationKey = "agentbox.navix.sh/egress-inject"
+
 	// SI Scheduler labels and annotations
 	LabelTeam = "scheduling.navix.sh/team"
 	LabelUser = "scheduling.navix.sh/user"

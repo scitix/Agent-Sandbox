@@ -1490,6 +1490,60 @@ export interface components {
             egress?: components["schemas"]["EgressRules"];
             /** @description Disable the default deny of private / link-local / cloud-metadata ranges (RFC1918, 169.254.0.0/16, ...). Default false — the anti-SSRF baseline stays on. */
             allowPrivateNetworks?: boolean;
+            /** @description Outbound credential broker: the sidecar terminates TLS for the listed hosts and injects (or substitutes) headers, so a sandbox can use a credential without being able to read it. Declarable on a SandboxEnv only — sandbox-create requests carrying it are rejected. Setting it with egress omitted means 'inject but do not filter'. */
+            secretInjection?: components["schemas"]["SecretInjection"];
+        };
+        /** @description Credential injection applied to matching outbound requests. Never carries a credential value: values live in Secrets and are resolved by the operator at push time. */
+        SecretInjection: {
+            /** @description Named credentials that rules may reference. */
+            credentials?: components["schemas"]["InjectedCredential"][];
+            /** @description Per-host injection actions. */
+            rules?: components["schemas"]["InjectionRule"][];
+            /** @description Lifetime of the per-sandbox CA minted for TLS interception, as a Go duration ('24h'). Defaults to 24h. */
+            caCertTTL?: string;
+        };
+        InjectedCredential: {
+            /** @description How rules refer to this credential in a value template ('{{ name }}'). */
+            name: string;
+            /** @description Secret key holding the credential. Must be in the SandboxEnv's namespace. */
+            valueFrom: components["schemas"]["SecretKeyRef"];
+            /** @description Environment variable name handed to the sandbox carrying the decoy value (placeholder mode). Omit to use this credential through header injection only. */
+            exposeAs?: string;
+            /** @description Decoy value given to the sandbox. Omit for a fresh random 'agbx_ph_<32 hex>' per claim. Set it when a client validates credential shape before sending. Minimum 16 characters; placeholders must not overlap. */
+            placeholder?: string;
+            /** @description First 8 hex characters of the SHA-256 of the resolved credential, so callers can tell whether a value is configured or has changed. The value itself is never returned. */
+            readonly valueDigest?: string;
+        };
+        SecretKeyRef: {
+            /** @description Secret name. */
+            name: string;
+            /** @description Key within the Secret. */
+            key: string;
+        };
+        InjectionRule: {
+            /** @description Exact hostname. Wildcards are rejected: anyone controlling a matching subdomain would receive the credential. */
+            host: string;
+            /** @description Destination ports the rule covers. Defaults to [80, 443]; other ports get no L7 handling. */
+            ports?: number[];
+            /** @description Headers to inject. */
+            headers?: components["schemas"]["HeaderInjection"][];
+            /** @description Credentials whose placeholder may be swapped for the real value on this host. */
+            substitute?: string[];
+            /** @description Narrow the rule to matching request paths. Empty means all paths. */
+            pathPrefixes?: string[];
+            /** @description Narrow the rule to these HTTP methods. Empty means all methods. */
+            methods?: string[];
+        };
+        HeaderInjection: {
+            /** @description Header name, compared case-insensitively. */
+            name: string;
+            /** @description Value template referencing declared credentials as '{{ credName }}', e.g. 'Bearer {{ openai }}'. A literal here would be a plaintext secret in the CRD and is rejected. */
+            value: string;
+            /**
+             * @description Override (default) replaces whatever the sandbox sent; IfAbsent injects only when the sandbox set no such header, so an agent supplying its own credential keeps it.
+             * @enum {string}
+             */
+            mode?: "Override" | "IfAbsent";
         };
         /** @description Allow/deny rules for sandbox outbound traffic. */
         EgressRules: {

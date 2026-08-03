@@ -117,6 +117,13 @@ var (
 	// dispatch time because they were no longer present in the informer cache or had
 	// transitioned out of Idle (e.g. deleted during scale-down).
 	ScheduleReadyQueueEvictedTotal *prometheus.CounterVec
+
+	// EgressMissingSidecarTotal counts idle pods the dispatcher refused because
+	// the claim requires egress enforcement but the pod carries no filter
+	// sidecar (it was materialised before the Pool gained its networkPolicy).
+	// Any non-zero value means a Pool rollout has not finished; a sustained
+	// non-zero rate means claims are being starved and should alert.
+	EgressMissingSidecarTotal *prometheus.CounterVec
 )
 
 func init() {
@@ -256,6 +263,11 @@ func init() {
 		Help: "Pods discarded from the ready queue at dispatch time because they were absent from the informer cache or no longer Idle (e.g. deleted during scale-down).",
 	}, scheduleLabels)
 
+	EgressMissingSidecarTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_egress_missing_sidecar_total",
+		Help: "Idle pods refused at dispatch because the claim requires egress enforcement but the pod has no filter sidecar (created before the pool's networkPolicy). Non-zero means a pool rollout is incomplete.",
+	}, scheduleLabels)
+
 	ctrlmetrics.Registry.MustRegister(
 		PoolReplicasDesired,
 		PoolReplicasIdle,
@@ -281,5 +293,6 @@ func init() {
 		ScheduleReservationTTLExpiredTotal,
 		ScheduleSkippedScaleDownProtectedTotal,
 		ScheduleReadyQueueEvictedTotal,
+		EgressMissingSidecarTotal,
 	)
 }

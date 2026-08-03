@@ -16,6 +16,7 @@ package sandboxpool
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -522,4 +523,109 @@ func (r *SandboxPoolReconciler) syncStuckStoppingPods(ctx context.Context, sandb
 		}
 	}
 	return result, nil
+}
+
+// syncRunningPodCredentials re-pushes credential injection to *running*
+// sandboxes whose Pool has since changed its config — a rotated token reaches
+// live agents without recreating them.
+//
+// Two things are deliberately carried forward rather than regenerated:
+//
+//   - the decoys, because a running process already read them from its
+//     environment and cannot be told about a new one;
+//   - nothing else. In particular the CA is reminted and re-installed, which is
+//     safe: envd's trust-store installer swaps the old certificate for the new
+//     one, and the re-push happens after that install.
+//
+// Pods whose rendered config is unchanged are skipped, so this is a no-op on
+// the overwhelming majority of reconciles.
+func (r *SandboxPoolReconciler) syncRunningPodCredentials(
+	ctx context.Context,
+	sandboxPool *agentsv1alpha1.SandboxPool,
+	pods []corev1.Pod,
+) ([]corev1.Pod, error) { //nolint:unparam
+	if r.SandboxReadyHook == nil || sandboxPool.Spec.NetworkPolicy == nil {
+		return pods, nil
+	}
+	desired := sandboxPool.Spec.NetworkPolicy.SecretInjection
+	if desired == nil {
+		return pods, nil
+	}
+
+	for i := range pods {
+		pod := &pods[i]
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if inplaceupdate.GetSandboxPhase(pod) != agentsv1alpha1.SandboxPhaseRunning {
+			continue
+		}
+		current := pod.Annotations[agentsv1alpha1.SandboxEgressInjectAnnotationKey]
+		if current == "" {
+			continue
+		}
+		next, changed, err := rerenderInjection(current, desired)
+		if err != nil {
+			klog.ErrorS(err, "egress inject: cannot re-render injection for running pod",
+				"namespace", pod.Namespace, "name", pod.Name)
+			continue
+		}
+		if !changed {
+			continue
+		}
+
+		base := pod.DeepCopy()
+		pod.Annotations[agentsv1alpha1.SandboxEgressInjectAnnotationKey] = next
+		if err := r.Patch(ctx, pod, client.MergeFrom(base)); err != nil {
+			klog.ErrorS(err, "egress inject: failed to update injection annotation",
+				"namespace", pod.Namespace, "name", pod.Name)
+			continue
+		}
+		klog.InfoS("egress inject: pool config changed, re-arming running sandbox",
+			"namespace", pod.Namespace, "name", pod.Name)
+		go r.SandboxReadyHook.OnSandboxReady(context.Background(), pod.DeepCopy())
+	}
+	return pods, nil
+}
+
+// rerenderInjection projects the Pool's current injection config onto a pod's
+// stamped annotation, preserving the decoys already handed to the sandbox.
+// Returns changed=false when the result is byte-identical to what is stamped.
+func rerenderInjection(currentJSON string, desired *agentsv1alpha1.SecretInjection) (string, bool, error) {
+	var stamped agentsv1alpha1.SecretInjection
+	if err := json.Unmarshal([]byte(currentJSON), &stamped); err != nil {
+		return "", false, err
+	}
+	existing := make(map[string]string, len(stamped.Credentials))
+	for _, c := range stamped.Credentials {
+		if c.Placeholder != "" {
+			existing[c.Name] = c.Placeholder
+		}
+	}
+
+	next := desired.DeepCopy()
+	for i := range next.Credentials {
+		c := &next.Credentials[i]
+		if c.ExposeAs == "" {
+			continue
+		}
+		if ph, ok := existing[c.Name]; ok {
+			// The sandbox is already holding this decoy; changing it now would
+			// simply stop matching.
+			c.Placeholder = ph
+			continue
+		}
+		if c.Placeholder == "" {
+			// A newly added credential cannot be exposed to a process that has
+			// already started, so leave it unexposed rather than mint a decoy
+			// nothing will ever send.
+			c.ExposeAs = ""
+		}
+	}
+
+	out, err := json.Marshal(next)
+	if err != nil {
+		return "", false, err
+	}
+	return string(out), string(out) != currentJSON, nil
 }
