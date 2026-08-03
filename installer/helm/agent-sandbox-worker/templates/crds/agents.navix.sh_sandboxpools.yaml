@@ -248,7 +248,7 @@ spec:
                               description: 'Name is how rules refer to this credential
                                 in a value template
 
-                                ("{{ name }}").'
+                                ("{{ "{{" }} name }}").'
                               type: string
                             placeholder:
                               description: "Placeholder is the decoy value handed\
@@ -310,7 +310,7 @@ spec:
                                     description: 'Value is a template that may reference
                                       declared credentials as
 
-                                      "{{ credName }}", e.g. "Bearer {{ openai }}".'
+                                      "{{ "{{" }} credName }}", e.g. "Bearer {{ "{{" }} openai }}".'
                                     type: string
                                 required:
                                 - name
