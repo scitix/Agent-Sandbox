@@ -107,10 +107,26 @@ def inject_keep_annotation(doc: dict) -> dict:
 def write_crd(src: Path, dst_dir: Path, doc: dict) -> Path:
     """Render a CRD doc into a Helm-templated file under dst_dir."""
     rel_src = src.relative_to(REPO_ROOT)
-    body = yaml.dump(doc, default_flow_style=False, sort_keys=False)
+    body = escape_go_template_delims(
+        yaml.dump(doc, default_flow_style=False, sort_keys=False)
+    )
     dst = dst_dir / src.name
     dst.write_text(CRD_HEADER_TEMPLATE.format(src=rel_src) + body + CRD_FOOTER)
     return dst
+
+
+def escape_go_template_delims(body: str) -> str:
+    """Neutralise Go-template delimiters inside a CRD body.
+
+    The CRD lands under `templates/`, so Helm renders it — and a `{{` anywhere
+    in the schema (an API doc comment showing a value template, say) is parsed
+    as an action and fails the whole chart. The body is data, never a template,
+    so every delimiter is escaped through Helm's own literal-string form.
+
+    Only the opening delimiter needs escaping; a bare `}}` outside an action is
+    ordinary text to Helm.
+    """
+    return body.replace("{{", '{{ "{{" }}')
 
 
 def reset_dir(path: Path) -> None:
