@@ -181,10 +181,16 @@ imagesCatalog:
 # control-plane object there would run one controller per cluster over a single
 # set of resources.
 #
-# `namespace` is where the ManagedAgent objects and the Brains they own live. It
-# may differ from this chart's release namespace; the chart then grants ws-proxy
-# a Role there. Leaving it empty makes the controller watch every namespace,
-# which needs cluster-wide grants this chart does not render — set it.
+# `namespace` is where the ManagedAgent objects and the Brains they own live.
+# Empty means this chart's release namespace, which is the right default: an
+# agent is a platform object, so it belongs beside the controller that
+# reconciles it and the proxy that fronts it, and the credentials the platform
+# materialises for it are namespace-scoped and land there too.
+#
+# Point it at a tenant's namespace only when the agents must reuse Secrets that
+# already live there — the chart then grants ws-proxy a Role in that namespace
+# instead. One namespace either way: the controller watches exactly one, since
+# watching all of them needs cluster-wide grants this chart does not render.
 managedAgent:
   enabled: false
   namespace: ""
