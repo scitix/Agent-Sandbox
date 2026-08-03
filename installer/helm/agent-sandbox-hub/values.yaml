@@ -172,3 +172,34 @@ imagesCatalog:
   #          static YAML and `kubectl apply`-ed, because `helm template` cannot
   #          `lookup` live data and would otherwise reset the catalog on re-apply.
   manageConfigMap: true
+
+# ManagedAgent controller.
+#
+# A ManagedAgent hosts one agent: a Brain Deployment plus the sandbox supply it
+# reaches for. It is reconciled HERE rather than by the worker's controller
+# manager because the worker chart installs on every cluster — reconciling a
+# control-plane object there would run one controller per cluster over a single
+# set of resources.
+#
+# `namespace` is where the ManagedAgent objects and the Brains they own live. It
+# may differ from this chart's release namespace; the chart then grants ws-proxy
+# a Role there. Leaving it empty makes the controller watch every namespace,
+# which needs cluster-wide grants this chart does not render — set it.
+managedAgent:
+  enabled: false
+  namespace: ""
+  # Publishing an agent to callers outside the cluster. Off by default: an
+  # agent that is merely deployed must not become reachable from the internet
+  # as a side effect. With this on, each agent still has to opt in through its
+  # own spec.ingress.enabled, and every request is authenticated.
+  publish:
+    enabled: false
+    # Listener the ws-proxy serves published agents on. Kept apart from the
+    # internal API (9004) on purpose: that one trusts a manager token and must
+    # never be routable from outside.
+    port: 9005
+    # Base URL callers are told to use. Derived from the ingress host and base
+    # path; set it explicitly when the two differ (TLS terminated elsewhere, a
+    # vanity domain in front).
+    baseURL: ""
+    annotations: {}

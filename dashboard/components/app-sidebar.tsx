@@ -20,6 +20,7 @@ import { Fragment } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
+  Bot,
   Box,
   Boxes,
   Layers,
@@ -36,6 +37,7 @@ import {
   ReceiptTextIcon,
   LayoutDashboard,
   HardDrive,
+  Package,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useAtomValue } from "jotai"
@@ -88,8 +90,13 @@ export const navSectionDefs: NavSectionDef[] = [
     items: [
       { labelKey: "nav.envs", page: "envs", icon: Boxes },
       { labelKey: "nav.templates", page: "templates", icon: Layers },
+      { labelKey: "nav.images", page: "images", icon: Package },
       { labelKey: "nav.datasets", page: "datasets", icon: HardDrive },
     ],
+  },
+  {
+    groupKey: "nav.agent",
+    items: [{ labelKey: "nav.managedAgents", page: "managed-agents", icon: Bot }],
   },
   {
     groupKey: "nav.team",

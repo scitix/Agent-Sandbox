@@ -15,7 +15,7 @@ spec:
       labels:
         {{- include "agent-sandbox-hub.proxySelectorLabels" . | nindent 8 }}
     spec:
-      {{- if .Values.globalApiKey.enabled }}
+      {{- if or .Values.globalApiKey.enabled .Values.managedAgent.enabled }}
       serviceAccountName: {{ include "agent-sandbox-hub.proxyFullname" . }}
       {{- end }}
       containers:
@@ -29,8 +29,29 @@ spec:
             - containerPort: 9004
               protocol: TCP
             {{- end }}
-          {{- if .Values.globalApiKey.enabled }}
+          {{- if or .Values.globalApiKey.enabled .Values.managedAgent.enabled }}
           env:
+          {{- end }}
+          {{- if .Values.managedAgent.enabled }}
+            - name: AGENTBOX_MANAGED_AGENT_ENABLED
+              value: "1"
+            - name: AGENTBOX_MANAGED_AGENT_NAMESPACE
+              value: {{ .Values.managedAgent.namespace | default .Release.Namespace | quote }}
+          {{- if .Values.managedAgent.publish.enabled }}
+            - name: WSPROXY_MANAGED_AGENT_GATEWAY_ADDR
+              value: ":{{ .Values.managedAgent.publish.port }}"
+            - name: WSPROXY_MANAGED_AGENT_PROXY_SERVICE
+              value: "{{ include "agent-sandbox-hub.proxyFullname" . }}.{{ .Release.Namespace }}:{{ .Values.managedAgent.publish.port }}"
+            - name: WSPROXY_MANAGED_AGENT_PUBLIC_BASE_URL
+              value: {{ .Values.managedAgent.publish.baseURL | default (printf "https://%s%s/api/managed-agents" .Values.ingress.host (.Values.basePath | default "" | trimSuffix "/")) | quote }}
+          {{- else }}
+            # Empty disables the listener: an agent is not reachable from
+            # outside merely because the controller runs.
+            - name: WSPROXY_MANAGED_AGENT_GATEWAY_ADDR
+              value: ""
+          {{- end }}
+          {{- end }}
+          {{- if .Values.globalApiKey.enabled }}
             - name: AGENTBOX_SECRET
               valueFrom:
                 secretKeyRef:

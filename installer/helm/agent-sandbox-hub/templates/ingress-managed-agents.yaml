@@ -1,0 +1,54 @@
+{{- if and .Values.ingress.enabled .Values.managedAgent.enabled .Values.managedAgent.publish.enabled }}
+{{- /*
+  One shared route for every published agent, e.g.
+
+      <basePath>/api/managed-agents/<agent>/threads
+
+  It is a separate Ingress object rather than another path on the main one
+  because `rewrite-target` applies to a whole Ingress: adding it there would
+  also rewrite the dashboard and websocket paths, which must arrive unchanged.
+
+  The backend is the ws-proxy's managed-agent listener, never an agent's own
+  Service. The Brain authenticates nothing — it takes the caller's word for
+  which end user is asking — so it is only safe behind a hop that checks the
+  API key and that the key's owner may use the agent named in the path.
+*/}}
+{{- $basePath := .Values.basePath | default "" | trimSuffix "/" }}
+{{- $prefix := printf "%s/api/managed-agents" $basePath }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agent-sandbox-hub.fullname" . }}-managed-agents
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.managedAgent.publish.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    # $2 is everything after the agent name's parent prefix, so the proxy
+    # receives "/<agent>/<path>" and routes on the agent name itself.
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # An agent turn streams for as long as it runs, and the response is SSE.
+    # The default 60s read timeout cuts a long turn off mid-stream, which the
+    # caller sees as a truncated event stream rather than an error.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: {{ $prefix }}(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "agent-sandbox-hub.proxyFullname" . }}
+                port:
+                  number: {{ .Values.managedAgent.publish.port }}
+{{- end }}

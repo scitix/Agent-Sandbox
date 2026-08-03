@@ -22,8 +22,8 @@ Run from the repository root:
 
 What it does:
   1. CRDs (config/crd/bases/*.yaml)
-       → installer/helm/agent-sandbox-worker/templates/crds/   (all CRDs)
-       → installer/helm/agent-sandbox-hub/templates/crds/      (SandboxTemplate only)
+       → installer/helm/agent-sandbox-worker/templates/crds/   (all but control-plane-only)
+       → installer/helm/agent-sandbox-hub/templates/crds/      (shared + control-plane-only)
      Each emitted file is wrapped in `{{- if .Values.crds.create }} ... {{- end }}`
      so users can opt out, and carries `helm.sh/resource-policy: keep` so the
      CRDs survive `helm uninstall`. Placing them under `templates/` (rather
@@ -59,6 +59,15 @@ WORKER_CRD_DST = (
 HUB_CRD_DST = (
     REPO_ROOT / "installer" / "helm" / "agent-sandbox-hub" / "templates" / "crds"
 )
+
+# CRDs that belong to the control plane and must NOT ship with the worker chart.
+# The worker chart installs on every cluster; a control-plane CRD there would
+# invite a second reconciler for objects only the hub owns.
+HUB_ONLY_CRDS = ("managedagents",)
+
+# CRDs the hub needs on top of HUB_ONLY_CRDS. SandboxTemplate is shared: the hub
+# syncs templates outward to workers, so it needs the schema locally too.
+HUB_SHARED_CRDS = ("sandboxtemplates",)
 MANAGER_ROLE_DST = (
     REPO_ROOT
     / "installer" / "helm" / "agent-sandbox-worker"
@@ -120,18 +129,20 @@ def sync_crds() -> None:
         print(f"  WARNING: no CRD files found in {CRD_SRC}")
         return
 
-    print("==> agent-sandbox-worker (all CRDs)")
+    print("==> agent-sandbox-worker (all CRDs except control-plane-only)")
     reset_dir(WORKER_CRD_DST)
     for src in crd_files:
+        if any(name in src.name for name in HUB_ONLY_CRDS):
+            continue
         doc = yaml.safe_load(src.read_text())
         inject_keep_annotation(doc)
         dst = write_crd(src, WORKER_CRD_DST, doc)
         print(f"  {src.relative_to(REPO_ROOT)} -> {dst.relative_to(REPO_ROOT)}")
 
-    print("==> agent-sandbox-hub (SandboxTemplate only)")
+    print("==> agent-sandbox-hub (shared + control-plane-only CRDs)")
     reset_dir(HUB_CRD_DST)
     for src in crd_files:
-        if "sandboxtemplates" not in src.name:
+        if not any(name in src.name for name in HUB_SHARED_CRDS + HUB_ONLY_CRDS):
             continue
         doc = yaml.safe_load(src.read_text())
         inject_keep_annotation(doc)

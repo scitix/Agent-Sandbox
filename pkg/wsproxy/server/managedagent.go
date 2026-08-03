@@ -1,0 +1,396 @@
+// Copyright 2026 ScitiX
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package server
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/yaml"
+
+	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
+	"github.com/scitix/agent-sandbox/pkg/controllers/managedagent"
+	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
+)
+
+// ManagedAgentAPI serves the console's CRUD over ManagedAgent objects.
+//
+// ManagedAgent is a control-plane object, so it is served here rather than by
+// the per-cluster API: the console reaches it through the same BFF path it uses
+// for global API keys and templates, with no cluster in the route.
+type ManagedAgentAPI struct {
+	Client    client.Client
+	Scheme    *runtime.Scheme
+	Namespace string
+}
+
+// managedAgentWire is the shape the console consumes: flattened metadata plus
+// the spec and status verbatim, matching how templates are exposed.
+type managedAgentWire struct {
+	Name              string                            `json:"name"`
+	Namespace         string                            `json:"namespace"`
+	CreationTimestamp string                            `json:"creationTimestamp,omitempty"`
+	Spec              agentsv1alpha1.ManagedAgentSpec   `json:"spec"`
+	Status            agentsv1alpha1.ManagedAgentStatus `json:"status,omitzero"`
+	CRDYaml           string                            `json:"crdYaml,omitempty"`
+}
+
+type managedAgentCreateRequest struct {
+	Name        string                          `json:"name"`
+	Namespace   string                          `json:"namespace,omitempty"`
+	Spec        agentsv1alpha1.ManagedAgentSpec `json:"spec"`
+	Credentials *managedAgentCredentials        `json:"credentials,omitempty"`
+}
+
+type managedAgentUpdateRequest struct {
+	Spec        agentsv1alpha1.ManagedAgentSpec `json:"spec"`
+	Credentials *managedAgentCredentials        `json:"credentials,omitempty"`
+}
+
+// managedAgentCredentials carries the API keys the console collected.
+//
+// They are accepted here and written to a Secret rather than stored on the
+// object: a key placed in a spec field lives in etcd in the clear and is echoed
+// back by every read. Asking the operator for a pre-existing Secret instead
+// would be the other way to avoid that, but a person creating their first agent
+// in a console does not have one — so the platform makes it.
+//
+// An omitted field on update means "leave that key alone", which is what lets
+// the console show an empty password box without wiping the stored value.
+type managedAgentCredentials struct {
+	ClaudeCodeAPIKey string `json:"claudeCodeApiKey,omitempty"`
+	OpenCodeAPIKey   string `json:"openCodeApiKey,omitempty"`
+	ClassifierAPIKey string `json:"classifierApiKey,omitempty"`
+	SandboxAPIKey    string `json:"sandboxApiKey,omitempty"`
+}
+
+// Keys inside the per-agent credential Secret.
+const (
+	credKeyClaudeCode = "CLAUDE_CODE_API_KEY"
+	credKeyOpenCode   = "OPENCODE_API_KEY"
+	credKeyClassifier = "CLASSIFIER_API_KEY"
+	credKeySandbox    = "SANDBOX_API_KEY"
+)
+
+// credentialSecretName is one Secret per agent, named after it. One object
+// rather than one per provider keeps the agent's blast radius and its lifecycle
+// the same thing: it is garbage-collected with the agent.
+func credentialSecretName(agent string) string {
+	return managedagent.BrainName(agent) + "-credentials"
+}
+
+// bindCredentialRefs points the spec at the per-agent Secret for every key the
+// caller supplied, so the console never has to know the Secret exists.
+func bindCredentialRefs(spec *agentsv1alpha1.ManagedAgentSpec, agent string, creds *managedAgentCredentials) {
+	if creds == nil {
+		return
+	}
+	name := credentialSecretName(agent)
+	ref := func(key string) *agentsv1alpha1.SecretKeySelector {
+		return &agentsv1alpha1.SecretKeySelector{Name: name, Key: key}
+	}
+	if creds.ClaudeCodeAPIKey != "" && spec.Runtime.ClaudeCode != nil {
+		spec.Runtime.ClaudeCode.CredentialsRef = *ref(credKeyClaudeCode)
+	}
+	if creds.OpenCodeAPIKey != "" && spec.Runtime.OpenCode != nil {
+		spec.Runtime.OpenCode.CredentialsRef = ref(credKeyOpenCode)
+	}
+	if creds.ClassifierAPIKey != "" && spec.Classifier != nil {
+		spec.Classifier.CredentialsRef = ref(credKeyClassifier)
+	}
+	if creds.SandboxAPIKey != "" && spec.Hands.External != nil {
+		spec.Hands.External.CredentialsRef = ref(credKeySandbox)
+	}
+}
+
+// writeCredentialSecret merges the supplied keys into the agent's Secret.
+//
+// It is called after the agent exists so the Secret can be owned by it and
+// removed with it. A failure here leaves an agent whose credential references
+// point at a key that is not there — which the pod reports as an authentication
+// error naming the endpoint, rather than failing silently.
+func (a *ManagedAgentAPI) writeCredentialSecret(
+	ctx context.Context,
+	ma *agentsv1alpha1.ManagedAgent,
+	creds *managedAgentCredentials,
+) error {
+	if creds == nil {
+		return nil
+	}
+	supplied := map[string]string{
+		credKeyClaudeCode: creds.ClaudeCodeAPIKey,
+		credKeyOpenCode:   creds.OpenCodeAPIKey,
+		credKeyClassifier: creds.ClassifierAPIKey,
+		credKeySandbox:    creds.SandboxAPIKey,
+	}
+	if !anyNonEmpty(supplied) {
+		return nil
+	}
+
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name:      credentialSecretName(ma.Name),
+		Namespace: ma.Namespace,
+	}}
+	_, err := controllerutil.CreateOrUpdate(ctx, a.Client, secret, func() error {
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		for key, value := range supplied {
+			if value != "" {
+				secret.Data[key] = []byte(value)
+			}
+		}
+		secret.Type = corev1.SecretTypeOpaque
+		return controllerutil.SetControllerReference(ma, secret, a.Scheme)
+	})
+	return err
+}
+
+func anyNonEmpty(m map[string]string) bool {
+	for _, v := range m {
+		if v != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// RegisterManagedAgentRoutes mounts the CRUD surface on the given group.
+func (a *ManagedAgentAPI) RegisterManagedAgentRoutes(g *gin.RouterGroup) {
+	g.GET("/managedagents", a.list)
+	g.POST("/managedagents", a.create)
+	g.GET("/managedagents/:name", a.get)
+	g.PUT("/managedagents/:name", a.update)
+	g.DELETE("/managedagents/:name", a.remove)
+}
+
+func (a *ManagedAgentAPI) list(c *gin.Context) {
+	var out agentsv1alpha1.ManagedAgentList
+	if err := a.Client.List(c.Request.Context(), &out, client.InNamespace(a.Namespace)); err != nil {
+		writeManagedAgentError(c, err)
+		return
+	}
+	who := callerOf(c)
+	items := make([]managedAgentWire, 0, len(out.Items))
+	for i := range out.Items {
+		if !visibleTo(&out.Items[i], who) {
+			continue
+		}
+		items = append(items, toManagedAgentWire(&out.Items[i], false))
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (a *ManagedAgentAPI) get(c *gin.Context) {
+	ma, ok := a.fetch(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, toManagedAgentWire(ma, true))
+}
+
+func (a *ManagedAgentAPI) create(c *gin.Context) {
+	var req managedAgentCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "detail": err.Error()})
+		return
+	}
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	ns := req.Namespace
+	if ns == "" {
+		ns = a.Namespace
+	}
+	// Ownership is stamped, never accepted: an agent belongs to the person who
+	// created it, and letting the request name someone else would make the
+	// visibility rule meaningless.
+	who := callerOf(c)
+	req.Spec.Owner = &agentsv1alpha1.ManagedAgentOwner{Team: who.team, User: who.user}
+	bindCredentialRefs(&req.Spec, req.Name, req.Credentials)
+
+	ma := &agentsv1alpha1.ManagedAgent{
+		ObjectMeta: metav1.ObjectMeta{Name: req.Name, Namespace: ns},
+		Spec:       req.Spec,
+	}
+	if err := a.Client.Create(c.Request.Context(), ma); err != nil {
+		writeManagedAgentError(c, err)
+		return
+	}
+	if err := a.writeCredentialSecret(c.Request.Context(), ma, req.Credentials); err != nil {
+		writeManagedAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, toManagedAgentWire(ma, false))
+}
+
+func (a *ManagedAgentAPI) update(c *gin.Context) {
+	ma, ok := a.fetch(c)
+	if !ok {
+		return
+	}
+	var req managedAgentUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "detail": err.Error()})
+		return
+	}
+	// Ownership is immutable: it is what the visibility rule is built on, so an
+	// update carries the stored value forward regardless of what was sent.
+	owner := ma.Spec.Owner
+	ma.Spec = req.Spec
+	ma.Spec.Owner = owner
+	bindCredentialRefs(&ma.Spec, ma.Name, req.Credentials)
+
+	if err := a.Client.Update(c.Request.Context(), ma); err != nil {
+		writeManagedAgentError(c, err)
+		return
+	}
+	if err := a.writeCredentialSecret(c.Request.Context(), ma, req.Credentials); err != nil {
+		writeManagedAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toManagedAgentWire(ma, false))
+}
+
+func (a *ManagedAgentAPI) remove(c *gin.Context) {
+	ma, ok := a.fetch(c)
+	if !ok {
+		return
+	}
+	if err := a.Client.Delete(c.Request.Context(), ma); err != nil {
+		writeManagedAgentError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// fetch loads one agent and enforces tenant scoping.
+//
+// An agent belonging to another team is reported as absent rather than
+// forbidden: which agents a tenant owns is itself not disclosed.
+func (a *ManagedAgentAPI) fetch(c *gin.Context) (*agentsv1alpha1.ManagedAgent, bool) {
+	var ma agentsv1alpha1.ManagedAgent
+	key := client.ObjectKey{Name: c.Param("name"), Namespace: a.Namespace}
+	if err := a.Client.Get(c.Request.Context(), key, &ma); err != nil {
+		writeManagedAgentError(c, err)
+		return nil, false
+	}
+	if !visibleTo(&ma, callerOf(c)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "managed agent not found"})
+		return nil, false
+	}
+	return &ma, true
+}
+
+// caller describes who is asking, for tenant scoping.
+type caller struct {
+	team  string
+	user  string
+	admin bool
+}
+
+// visibleTo reports whether this caller may see the agent.
+//
+// Scoping is to one person, not to a team: an agent carries its creator's
+// credentials and can act on their behalf, so a teammate listing agents does
+// not see it. An admin sees everything — the manager token operators use
+// carries its own synthetic identity, and scoping it like a tenant would hide
+// every agent from the caller meant to administer them.
+func visibleTo(ma *agentsv1alpha1.ManagedAgent, who caller) bool {
+	if who.admin {
+		return true
+	}
+	owner := ma.Spec.Owner
+	if owner == nil || (owner.Team == "" && owner.User == "") {
+		return true
+	}
+	return owner.Team == who.team && owner.User == who.user
+}
+
+func callerOf(c *gin.Context) caller {
+	v, ok := c.Get(middleware.AuthContextKey)
+	if !ok {
+		return caller{}
+	}
+	var info domain.AuthInfo
+	switch t := v.(type) {
+	case domain.AuthInfo:
+		info = t
+	case *domain.AuthInfo:
+		if t == nil {
+			return caller{}
+		}
+		info = *t
+	default:
+		return caller{}
+	}
+	return caller{team: info.Team, user: info.User, admin: info.Role == apikey.RoleAdmin}
+}
+
+func toManagedAgentWire(ma *agentsv1alpha1.ManagedAgent, withYAML bool) managedAgentWire {
+	w := managedAgentWire{
+		Name:      ma.Name,
+		Namespace: ma.Namespace,
+		Spec:      ma.Spec,
+		Status:    ma.Status,
+	}
+	if !ma.CreationTimestamp.IsZero() {
+		w.CreationTimestamp = ma.CreationTimestamp.UTC().Format("2006-01-02T15:04:05Z")
+	}
+	if withYAML {
+		// The console renders this in a read-only tab. Server fields are
+		// stripped so what is shown is re-appliable.
+		clean := &agentsv1alpha1.ManagedAgent{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: agentsv1alpha1.GroupVersion.String(),
+				Kind:       "ManagedAgent",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        ma.Name,
+				Namespace:   ma.Namespace,
+				Labels:      ma.Labels,
+				Annotations: ma.Annotations,
+			},
+			Spec: ma.Spec,
+		}
+		if raw, err := yaml.Marshal(clean); err == nil {
+			w.CRDYaml = string(raw)
+		}
+	}
+	return w
+}
+
+func writeManagedAgentError(c *gin.Context, err error) {
+	switch {
+	case apierrors.IsNotFound(err):
+		c.JSON(http.StatusNotFound, gin.H{"error": "managed agent not found"})
+	case apierrors.IsAlreadyExists(err):
+		c.JSON(http.StatusConflict, gin.H{"error": "managed agent already exists"})
+	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
+}

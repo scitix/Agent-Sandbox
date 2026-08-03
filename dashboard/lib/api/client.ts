@@ -45,6 +45,11 @@ export type {
 // ─── Re-export schema components for downstream consumers ──────────────────────
 export type { components }
 
+// ManagedAgent is a control-plane resource served by wsproxy, so its shapes are
+// hand-written rather than schema-derived. Re-exported here so consumers have a
+// single import site for API types.
+export type * from "./managed-agent-types"
+
 // ─── Schema-derived type aliases (replaces lib/types/index.ts) ─────────────────
 
 // Sandbox
