@@ -60,7 +60,11 @@ from .exec_command_request import ExecCommandRequest
 from .exec_command_result import ExecCommandResult
 from .exec_token_response import ExecTokenResponse
 from .feature_gates import FeatureGates
+from .header_injection import HeaderInjection
+from .header_injection_mode import HeaderInjectionMode
 from .image_pull_secret_input import ImagePullSecretInput
+from .injected_credential import InjectedCredential
+from .injection_rule import InjectionRule
 from .instance_type_item import InstanceTypeItem
 from .instance_type_item_extensions import InstanceTypeItemExtensions
 from .list_clusters_result import ListClustersResult
@@ -135,6 +139,8 @@ from .sandbox_template_envelope import SandboxTemplateEnvelope
 from .sandbox_template_spec import SandboxTemplateSpec
 from .sandbox_template_status import SandboxTemplateStatus
 from .sandbox_template_summary import SandboxTemplateSummary
+from .secret_injection import SecretInjection
+from .secret_key_ref import SecretKeyRef
 from .self_create_api_key_request import SelfCreateAPIKeyRequest
 from .set_sandbox_timeout_request import SetSandboxTimeoutRequest
 from .teams_result import TeamsResult
@@ -197,7 +203,11 @@ __all__ = (
     "ExecCommandResult",
     "ExecTokenResponse",
     "FeatureGates",
+    "HeaderInjection",
+    "HeaderInjectionMode",
     "ImagePullSecretInput",
+    "InjectedCredential",
+    "InjectionRule",
     "InstanceTypeItem",
     "InstanceTypeItemExtensions",
     "ListClustersResult",
@@ -272,6 +282,8 @@ __all__ = (
     "SandboxTemplateSpec",
     "SandboxTemplateStatus",
     "SandboxTemplateSummary",
+    "SecretInjection",
+    "SecretKeyRef",
     "SelfCreateAPIKeyRequest",
     "SetSandboxTimeoutRequest",
     "TeamsResult",

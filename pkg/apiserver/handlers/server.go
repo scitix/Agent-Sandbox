@@ -690,7 +690,65 @@ func networkPolicyFromGen(g *gen.SandboxNetworkPolicy) *agentsv1alpha1.SandboxNe
 		}
 		np.Egress = e
 	}
+	np.SecretInjection = secretInjectionFromGen(g.SecretInjection)
 	return np
+}
+
+// secretInjectionFromGen maps the wire credential-injection block onto the CRD
+// spec. valueDigest is read-only and deliberately ignored on the way in.
+func secretInjectionFromGen(g *gen.SecretInjection) *agentsv1alpha1.SecretInjection {
+	if g == nil {
+		return nil
+	}
+	si := &agentsv1alpha1.SecretInjection{}
+	if g.CaCertTTL != nil && *g.CaCertTTL != "" {
+		if d, err := time.ParseDuration(*g.CaCertTTL); err == nil {
+			si.CACertTTL = &metav1.Duration{Duration: d}
+		}
+	}
+	if g.Credentials != nil {
+		for _, c := range *g.Credentials {
+			cred := agentsv1alpha1.InjectedCredential{
+				Name:      c.Name,
+				ValueFrom: agentsv1alpha1.SecretKeyRef{Name: c.ValueFrom.Name, Key: c.ValueFrom.Key},
+			}
+			if c.ExposeAs != nil {
+				cred.ExposeAs = *c.ExposeAs
+			}
+			if c.Placeholder != nil {
+				cred.Placeholder = *c.Placeholder
+			}
+			si.Credentials = append(si.Credentials, cred)
+		}
+	}
+	if g.Rules != nil {
+		for _, r := range *g.Rules {
+			rule := agentsv1alpha1.InjectionRule{Host: r.Host}
+			if r.Ports != nil {
+				rule.Ports = *r.Ports
+			}
+			if r.Substitute != nil {
+				rule.Substitute = *r.Substitute
+			}
+			if r.PathPrefixes != nil {
+				rule.PathPrefixes = *r.PathPrefixes
+			}
+			if r.Methods != nil {
+				rule.Methods = *r.Methods
+			}
+			if r.Headers != nil {
+				for _, h := range *r.Headers {
+					hi := agentsv1alpha1.HeaderInjection{Name: h.Name, Value: h.Value}
+					if h.Mode != nil {
+						hi.Mode = agentsv1alpha1.HeaderInjectionMode(*h.Mode)
+					}
+					rule.Headers = append(rule.Headers, hi)
+				}
+			}
+			si.Rules = append(si.Rules, rule)
+		}
+	}
+	return si
 }
 
 // inlineResourcesFromGen projects the wire ResourceRequirements (Quantity

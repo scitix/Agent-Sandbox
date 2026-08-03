@@ -45,21 +45,25 @@ const upstreamDialTimeout = 30 * time.Second
 
 // ServeConfig configures the proxy listeners and policy source.
 type ServeConfig struct {
-	PolicyPath string
-	HTTPPort   int
-	TLSPort    int
-	OtherPort  int
-	Logger     *slog.Logger
+	PolicyPath  string
+	SecretsPath string
+	HTTPPort    int
+	TLSPort     int
+	OtherPort   int
+	Logger      *slog.Logger
 }
 
 // Proxy is the running egress filter.
 type Proxy struct {
-	cfg    ServeConfig
-	log    *slog.Logger
-	policy atomic.Pointer[Policy]
+	cfg     ServeConfig
+	log     *slog.Logger
+	policy  atomic.Pointer[Policy]
+	secrets atomic.Pointer[Secrets]
+	ca      atomic.Pointer[certAuthority]
 }
 
-// NewProxy builds a Proxy, loading the initial policy (fail-closed if absent).
+// NewProxy builds a Proxy, loading the initial policy (fail-closed if absent)
+// and injection config (empty if absent).
 func NewProxy(cfg ServeConfig) *Proxy {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -70,10 +74,47 @@ func NewProxy(cfg ServeConfig) *Proxy {
 		p.log.Error("initial policy load failed; failing closed", "err", err)
 	}
 	p.policy.Store(&pol)
+	p.loadSecrets()
 	return p
 }
 
 func (p *Proxy) current() Policy { return *p.policy.Load() }
+
+func (p *Proxy) currentSecrets() Secrets {
+	if s := p.secrets.Load(); s != nil {
+		return *s
+	}
+	return Secrets{}
+}
+
+func (p *Proxy) currentCA() *certAuthority { return p.ca.Load() }
+
+// loadSecrets re-reads the injection config and rebuilds the CA. A parse
+// failure clears both rather than keeping stale material: an operator that
+// pushed a bad config must not leave the previous sandbox's credentials armed.
+func (p *Proxy) loadSecrets() {
+	s, err := LoadSecrets(p.cfg.SecretsPath)
+	if err != nil {
+		p.log.Error("secrets load failed; injection disabled", "err", err)
+		s = Secrets{}
+	}
+	p.secrets.Store(&s)
+
+	if s.CACertPEM == "" || s.CAKeyPEM == "" {
+		p.ca.Store(nil)
+	} else {
+		ca, caErr := newCertAuthority(s.CACertPEM, s.CAKeyPEM)
+		if caErr != nil {
+			p.log.Error("secrets: CA material unusable; TLS interception disabled", "err", caErr)
+			p.ca.Store(nil)
+		} else {
+			p.ca.Store(ca)
+		}
+	}
+	// Deliberately logs counts only — never a header value, placeholder, or key.
+	p.log.Info("injection config loaded", "sandbox", s.SandboxID,
+		"rules", len(s.Rules), "substitutions", len(s.Substitutions), "ca", p.ca.Load() != nil)
+}
 
 // Serve starts the three listeners and the policy hot-reload watcher, blocking
 // until ctx is cancelled.
@@ -146,8 +187,20 @@ func (p *Proxy) watchPolicy(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case ev := <-w.Events:
-			if ev.Name == p.cfg.PolicyPath || dirOf(ev.Name) == dir {
-				p.reload()
+			// Both files are written temp+rename into this directory, so match
+			// on the directory and re-read whichever one the event names.
+			if dirOf(ev.Name) != dir && ev.Name != p.cfg.PolicyPath && ev.Name != p.cfg.SecretsPath {
+				continue
+			}
+			if ev.Name == p.cfg.SecretsPath {
+				p.loadSecrets()
+				continue
+			}
+			p.reload()
+			if p.cfg.SecretsPath != "" {
+				// A rename lands as an event on the temp name, so a change to
+				// the secrets file can arrive without naming it directly.
+				p.loadSecrets()
 			}
 		case err := <-w.Errors:
 			p.log.Error("fsnotify error", "err", err)
@@ -189,6 +242,16 @@ func (p *Proxy) handle(ctx context.Context, conn net.Conn, r role) {
 	if !decision.Allow {
 		p.log.Info("egress denied", "host", hostname, "ip", origIP.String(), "port", origPort, "match", decision.Match)
 		return
+	}
+
+	// Credential injection: only for hosts that have rules, and only on the two
+	// ports where the destination hostname is knowable. Everything else falls
+	// through to the untouched splice path below.
+	if r != roleOther {
+		if secrets := p.currentSecrets(); secrets.Intercepts(hostname, origPort) {
+			p.serveL7(ctx, conn, br, hostname, origPort, r)
+			return
+		}
 	}
 
 	var upstream net.Conn

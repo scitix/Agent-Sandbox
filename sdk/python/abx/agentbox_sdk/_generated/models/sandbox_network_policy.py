@@ -27,6 +27,7 @@ from typing import cast
 
 if TYPE_CHECKING:
   from ..models.egress_rules import EgressRules
+  from ..models.secret_injection import SecretInjection
 
 
 
@@ -47,11 +48,14 @@ class SandboxNetworkPolicy:
             egress (EgressRules | Unset): Allow/deny rules for sandbox outbound traffic.
             allow_private_networks (bool | Unset): Disable the default deny of private / link-local / cloud-metadata ranges
                 (RFC1918, 169.254.0.0/16, ...). Default false — the anti-SSRF baseline stays on.
+            secret_injection (SecretInjection | Unset): Credential injection applied to matching outbound requests. Never
+                carries a credential value: values live in Secrets and are resolved by the operator at push time.
      """
 
     disable_egress: bool | Unset = UNSET
     egress: EgressRules | Unset = UNSET
     allow_private_networks: bool | Unset = UNSET
+    secret_injection: SecretInjection | Unset = UNSET
 
 
 
@@ -59,6 +63,7 @@ class SandboxNetworkPolicy:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.egress_rules import EgressRules
+        from ..models.secret_injection import SecretInjection
         disable_egress = self.disable_egress
 
         egress: dict[str, Any] | Unset = UNSET
@@ -66,6 +71,10 @@ class SandboxNetworkPolicy:
             egress = self.egress.to_dict()
 
         allow_private_networks = self.allow_private_networks
+
+        secret_injection: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.secret_injection, Unset):
+            secret_injection = self.secret_injection.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -78,6 +87,8 @@ class SandboxNetworkPolicy:
             field_dict["egress"] = egress
         if allow_private_networks is not UNSET:
             field_dict["allowPrivateNetworks"] = allow_private_networks
+        if secret_injection is not UNSET:
+            field_dict["secretInjection"] = secret_injection
 
         return field_dict
 
@@ -86,6 +97,7 @@ class SandboxNetworkPolicy:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.egress_rules import EgressRules
+        from ..models.secret_injection import SecretInjection
         d = dict(src_dict)
         disable_egress = d.pop("disableEgress", UNSET)
 
@@ -101,10 +113,21 @@ class SandboxNetworkPolicy:
 
         allow_private_networks = d.pop("allowPrivateNetworks", UNSET)
 
+        _secret_injection = d.pop("secretInjection", UNSET)
+        secret_injection: SecretInjection | Unset
+        if isinstance(_secret_injection,  Unset):
+            secret_injection = UNSET
+        else:
+            secret_injection = SecretInjection.from_dict(_secret_injection)
+
+
+
+
         sandbox_network_policy = cls(
             disable_egress=disable_egress,
             egress=egress,
             allow_private_networks=allow_private_networks,
+            secret_injection=secret_injection,
         )
 
         return sandbox_network_policy

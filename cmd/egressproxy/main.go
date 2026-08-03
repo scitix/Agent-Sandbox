@@ -17,7 +17,9 @@
 //
 //	install-redirect  (init container, CAP_NET_ADMIN) — program iptables REDIRECT
 //	serve             (native sidecar)                — the filtering proxy
-//	set-policy/reset  (invoked via kubectl exec)      — control-plane policy push
+//	set-policy        (invoked via kubectl exec)      — control-plane policy push
+//	set-secrets       (invoked via kubectl exec)      — credential injection push
+//	reset             (invoked via kubectl exec)      — fail closed and wipe secrets
 package main
 
 import (
@@ -35,7 +37,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: egressproxy <serve|install-redirect|set-policy|reset> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: egressproxy <serve|install-redirect|set-policy|set-secrets|reset> [flags]")
 		os.Exit(2)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -53,8 +55,10 @@ func main() {
 		})
 	case "set-policy":
 		err = runSetPolicy()
+	case "set-secrets":
+		err = runSetSecrets()
 	case "reset":
-		err = egressproxy.WritePolicy(egressproxy.DefaultPolicyPath, egressproxy.FailClosed())
+		err = runReset()
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}
@@ -68,11 +72,12 @@ func runServe(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	p := egressproxy.NewProxy(egressproxy.ServeConfig{
-		PolicyPath: egressproxy.DefaultPolicyPath,
-		HTTPPort:   egressproxy.DefaultHTTPPort,
-		TLSPort:    egressproxy.DefaultTLSPort,
-		OtherPort:  egressproxy.DefaultOtherPort,
-		Logger:     log,
+		PolicyPath:  egressproxy.DefaultPolicyPath,
+		SecretsPath: egressproxy.DefaultSecretsPath,
+		HTTPPort:    egressproxy.DefaultHTTPPort,
+		TLSPort:     egressproxy.DefaultTLSPort,
+		OtherPort:   egressproxy.DefaultOtherPort,
+		Logger:      log,
 	})
 	if err := p.Serve(ctx); err != nil && err != context.Canceled {
 		return err
@@ -92,4 +97,31 @@ func runSetPolicy() error {
 		return fmt.Errorf("parse policy: %w", err)
 	}
 	return egressproxy.WritePolicy(egressproxy.DefaultPolicyPath, p)
+}
+
+// runSetSecrets reads a Secrets JSON from stdin and writes it atomically with
+// owner-only permissions. This is the only path credential material takes into
+// the sandbox Pod, and it terminates in a tmpfs volume mounted by the sidecar
+// alone — the sandbox containers never see the file.
+func runSetSecrets() error {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("read stdin: %w", err)
+	}
+	var s egressproxy.Secrets
+	if err := json.Unmarshal(data, &s); err != nil {
+		// Deliberately does not wrap the parse error with the payload.
+		return fmt.Errorf("parse secrets: invalid JSON")
+	}
+	return egressproxy.WriteSecrets(egressproxy.DefaultSecretsPath, s)
+}
+
+// runReset fails the policy closed and wipes the injection config. Both halves
+// matter on release: a recycled pod must carry neither the previous sandbox's
+// egress allowances nor its credentials, CA key, or placeholder map.
+func runReset() error {
+	if err := egressproxy.WritePolicy(egressproxy.DefaultPolicyPath, egressproxy.FailClosed()); err != nil {
+		return err
+	}
+	return egressproxy.RemoveSecrets(egressproxy.DefaultSecretsPath)
 }

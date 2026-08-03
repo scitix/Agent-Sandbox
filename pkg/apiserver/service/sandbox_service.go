@@ -503,6 +503,19 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		annotations[agentsv1alpha1.SandboxEgressPolicyAnnotationKey] = egressPolicyJSON
 	}
 
+	// Credential injection: resolved from the Env only (a create request may not
+	// carry it, see the rejection in the E2B compat layer). The annotation holds
+	// rule shapes and per-claim decoys; the SandboxReady hook resolves the
+	// referenced Secrets and delivers the plaintext straight to the sidecar.
+	egressInjectJSON, injectOn, injectErr := buildEgressInjectAnnotation(pool)
+	if injectErr != nil {
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
+		return nil, injectErr
+	}
+	if injectOn {
+		annotations[agentsv1alpha1.SandboxEgressInjectAnnotationKey] = egressInjectJSON
+	}
+
 	// Compute managed label keys from the caller-supplied labels, excluding
 	// system labels that must survive ReleaseSandboxPod so that the controller
 	// can write them into the history store record.
@@ -524,6 +537,13 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		// The derived egress-policy annotation must also be stripped on release
 		// so a reused pod does not carry a prior sandbox's egress rules.
 		managedAnnoKeyList = append(managedAnnoKeyList, agentsv1alpha1.SandboxEgressPolicyAnnotationKey)
+	}
+	if injectOn {
+		// Same for the injection block: a recycled pod must not carry the
+		// previous sandbox's rules or decoys into the next claim.
+		managedAnnoKeyList = append(managedAnnoKeyList, agentsv1alpha1.SandboxEgressInjectAnnotationKey)
+	}
+	if egressOn || injectOn {
 		sort.Strings(managedAnnoKeyList)
 	}
 	managedAnnotationKeys, encErr := json.Marshal(managedAnnoKeyList)
@@ -562,6 +582,11 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		},
 		Deadline: time.Now().Add(startupTimeout),
 		ResultCh: resultCh,
+		// egressOn means an effective policy was resolved above and stamped as
+		// an annotation. Only a Pod carrying the filter sidecar can enforce it,
+		// so refuse Pods that predate the Pool's networkPolicy rather than hand
+		// back an unfiltered sandbox that looks successfully policed.
+		RequireEgressSidecar: egressOn,
 	}
 	sched := s.getOrCreateScheduler(
 		input.Namespace,

@@ -85,6 +85,23 @@ const emptyToUndef = (val: unknown) =>
 
 const dnsLabel = /^[a-z]([a-z0-9-]*[a-z0-9])?$/
 
+const injectionCredentialRowSchema = z.object({
+  name: z.string().optional(),
+  secretName: z.string().optional(),
+  secretKey: z.string().optional(),
+  exposeAs: z.string().optional(),
+  placeholder: z.string().optional(),
+})
+
+const injectionRuleRowSchema = z.object({
+  host: z.string().optional(),
+  headerName: z.string().optional(),
+  headerValue: z.string().optional(),
+  mode: z.enum(["Override", "IfAbsent"]).optional(),
+  substitute: z.string().optional(),
+  pathPrefixes: z.string().optional(),
+})
+
 const registryRowSchema = z.object({
   registry: z.preprocess(emptyToUndef, z.string().optional()),
   username: z.preprocess(emptyToUndef, z.string().optional()),
@@ -131,12 +148,17 @@ const formSchema = z
     allowedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
     deniedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
     allowPrivateNetworks: z.boolean(),
+    // Credential injection: the sidecar adds these headers on the way out, so
+    // the sandbox can use a credential it can never read.
+    injectionCredentialRows: z.array(injectionCredentialRowSchema),
+    injectionRuleRows: z.array(injectionRuleRowSchema),
     // Auto-update rollout policy (Env-level default; per-member override lives
     // on the pool sheet). maxUnavailable is a free-form int-or-percent string.
     autoUpdate: z.boolean(),
     maxUnavailable: z.preprocess(emptyToUndef, z.string().optional()),
   })
   .superRefine((v, ctx) => {
+    validateInjection(v, ctx)
     if (v.networkPolicyMode !== "allowlist") return
     for (const d of splitLines(v.allowedDomains)) {
       if (!domainRe.test(d)) {
@@ -338,14 +360,18 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                 <Combobox
                   autoHighlight
                   value={extendSel}
-                  onValueChange={(v: { clusterID: string; clusterName: string; name: string } | null) => {
+                  onValueChange={(
+                    v: { clusterID: string; clusterName: string; name: string } | null,
+                  ) => {
                     setExtendSel(v)
                     setValue("name", v?.name ?? "", { shouldValidate: true })
                   }}
                   items={otherEnvs}
-                  itemToStringLabel={(e: { clusterID: string; clusterName: string; name: string }) =>
-                    e.name
-                  }
+                  itemToStringLabel={(e: {
+                    clusterID: string
+                    clusterName: string
+                    name: string
+                  }) => e.name}
                 >
                   <ComboboxInput
                     aria-invalid={!!errors.name}
@@ -358,7 +384,9 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                       {(e: { clusterID: string; clusterName: string; name: string }) => (
                         <ComboboxItem key={`${e.clusterID}/${e.name}`} value={e}>
                           <span className="font-mono text-sm">{e.name}</span>
-                          <span className="text-muted-foreground ml-2 text-xs">{e.clusterName}</span>
+                          <span className="text-muted-foreground ml-2 text-xs">
+                            {e.clusterName}
+                          </span>
                         </ComboboxItem>
                       )}
                     </ComboboxList>
@@ -496,6 +524,7 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                     <Separator />
 
                     <NetworkPolicySection control={control} register={register} errors={errors} />
+                    <SecretInjectionSection control={control} register={register} errors={errors} />
 
                     <Separator />
 
@@ -701,6 +730,361 @@ function ImagePullSecretSection({ control, register }: ImagePullSecretSectionPro
   )
 }
 
+// ─── Credential injection ───────────────────────────────────────────────────
+
+// splitCommas parses a comma-separated free-text field into trimmed entries.
+function splitCommas(v: string | undefined): string[] {
+  return (v ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean)
+}
+
+// buildSecretInjection folds the credential and rule rows into the wire shape.
+// Rows are keyed by host so several header rows on one host become one rule
+// carrying several headers, matching how the proxy evaluates them.
+function buildSecretInjection(v: FormValues): Record<string, unknown> | undefined {
+  const credentials = v.injectionCredentialRows
+    .filter((c) => c.name && c.secretName && c.secretKey)
+    .map((c) => ({
+      name: c.name!,
+      valueFrom: { name: c.secretName!, key: c.secretKey! },
+      ...(c.exposeAs ? { exposeAs: c.exposeAs } : {}),
+      ...(c.placeholder ? { placeholder: c.placeholder } : {}),
+    }))
+
+  const byHost = new Map<string, Record<string, unknown>>()
+  for (const r of v.injectionRuleRows) {
+    if (!r.host) continue
+    let rule = byHost.get(r.host)
+    if (!rule) {
+      rule = { host: r.host, headers: [] as Record<string, unknown>[] }
+      byHost.set(r.host, rule)
+    }
+    if (r.headerName && r.headerValue) {
+      ;(rule.headers as Record<string, unknown>[]).push({
+        name: r.headerName,
+        value: r.headerValue,
+        ...(r.mode && r.mode !== "Override" ? { mode: r.mode } : {}),
+      })
+    }
+    const sub = splitCommas(r.substitute)
+    if (sub.length) rule.substitute = sub
+    const paths = splitCommas(r.pathPrefixes)
+    if (paths.length) rule.pathPrefixes = paths
+  }
+  const rules = [...byHost.values()].map((r) => {
+    const headers = r.headers as Record<string, unknown>[]
+    if (headers.length === 0) delete r.headers
+    return r
+  })
+
+  if (credentials.length === 0 && rules.length === 0) return undefined
+  return { credentials, rules }
+}
+
+// validateInjection mirrors the server-side checks that would otherwise only
+// surface when a sandbox is created hours later.
+function validateInjection(v: FormValues, ctx: z.RefinementCtx): void {
+  const names = new Set<string>()
+  v.injectionCredentialRows.forEach((c, i) => {
+    if (!c.name && !c.secretName && !c.secretKey) return
+    if (!c.name || !c.secretName || !c.secretKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["injectionCredentialRows", i],
+        message: "envs.form.errors.injectionCredentialIncomplete",
+      })
+      return
+    }
+    names.add(c.name)
+    if (c.placeholder && c.placeholder.length < 16) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["injectionCredentialRows", i, "placeholder"],
+        message: "envs.form.errors.placeholderTooShort",
+      })
+    }
+    if (c.placeholder && !c.exposeAs) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["injectionCredentialRows", i, "exposeAs"],
+        message: "envs.form.errors.placeholderNeedsExposeAs",
+      })
+    }
+  })
+
+  const allowed = new Set(splitLines(v.allowedDomains))
+  v.injectionRuleRows.forEach((r, i) => {
+    if (!r.host) return
+    if (r.host.includes("*")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["injectionRuleRows", i, "host"],
+        message: "envs.form.errors.injectionWildcardHost",
+      })
+    }
+    // A host outside the allowlist is dropped before the L7 path ever runs.
+    if (v.networkPolicyMode === "allowlist" && allowed.size > 0 && !allowed.has(r.host)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["injectionRuleRows", i, "host"],
+        message: "envs.form.errors.injectionHostNotAllowed",
+      })
+    }
+    if (r.headerValue) {
+      const refs = [...r.headerValue.matchAll(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g)].map((m) => m[1])
+      if (refs.length === 0) {
+        // A literal here would be a plaintext secret stored in the CR.
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["injectionRuleRows", i, "headerValue"],
+          message: "envs.form.errors.injectionValueNeedsCredential",
+        })
+      }
+      for (const ref of refs) {
+        if (!names.has(ref)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["injectionRuleRows", i, "headerValue"],
+            message: "envs.form.errors.injectionUnknownCredential",
+          })
+          break
+        }
+      }
+    }
+  })
+}
+
+interface SecretInjectionSectionProps {
+  control: ReturnType<typeof useForm<FormValues>>["control"]
+  register: ReturnType<typeof useForm<FormValues>>["register"]
+  errors: ReturnType<typeof useForm<FormValues>>["formState"]["errors"]
+}
+
+function SecretInjectionSection({ control, register, errors }: SecretInjectionSectionProps) {
+  const { t } = useTranslation()
+  const creds = useFieldArray({ control, name: "injectionCredentialRows" })
+  const rules = useFieldArray({ control, name: "injectionRuleRows" })
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
+          {t("envs.form.section.secretInjection")}
+        </h3>
+        <p className="text-muted-foreground mt-1 text-xs">{t("envs.form.secretInjection.hint")}</p>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <FieldLabel className="text-[11px]">
+          {t("envs.form.secretInjection.credentials")}
+        </FieldLabel>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            creds.append({ name: "", secretName: "", secretKey: "", exposeAs: "", placeholder: "" })
+          }
+          className="h-7 gap-1 font-mono text-[11px]"
+        >
+          <Plus className="h-3 w-3" />
+          {t("envs.form.secretInjection.addCredential")}
+        </Button>
+      </div>
+      {creds.fields.length === 0 && (
+        <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-center text-xs">
+          {t("envs.form.secretInjection.empty")}
+        </p>
+      )}
+      <div className="space-y-2">
+        {creds.fields.map((field, index) => (
+          <div
+            key={field.id}
+            className="bg-muted/30 flex items-start gap-2 rounded-md border p-2.5"
+          >
+            <div className="grid flex-1 grid-cols-5 gap-2">
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.credName")}
+                </FieldLabel>
+                <Input
+                  placeholder="openai"
+                  {...register(`injectionCredentialRows.${index}.name` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.secretName")}
+                </FieldLabel>
+                <Input
+                  placeholder="my-secrets"
+                  {...register(`injectionCredentialRows.${index}.secretName` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.secretKey")}
+                </FieldLabel>
+                <Input
+                  placeholder="api-key"
+                  {...register(`injectionCredentialRows.${index}.secretKey` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.exposeAs")}
+                </FieldLabel>
+                <Input
+                  placeholder="OPENAI_API_KEY"
+                  {...register(`injectionCredentialRows.${index}.exposeAs` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.placeholder")}
+                </FieldLabel>
+                <Input
+                  placeholder={t("envs.form.secretInjection.placeholderHint")}
+                  {...register(`injectionCredentialRows.${index}.placeholder` as const)}
+                />
+              </Field>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => creds.remove(index)}
+              className="text-destructive mt-5"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between pt-1">
+        <FieldLabel className="text-[11px]">{t("envs.form.secretInjection.rules")}</FieldLabel>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            rules.append({
+              host: "",
+              headerName: "Authorization",
+              headerValue: "",
+              mode: "Override",
+              substitute: "",
+              pathPrefixes: "",
+            })
+          }
+          className="h-7 gap-1 font-mono text-[11px]"
+        >
+          <Plus className="h-3 w-3" />
+          {t("envs.form.secretInjection.addRule")}
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {rules.fields.map((field, index) => (
+          <div
+            key={field.id}
+            className="bg-muted/30 flex items-start gap-2 rounded-md border p-2.5"
+          >
+            <div className="grid flex-1 grid-cols-3 gap-2">
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.host")}
+                </FieldLabel>
+                <Input
+                  placeholder="api.openai.com"
+                  {...register(`injectionRuleRows.${index}.host` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.headerName")}
+                </FieldLabel>
+                <Input
+                  placeholder="Authorization"
+                  {...register(`injectionRuleRows.${index}.headerName` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.headerValue")}
+                </FieldLabel>
+                <Input
+                  placeholder="Bearer {{ openai }}"
+                  {...register(`injectionRuleRows.${index}.headerValue` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.mode")}
+                </FieldLabel>
+                <Controller
+                  control={control}
+                  name={`injectionRuleRows.${index}.mode` as const}
+                  render={({ field: f }) => (
+                    <Select value={f.value ?? "Override"} onValueChange={f.onChange}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Override">
+                          {t("envs.form.secretInjection.modeOverride")}
+                        </SelectItem>
+                        <SelectItem value="IfAbsent">
+                          {t("envs.form.secretInjection.modeIfAbsent")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.substitute")}
+                </FieldLabel>
+                <Input
+                  placeholder="openai"
+                  {...register(`injectionRuleRows.${index}.substitute` as const)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel className="text-[11px]">
+                  {t("envs.form.secretInjection.pathPrefixes")}
+                </FieldLabel>
+                <Input
+                  placeholder="/v1/"
+                  {...register(`injectionRuleRows.${index}.pathPrefixes` as const)}
+                />
+              </Field>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => rules.remove(index)}
+              className="text-destructive mt-5"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      {(errors.injectionCredentialRows || errors.injectionRuleRows) && (
+        <p className="text-destructive text-xs">{t("envs.form.secretInjection.hasErrors")}</p>
+      )}
+      <p className="text-muted-foreground text-xs">
+        {t("envs.form.secretInjection.usableNotReadable")}
+      </p>
+    </section>
+  )
+}
+
 // ─── Network policy section ─────────────────────────────────────────────────
 
 interface NetworkPolicySectionProps {
@@ -888,6 +1272,8 @@ function envToFormValues(env: AgentSandboxEnv | null): FormValues {
       allowedCIDRs: undefined,
       deniedCIDRs: undefined,
       allowPrivateNetworks: false,
+      injectionCredentialRows: [],
+      injectionRuleRows: [],
       autoUpdate: true,
       maxUnavailable: undefined,
     }
@@ -912,6 +1298,26 @@ function envToFormValues(env: AgentSandboxEnv | null): FormValues {
     allowedCIDRs: (np?.egress?.allowedCIDRs ?? []).join("\n") || undefined,
     deniedCIDRs: (np?.egress?.deniedCIDRs ?? []).join("\n") || undefined,
     allowPrivateNetworks: np?.allowPrivateNetworks ?? false,
+    injectionCredentialRows: (np?.secretInjection?.credentials ?? []).map((c) => ({
+      name: c.name,
+      secretName: c.valueFrom.name,
+      secretKey: c.valueFrom.key,
+      exposeAs: c.exposeAs ?? "",
+      placeholder: c.placeholder ?? "",
+    })),
+    injectionRuleRows: (np?.secretInjection?.rules ?? []).flatMap((r) =>
+      (r.headers && r.headers.length > 0
+        ? r.headers
+        : [{ name: "", value: "", mode: undefined }]
+      ).map((h) => ({
+        host: r.host,
+        headerName: h.name,
+        headerValue: h.value,
+        mode: (h.mode as "Override" | "IfAbsent" | undefined) ?? "Override",
+        substitute: (r.substitute ?? []).join(", "),
+        pathPrefixes: (r.pathPrefixes ?? []).join(", "),
+      })),
+    ),
     autoUpdate: overrides?.updateStrategy?.autoUpdate ?? true,
     maxUnavailable: overrides?.updateStrategy?.maxUnavailable,
   }
@@ -963,8 +1369,14 @@ function buildUpdateStrategy(v: FormValues): Record<string, unknown> | undefined
 // buildNetworkPolicy maps the form's mode + fields onto the wire networkPolicy
 // object, or undefined for "unrestricted" (omit the field).
 function buildNetworkPolicy(v: FormValues): Record<string, unknown> | undefined {
-  if (v.networkPolicyMode === "unrestricted") return undefined
+  const injection = buildSecretInjection(v)
+  // Injection alone is a valid configuration: it still needs the sidecar, which
+  // is what "networkPolicy is set" means, but it filters nothing.
+  if (v.networkPolicyMode === "unrestricted") {
+    return injection ? { secretInjection: injection } : undefined
+  }
   const np: Record<string, unknown> = {}
+  if (injection) np.secretInjection = injection
   if (v.allowPrivateNetworks) np.allowPrivateNetworks = true
   if (v.networkPolicyMode === "disable") {
     np.disableEgress = true

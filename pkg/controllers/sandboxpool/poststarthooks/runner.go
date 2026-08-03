@@ -100,14 +100,34 @@ func NewRunner(gatewayBaseURL string, clientset kubernetes.Interface, restConfig
 }
 
 // egressProxyContainerName is the filter sidecar the egress plugin injects.
-// Kept in sync with pkg/framework/plugins/egress.
-const egressProxyContainerName = "egress-proxy"
+const egressProxyContainerName = agentsv1alpha1.EgressProxyContainerName
 
 // OnSandboxReady implements sandboxpool.SandboxReadyHook.
 // It is called in a goroutine; errors are logged but never propagated.
+//
+// The step order is a security contract, not a convenience:
+//
+//  1. resolve credentials and mint the sandbox's CA (nothing observable yet);
+//  2. run the post-start hooks, which install that CA in the sandbox's trust
+//     store — merged into the same /init call as the user's env vars;
+//  3. push the egress policy;
+//  4. arm the sidecar with the credentials.
+//
+// Arming before the CA is installed would make the sandbox's first intercepted
+// request fail its TLS handshake. Both halves of a partial failure are safe:
+// without step 4 requests leave carrying only a decoy, and without step 2 they
+// do not leave at all. Neither leaks a credential.
 func (r *Runner) OnSandboxReady(ctx context.Context, pod *corev1.Pod) {
-	r.runPostStartHooks(ctx, pod)
+	plan, err := r.prepareInjection(ctx, pod)
+	if err != nil {
+		// No credential is armed, so the sandbox runs with decoys only and the
+		// upstream rejects it. Loud, but not a leak.
+		klog.ErrorS(err, "egress inject: could not prepare credential injection; sandbox will run without it",
+			"pod", klog.KObj(pod))
+	}
+	r.runPostStartHooks(ctx, pod, plan)
 	r.pushEgressPolicy(ctx, pod)
+	r.pushEgressSecrets(ctx, pod, plan)
 }
 
 // OnSandboxRelease implements sandboxpool.SandboxReleaseHook. When the pod
@@ -135,7 +155,11 @@ func (r *Runner) pushEgressPolicy(ctx context.Context, pod *corev1.Pod) {
 		return
 	}
 	if !hasInitContainer(pod, egressProxyContainerName) {
-		klog.ErrorS(nil, "egress: policy annotation present but no egress-proxy sidecar; pod egress stays fail-closed",
+		// No sidecar means no iptables redirect either, so nothing filters this
+		// pod's traffic — it is UNFILTERED, not fail-closed. The dispatcher
+		// refuses such pods for policy-bearing claims (RequireEgressSidecar), so
+		// reaching here means something bypassed it; treat as an incident.
+		klog.ErrorS(nil, "egress: policy annotation present but no egress-proxy sidecar; this pod's egress is UNFILTERED",
 			"pod", klog.KObj(pod))
 		return
 	}
@@ -147,19 +171,55 @@ func (r *Runner) pushEgressPolicy(ctx context.Context, pod *corev1.Pod) {
 	}
 }
 
-// runPostStartHooks executes the user-declared post-start hooks recorded on the
-// pod's annotation.
-func (r *Runner) runPostStartHooks(ctx context.Context, pod *corev1.Pod) {
-	raw, ok := pod.Annotations[agentsv1alpha1.SandboxPostStartHooksAnnotationKey]
-	if !ok || raw == "" {
+// pushEgressSecrets arms the filter sidecar with the resolved credentials, the
+// sandbox's CA private key, and the decoy map. This is the only path credential
+// material takes into the Pod, and it terminates in a tmpfs the sandbox
+// containers do not mount.
+//
+// It must run after the CA has been installed in the sandbox (see
+// OnSandboxReady). On failure the sidecar simply stays unarmed.
+func (r *Runner) pushEgressSecrets(ctx context.Context, pod *corev1.Pod, plan *injectionPlan) {
+	if plan == nil {
 		return
 	}
-
-	var hooks []Action
-	if err := json.Unmarshal([]byte(raw), &hooks); err != nil {
-		klog.ErrorS(err, "poststarthooks: failed to decode hooks annotation",
+	if !hasInitContainer(pod, egressProxyContainerName) {
+		klog.ErrorS(nil, "egress inject: injection configured but no egress-proxy sidecar; nothing will be injected",
 			"pod", klog.KObj(pod))
 		return
+	}
+	payload, err := json.Marshal(plan.secrets)
+	if err != nil {
+		klog.ErrorS(err, "egress inject: failed to encode secrets payload", "pod", klog.KObj(pod))
+		return
+	}
+	err = retry.OnError(defaultBackoff, func(error) bool { return true }, func() error {
+		return r.execInContainer(ctx, pod, egressProxyContainerName,
+			[]string{"/egress-proxy", "set-secrets"}, bytes.NewReader(payload))
+	})
+	if err != nil {
+		// Deliberately does not log the payload.
+		klog.ErrorS(err, "egress inject: failed to push credentials to sidecar; requests will carry only decoys",
+			"pod", klog.KObj(pod), "rules", len(plan.secrets.Rules))
+		return
+	}
+	klog.V(2).InfoS("egress inject: credentials armed", "pod", klog.KObj(pod),
+		"rules", len(plan.secrets.Rules), "substitutions", len(plan.secrets.Substitutions))
+}
+
+// runPostStartHooks executes the user-declared post-start hooks recorded on the
+// pod's annotation, after folding in the CA certificate and decoy env vars that
+// credential injection needs the sandbox to have.
+func (r *Runner) runPostStartHooks(ctx context.Context, pod *corev1.Pod, plan *injectionPlan) {
+	var hooks []Action
+	if raw, ok := pod.Annotations[agentsv1alpha1.SandboxPostStartHooksAnnotationKey]; ok && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &hooks); err != nil {
+			klog.ErrorS(err, "poststarthooks: failed to decode hooks annotation",
+				"pod", klog.KObj(pod))
+			return
+		}
+	}
+	if plan != nil {
+		hooks = mergeInitHook(hooks, plan.caCertPEM, plan.envVars)
 	}
 	if len(hooks) == 0 {
 		return
