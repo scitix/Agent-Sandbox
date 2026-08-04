@@ -1,5 +1,5 @@
 diff --git a/packages/envd/internal/execcontext/context.go b/packages/envd/internal/execcontext/context.go
-index c7b68284f..b2eaf795c 100644
+index c7b6828..b2eaf79 100644
 --- a/packages/envd/internal/execcontext/context.go
 +++ b/packages/envd/internal/execcontext/context.go
 @@ -10,6 +10,12 @@ type Defaults struct {
@@ -16,17 +16,20 @@ index c7b68284f..b2eaf795c 100644
  
  func ResolveDefaultWorkdir(workdir string, defaultWorkdir *string) string {
 diff --git a/packages/envd/internal/services/process/handler/handler.go b/packages/envd/internal/services/process/handler/handler.go
-index e30320944..7bda501a8 100644
+index 8c135c3..98536c7 100644
 --- a/packages/envd/internal/services/process/handler/handler.go
 +++ b/packages/envd/internal/services/process/handler/handler.go
-@@ -102,10 +102,29 @@ func New(
+@@ -195,12 +195,32 @@ func New(
  	userCmd := strings.Join(append([]string{req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...), " ")
  
- 	// Wrap in a shell that resets oom_score_adj, ioprio (ionice best-effort/4), and nice.
+ 	// Wrap in a shell that resets oom_score_adj, ioprio (ionice best-effort/4),
+-	// and nice. The oom_score_adj write is pure /proc and always applied; the
+-	// priority helpers are used only where the image provides them.
 -	niceDelta := defaultNice - currentNice()
--	oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/ionice -c 2 -n 4 /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
+-	oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec %s"${@}"`, defaultOomScore, ioniceNicePrefix(defaultIoClass, defaultIoPrio, niceDelta, exec.LookPath))
 -	wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
 -	cmd := exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
++	// and nice.
 +	//
 +	// This priming is Firecracker-specific. Outside a microVM (IsNotFC, e.g. a
 +	// Kubernetes container) it is both unnecessary and harmful:
@@ -36,6 +39,8 @@ index e30320944..7bda501a8 100644
 +	//   - The kubelet pins a per-QoS oom_score_adj floor and FORBIDS lowering it,
 +	//     so `echo 100 > /proc/$$/oom_score_adj` fails with EACCES. Because of the
 +	//     `&&`, that failure short-circuits and the user's command never runs.
++	//     Upstream made the ionice/nice half degrade gracefully via LookPath, but
++	//     the oom_score_adj write is still unconditional, so this is still needed.
 +	//   - Routing every exec through `/bin/sh -c` also makes execution depend on a
 +	//     working /bin/sh in the user's image (busybox multi-call binaries, etc.).
 +	// So in not-FC mode we exec the command directly. cgroup attachment and the
@@ -46,7 +51,7 @@ index e30320944..7bda501a8 100644
 +		cmd = exec.CommandContext(ctx, req.GetProcess().GetCmd(), req.GetProcess().GetArgs()...)
 +	} else {
 +		niceDelta := defaultNice - currentNice()
-+		oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec /usr/bin/ionice -c 2 -n 4 /usr/bin/nice -n %d "${@}"`, defaultOomScore, niceDelta)
++		oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec %s"${@}"`, defaultOomScore, ioniceNicePrefix(defaultIoClass, defaultIoPrio, niceDelta, exec.LookPath))
 +		wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
 +		cmd = exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
 +	}
@@ -55,7 +60,7 @@ index e30320944..7bda501a8 100644
  	if err != nil {
 diff --git a/packages/envd/internal/services/process/handler/handler_oom_test.go b/packages/envd/internal/services/process/handler/handler_oom_test.go
 new file mode 100644
-index 000000000..10575507a
+index 0000000..1057550
 --- /dev/null
 +++ b/packages/envd/internal/services/process/handler/handler_oom_test.go
 @@ -0,0 +1,83 @@
@@ -143,10 +148,10 @@ index 000000000..10575507a
 +	}
 +}
 diff --git a/packages/envd/main.go b/packages/envd/main.go
-index a9f462110..99151f778 100644
+index f61e0b9..dd6b397 100644
 --- a/packages/envd/main.go
 +++ b/packages/envd/main.go
-@@ -167,6 +167,7 @@ func run() error {
+@@ -186,6 +186,7 @@ func run() error {
  	defaults := &execcontext.Defaults{
  		User:    defaultUser,
  		EnvVars: utils.NewEnvVars(),

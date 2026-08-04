@@ -18,7 +18,13 @@ unpatched envd: it reintroduces the bug below.
 
 ## 0001-skip-oom-nice-wrapper-when-not-firecracker.patch
 
-**Base:** envd 0.6.10 (`1b19a3bcb37d1fb44171ae8dee3a126cf3d39c34`)
+**Base:** envd 0.6.13 (`03166a020f0ea2da25e3a73e45518ae156db824f`)
+
+> Rebased from 0.6.10 to 0.6.13. Upstream reworked the wrapper so ionice/nice are
+> looked up with `exec.LookPath` and skipped when absent — but the
+> `oom_score_adj` write is still unconditional, which is the half that breaks
+> under Kubernetes. The patch keeps upstream's improvement in the Firecracker
+> branch and only bypasses the whole wrapper in not-FC mode.
 
 **Problem.** Before exec-ing each command, envd wraps it as
 `/bin/sh -c "echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n N -- CMD"`.
