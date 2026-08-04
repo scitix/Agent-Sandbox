@@ -225,3 +225,16 @@ const (
 func EnvImagePullSecretName(envName string) string {
 	return ImagePullSecretNamePrefix + envName
 }
+
+// EnvSecretInjectionNamePrefix is prepended to an Env's name to form the Secret
+// that holds its injected credentials — one Secret per Env, one key per
+// credential (keyed by the credential's Name), not one Secret per credential.
+const EnvSecretInjectionNamePrefix = "eis-"
+
+// EnvSecretInjectionName returns the Secret backing an Env's declared
+// credentials. Callers may also point a credential at a Secret of their own;
+// this is only the one the platform materialises from values typed into the
+// API, mirroring how imagePullSecret works.
+func EnvSecretInjectionName(envName string) string {
+	return EnvSecretInjectionNamePrefix + envName
+}
