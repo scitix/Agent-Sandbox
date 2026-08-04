@@ -135,7 +135,7 @@ func (r *Runner) OnSandboxReady(ctx context.Context, pod *corev1.Pod) {
 // fail-closed so a reused pod never carries the previous sandbox's egress rules
 // into the window before the next claim's policy push lands.
 func (r *Runner) OnSandboxRelease(ctx context.Context, pod *corev1.Pod) {
-	if !hasInitContainer(pod, egressProxyContainerName) {
+	if !agentsv1alpha1.PodHasEgressProxy(pod) {
 		return
 	}
 	err := retry.OnError(defaultBackoff, func(error) bool { return true }, func() error {
@@ -154,7 +154,7 @@ func (r *Runner) pushEgressPolicy(ctx context.Context, pod *corev1.Pod) {
 	if raw == "" {
 		return
 	}
-	if !hasInitContainer(pod, egressProxyContainerName) {
+	if !agentsv1alpha1.PodHasEgressProxy(pod) {
 		// No sidecar means no iptables redirect either, so nothing filters this
 		// pod's traffic — it is UNFILTERED, not fail-closed. The dispatcher
 		// refuses such pods for policy-bearing claims (RequireEgressSidecar), so
@@ -182,7 +182,7 @@ func (r *Runner) pushEgressSecrets(ctx context.Context, pod *corev1.Pod, plan *i
 	if plan == nil {
 		return
 	}
-	if !hasInitContainer(pod, egressProxyContainerName) {
+	if !agentsv1alpha1.PodHasEgressProxy(pod) {
 		klog.ErrorS(nil, "egress inject: injection configured but no egress-proxy sidecar; nothing will be injected",
 			"pod", klog.KObj(pod))
 		return
@@ -304,15 +304,6 @@ func (r *Runner) execInContainer(ctx context.Context, pod *corev1.Pod, container
 		return fmt.Errorf("exec: command %v in %s failed: %w (stderr: %s)", command, container, err, strings.TrimSpace(stderrBuf.String()))
 	}
 	return nil
-}
-
-func hasInitContainer(pod *corev1.Pod, name string) bool {
-	for i := range pod.Spec.InitContainers {
-		if pod.Spec.InitContainers[i].Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // httpPostHook sends a POST request through the gateway to an in-sandbox HTTP endpoint.

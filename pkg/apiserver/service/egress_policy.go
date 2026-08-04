@@ -73,9 +73,17 @@ func buildEgressPolicyAnnotation(override *agentsv1alpha1.SandboxNetworkPolicy, 
 // egressproxy.Policy the sidecar enforces.
 //
 // The proxy's default action is deny (allowlist), so the CRD's "Egress==nil
-// means unrestricted (except the anti-SSRF baseline)" case is represented with
-// an allow-all domain + CIDR. The anti-SSRF baseline is checked before the allow
-// rules in Evaluate, so private ranges stay denied unless AllowPrivateNetworks.
+// means unrestricted" case is represented with an allow-all domain + CIDR.
+//
+// Egress==nil also implies AllowPrivateNetworks: a policy that declares no
+// filtering must not be more restrictive than having no SandboxNetworkPolicy at
+// all, and without one there is no sidecar and private ranges are reachable.
+// Otherwise merely turning on SecretInjection — which requires a non-nil policy
+// to get the sidecar injected — would silently cut the sandbox off from every
+// host that resolves inside the cluster, including split-horizon public names.
+// The anti-SSRF baseline stays on wherever filtering *is* declared (Egress set,
+// or DisableEgress), and "allow everything but keep the baseline" remains
+// expressible as Egress{AllowedDomains: ["*"], AllowedCIDRs: ["0.0.0.0/0"]}.
 func toProxyPolicy(np *agentsv1alpha1.SandboxNetworkPolicy, sandboxID string) egressproxy.Policy {
 	p := egressproxy.Policy{
 		SandboxID:            sandboxID,
@@ -87,9 +95,10 @@ func toProxyPolicy(np *agentsv1alpha1.SandboxNetworkPolicy, sandboxID string) eg
 		return p
 	}
 	if np.Egress == nil {
-		// Unrestricted (subject to the anti-SSRF baseline).
+		// Unrestricted: allow-all, baseline included.
 		p.AllowedDomains = []string{"*"}
 		p.AllowedCIDRs = []string{"0.0.0.0/0"}
+		p.AllowPrivateNetworks = true
 		return p
 	}
 	p.AllowedDomains = np.Egress.AllowedDomains

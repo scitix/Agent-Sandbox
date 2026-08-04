@@ -26,6 +26,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
@@ -43,6 +44,22 @@ const (
 
 // Config parameterizes the injected containers.
 type Config struct {
+	// LegacySidecar injects the proxy as an ordinary container instead of a
+	// native sidecar, for API servers that do not support
+	// initContainers[].restartPolicy — Kubernetes < 1.28, or 1.28 without the
+	// SidecarContainers gate. Those API servers *silently prune* the field, so
+	// the proxy degrades into a plain init container running a process that
+	// never exits and the Pod hangs in Init forever. Detect it with
+	// `kubectl explain pod.spec.initContainers.restartPolicy`.
+	//
+	// The cost is the ordering guarantee: a native sidecar is up before the app
+	// containers start, whereas an ordinary container starts alongside them, so
+	// early sandbox traffic can hit the redirect before the proxy listens. That
+	// window fails closed (connection refused, nothing escapes unfiltered) and
+	// is confined to a Pod's own startup — the readiness probe below keeps a Pod
+	// out of the claimable set until the proxy answers.
+	LegacySidecar bool
+
 	// Image is the container image that carries the egress-proxy binary. Both
 	// the init container and the sidecar run it (different subcommands). Defaults
 	// to the operator's idle image, which is guaranteed present on pool nodes.
@@ -68,7 +85,7 @@ func (p *Plugin) PreCreatePod(_ context.Context, pod *corev1.Pod, pool *agentsv1
 	if pool == nil || pool.Spec.NetworkPolicy == nil {
 		return false, nil
 	}
-	if hasContainer(pod.Spec.InitContainers, proxyContainerName) {
+	if agentsv1alpha1.PodHasEgressProxy(pod) {
 		return false, nil // already injected (defensive; createPod builds a fresh Pod)
 	}
 
@@ -112,7 +129,16 @@ func (p *Plugin) PreCreatePod(_ context.Context, pod *corev1.Pod, pool *agentsv1
 	// containers (tini/envd) still run with unfiltered network; the redirect is
 	// installed last, immediately before the native sidecar comes up and the app
 	// containers start.
-	pod.Spec.InitContainers = append(pod.Spec.InitContainers, p.initContainer(img), p.sidecar(img))
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, p.initContainer(img))
+	if p.cfg.LegacySidecar {
+		// Ordinary container: the redirect is already installed by the init
+		// container above, so traffic that beats the proxy is refused rather
+		// than leaked. Appended last so the sandbox stays containers[0], which
+		// the in-place image update patches by index.
+		pod.Spec.Containers = append(pod.Spec.Containers, p.legacySidecar(img))
+		return true, nil
+	}
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, p.sidecar(img))
 	return true, nil
 }
 
@@ -154,6 +180,29 @@ func (p *Plugin) sidecar(img string) corev1.Container {
 		},
 		Resources: minimalResources(),
 	}
+}
+
+// legacySidecar is the same container without the native-sidecar restartPolicy,
+// for API servers that would prune that field (see Config.LegacySidecar).
+//
+// It carries a readiness probe the native form does not need: as an ordinary
+// container it has no start-ordering guarantee, so gating Pod readiness on the
+// proxy actually listening is what keeps a half-started Pod out of the claimable
+// set (the claim path only ever hands out Ready idle Pods).
+func (p *Plugin) legacySidecar(img string) corev1.Container {
+	c := p.sidecar(img)
+	c.RestartPolicy = nil
+	c.ReadinessProbe = &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{
+				Port: intstr.FromInt32(egressproxy.DefaultHTTPPort),
+			},
+		},
+		InitialDelaySeconds: 1,
+		PeriodSeconds:       2,
+		FailureThreshold:    30,
+	}
+	return c
 }
 
 func rejectProxyUIDCollision(pod *corev1.Pod) *domain.AppError {

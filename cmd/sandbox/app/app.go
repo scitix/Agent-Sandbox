@@ -103,6 +103,7 @@ func Run(opts Options) {
 		localClusterID                                   string
 		clustersConfigMapName                            string
 		egressProxyImage                                 string
+		egressLegacySidecar                              bool
 		tlsOpts                                          []func(*tls.Config)
 	)
 
@@ -156,6 +157,13 @@ func Run(opts Options) {
 		"Container image carrying the egress-proxy binary, injected as the filter sidecar/init into "+
 			"sandbox Pods of Pools with a networkPolicy. Defaults to the idle image. Required when "+
 			"egress filtering is used; a Pool with a networkPolicy but no image fails pod creation (fail-closed).")
+	flag.BoolVar(&egressLegacySidecar, "egress-legacy-sidecar",
+		os.Getenv("AGENTBOX_EGRESS_LEGACY_SIDECAR") == "true",
+		"Inject the egress proxy as an ordinary container instead of a native sidecar, for API servers "+
+			"that do not support initContainers[].restartPolicy (Kubernetes < 1.28, or 1.28 without the "+
+			"SidecarContainers gate). Those API servers prune the field silently and the Pod then hangs in "+
+			"Init forever; check with `kubectl explain pod.spec.initContainers.restartPolicy`. Costs the "+
+			"start-ordering guarantee (early traffic is refused, never leaked) — leave off on 1.29+.")
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -291,7 +299,10 @@ func Run(opts Options) {
 	// The egress filter is an in-tree plugin, always registered. It self-gates
 	// on pool.Spec.NetworkPolicy, so Pools without a policy are untouched; a
 	// policy-bearing Pool with no configured image fails pod creation (closed).
-	builtPlugins = append(builtPlugins, egress.New(egress.Config{Image: egressProxyImage}))
+	builtPlugins = append(builtPlugins, egress.New(egress.Config{
+		Image:         egressProxyImage,
+		LegacySidecar: egressLegacySidecar,
+	}))
 
 	pluginManager := plugins.NewPluginManager(builtPlugins...)
 	if err := pluginManager.Start(ctx, handle); err != nil {

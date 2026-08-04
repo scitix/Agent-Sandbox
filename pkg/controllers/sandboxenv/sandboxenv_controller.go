@@ -192,8 +192,17 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Guarantee the Env's own credential Secret exists (existence only — its
+	// Data belongs to the API write path) and resolve every declared credential
+	// so syncStatus can report an unusable one on the Env rather than leaving it
+	// to surface as sandboxes that fail to start.
+	credCond, err := r.reconcileCredentialSecret(ctx, env)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Aggregate status from member Pools (writes status.clusters[local]).
-	if err := r.syncStatus(ctx, env); err != nil {
+	if err := r.syncStatus(ctx, env, credCond); err != nil {
 		return ctrl.Result{}, err
 	}
 

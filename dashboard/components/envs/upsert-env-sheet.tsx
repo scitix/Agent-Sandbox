@@ -1169,6 +1169,12 @@ function NetworkPolicySection({ control, register, errors }: NetworkPolicySectio
         <FieldDescription>{t("envs.form.networkPolicy.modeDescription")}</FieldDescription>
       </Field>
 
+      {mode === "unrestricted" && (
+        <p className="text-muted-foreground rounded-md border border-dashed p-3 text-xs">
+          {t("envs.form.networkPolicy.unrestrictedPrivateNote")}
+        </p>
+      )}
+
       {mode === "allowlist" && (
         <>
           <Field>

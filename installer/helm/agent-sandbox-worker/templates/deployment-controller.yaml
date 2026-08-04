@@ -37,6 +37,9 @@ spec:
             {{- if .Values.controller.egressProxyImage }}
             - --egress-proxy-image={{ .Values.controller.egressProxyImage }}
             {{- end }}
+            {{- if .Values.controller.egressLegacySidecar }}
+            - --egress-legacy-sidecar
+            {{- end }}
             {{- if .Values.extensionsConfig.create }}
             - --extension-config=/etc/agentbox/extensions.yaml
             {{- end }}

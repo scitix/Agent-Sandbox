@@ -74,6 +74,63 @@ func resolveInjectedCredentialRefs(overrides *agentsv1alpha1.EnvOverridesSpec, e
 	return nil
 }
 
+// preflightInjectedCredentials rejects a write whose credentials could not be
+// materialised — before the Env itself is written.
+//
+// The Secret can only be created after the Env exists, because its OwnerRef
+// needs the Env's UID; so the write order has to be Env-then-Secret, and a
+// failure at the Secret step used to leave the Env referencing a credential
+// that was never stored. That is not a hypothetical: `value` is write-only, so
+// an edit that does not re-type a credential sends no value at all, and the
+// Env would be saved pointing at a key nobody ever wrote. Checking first makes
+// the realistic failure atomic — nothing is persisted and the caller is told
+// what to supply.
+//
+// A credential passes when the caller supplied a value now, or the managed
+// Secret already holds a non-empty one. Credentials pointing at a Secret the
+// caller manages are their business, not ours.
+func (s *k8sSandboxEnvService) preflightInjectedCredentials(
+	ctx context.Context,
+	namespace, envName string,
+	overrides *agentsv1alpha1.EnvOverridesSpec,
+	values map[string]string,
+) *domain.AppError {
+	if overrides == nil || overrides.NetworkPolicy == nil || overrides.NetworkPolicy.SecretInjection == nil {
+		return nil
+	}
+	managed := agentsv1alpha1.EnvSecretInjectionName(envName)
+	creds := overrides.NetworkPolicy.SecretInjection.Credentials
+
+	var stored *corev1.Secret
+	for i := range creds {
+		c := &creds[i]
+		if c.ValueFrom.Name != managed && c.ValueFrom.Name != "" {
+			continue // caller-managed Secret
+		}
+		if v, ok := values[c.Name]; ok && v != "" {
+			continue
+		}
+		if stored == nil {
+			stored = &corev1.Secret{}
+			if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: managed}, stored); err != nil {
+				if !k8serrors.IsNotFound(err) {
+					return domain.NewInternal(fmt.Sprintf("lookup credential secret: %v", err), err)
+				}
+				stored.Data = nil
+			}
+		}
+		key := c.ValueFrom.Key
+		if key == "" {
+			key = c.Name
+		}
+		if len(stored.Data[key]) == 0 {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"credential %q has no value; supply one, or point valueFrom at a Secret you manage", c.Name))
+		}
+	}
+	return nil
+}
+
 // upsertEnvSecretInjection materialises the Env's credential Secret.
 //
 // Update semantics matter here because `value` is write-only: an edit that only
