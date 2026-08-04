@@ -614,8 +614,8 @@ spec:
                                               type: string
                                             name:
                                               description: |-
-                                                Name is how rules refer to this credential in a value template
-                                                ("{{ name }}").
+                                                Name is how rules refer to this credential in a value template: the
+                                                credential name wrapped in a doubled pair of curly braces.
                                               type: string
                                             placeholder:
                                               description: |-
@@ -677,8 +677,10 @@ spec:
                                                     type: string
                                                   value:
                                                     description: |-
-                                                      Value is a template that may reference declared credentials as
-                                                      "{{ credName }}", e.g. "Bearer {{ openai }}".
+                                                      Value is a template that may reference declared credentials by name, each
+                                                      name wrapped in a doubled pair of curly braces. For an Authorization
+                                                      header, that is a Bearer prefix followed by the brace-wrapped name of the
+                                                      credential holding the key.
                                                     type: string
                                                 required:
                                                 - name
@@ -1114,8 +1116,8 @@ spec:
                                   type: string
                                 name:
                                   description: |-
-                                    Name is how rules refer to this credential in a value template
-                                    ("{{ name }}").
+                                    Name is how rules refer to this credential in a value template: the
+                                    credential name wrapped in a doubled pair of curly braces.
                                   type: string
                                 placeholder:
                                   description: |-
@@ -1174,8 +1176,10 @@ spec:
                                         type: string
                                       value:
                                         description: |-
-                                          Value is a template that may reference declared credentials as
-                                          "{{ credName }}", e.g. "Bearer {{ openai }}".
+                                          Value is a template that may reference declared credentials by name, each
+                                          name wrapped in a doubled pair of curly braces. For an Authorization
+                                          header, that is a Bearer prefix followed by the brace-wrapped name of the
+                                          credential holding the key.
                                         type: string
                                     required:
                                     - name

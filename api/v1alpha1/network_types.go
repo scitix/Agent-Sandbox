@@ -106,10 +106,17 @@ type SecretInjection struct {
 	CACertTTL *metav1.Duration `json:"caCertTTL,omitempty"`
 }
 
+// Doc comments in this file must never contain a literal doubled curly brace:
+// controller-gen copies them verbatim into the CRD field descriptions, and every
+// consumer that renders the resulting manifest as a Go template — Helm, because
+// the CRDs ship under a chart's templates/, and delivery platforms that parse a
+// service YAML for variables — then fails on the unknown action. Spell the
+// placeholder syntax out in words instead.
+
 // InjectedCredential is one named credential.
 type InjectedCredential struct {
-	// Name is how rules refer to this credential in a value template
-	// ("{{ name }}").
+	// Name is how rules refer to this credential in a value template: the
+	// credential name wrapped in a doubled pair of curly braces.
 	Name string `json:"name"`
 
 	// ValueFrom points at the Secret key holding the credential. The Secret
@@ -192,8 +199,10 @@ type HeaderInjection struct {
 	// Name is the header name, compared case-insensitively.
 	Name string `json:"name"`
 
-	// Value is a template that may reference declared credentials as
-	// "{{ credName }}", e.g. "Bearer {{ openai }}".
+	// Value is a template that may reference declared credentials by name, each
+	// name wrapped in a doubled pair of curly braces. For an Authorization
+	// header, that is a Bearer prefix followed by the brace-wrapped name of the
+	// credential holding the key.
 	Value string `json:"value"`
 
 	// Mode defaults to Override.
