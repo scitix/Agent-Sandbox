@@ -40,6 +40,23 @@ const (
 	proxyContainerName = agentsv1alpha1.EgressProxyContainerName
 	policyVolumeName   = "egress-policy"
 	policyMountDir     = "/var/run/egress"
+
+	// proxyMemoryLimit / proxyGoMemLimit cap the sidecar. The proxy itself is
+	// tiny (single-digit MiB with a CA and rules loaded), but the limit is not
+	// only its own: the control plane execs `set-policy` / `set-secrets` /
+	// `reset` *into this container*, and the credential tmpfs below is charged
+	// here too. GOMEMLIMIT is set because the Go runtime sizes the heap from the
+	// machine's memory, not the cgroup's — on a large node a burst can overshoot
+	// a small limit before the GC reacts, and the kill lands on the sidecar with
+	// no explanation in its log.
+	proxyMemoryLimit = "256Mi"
+	proxyGoMemLimit  = "200MiB"
+
+	// policyVolumeSizeLimit caps the memory-backed credential volume. Its pages
+	// count against the sidecar's memory limit, so an unbounded tmpfs is an
+	// unbounded hole in that budget. The payload is a policy, a rule table and a
+	// CA — kilobytes.
+	policyVolumeSizeLimit = "16Mi"
 )
 
 // Config parameterizes the injected containers.
@@ -121,8 +138,11 @@ func (p *Plugin) PreCreatePod(_ context.Context, pod *corev1.Pod, pool *agentsv1
 	}
 
 	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name:         policyVolumeName,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}},
+		Name: policyVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium:    corev1.StorageMediumMemory,
+			SizeLimit: ptr(resource.MustParse(policyVolumeSizeLimit)),
+		}},
 	})
 
 	// Append at the end of InitContainers so any existing injector init
@@ -168,6 +188,10 @@ func (p *Plugin) sidecar(img string) corev1.Container {
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"/egress-proxy", "serve"},
 		RestartPolicy:   &always, // native sidecar (k8s >= 1.29)
+		Env: []corev1.EnvVar{
+			// The Go runtime reads the machine's memory, not the cgroup's.
+			{Name: "GOMEMLIMIT", Value: proxyGoMemLimit},
+		},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: policyVolumeName, MountPath: policyMountDir},
 		},
@@ -192,15 +216,20 @@ func (p *Plugin) sidecar(img string) corev1.Container {
 func (p *Plugin) legacySidecar(img string) corev1.Container {
 	c := p.sidecar(img)
 	c.RestartPolicy = nil
+	// Probe the dedicated health port, never a data-plane port: a probe against
+	// one of those is indistinguishable from a redirected sandbox connection, so
+	// it gets policy-evaluated and logged as a denial on every interval, and it
+	// only ever proves that accept() works.
 	c.ReadinessProbe = &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
-			TCPSocket: &corev1.TCPSocketAction{
-				Port: intstr.FromInt32(egressproxy.DefaultHTTPPort),
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: "/healthz",
+				Port: intstr.FromInt32(egressproxy.DefaultHealthPort),
 			},
 		},
 		InitialDelaySeconds: 1,
-		PeriodSeconds:       2,
-		FailureThreshold:    30,
+		PeriodSeconds:       5,
+		FailureThreshold:    12,
 	}
 	return c
 }
@@ -277,10 +306,10 @@ func minimalResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("10m"),
-			corev1.ResourceMemory: resource.MustParse("32Mi"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceMemory: resource.MustParse("128Mi"),
+			corev1.ResourceMemory: resource.MustParse(proxyMemoryLimit),
 		},
 	}
 }

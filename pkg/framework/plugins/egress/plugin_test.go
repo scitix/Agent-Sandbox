@@ -190,9 +190,20 @@ func TestPreCreatePod_LegacySidecarInjectsOrdinaryContainer(t *testing.T) {
 			t.Error("legacy mode must not set restartPolicy (the field is what old API servers prune)")
 		}
 		// Without start ordering, readiness is what keeps a Pod whose proxy is
-		// not listening yet out of the claimable set.
-		if c.ReadinessProbe == nil || c.ReadinessProbe.TCPSocket == nil {
-			t.Error("legacy sidecar needs a readiness probe on the proxy port")
+		// not listening yet out of the claimable set. It must target the health
+		// port: a probe against a data-plane port is indistinguishable from a
+		// redirected sandbox connection, so it gets policy-evaluated and logged
+		// as a denial on every interval.
+		probe := c.ReadinessProbe
+		if probe == nil || probe.HTTPGet == nil {
+			t.Fatal("legacy sidecar needs an HTTP readiness probe")
+		}
+		if got := probe.HTTPGet.Port.IntValue(); got != egressproxy.DefaultHealthPort {
+			t.Errorf("probe hits port %d; must use the health port %d, never the data plane",
+				got, egressproxy.DefaultHealthPort)
+		}
+		if probe.TCPSocket != nil {
+			t.Error("probe must not be a raw TCP connect to a data-plane port")
 		}
 	}
 	// The claim path gates on this helper; missing the container form would make
@@ -222,5 +233,51 @@ func TestPreCreatePod_LegacySidecarIsIdempotent(t *testing.T) {
 		len(pod.Spec.Volumes) != volumes {
 		t.Errorf("second pass injected again: containers=%d inits=%d volumes=%d",
 			len(pod.Spec.Containers), len(pod.Spec.InitContainers), len(pod.Spec.Volumes))
+	}
+}
+
+// The sidecar shares its memory limit with the control-plane processes exec'd
+// into it and with the credential tmpfs, and the Go runtime sizes its heap from
+// the machine rather than the cgroup — so the limit needs headroom and
+// GOMEMLIMIT, and the tmpfs needs a cap of its own.
+func TestPreCreatePod_SidecarMemoryBudget(t *testing.T) {
+	p := New(Config{Image: "idle:1"})
+	pod := sandboxPod()
+	if _, err := p.PreCreatePod(context.Background(), pod, poolWithPolicy()); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	var proxy *corev1.Container
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == proxyContainerName {
+			proxy = &pod.Spec.InitContainers[i]
+		}
+	}
+	if proxy == nil {
+		t.Fatal("proxy not injected")
+	}
+	if got := proxy.Resources.Limits.Memory().String(); got != proxyMemoryLimit {
+		t.Errorf("memory limit = %s, want %s", got, proxyMemoryLimit)
+	}
+	var gomemlimit string
+	for _, e := range proxy.Env {
+		if e.Name == "GOMEMLIMIT" {
+			gomemlimit = e.Value
+		}
+	}
+	if gomemlimit != proxyGoMemLimit {
+		t.Errorf("GOMEMLIMIT = %q, want %q — without it the Go heap ignores the cgroup limit",
+			gomemlimit, proxyGoMemLimit)
+	}
+	for _, v := range pod.Spec.Volumes {
+		if v.Name != policyVolumeName {
+			continue
+		}
+		if v.EmptyDir == nil || v.EmptyDir.Medium != corev1.StorageMediumMemory {
+			t.Fatal("credential volume must stay memory-backed")
+		}
+		if v.EmptyDir.SizeLimit == nil {
+			t.Error("memory-backed credential volume needs a sizeLimit: its pages are charged to the sidecar")
+		}
 	}
 }

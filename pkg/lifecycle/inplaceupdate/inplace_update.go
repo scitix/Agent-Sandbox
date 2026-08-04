@@ -347,7 +347,7 @@ func MarkUpdateCompleted(ctx context.Context, c client.Client, sandboxPool *agen
 		// Snapshot stable container statuses when transitioning to Running so
 		// the controller can detect unexpected restarts (e.g., OOM-kills) later.
 		if defaultTargetPodPhase(state.TargetPodPhase, agentsv1alpha1.SandboxPhaseRunning) == agentsv1alpha1.SandboxPhaseRunning {
-			state.StableContainerStatuses = buildStableContainerStatuses(current)
+			state.StableContainerStatuses = buildStableContainerStatuses(current, state.TargetImages)
 		} else {
 			state.StableContainerStatuses = nil
 		}
@@ -413,7 +413,7 @@ func applyUpdate(pod *corev1.Pod, opts UpdateOptions) (bool, error) {
 				Phase:                   InplaceUpdatePhaseCompleted,
 				TargetPodPhase:          targetPhase,
 				UpdateTimestamp:         metav1.Now(),
-				StableContainerStatuses: buildStableContainerStatuses(pod),
+				StableContainerStatuses: buildStableContainerStatuses(pod, containerImages),
 			}
 			encoded, err := json.Marshal(state)
 			if err != nil {
@@ -574,11 +574,28 @@ func allImagesMatch(pod *corev1.Pod, containerImages map[string]string) bool {
 }
 
 // buildStableContainerStatuses snapshots the current containerID and
-// restartCount for every container in the Pod. The snapshot is used later by
-// HasUnexpectedRestart to detect crashes (e.g. OOM-kills).
-func buildStableContainerStatuses(pod *corev1.Pod) map[string]StableContainerStatus {
-	stable := make(map[string]StableContainerStatus, len(pod.Status.ContainerStatuses))
+// restartCount of the containers this update targets. The snapshot is used later
+// by HasUnexpectedRestart to detect crashes (e.g. OOM-kills).
+//
+// Scoped to targets on purpose. Snapshotting every container makes any injected
+// sidecar's restart look like the sandbox crashed, and the reaction to that is
+// to recycle the Pod — so an egress proxy that got OOM-killed would take a live
+// sandbox down with it, even though the proxy recovers on its own (it reloads
+// its policy and credentials from the volume on start). Only the containers
+// whose image this update swapped are the sandbox's own lifecycle; the rest have
+// their own, and kubelet already restarts them.
+//
+// An empty targets map yields no snapshot, which disables the check rather than
+// widening it.
+func buildStableContainerStatuses(pod *corev1.Pod, targets map[string]string) map[string]StableContainerStatus {
+	if len(targets) == 0 {
+		return nil
+	}
+	stable := make(map[string]StableContainerStatus, len(targets))
 	for _, cs := range pod.Status.ContainerStatuses {
+		if _, ok := targets[cs.Name]; !ok {
+			continue
+		}
 		stable[cs.Name] = StableContainerStatus{
 			ContainerID:  cs.ContainerID,
 			RestartCount: cs.RestartCount,
@@ -641,10 +658,13 @@ func cleanupSandboxMetadataForIdle(pod *corev1.Pod) {
 	}
 }
 
-// HasUnexpectedRestart returns true if any container in the pod has a different
-// containerID than what was recorded in StableContainerStatuses. A containerID
-// change indicates the container was killed and restarted by kubelet (e.g.,
-// OOM-kill, crash) while the pod was in Running phase.
+// HasUnexpectedRestart returns true if any container this update targeted has a
+// different containerID than what was recorded in StableContainerStatuses. A
+// containerID change indicates the container was killed and restarted by kubelet
+// (e.g., OOM-kill, crash) while the pod was in Running phase.
+//
+// Injected sidecars are outside the snapshot (see buildStableContainerStatuses),
+// so their restarts do not recycle the sandbox.
 //
 // Design note: we intentionally do NOT use restartCount as a signal here.
 // kubelet reports containerID, restartCount, and Ready in separate status
