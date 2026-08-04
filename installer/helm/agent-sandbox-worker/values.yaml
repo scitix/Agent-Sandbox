@@ -53,11 +53,21 @@ extensionsConfig:
 # Controller (sandbox operator + API server)
 # ---------------------------------------------------------------------------
 controller:
-  # egressProxyImage is the image carrying the egress-proxy binary. The egress
-  # network-policy plugin injects it as the filter sidecar + init container into
-  # sandbox Pods of Pools whose networkPolicy is set. Empty disables the flag —
-  # such a Pool then fails pod creation (fail-closed). Set to the idle image,
-  # which bundles egress-proxy.
+  # egressProxyImage overrides the image the egress network-policy plugin injects
+  # as the filter sidecar + init container into sandbox Pods of Pools whose
+  # networkPolicy is set.
+  #
+  # LEAVE IT EMPTY. Empty does not disable anything — the plugin then uses the
+  # Pool's own idleImage, which already bundles egress-proxy (they are the same
+  # image; see installer/dockerfile/Dockerfile.idleimage). Pinning it here adds a
+  # second place the version is written down, and the two drift the moment a
+  # template moves to a newer idle image while this value stays behind: Pods
+  # would run a new idle image beside an old sidecar binary. Letting it follow
+  # the template keeps one coordinate.
+  #
+  # Set it only to force a sidecar image different from the template's idle
+  # image — e.g. to roll the filter ahead of the sandbox images. Pod creation
+  # fails only when BOTH this and the Pool's idleImage are empty.
   egressProxyImage: ""
 
   # appName is the value placed in app.kubernetes.io/name for the controller
