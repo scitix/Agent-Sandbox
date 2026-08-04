@@ -302,3 +302,105 @@ func TestPostSandboxes_MetadataKeys(t *testing.T) {
 		})
 	}
 }
+
+// mockConnectService serves one sandbox by ID and records SetTimeout calls, so a
+// connect can be checked for both what it returns and what it changed.
+type mockConnectService struct {
+	service.SandboxService
+	sandbox    *gen.Sandbox
+	getErr     *apidomain.AppError
+	timeoutSet time.Duration
+	timeoutHit int
+}
+
+func (m *mockConnectService) Get(_ context.Context, _, id string) (*gen.Sandbox, *apidomain.AppError) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	sb := *m.sandbox
+	sb.SandboxId = id
+	return &sb, nil
+}
+
+func (m *mockConnectService) SetTimeout(_ context.Context, _, _ string, d time.Duration) *apidomain.AppError {
+	m.timeoutHit++
+	m.timeoutSet = d
+	return nil
+}
+
+// Connect is what lets an SDK rebuild a handle from an ID alone, so it has to
+// answer with the same shape create does — not the 501 it used to.
+func TestPostSandboxesSandboxIDConnect_ReturnsSandboxAndAppliesTimeout(t *testing.T) {
+	sb := mkSandbox("sbx-1", nil)
+	svc := &mockConnectService{sandbox: &sb}
+	s := &Server{sandbox: svc}
+	gc, _ := ginCtxWithAuth()
+
+	resp, err := s.PostSandboxesSandboxIDConnect(gc, e2bgen.PostSandboxesSandboxIDConnectRequestObject{
+		SandboxID: "sbx-1",
+		Body:      &e2bgen.PostSandboxesSandboxIDConnectJSONRequestBody{Timeout: 120},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	ok, isOK := resp.(e2bgen.PostSandboxesSandboxIDConnect200JSONResponse)
+	if !isOK {
+		t.Fatalf("expected 200, got %T", resp)
+	}
+	if ok.SandboxID != "sbx-1" {
+		t.Errorf("sandboxID = %q, want sbx-1", ok.SandboxID)
+	}
+	// Upstream semantics: the body's timeout is the new deadline, counted from now.
+	if svc.timeoutHit != 1 || svc.timeoutSet != 120*time.Second {
+		t.Errorf("timeout applied %d time(s) as %v; want once as 2m", svc.timeoutHit, svc.timeoutSet)
+	}
+}
+
+// A killed or expired sandbox has nothing to attach to. 404 is what the SDKs
+// turn into sandbox-not-found; a 500 would read as a broken server.
+func TestPostSandboxesSandboxIDConnect_MissingSandboxIs404(t *testing.T) {
+	svc := &mockConnectService{getErr: apidomain.NewNotFound("sandbox \"sbx-gone\" not found")}
+	s := &Server{sandbox: svc}
+	gc, _ := ginCtxWithAuth()
+
+	resp, err := s.PostSandboxesSandboxIDConnect(gc, e2bgen.PostSandboxesSandboxIDConnectRequestObject{
+		SandboxID: "sbx-gone",
+		Body:      &e2bgen.PostSandboxesSandboxIDConnectJSONRequestBody{Timeout: 60},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, isNotFound := resp.(e2bgen.PostSandboxesSandboxIDConnect404JSONResponse); !isNotFound {
+		t.Fatalf("expected 404, got %T", resp)
+	}
+	if svc.timeoutHit != 0 {
+		t.Error("must not touch the deadline of a sandbox that does not exist")
+	}
+}
+
+// Attaching without asking for a deadline must not invent one.
+func TestPostSandboxesSandboxIDConnect_NoTimeoutLeavesDeadlineAlone(t *testing.T) {
+	sb := mkSandbox("sbx-2", nil)
+	svc := &mockConnectService{sandbox: &sb}
+	s := &Server{sandbox: svc}
+	gc, _ := ginCtxWithAuth()
+
+	for _, body := range []*e2bgen.PostSandboxesSandboxIDConnectJSONRequestBody{
+		nil,
+		{Timeout: 0},
+		{Timeout: -5},
+	} {
+		resp, err := s.PostSandboxesSandboxIDConnect(gc, e2bgen.PostSandboxesSandboxIDConnectRequestObject{
+			SandboxID: "sbx-2", Body: body,
+		})
+		if err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+		if _, isOK := resp.(e2bgen.PostSandboxesSandboxIDConnect200JSONResponse); !isOK {
+			t.Fatalf("body %+v: expected 200, got %T", body, resp)
+		}
+	}
+	if svc.timeoutHit != 0 {
+		t.Errorf("SetTimeout called %d time(s) without a positive timeout", svc.timeoutHit)
+	}
+}
