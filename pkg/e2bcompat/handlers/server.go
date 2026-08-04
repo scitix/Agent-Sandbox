@@ -433,8 +433,47 @@ func (s *Server) PostSandboxesSandboxIDSnapshots(_ context.Context, _ e2bgen.Pos
 	return e2bgen.PostSandboxesSandboxIDSnapshots500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
 }
 
-func (s *Server) PostSandboxesSandboxIDConnect(_ context.Context, _ e2bgen.PostSandboxesSandboxIDConnectRequestObject) (e2bgen.PostSandboxesSandboxIDConnectResponseObject, error) {
-	return e2bgen.PostSandboxesSandboxIDConnect500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+// PostSandboxesSandboxIDConnect re-attaches to a sandbox by ID, returning the
+// same shape create does so an SDK can rebuild its handle from an ID alone.
+//
+// Upstream, connect resumes a *paused* sandbox. AgentBox has no pause — a
+// sandbox is either running in its pool Pod or gone — so here it means "attach
+// to a running one", and a sandbox that was killed or expired is a 404 (which
+// the SDKs surface as sandbox-not-found).
+//
+// The timeout in the body is applied as upstream defines it: expiry becomes now
+// plus that value, so it can move a deadline in either direction. Note that the
+// SDKs default it (300s in Python), so a bare connect() shortens a sandbox that
+// was created with a longer timeout — pass the timeout you want, or use
+// POST /sandboxes/{id}/timeout to set one without re-attaching. A missing or
+// non-positive value leaves the deadline alone rather than failing the attach.
+func (s *Server) PostSandboxesSandboxIDConnect(ctx context.Context, req e2bgen.PostSandboxesSandboxIDConnectRequestObject) (e2bgen.PostSandboxesSandboxIDConnectResponseObject, error) {
+	auth := authFrom(ctx)
+	sandboxID := req.SandboxID
+	if clusterID, _ := cluster.SplitSandboxID(sandboxID); s.isCrossCluster(clusterID) {
+		s.forwarder.Forward(httpctx.GinFromCtx(ctx), clusterID, service.URLKindE2B, jsonBody(req.Body))
+		return nil, nil
+	}
+
+	result, appErr := s.sandbox.Get(ctx, auth.Namespace, sandboxID)
+	if appErr != nil {
+		if appErr.Code == apidomain.ErrCodeNotFound {
+			return e2bgen.PostSandboxesSandboxIDConnect404JSONResponse{N404JSONResponse: e2bgen.N404JSONResponse(errRespCode(404, appErr.Message))}, nil
+		}
+		return e2bgen.PostSandboxesSandboxIDConnect500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespAppErr(ctx, appErr))}, nil
+	}
+
+	if req.Body != nil && req.Body.Timeout > 0 {
+		timeout := time.Duration(req.Body.Timeout) * time.Second
+		if tErr := s.sandbox.SetTimeout(ctx, auth.Namespace, sandboxID, timeout); tErr != nil {
+			if tErr.Code == apidomain.ErrCodeNotFound {
+				return e2bgen.PostSandboxesSandboxIDConnect404JSONResponse{N404JSONResponse: e2bgen.N404JSONResponse(errRespCode(404, tErr.Message))}, nil
+			}
+			return e2bgen.PostSandboxesSandboxIDConnect500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespAppErr(ctx, tErr))}, nil
+		}
+	}
+
+	return e2bgen.PostSandboxesSandboxIDConnect200JSONResponse(s.domainSandboxToE2BSandbox(ctx, result, auth.Namespace)), nil
 }
 
 func (s *Server) GetSandboxesMetrics(_ context.Context, _ e2bgen.GetSandboxesMetricsRequestObject) (e2bgen.GetSandboxesMetricsResponseObject, error) {
