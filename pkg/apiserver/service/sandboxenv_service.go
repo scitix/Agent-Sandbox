@@ -278,6 +278,11 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 	if err := validateEnvOverrides(input.Overrides); err != nil {
 		return nil, err
 	}
+	// Refuse before writing anything if a credential could not be materialised,
+	// rather than creating the Env and rolling it back below.
+	if err := s.preflightInjectedCredentials(ctx, input.Namespace, input.Name, input.Overrides, input.InjectedCredentialValues); err != nil {
+		return nil, err
+	}
 	mode := input.Mode
 	if mode == "" {
 		mode = agentsv1alpha1.SandboxEnvModeWarmPool
@@ -349,6 +354,13 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 		return nil, err
 	}
 	if err := validateEnvOverrides(input.Overrides); err != nil {
+		return nil, err
+	}
+	// Check the credentials before the Env is patched. An edit that does not
+	// re-type a credential sends no value (the field is write-only), so without
+	// this the Env would be saved referencing a key that upsertEnvSecretInjection
+	// then refuses to invent — leaving a live Env whose sandboxes fail closed.
+	if err := s.preflightInjectedCredentials(ctx, input.Namespace, input.Name, input.Overrides, input.InjectedCredentialValues); err != nil {
 		return nil, err
 	}
 	key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}

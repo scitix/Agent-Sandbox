@@ -883,6 +883,7 @@
   "envs.form.networkPolicy.hint": "控制沙箱的出站（egress）网络，由 Pod 内过滤 sidecar 强制执行。",
   "envs.form.networkPolicy.mode": "出站模式",
   "envs.form.networkPolicy.modeDescription": "不限制=放行全部；禁用外网=全部拒绝；白名单=仅放行你列出的域名/IP。",
+  "envs.form.networkPolicy.unrestrictedPrivateNote": "不限制模式同样可以访问内网网段（RFC1918、集群内地址），与完全不配网络策略的沙箱一致 —— 所以开启凭证注入不会收窄沙箱能访问的范围。若想放行所有域名但保留反 SSRF 基线，请改用白名单模式并填域名 “*”。",
   "envs.form.networkPolicy.modeUnrestricted": "不限制",
   "envs.form.networkPolicy.modeDisable": "禁用外网",
   "envs.form.networkPolicy.modeAllowlist": "白名单",

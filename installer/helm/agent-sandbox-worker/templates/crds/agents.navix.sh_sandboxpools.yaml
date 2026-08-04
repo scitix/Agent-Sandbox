@@ -164,8 +164,14 @@ spec:
                   allowPrivateNetworks:
                     description: "AllowPrivateNetworks disables the default deny of\
                       \ private / link-local /\ncloud-metadata ranges (RFC1918, 169.254.0.0/16,\
-                      \ etc.). Default false \u2014 the\nanti-SSRF baseline stays\
-                      \ on. Enable only for trusted intra-cluster access."
+                      \ etc.) for a policy that\ndeclares filtering. Default false\
+                      \ \u2014 the anti-SSRF baseline stays on.\nEnable only for trusted\
+                      \ intra-cluster access.\n\nImplied when Egress is nil and DisableEgress\
+                      \ is false: a policy that\nfilters nothing (SecretInjection-only,\
+                      \ say) must not be stricter than\nhaving no policy at all, where\
+                      \ no sidecar exists and private ranges are\nreachable. To allow\
+                      \ every host but keep the baseline, declare\nEgress with AllowedDomains\
+                      \ [\"*\"] and AllowedCIDRs [\"0.0.0.0/0\"] instead."
                     type: boolean
                   disableEgress:
                     description: 'DisableEgress blocks all outbound traffic (DNS still
@@ -175,10 +181,9 @@ spec:
                       switch.'
                     type: boolean
                   egress:
-                    description: 'Egress is the allowlist. When DisableEgress is false
-                      and Egress is nil,
-
-                      egress is unrestricted except for the anti-SSRF baseline below.'
+                    description: "Egress is the allowlist. When DisableEgress is false\
+                      \ and Egress is nil,\negress is unrestricted \u2014 including\
+                      \ private ranges, see\nAllowPrivateNetworks."
                     properties:
                       allowedCIDRs:
                         description: AllowedCIDRs permits egress to these CIDR blocks
@@ -214,10 +219,11 @@ spec:
                       \ disables it.\n\nSetting this alone (with Egress nil) is valid\
                       \ and means \"inject, but do\nnot filter\": the sidecar is still\
                       \ injected \u2014 which is what makes the\ninterception possible\
-                      \ \u2014 while egress stays unrestricted apart from the\nanti-SSRF\
-                      \ baseline.\n\nDeclarable only on a SandboxEnv. Sandbox-create\
-                      \ requests carrying it are\nrejected, because a credential travelling\
-                      \ through a create request would\nre-introduce exactly the exposure\
+                      \ \u2014 while egress stays unrestricted, private ranges\nincluded,\
+                      \ so enabling injection never narrows what the sandbox can reach.\n\
+                      \nDeclarable only on a SandboxEnv. Sandbox-create requests carrying\
+                      \ it are\nrejected, because a credential travelling through\
+                      \ a create request would\nre-introduce exactly the exposure\
                       \ this feature removes."
                     properties:
                       caCertTTL:

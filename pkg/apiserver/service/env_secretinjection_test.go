@@ -28,13 +28,13 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 )
 
-func envWithCreds(name string, credNames ...string) *agentsv1alpha1.SandboxEnv {
+func envWithCreds(credNames ...string) *agentsv1alpha1.SandboxEnv {
 	creds := make([]agentsv1alpha1.InjectedCredential, 0, len(credNames))
 	for _, c := range credNames {
 		creds = append(creds, agentsv1alpha1.InjectedCredential{Name: c})
 	}
 	env := &agentsv1alpha1.SandboxEnv{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "myenv", Namespace: "default"},
 	}
 	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{
 		NetworkPolicy: &agentsv1alpha1.SandboxNetworkPolicy{
@@ -60,7 +60,7 @@ func newEnvSvc(t *testing.T, objs ...client.Object) *k8sSandboxEnvService {
 // A caller that types only a name and a value must end up with a working
 // reference — that is the whole point of not making them create a Secret.
 func TestResolveInjectedCredentialRefs_FillsManagedRef(t *testing.T) {
-	env := envWithCreds("myenv", "openai")
+	env := envWithCreds("openai")
 	if err := resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", map[string]string{"openai": "sk-1"}); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestResolveInjectedCredentialRefs_FillsManagedRef(t *testing.T) {
 // Supplying both is ambiguous about which one wins, so it is refused rather
 // than silently picking one.
 func TestResolveInjectedCredentialRefs_RejectsBoth(t *testing.T) {
-	env := envWithCreds("myenv", "openai")
+	env := envWithCreds("openai")
 	env.Spec.Overrides.NetworkPolicy.SecretInjection.Credentials[0].ValueFrom =
 		agentsv1alpha1.SecretKeyRef{Name: "mine", Key: "k"}
 	if err := resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", map[string]string{"openai": "sk-1"}); err == nil {
@@ -83,7 +83,7 @@ func TestResolveInjectedCredentialRefs_RejectsBoth(t *testing.T) {
 
 // Pointing at your own Secret must survive untouched.
 func TestResolveInjectedCredentialRefs_KeepsCallerOwnedRef(t *testing.T) {
-	env := envWithCreds("myenv", "openai")
+	env := envWithCreds("openai")
 	env.Spec.Overrides.NetworkPolicy.SecretInjection.Credentials[0].ValueFrom =
 		agentsv1alpha1.SecretKeyRef{Name: "mine", Key: "k"}
 	if err := resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", nil); err != nil {
@@ -95,7 +95,7 @@ func TestResolveInjectedCredentialRefs_KeepsCallerOwnedRef(t *testing.T) {
 }
 
 func TestUpsertEnvSecretInjection_CreatesOneSecretForTheEnv(t *testing.T) {
-	env := envWithCreds("myenv", "openai", "hub")
+	env := envWithCreds("openai", "hub")
 	_ = resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", map[string]string{"openai": "sk-1", "hub": "h-1"})
 	s := newEnvSvc(t)
 
@@ -118,7 +118,7 @@ func TestUpsertEnvSecretInjection_CreatesOneSecretForTheEnv(t *testing.T) {
 // `value` is write-only, so an edit that only renames a rule sends no values at
 // all. Replacing Data wholesale there would wipe every stored credential.
 func TestUpsertEnvSecretInjection_EditWithoutValuesKeepsThem(t *testing.T) {
-	env := envWithCreds("myenv", "openai")
+	env := envWithCreds("openai")
 	_ = resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", nil)
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: agentsv1alpha1.EnvSecretInjectionName("myenv"), Namespace: "default"},
@@ -139,7 +139,7 @@ func TestUpsertEnvSecretInjection_EditWithoutValuesKeepsThem(t *testing.T) {
 
 // Dropping a credential from the Env should take its material with it.
 func TestUpsertEnvSecretInjection_RemovesDroppedCredential(t *testing.T) {
-	env := envWithCreds("myenv", "openai")
+	env := envWithCreds("openai")
 	_ = resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", nil)
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: agentsv1alpha1.EnvSecretInjectionName("myenv"), Namespace: "default"},
@@ -164,7 +164,7 @@ func TestUpsertEnvSecretInjection_RemovesDroppedCredential(t *testing.T) {
 // A brand-new credential with no value would otherwise be armed as an empty
 // string and fail against the upstream with a confusing 401.
 func TestUpsertEnvSecretInjection_NewCredentialNeedsAValue(t *testing.T) {
-	env := envWithCreds("myenv", "openai")
+	env := envWithCreds("openai")
 	_ = resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", nil)
 	s := newEnvSvc(t)
 
@@ -174,7 +174,7 @@ func TestUpsertEnvSecretInjection_NewCredentialNeedsAValue(t *testing.T) {
 }
 
 func TestCredentialDigests_NeverReturnsTheValue(t *testing.T) {
-	env := envWithCreds("myenv", "openai")
+	env := envWithCreds("openai")
 	_ = resolveInjectedCredentialRefs(env.Spec.Overrides, "myenv", nil)
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: agentsv1alpha1.EnvSecretInjectionName("myenv"), Namespace: "default"},
@@ -188,5 +188,104 @@ func TestCredentialDigests_NeverReturnsTheValue(t *testing.T) {
 	}
 	if d["openai"] == "sk-super-secret" {
 		t.Fatal("digest leaked the value")
+	}
+}
+
+// credsWithRule builds an injection spec that passes validation: a credential
+// plus a rule that actually references it (a credential with no rule is
+// refused earlier, for a different reason).
+func credsWithRule(cred string) *agentsv1alpha1.EnvOverridesSpec {
+	env := envWithCreds(cred)
+	si := env.Spec.Overrides.NetworkPolicy.SecretInjection
+	si.Rules = []agentsv1alpha1.InjectionRule{{
+		Host: "op.example.com",
+		Headers: []agentsv1alpha1.HeaderInjection{{
+			Name:  "Authorization",
+			Value: "Bearer {{" + cred + "}}",
+		}},
+	}}
+	return env.Spec.Overrides
+}
+
+// The Env must never end up referencing a credential whose value was never
+// stored. `value` is write-only, so an edit that does not re-type a credential
+// sends nothing at all — and because the Secret can only be written after the
+// Env exists, a half-completed write used to leave the Env live and pointing at
+// a key nobody had written. Sandboxes then failed closed at claim time.
+func TestUpdate_RefusesCredentialWithNoStoredValue(t *testing.T) {
+	env := &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{Name: "myenv", Namespace: "default"},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "tmpl"},
+		},
+	}
+	s := newEnvSvc(t, env)
+
+	_, err := s.Update(context.Background(), UpdateSandboxEnvInput{
+		Name: "myenv", Namespace: "default",
+		Overrides: credsWithRule("navix"),
+	})
+	if err == nil {
+		t.Fatal("expected the update to be refused")
+	}
+
+	stored := &agentsv1alpha1.SandboxEnv{}
+	if gErr := s.client.Get(context.Background(),
+		client.ObjectKey{Namespace: "default", Name: "myenv"}, stored); gErr != nil {
+		t.Fatalf("get env: %v", gErr)
+	}
+	if stored.Spec.Overrides != nil && stored.Spec.Overrides.NetworkPolicy != nil {
+		t.Fatal("a refused update must not have written the Env")
+	}
+}
+
+// The same edit is fine once the value is already stored — that is the normal
+// "edit a rule without re-typing the credential" path.
+func TestUpdate_AcceptsCredentialAlreadyStored(t *testing.T) {
+	env := &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{Name: "myenv", Namespace: "default"},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "tmpl"},
+		},
+	}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default", Name: agentsv1alpha1.EnvSecretInjectionName("myenv")},
+		Data: map[string][]byte{"navix": []byte("nvx-real")},
+	}
+	s := newEnvSvc(t, env, sec)
+
+	if _, err := s.Update(context.Background(), UpdateSandboxEnvInput{
+		Name: "myenv", Namespace: "default",
+		Overrides: credsWithRule("navix"),
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	stored := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(context.Background(),
+		client.ObjectKey{Namespace: "default", Name: "myenv"}, stored); err != nil {
+		t.Fatalf("get env: %v", err)
+	}
+	if stored.Spec.Overrides == nil || stored.Spec.Overrides.NetworkPolicy == nil ||
+		stored.Spec.Overrides.NetworkPolicy.SecretInjection == nil {
+		t.Fatal("update should have written the injection spec")
+	}
+}
+
+// Create refuses the same way, so no Env is created and rolled back.
+func TestCreate_RefusesCredentialWithNoValue(t *testing.T) {
+	s := newEnvSvc(t)
+	_, err := s.Create(context.Background(), CreateSandboxEnvInput{
+		Name: "myenv", Namespace: "default",
+		TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "tmpl"},
+		Overrides:   credsWithRule("navix"),
+	})
+	if err == nil {
+		t.Fatal("expected the create to be refused")
+	}
+	stored := &agentsv1alpha1.SandboxEnv{}
+	if gErr := s.client.Get(context.Background(),
+		client.ObjectKey{Namespace: "default", Name: "myenv"}, stored); gErr == nil {
+		t.Fatal("a refused create must not leave an Env behind")
 	}
 }

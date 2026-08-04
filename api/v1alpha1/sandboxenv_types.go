@@ -719,6 +719,12 @@ const (
 	// SandboxEnvConditionAutoscalingActive indicates the autoscaler is
 	// configured, enabled, and has not stalled due to misconfiguration.
 	SandboxEnvConditionAutoscalingActive = "AutoscalingActive"
+	// SandboxEnvConditionCredentialsResolvable indicates every declared
+	// injected credential resolves to a non-empty value right now. False means
+	// a sandbox claim would fail closed, so the Env carries the diagnosis
+	// instead of leaving it to be inferred from Pods that never start. Absent
+	// on Envs that declare no credentials.
+	SandboxEnvConditionCredentialsResolvable = "CredentialsResolvable"
 )
 
 // +kubebuilder:object:root=true

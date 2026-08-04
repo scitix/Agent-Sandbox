@@ -20,9 +20,11 @@ import (
 )
 
 // EgressProxyContainerName is the egress filter sidecar the operator injects
-// into sandbox Pods whose Pool declares a SandboxNetworkPolicy. It runs as a
-// native sidecar, so it lives in Pod.Spec.InitContainers with an Always restart
-// policy.
+// into sandbox Pods whose Pool declares a SandboxNetworkPolicy. Normally it is a
+// native sidecar and lives in Pod.Spec.InitContainers with an Always restart
+// policy; on API servers that prune that field the operator can be told to
+// inject it as an ordinary container instead, so both lists have to be searched
+// for it.
 const EgressProxyContainerName = "egress-proxy"
 
 // PodHasEgressProxy reports whether pod carries the egress filter sidecar.
@@ -39,6 +41,15 @@ func PodHasEgressProxy(pod *corev1.Pod) bool {
 	}
 	for i := range pod.Spec.InitContainers {
 		if pod.Spec.InitContainers[i].Name == EgressProxyContainerName {
+			return true
+		}
+	}
+	// Both lists must be checked: on API servers without native-sidecar support
+	// the proxy is injected as an ordinary container instead. Scanning only
+	// InitContainers would make the claim path treat every such Pod as
+	// unfiltered and refuse to hand any of them out.
+	for i := range pod.Spec.Containers {
+		if pod.Spec.Containers[i].Name == EgressProxyContainerName {
 			return true
 		}
 	}
@@ -60,13 +71,21 @@ type SandboxNetworkPolicy struct {
 	DisableEgress bool `json:"disableEgress,omitempty"`
 
 	// Egress is the allowlist. When DisableEgress is false and Egress is nil,
-	// egress is unrestricted except for the anti-SSRF baseline below.
+	// egress is unrestricted — including private ranges, see
+	// AllowPrivateNetworks.
 	// +optional
 	Egress *EgressRules `json:"egress,omitempty"`
 
 	// AllowPrivateNetworks disables the default deny of private / link-local /
-	// cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.). Default false — the
-	// anti-SSRF baseline stays on. Enable only for trusted intra-cluster access.
+	// cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.) for a policy that
+	// declares filtering. Default false — the anti-SSRF baseline stays on.
+	// Enable only for trusted intra-cluster access.
+	//
+	// Implied when Egress is nil and DisableEgress is false: a policy that
+	// filters nothing (SecretInjection-only, say) must not be stricter than
+	// having no policy at all, where no sidecar exists and private ranges are
+	// reachable. To allow every host but keep the baseline, declare
+	// Egress with AllowedDomains ["*"] and AllowedCIDRs ["0.0.0.0/0"] instead.
 	// +optional
 	AllowPrivateNetworks bool `json:"allowPrivateNetworks,omitempty"`
 
@@ -77,8 +96,8 @@ type SandboxNetworkPolicy struct {
 	//
 	// Setting this alone (with Egress nil) is valid and means "inject, but do
 	// not filter": the sidecar is still injected — which is what makes the
-	// interception possible — while egress stays unrestricted apart from the
-	// anti-SSRF baseline.
+	// interception possible — while egress stays unrestricted, private ranges
+	// included, so enabling injection never narrows what the sandbox can reach.
 	//
 	// Declarable only on a SandboxEnv. Sandbox-create requests carrying it are
 	// rejected, because a credential travelling through a create request would

@@ -154,3 +154,73 @@ func TestPreCreatePod_FlagImageOverridesIdle(t *testing.T) {
 		}
 	}
 }
+
+// On an API server without native-sidecar support the proxy has to be an
+// ordinary container: as an init container it would run a process that never
+// exits and hang the Pod in Init forever.
+func TestPreCreatePod_LegacySidecarInjectsOrdinaryContainer(t *testing.T) {
+	p := New(Config{Image: "idle:1", LegacySidecar: true})
+	pod := sandboxPod()
+	sandboxName := pod.Spec.Containers[0].Name
+
+	updated, err := p.PreCreatePod(context.Background(), pod, poolWithPolicy())
+	if err != nil || !updated {
+		t.Fatalf("policy => inject; got updated=%v err=%v", updated, err)
+	}
+	if !hasContainer(pod.Spec.InitContainers, initContainerName) {
+		t.Error("the redirect must still be installed by an init container")
+	}
+	if hasContainer(pod.Spec.InitContainers, proxyContainerName) {
+		t.Error("legacy mode must not leave the proxy among the init containers")
+	}
+	if !hasContainer(pod.Spec.Containers, proxyContainerName) {
+		t.Fatal("proxy missing from the ordinary containers")
+	}
+	// The in-place image update patches the sandbox by index, so it has to stay
+	// first even though a container was appended.
+	if pod.Spec.Containers[0].Name != sandboxName {
+		t.Errorf("sandbox must remain containers[0], got %q", pod.Spec.Containers[0].Name)
+	}
+	for i := range pod.Spec.Containers {
+		c := pod.Spec.Containers[i]
+		if c.Name != proxyContainerName {
+			continue
+		}
+		if c.RestartPolicy != nil {
+			t.Error("legacy mode must not set restartPolicy (the field is what old API servers prune)")
+		}
+		// Without start ordering, readiness is what keeps a Pod whose proxy is
+		// not listening yet out of the claimable set.
+		if c.ReadinessProbe == nil || c.ReadinessProbe.TCPSocket == nil {
+			t.Error("legacy sidecar needs a readiness probe on the proxy port")
+		}
+	}
+	// The claim path gates on this helper; missing the container form would make
+	// it treat every legacy Pod as unfiltered and hand out none of them.
+	if !agentsv1alpha1.PodHasEgressProxy(pod) {
+		t.Error("PodHasEgressProxy must recognise the container form")
+	}
+}
+
+// Re-running the plugin over an already-injected Pod is a no-op in either shape.
+func TestPreCreatePod_LegacySidecarIsIdempotent(t *testing.T) {
+	p := New(Config{Image: "idle:1", LegacySidecar: true})
+	pod := sandboxPod()
+	if _, err := p.PreCreatePod(context.Background(), pod, poolWithPolicy()); err != nil {
+		t.Fatalf("first inject: %v", err)
+	}
+	containers, inits, volumes := len(pod.Spec.Containers), len(pod.Spec.InitContainers), len(pod.Spec.Volumes)
+
+	updated, err := p.PreCreatePod(context.Background(), pod, poolWithPolicy())
+	if err != nil {
+		t.Fatalf("second inject: %v", err)
+	}
+	if updated {
+		t.Error("second pass should report no change")
+	}
+	if len(pod.Spec.Containers) != containers || len(pod.Spec.InitContainers) != inits ||
+		len(pod.Spec.Volumes) != volumes {
+		t.Errorf("second pass injected again: containers=%d inits=%d volumes=%d",
+			len(pod.Spec.Containers), len(pod.Spec.InitContainers), len(pod.Spec.Volumes))
+	}
+}

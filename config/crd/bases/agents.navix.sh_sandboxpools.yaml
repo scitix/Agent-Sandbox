@@ -122,8 +122,15 @@ spec:
                   allowPrivateNetworks:
                     description: |-
                       AllowPrivateNetworks disables the default deny of private / link-local /
-                      cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.). Default false — the
-                      anti-SSRF baseline stays on. Enable only for trusted intra-cluster access.
+                      cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.) for a policy that
+                      declares filtering. Default false — the anti-SSRF baseline stays on.
+                      Enable only for trusted intra-cluster access.
+
+                      Implied when Egress is nil and DisableEgress is false: a policy that
+                      filters nothing (SecretInjection-only, say) must not be stricter than
+                      having no policy at all, where no sidecar exists and private ranges are
+                      reachable. To allow every host but keep the baseline, declare
+                      Egress with AllowedDomains ["*"] and AllowedCIDRs ["0.0.0.0/0"] instead.
                     type: boolean
                   disableEgress:
                     description: |-
@@ -133,7 +140,8 @@ spec:
                   egress:
                     description: |-
                       Egress is the allowlist. When DisableEgress is false and Egress is nil,
-                      egress is unrestricted except for the anti-SSRF baseline below.
+                      egress is unrestricted — including private ranges, see
+                      AllowPrivateNetworks.
                     properties:
                       allowedCIDRs:
                         description: AllowedCIDRs permits egress to these CIDR blocks
@@ -166,8 +174,8 @@ spec:
 
                       Setting this alone (with Egress nil) is valid and means "inject, but do
                       not filter": the sidecar is still injected — which is what makes the
-                      interception possible — while egress stays unrestricted apart from the
-                      anti-SSRF baseline.
+                      interception possible — while egress stays unrestricted, private ranges
+                      included, so enabling injection never narrows what the sandbox can reach.
 
                       Declarable only on a SandboxEnv. Sandbox-create requests carrying it are
                       rejected, because a credential travelling through a create request would

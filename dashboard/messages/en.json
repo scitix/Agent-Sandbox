@@ -883,6 +883,7 @@
   "envs.form.networkPolicy.hint": "Control the sandbox's outbound (egress) network. Enforced by an in-Pod filter sidecar.",
   "envs.form.networkPolicy.mode": "Egress mode",
   "envs.form.networkPolicy.modeDescription": "Unrestricted allows all outbound; Disable blocks all; Allowlist permits only the domains/IPs you list.",
+  "envs.form.networkPolicy.unrestrictedPrivateNote": "Unrestricted reaches private ranges too (RFC1918, cluster-internal addresses), same as a sandbox with no network policy — so enabling credential injection never narrows what the sandbox can reach. To allow every host while keeping the anti-SSRF baseline, choose Allowlist with the domain \"*\" instead.",
   "envs.form.networkPolicy.modeUnrestricted": "Unrestricted",
   "envs.form.networkPolicy.modeDisable": "Disable internet",
   "envs.form.networkPolicy.modeAllowlist": "Allowlist",

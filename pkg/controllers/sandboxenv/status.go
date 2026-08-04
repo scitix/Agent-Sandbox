@@ -35,7 +35,11 @@ import (
 // Phase 1: there is at most one member; the function tolerates zero (no
 // observation yet) and writes empty ObservedMembers when the member is
 // missing.
-func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alpha1.SandboxEnv) error {
+func (r *SandboxEnvReconciler) syncStatus(
+	ctx context.Context,
+	env *agentsv1alpha1.SandboxEnv,
+	credCond credentialsCondition,
+) error {
 	localSpec, _ := findLocalClusterSpec(env, r.LocalClusterID)
 
 	observed := make([]agentsv1alpha1.EnvObservedMember, 0, len(localSpec.Members))
@@ -177,6 +181,7 @@ func (r *SandboxEnvReconciler) syncStatus(ctx context.Context, env *agentsv1alph
 	// Conditions
 	setReadyCondition(env, observed)
 	setTemplateConsistentCondition(env, observed, rolloutInProgress)
+	setCredentialsResolvableCondition(env, credCond)
 
 	if equality.Semantic.DeepEqual(base.Status, env.Status) {
 		return nil
@@ -479,6 +484,27 @@ func setTemplateConsistentCondition(env *agentsv1alpha1.SandboxEnv, observed []a
 		message = "at least one member is rolling onto a new template revision"
 	}
 	setCondition(env, agentsv1alpha1.SandboxEnvConditionTemplateConsistent, status, reason, message)
+}
+
+// setCredentialsResolvableCondition reports whether every declared injected
+// credential resolves. An Env that declares none carries no such condition, so
+// removing the last credential clears it rather than leaving a stale verdict.
+func setCredentialsResolvableCondition(env *agentsv1alpha1.SandboxEnv, c credentialsCondition) {
+	if !c.evaluated {
+		removeCondition(env, agentsv1alpha1.SandboxEnvConditionCredentialsResolvable)
+		return
+	}
+	setCondition(env, agentsv1alpha1.SandboxEnvConditionCredentialsResolvable, c.status, c.reason, c.message)
+}
+
+// removeCondition drops a Condition entry if present.
+func removeCondition(env *agentsv1alpha1.SandboxEnv, conditionType string) {
+	for i := range env.Status.Conditions {
+		if env.Status.Conditions[i].Type == conditionType {
+			env.Status.Conditions = append(env.Status.Conditions[:i], env.Status.Conditions[i+1:]...)
+			return
+		}
+	}
 }
 
 // setCondition upserts a Condition entry preserving LastTransitionTime when

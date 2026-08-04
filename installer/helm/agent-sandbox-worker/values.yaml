@@ -70,6 +70,24 @@ controller:
   # fails only when BOTH this and the Pool's idleImage are empty.
   egressProxyImage: ""
 
+  # egressLegacySidecar injects the egress proxy as an ordinary container instead
+  # of a native sidecar. Set it to true ONLY on clusters whose API server does
+  # not support initContainers[].restartPolicy — Kubernetes < 1.28, or 1.28
+  # without the SidecarContainers feature gate. Check the target cluster with:
+  #
+  #   kubectl explain pod.spec.initContainers.restartPolicy
+  #     → "field does not exist" means you need this switch
+  #
+  # Those API servers prune the field silently, which turns the proxy into a
+  # plain init container running a process that never exits: every sandbox Pod
+  # then hangs in Init forever and the Pool reports NoIdlePodsAvailable.
+  #
+  # The cost is the start-ordering guarantee — an ordinary container starts
+  # alongside the sandbox rather than before it, so traffic that beats the proxy
+  # is refused (fail-closed, never unfiltered). A readiness probe on the proxy
+  # keeps such a Pod out of the claimable set until it listens.
+  egressLegacySidecar: false
+
   # appName is the value placed in app.kubernetes.io/name for the controller
   # Deployment + its Services + ServiceMonitor. Empty means "use the chart
   # name" (current behavior). Override when migrating from a non-Helm install
