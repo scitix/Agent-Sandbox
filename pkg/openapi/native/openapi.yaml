@@ -1316,14 +1316,18 @@ components:
 
     InjectedCredential:
       type: object
-      required: [name, valueFrom]
+      required: [name]
       properties:
         name:
           type: string
-          description: "How rules refer to this credential in a value template ('{{ name }}')."
+          description: "How rules refer to this credential in a value template ('{{ name }}'). Also the key under which the value is stored in the Env's credential Secret, so it must be a valid Secret key: alphanumeric plus - and _."
+        value:
+          type: string
+          writeOnly: true
+          description: "The credential itself. Write-only: the server stores it in the Env's credential Secret (one Secret per Env, keyed by this credential's name), fills in valueFrom, and never returns it. Supply this OR valueFrom, not both. On update, omit it to keep the stored value unchanged."
         valueFrom:
           $ref: "#/components/schemas/SecretKeyRef"
-          description: "Secret key holding the credential. Must be in the SandboxEnv's namespace."
+          description: "Point at a Secret you manage yourself instead of having the platform store the value. Filled in automatically when `value` is supplied. Must be in the SandboxEnv's namespace."
         exposeAs:
           type: string
           description: "Environment variable name handed to the sandbox carrying the decoy value (placeholder mode). Omit to use this credential through header injection only."

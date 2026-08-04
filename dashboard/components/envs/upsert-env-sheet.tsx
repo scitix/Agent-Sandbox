@@ -87,11 +87,19 @@ const dnsLabel = /^[a-z]([a-z0-9-]*[a-z0-9])?$/
 
 const injectionCredentialRowSchema = z.object({
   name: z.string().optional(),
-  secretName: z.string().optional(),
-  secretKey: z.string().optional(),
+  // Write-only. Left blank on an edit it means "keep what is stored" — the API
+  // never returns a value, so the form cannot round-trip one.
+  value: z.string().optional(),
+  // configured marks a credential the server already holds a value for, so a
+  // value can be required for new rows without demanding a re-type of old ones.
+  configured: z.boolean().optional(),
   exposeAs: z.string().optional(),
   placeholder: z.string().optional(),
 })
+
+// The credential name doubles as the key inside the Env's credential Secret,
+// so it is limited to what Kubernetes accepts there.
+const credNameRe = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/
 
 const injectionRuleRowSchema = z.object({
   host: z.string().optional(),
@@ -745,10 +753,12 @@ function splitCommas(v: string | undefined): string[] {
 // carrying several headers, matching how the proxy evaluates them.
 function buildSecretInjection(v: FormValues): Record<string, unknown> | undefined {
   const credentials = v.injectionCredentialRows
-    .filter((c) => c.name && c.secretName && c.secretKey)
+    .filter((c) => c.name)
     .map((c) => ({
       name: c.name!,
-      valueFrom: { name: c.secretName!, key: c.secretKey! },
+      // Omitted when left blank on an edit, so the server keeps the stored
+      // value rather than clearing it.
+      ...(c.value ? { value: c.value } : {}),
       ...(c.exposeAs ? { exposeAs: c.exposeAs } : {}),
       ...(c.placeholder ? { placeholder: c.placeholder } : {}),
     }))
@@ -788,14 +798,29 @@ function buildSecretInjection(v: FormValues): Record<string, unknown> | undefine
 function validateInjection(v: FormValues, ctx: z.RefinementCtx): void {
   const names = new Set<string>()
   v.injectionCredentialRows.forEach((c, i) => {
-    if (!c.name && !c.secretName && !c.secretKey) return
-    if (!c.name || !c.secretName || !c.secretKey) {
+    if (!c.name && !c.value) return
+    if (!c.name) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["injectionCredentialRows", i],
+        path: ["injectionCredentialRows", i, "name"],
         message: "envs.form.errors.injectionCredentialIncomplete",
       })
       return
+    }
+    if (!credNameRe.test(c.name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["injectionCredentialRows", i, "name"],
+        message: "envs.form.errors.injectionCredentialName",
+      })
+    }
+    // Blank is fine only when the server already holds a value for this one.
+    if (!c.value && !c.configured) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["injectionCredentialRows", i, "value"],
+        message: "envs.form.errors.injectionValueRequired",
+      })
     }
     names.add(c.name)
     if (c.placeholder && c.placeholder.length < 16) {
@@ -885,7 +910,7 @@ function SecretInjectionSection({ control, register, errors }: SecretInjectionSe
           variant="outline"
           size="sm"
           onClick={() =>
-            creds.append({ name: "", secretName: "", secretKey: "", exposeAs: "", placeholder: "" })
+            creds.append({ name: "", value: "", configured: false, exposeAs: "", placeholder: "" })
           }
           className="h-7 gap-1 font-mono text-[11px]"
         >
@@ -904,7 +929,7 @@ function SecretInjectionSection({ control, register, errors }: SecretInjectionSe
             key={field.id}
             className="bg-muted/30 flex items-start gap-2 rounded-md border p-2.5"
           >
-            <div className="grid flex-1 grid-cols-5 gap-2">
+            <div className="flex-1 space-y-2">
               <Field>
                 <FieldLabel className="text-[11px]">
                   {t("envs.form.secretInjection.credName")}
@@ -913,24 +938,32 @@ function SecretInjectionSection({ control, register, errors }: SecretInjectionSe
                   placeholder="openai"
                   {...register(`injectionCredentialRows.${index}.name` as const)}
                 />
+                <FieldDescription className="text-[11px]">
+                  {t("envs.form.secretInjection.credNameDescription")}
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.secretName")}
+                  {t("envs.form.secretInjection.value")}
+                  {creds.fields[index]?.configured && (
+                    <span className="text-muted-foreground ml-2 font-normal">
+                      {t("envs.form.secretInjection.valueStored")}
+                    </span>
+                  )}
                 </FieldLabel>
                 <Input
-                  placeholder="my-secrets"
-                  {...register(`injectionCredentialRows.${index}.secretName` as const)}
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={
+                    creds.fields[index]?.configured
+                      ? t("envs.form.secretInjection.valueKeep")
+                      : "sk-..."
+                  }
+                  {...register(`injectionCredentialRows.${index}.value` as const)}
                 />
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.secretKey")}
-                </FieldLabel>
-                <Input
-                  placeholder="api-key"
-                  {...register(`injectionCredentialRows.${index}.secretKey` as const)}
-                />
+                <FieldDescription className="text-[11px]">
+                  {t("envs.form.secretInjection.valueDescription")}
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel className="text-[11px]">
@@ -940,6 +973,9 @@ function SecretInjectionSection({ control, register, errors }: SecretInjectionSe
                   placeholder="OPENAI_API_KEY"
                   {...register(`injectionCredentialRows.${index}.exposeAs` as const)}
                 />
+                <FieldDescription className="text-[11px]">
+                  {t("envs.form.secretInjection.exposeAsDescription")}
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel className="text-[11px]">
@@ -949,6 +985,9 @@ function SecretInjectionSection({ control, register, errors }: SecretInjectionSe
                   placeholder={t("envs.form.secretInjection.placeholderHint")}
                   {...register(`injectionCredentialRows.${index}.placeholder` as const)}
                 />
+                <FieldDescription className="text-[11px]">
+                  {t("envs.form.secretInjection.placeholderDescription")}
+                </FieldDescription>
               </Field>
             </div>
             <Button
@@ -992,7 +1031,7 @@ function SecretInjectionSection({ control, register, errors }: SecretInjectionSe
             key={field.id}
             className="bg-muted/30 flex items-start gap-2 rounded-md border p-2.5"
           >
-            <div className="grid flex-1 grid-cols-3 gap-2">
+            <div className="flex-1 space-y-2">
               <Field>
                 <FieldLabel className="text-[11px]">
                   {t("envs.form.secretInjection.host")}
@@ -1300,8 +1339,8 @@ function envToFormValues(env: AgentSandboxEnv | null): FormValues {
     allowPrivateNetworks: np?.allowPrivateNetworks ?? false,
     injectionCredentialRows: (np?.secretInjection?.credentials ?? []).map((c) => ({
       name: c.name,
-      secretName: c.valueFrom.name,
-      secretKey: c.valueFrom.key,
+      value: "", // never returned by the API
+      configured: Boolean(c.valueFrom),
       exposeAs: c.exposeAs ?? "",
       placeholder: c.placeholder ?? "",
     })),

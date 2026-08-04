@@ -1503,10 +1503,12 @@ export interface components {
             caCertTTL?: string;
         };
         InjectedCredential: {
-            /** @description How rules refer to this credential in a value template ('{{ name }}'). */
+            /** @description How rules refer to this credential in a value template ('{{ name }}'). Also the key under which the value is stored in the Env's credential Secret, so it must be a valid Secret key: alphanumeric plus - and _. */
             name: string;
-            /** @description Secret key holding the credential. Must be in the SandboxEnv's namespace. */
-            valueFrom: components["schemas"]["SecretKeyRef"];
+            /** @description The credential itself. Write-only: the server stores it in the Env's credential Secret (one Secret per Env, keyed by this credential's name), fills in valueFrom, and never returns it. Supply this OR valueFrom, not both. On update, omit it to keep the stored value unchanged. */
+            value?: string;
+            /** @description Point at a Secret you manage yourself instead of having the platform store the value. Filled in automatically when `value` is supplied. Must be in the SandboxEnv's namespace. */
+            valueFrom?: components["schemas"]["SecretKeyRef"];
             /** @description Environment variable name handed to the sandbox carrying the decoy value (placeholder mode). Omit to use this credential through header injection only. */
             exposeAs?: string;
             /** @description Decoy value given to the sandbox. Omit for a fresh random 'agbx_ph_<32 hex>' per claim. Set it when a client validates credential shape before sending. Minimum 16 characters; placeholders must not overlap. */
