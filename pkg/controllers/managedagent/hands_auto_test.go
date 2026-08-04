@@ -115,6 +115,14 @@ func (f *fakeWorker) handler(t *testing.T) http.Handler {
 				Name string `json:"name"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			// A real worker refuses to re-create an env that exists; EnsureEnv
+			// tolerates that (a concurrent reconcile is the desired state either
+			// way) while CreateEnv must report it.
+			if f.envs[body.Name] {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"error":"env already exists"}`))
+				return
+			}
 			f.envs[body.Name] = true
 			w.WriteHeader(http.StatusCreated)
 
@@ -303,5 +311,53 @@ func TestEnsureEnvDedupesInlineSizedMembers(t *testing.T) {
 	}
 	if got := f.members["navix-hands"]; len(got) != 2 {
 		t.Errorf("member pools after 4 reconciles = %v, want exactly one per instance type", got)
+	}
+}
+
+// CreateEnv forwards the caller's body as-is. The console offers the worker's
+// whole env API through it (credential injection included), so anything this
+// layer re-serialised would be a second schema to keep in step.
+func TestCreateEnvForwardsTheBodyVerbatimAndAddsMembers(t *testing.T) {
+	f := newFakeWorker()
+	p := newTestProvisioner(t, f)
+
+	name, err := p.CreateEnv(context.Background(), "gw-a",
+		json.RawMessage(`{"name":"navix-hands","templateRef":{"name":"tpl"},`+
+			`"overrides":{"networkPolicy":{"secretInjection":{"credentials":[{"name":"navix"}]}}}}`),
+		[]json.RawMessage{json.RawMessage(`{"instanceType":"1c2gi"}`)})
+	if err != nil {
+		t.Fatalf("CreateEnv: %v", err)
+	}
+	if name != "navix-hands" {
+		t.Errorf("name = %q, want navix-hands", name)
+	}
+	if !f.envs["navix-hands"] {
+		t.Error("env was not created")
+	}
+	if got := f.members["navix-hands"]; len(got) != 1 {
+		t.Errorf("members = %v, want one", got)
+	}
+}
+
+// Unlike EnsureEnv, which is a reconcile and treats an existing env as the
+// desired state, this is a one-shot console request: adopting somebody else's env
+// would attach an agent to a sandbox supply configured for another purpose.
+func TestCreateEnvReportsAConflictInsteadOfAdopting(t *testing.T) {
+	f := newFakeWorker()
+	f.envs["taken"] = true
+	p := newTestProvisioner(t, f)
+
+	if _, err := p.CreateEnv(context.Background(), "gw-a",
+		json.RawMessage(`{"name":"taken","templateRef":{"name":"tpl"}}`), nil); err == nil {
+		t.Fatal("expected an existing env to be refused")
+	}
+}
+
+// A body with no name cannot address the member endpoint, and would leave the
+// agent pointing at "".
+func TestCreateEnvRequiresAName(t *testing.T) {
+	p := newTestProvisioner(t, newFakeWorker())
+	if _, err := p.CreateEnv(context.Background(), "gw-a", json.RawMessage(`{}`), nil); err == nil {
+		t.Fatal("expected a nameless env request to be refused")
 	}
 }

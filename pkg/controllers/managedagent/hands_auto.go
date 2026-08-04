@@ -40,6 +40,19 @@ type HandsProvisioner interface {
 	// EnsureEnv makes the env and its member pools exist, and reports whether
 	// the env is serving. It must be safe to call on every reconcile.
 	EnsureEnv(ctx context.Context, clusterID string, spec DerivedEnv) (ready bool, detail string, err error)
+
+	// CreateEnv creates an env from a request body the caller supplies verbatim,
+	// plus its member pools, and returns the env's name.
+	//
+	// Distinct from EnsureEnv in two ways that matter. It is a ONE-SHOT: the
+	// caller is a console request, not a reconcile loop, so it reports a
+	// conflict as an error instead of treating an existing env as success —
+	// silently adopting somebody else's env would attach an agent to a sandbox
+	// supply configured for another purpose. And the body is opaque here: it is
+	// the worker's own create-env request, forwarded unchanged, so the console
+	// can offer every field that API has (credential injection included) without
+	// this type growing a mirror of it that drifts.
+	CreateEnv(ctx context.Context, clusterID string, env json.RawMessage, members []json.RawMessage) (string, error)
 }
 
 // DerivedEnv is the env one agent needs, already named and sized.
@@ -280,6 +293,53 @@ func (p *RESTHandsProvisioner) createEnv(ctx context.Context, ep ClusterEndpoint
 		return fmt.Errorf("create env %q: %s", spec.Name, httpDetail(code, body))
 	}
 	return nil
+}
+
+// CreateEnv implements HandsProvisioner.
+//
+// The env body is forwarded to the worker unchanged; only its `name` is read
+// here, because the member endpoint is addressed by it and the caller needs it
+// to point the agent at the env afterwards. Members are posted one by one so a
+// rejected member names itself.
+func (p *RESTHandsProvisioner) CreateEnv(
+	ctx context.Context,
+	clusterID string,
+	env json.RawMessage,
+	members []json.RawMessage,
+) (string, error) {
+	ep, ok := p.Resolve(clusterID)
+	if !ok {
+		return "", fmt.Errorf("cluster %q is not reachable from this control plane", clusterID)
+	}
+	var named struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(env, &named); err != nil {
+		return "", fmt.Errorf("decode env request: %w", err)
+	}
+	if named.Name == "" {
+		return "", fmt.Errorf("env request has no name")
+	}
+
+	body, code, err := p.do(ctx, ep, http.MethodPost, "/v1/envs", env)
+	if err != nil {
+		return "", err
+	}
+	if code != http.StatusOK && code != http.StatusCreated {
+		return "", fmt.Errorf("create env %q: %s", named.Name, httpDetail(code, body))
+	}
+
+	path := "/v1/envs/" + named.Name + "/sandboxpools"
+	for i, member := range members {
+		mBody, mCode, mErr := p.do(ctx, ep, http.MethodPost, path, member)
+		if mErr != nil {
+			return named.Name, mErr
+		}
+		if mCode != http.StatusOK && mCode != http.StatusCreated {
+			return named.Name, fmt.Errorf("add member %d to env %q: %s", i, named.Name, httpDetail(mCode, mBody))
+		}
+	}
+	return named.Name, nil
 }
 
 // ensureMembers adds the member pools the env is missing and returns how many

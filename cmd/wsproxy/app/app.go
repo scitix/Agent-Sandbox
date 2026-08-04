@@ -89,7 +89,13 @@ func Run() {
 
 	// ── Layer 2: Sync manager + internal API (:9004) ──────────────────────────
 
-	var sm *syncmgr.SyncManager
+	var (
+		sm *syncmgr.SyncManager
+		// Shared by the console API (create-an-env-with-the-agent) and the
+		// controller (hands.auto). Declared out here because the two are started
+		// from different scopes and must not each build their own.
+		hands managedagent.HandsProvisioner
+	)
 
 	if cfg.SyncEnabled() {
 		k8sClient := buildK8sClient()
@@ -102,6 +108,7 @@ func Run() {
 
 		adminKeyMgr := apikey.NewAdminKeyManager(cfg.AdminKey)
 		templateSvc := service.NewSandboxTemplateService(k8sClient)
+		hands = handsProvisioner(cfg, store)
 
 		sm = syncmgr.New(store, cfg.Secret, cfg.Secret, syncmgr.Deps{
 			KeyStore:               ks,
@@ -126,10 +133,13 @@ func Run() {
 			if ns == "" {
 				ns = cfg.APIKeyNamespace
 			}
+			// The same provisioner the controller uses: one client, one admin key,
+			// one place that knows how to reach a worker's env API.
 			routerDeps.ManagedAgentAPI = &server.ManagedAgentAPI{
 				Client:    k8sClient,
 				Scheme:    k8sClient.Scheme(),
 				Namespace: ns,
+				Hands:     hands,
 			}
 		}
 		if cfg.ManagedAgentEnabled && cfg.ManagedAgentGatewayAddr != "" {
@@ -153,7 +163,12 @@ func Run() {
 	// ── ManagedAgent controller (control plane only) ──────────────────────────
 
 	if cfg.ManagedAgentEnabled {
-		startManagedAgentController(cfg, handsProvisioner(cfg, store))
+		if hands == nil {
+			// Sync is off, so the console API was never wired; the controller
+			// still needs a provisioner for hands.auto.
+			hands = handsProvisioner(cfg, store)
+		}
+		startManagedAgentController(cfg, hands)
 	}
 
 	// ── Cluster config reload (30s) ───────────────────────────────────────────

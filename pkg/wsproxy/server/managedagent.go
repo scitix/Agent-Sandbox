@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,12 @@ type ManagedAgentAPI struct {
 	Client    client.Client
 	Scheme    *runtime.Scheme
 	Namespace string
+	// Hands creates a SandboxEnv on a worker cluster when a create request asks
+	// for one. Nil on a control plane without an admin key — a request that needs
+	// it is then refused rather than silently creating an agent with no sandbox
+	// supply. Shared with the ManagedAgent controller, which uses it for
+	// hands.auto.
+	Hands managedagent.HandsProvisioner
 }
 
 // managedAgentWire is the shape the console consumes: flattened metadata plus
@@ -61,11 +68,42 @@ type managedAgentCreateRequest struct {
 	Namespace   string                          `json:"namespace,omitempty"`
 	Spec        agentsv1alpha1.ManagedAgentSpec `json:"spec"`
 	Credentials *managedAgentCredentials        `json:"credentials,omitempty"`
+	// SandboxEnv, when present, creates the agent's sandbox supply on a worker
+	// cluster before the agent itself is created, and points spec.hands at it.
+	SandboxEnv *managedAgentSandboxEnv `json:"sandboxEnv,omitempty"`
+}
+
+// managedAgentSandboxEnv creates the agent's SandboxEnv from the console in the
+// same request that creates the agent.
+//
+// Env and Members are the worker's OWN request bodies, forwarded unchanged. That
+// is deliberate: an agent's sandbox supply needs the whole env API surface —
+// including the credential injection that lets a sandbox use a token it cannot
+// read — and mirroring those fields here would be a second schema to keep in
+// step with the worker's.
+//
+// It is create-only. The env, not the agent, is the single writer of that
+// configuration afterwards: nothing here is stored on the ManagedAgent, no
+// controller reconciles it back, and an update request carrying this field is
+// rejected. Later changes are made on the env itself.
+type managedAgentSandboxEnv struct {
+	// ClusterID names the worker cluster to create the env on. Empty means the
+	// control plane's default cluster resolution, same as hands.auto.
+	ClusterID string `json:"clusterID,omitempty"`
+	// Env is a worker CreateSandboxEnvRequest.
+	Env json.RawMessage `json:"env"`
+	// Members are worker add-member requests, applied in order. A member is a
+	// separate call on the worker, so it is a separate body here too.
+	Members []json.RawMessage `json:"members,omitempty"`
 }
 
 type managedAgentUpdateRequest struct {
 	Spec        agentsv1alpha1.ManagedAgentSpec `json:"spec"`
 	Credentials *managedAgentCredentials        `json:"credentials,omitempty"`
+	// SandboxEnv is accepted only to be refused with an explanation. Silently
+	// ignoring it would let a console think it had just changed an env's
+	// credentials here, when the env is the only place that can be changed.
+	SandboxEnv *managedAgentSandboxEnv `json:"sandboxEnv,omitempty"`
 }
 
 // managedAgentCredentials carries the API keys the console collected.
@@ -229,6 +267,36 @@ func (a *ManagedAgentAPI) create(c *gin.Context) {
 	// visibility rule meaningless.
 	who := callerOf(c)
 	req.Spec.Owner = &agentsv1alpha1.ManagedAgentOwner{Team: who.team, User: who.user}
+
+	// Create the sandbox supply first, when the caller asked for one. Before the
+	// agent, so a failure here leaves nothing behind: an agent whose env creation
+	// failed would be published, answer requests, and fail every tool call.
+	if req.SandboxEnv != nil {
+		if a.Hands == nil {
+			c.JSON(http.StatusNotImplemented, gin.H{
+				"error": "this control plane cannot create sandbox environments (no admin key configured); " +
+					"create the env first and reference it with hands.envRef",
+			})
+			return
+		}
+		envName, err := a.Hands.CreateEnv(
+			c.Request.Context(), req.SandboxEnv.ClusterID, req.SandboxEnv.Env, req.SandboxEnv.Members)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "create sandbox env", "detail": err.Error()})
+			return
+		}
+		// Point the agent at what was just created, and clear the other branches:
+		// hands is one-of, and a leftover auto/external block would win or conflict.
+		binding := req.Spec.Hands.Binding
+		req.Spec.Hands = agentsv1alpha1.ManagedAgentHands{
+			EnvRef: &agentsv1alpha1.HandsEnvRef{
+				ClusterID: req.SandboxEnv.ClusterID,
+				Name:      envName,
+			},
+			Binding: binding,
+		}
+	}
+
 	bindCredentialRefs(&req.Spec, req.Name, req.Credentials)
 
 	ma := &agentsv1alpha1.ManagedAgent{
@@ -254,6 +322,13 @@ func (a *ManagedAgentAPI) update(c *gin.Context) {
 	var req managedAgentUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "detail": err.Error()})
+		return
+	}
+	if req.SandboxEnv != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "sandboxEnv can only be set when creating an agent; " +
+				"change the SandboxEnv itself to edit its sizing, credentials or egress rules",
+		})
 		return
 	}
 	// Ownership is immutable: it is what the visibility rule is built on, so an
