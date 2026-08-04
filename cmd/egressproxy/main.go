@@ -77,6 +77,7 @@ func runServe(log *slog.Logger) error {
 		HTTPPort:    egressproxy.DefaultHTTPPort,
 		TLSPort:     egressproxy.DefaultTLSPort,
 		OtherPort:   egressproxy.DefaultOtherPort,
+		HealthPort:  egressproxy.DefaultHealthPort,
 		Logger:      log,
 	})
 	if err := p.Serve(ctx); err != nil && err != context.Canceled {

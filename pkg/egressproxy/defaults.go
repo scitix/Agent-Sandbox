@@ -26,6 +26,13 @@ const (
 	DefaultTLSPort   = 15002
 	DefaultOtherPort = 15003
 
+	// DefaultHealthPort serves /healthz. Separate from the three data-plane
+	// ports on purpose: a probe aimed at those arrives indistinguishable from a
+	// redirected sandbox connection, so it would be policy-evaluated, logged as
+	// a denial on every interval, and — with private ranges allowed — dialed
+	// straight back into this listener.
+	DefaultHealthPort = 15004
+
 	// DefaultPolicyPath is the emptyDir file the control plane writes (exec) and
 	// the proxy reads (fsnotify). Mounted only in the sidecar.
 	DefaultPolicyPath = "/var/run/egress/policy.json"

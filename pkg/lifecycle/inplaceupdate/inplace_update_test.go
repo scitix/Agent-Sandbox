@@ -1378,3 +1378,51 @@ func TestIsInplaceUpdateCompleted(t *testing.T) {
 		})
 	}
 }
+
+// An injected sidecar's restart must not look like the sandbox crashed. The
+// reaction to an unexpected restart is to recycle the Pod, so snapshotting every
+// container meant an OOM-killed egress proxy took a live sandbox down with it —
+// even though the proxy recovers on its own from the volume it reads at start.
+func TestBuildStableContainerStatuses_OnlyTargetedContainers(t *testing.T) {
+	pod := &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+		{Name: "sandbox", ContainerID: "containerd://sandbox-1", RestartCount: 1},
+		{Name: "egress-proxy", ContainerID: "containerd://proxy-1", RestartCount: 0},
+	}}}
+	targets := map[string]string{"sandbox": "img:running"}
+
+	stable := buildStableContainerStatuses(pod, targets)
+	if _, ok := stable["sandbox"]; !ok {
+		t.Fatal("the container whose image was swapped must be tracked")
+	}
+	if _, ok := stable["egress-proxy"]; ok {
+		t.Error("an untargeted sidecar must not be tracked; its restarts are its own business")
+	}
+
+	// No targets means no detection rather than tracking everything.
+	if got := buildStableContainerStatuses(pod, nil); got != nil {
+		t.Errorf("empty targets should disable the check, got %v", got)
+	}
+}
+
+// End-to-end on the annotation: the sidecar restarting is invisible, the
+// sandbox restarting is not.
+func TestHasUnexpectedRestart_IgnoresSidecarRestart(t *testing.T) {
+	state := `{"phase":"completed","targetPodPhase":"running","targetImages":{"sandbox":"img:running"},` +
+		`"stableContainerStatuses":{"sandbox":{"containerID":"containerd://sandbox-1","restartCount":0}}}`
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{PodAnnotationInPlaceUpdateStateKey: state}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+			{Name: "sandbox", ContainerID: "containerd://sandbox-1", RestartCount: 0},
+			// OOM-killed and restarted by kubelet: new containerID.
+			{Name: "egress-proxy", ContainerID: "containerd://proxy-2", RestartCount: 1},
+		}},
+	}
+	if HasUnexpectedRestart(pod) {
+		t.Error("a sidecar restart must not recycle the sandbox")
+	}
+
+	pod.Status.ContainerStatuses[0].ContainerID = "containerd://sandbox-2"
+	if !HasUnexpectedRestart(pod) {
+		t.Error("the sandbox container restarting is still an unexpected restart")
+	}
+}
