@@ -27,7 +27,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/scitix/agent-sandbox/cmd/sandbox/app/extconfig"
@@ -103,7 +105,7 @@ func Run(opts Options) {
 		localClusterID                                   string
 		clustersConfigMapName                            string
 		egressProxyImage                                 string
-		egressLegacySidecar                              bool
+		egressLegacySidecar                              string
 		tlsOpts                                          []func(*tls.Config)
 	)
 
@@ -157,13 +159,20 @@ func Run(opts Options) {
 		"Container image carrying the egress-proxy binary, injected as the filter sidecar/init into "+
 			"sandbox Pods of Pools with a networkPolicy. Defaults to the idle image. Required when "+
 			"egress filtering is used; a Pool with a networkPolicy but no image fails pod creation (fail-closed).")
-	flag.BoolVar(&egressLegacySidecar, "egress-legacy-sidecar",
-		os.Getenv("AGENTBOX_EGRESS_LEGACY_SIDECAR") == "true",
+	// Deliberately a string, not a bool: the value is substituted into the
+	// deployment manifest by the release platform, and an unset variable
+	// substitutes to nothing. A bool flag rejects `--flag=` outright, which
+	// would CrashLoop the operator over an unset template variable; empty is
+	// read as "off" instead. Always pass it as `--egress-legacy-sidecar=<bool>`;
+	// the bare form would swallow the next argument.
+	flag.StringVar(&egressLegacySidecar, "egress-legacy-sidecar",
+		os.Getenv("AGENTBOX_EGRESS_LEGACY_SIDECAR"),
 		"Inject the egress proxy as an ordinary container instead of a native sidecar, for API servers "+
 			"that do not support initContainers[].restartPolicy (Kubernetes < 1.28, or 1.28 without the "+
 			"SidecarContainers gate). Those API servers prune the field silently and the Pod then hangs in "+
 			"Init forever; check with `kubectl explain pod.spec.initContainers.restartPolicy`. Costs the "+
-			"start-ordering guarantee (early traffic is refused, never leaked) — leave off on 1.29+.")
+			"start-ordering guarantee (early traffic is refused, never leaked) — leave off on 1.29+. "+
+			"Accepts true/false/1/0/yes/no; empty means false.")
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -185,6 +194,22 @@ func Run(opts Options) {
 	if extprocInternalAPIURL == "" {
 		setupLog.Error(nil, "--extproc-internal-api-url is required (gRPC dial target, e.g. agentbox-extproc.agentbox-system.svc:9003)") //nolint:lll
 		os.Exit(1)
+	}
+
+	// A bad value here must not take the operator down: this flag's value is
+	// substituted into the manifest by the release platform, and an undeclared
+	// variable renders as "<no value>". Losing the whole control plane over that
+	// is worse than falling back to native sidecars, which on an API server that
+	// supports them is also the correct answer — and where it is not, the symptom
+	// is confined to egress-enabled Pools and is documented.
+	legacySidecarEnabled, parseErr := parseOptionalBool(egressLegacySidecar)
+	if parseErr != nil {
+		setupLog.Error(parseErr, "Ignoring --egress-legacy-sidecar and injecting native sidecars; "+
+			"set the value to true or false", "value", egressLegacySidecar)
+	}
+	if legacySidecarEnabled {
+		setupLog.Info("egress: injecting the filter proxy as an ordinary container " +
+			"(--egress-legacy-sidecar); native sidecars are used on API servers that support them")
 	}
 
 	// ---- extension config ----------------------------------------------------
@@ -301,7 +326,7 @@ func Run(opts Options) {
 	// policy-bearing Pool with no configured image fails pod creation (closed).
 	builtPlugins = append(builtPlugins, egress.New(egress.Config{
 		Image:         egressProxyImage,
-		LegacySidecar: egressLegacySidecar,
+		LegacySidecar: legacySidecarEnabled,
 	}))
 
 	pluginManager := plugins.NewPluginManager(builtPlugins...)
@@ -706,4 +731,24 @@ func buildScheme(extras []func(*runtime.Scheme) error) *runtime.Scheme {
 		utilruntime.Must(fn(s))
 	}
 	return s
+}
+
+// parseOptionalBool reads a boolean CLI flag that is passed as a string so an
+// unset value is tolerated.
+//
+// Flags whose value is substituted into the deployment manifest by a release
+// platform can arrive empty when the corresponding variable was declared but
+// left blank, or as the literal "<no value>" when it was never declared at all.
+// A bool flag rejects both outright, so this reads empty as false and reports
+// anything else it cannot parse — leaving the caller to decide between failing
+// and continuing with the default.
+func parseOptionalBool(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "false", "0", "no", "off":
+		return false, nil
+	case "true", "1", "yes", "on":
+		return true, nil
+	default:
+		return false, fmt.Errorf("expected a boolean (true/false), got %q", v)
+	}
 }

@@ -86,6 +86,10 @@ controller:
   # alongside the sandbox rather than before it, so traffic that beats the proxy
   # is refused (fail-closed, never unfiltered). A readiness probe on the proxy
   # keeps such a Pod out of the claimable set until it listens.
+  #
+  # Rendered as `--egress-legacy-sidecar=<value>` unconditionally so a release
+  # platform that templates the manifest can substitute the value; the flag reads
+  # an empty value as false rather than refusing to start.
   egressLegacySidecar: false
 
   # appName is the value placed in app.kubernetes.io/name for the controller
