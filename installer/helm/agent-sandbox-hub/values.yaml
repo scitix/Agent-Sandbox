@@ -141,10 +141,15 @@ prometheus:
   token: ""
 
 # External log service integration (optional).
+#
+# Two auth schemes, chosen by appId: set it for the signed scheme
+# (Signature/AppID/Timestamp/Randstr headers), leave it empty for Bearer.
+# project scopes the query on gateways that require it; empty omits the param.
 logs:
   downloadUrl: ""
   appId: ""
   token: ""
+  project: ""
 
 # Platform notifications sent by ws-proxy: the daily usage report and the
 # idle alert. Requires globalApiKey.enabled (the notification service runs in
