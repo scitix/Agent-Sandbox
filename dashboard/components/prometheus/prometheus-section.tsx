@@ -21,14 +21,13 @@
  *
  * Used on both the admin page (with admin controls) and the overview page (scoped to current user).
  *
- * Props:
- *   clusterID        — cluster label for Prometheus queries
- *   showAdminControls — admin page: show the HTTP & Sandbox Activity charts
+ * The time range is read from the URL search params the page-level picker
+ * writes, so this section renders charts only — never its own picker.
  */
 
-import { useState, useMemo, useCallback } from "react"
+import { useMemo } from "react"
 import { useTranslation } from "@/lib/i18n"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
 import {
   Activity,
@@ -38,9 +37,9 @@ import {
   CheckCircle2,
   Clock,
   Server,
+  Loader2,
 } from "lucide-react"
 import { authAtom, impersonationAtom, isActualAdminAtom } from "@/lib/atoms"
-import { GrafanaTimePicker } from "@/components/prometheus/grafana-time-picker"
 import { MetricsChart } from "@/components/prometheus/metrics-chart"
 import { C } from "./colors"
 import {
@@ -74,7 +73,6 @@ import { formatRate, formatDuration } from "@/lib/prometheus/transform"
 import type { SandboxFilters } from "@/lib/types/prometheus"
 import { type RefreshInterval, resolveTimeRange } from "@/lib/types/prometheus"
 import type { TranslationKey } from "@/lib/i18n"
-import { useRefreshCountdown } from "@/hooks/use-refresh-countdown"
 import { useTimeRangeSearchParams } from "@/hooks/use-time-range-search-params"
 import { StatCard } from "./stat-card"
 import { AdminMetricsSection } from "./prometheus-admin-section"
@@ -84,7 +82,18 @@ import { AdminMetricsSection } from "./prometheus-admin-section"
 // ─── Props ─────────────────────────────────────────────────────────────────────
 
 export interface PrometheusSectionProps {
-  clusterID: string
+  /**
+   * Cluster scope for every query here, as the BFF's `cluster` param: one
+   * cluster ID, a comma-separated list, or "all". The server turns it into a
+   * single PromQL matcher, so a multi-cluster scope costs no extra requests
+   * and percentile charts stay exact.
+   */
+  clusters: string
+  /**
+   * Auto-refresh interval in ms. Owned by the page, which renders the only
+   * time-range picker — this section has none of its own.
+   */
+  refreshInterval?: RefreshInterval
   /** When true, show admin-only HTTP & Sandbox Activity charts (admin page only) */
   showAdminControls?: boolean
   /**
@@ -101,13 +110,13 @@ export interface PrometheusSectionProps {
 // ─── PrometheusSection ─────────────────────────────────────────────────────────
 
 export function PrometheusSection({
-  clusterID,
+  clusters,
+  refreshInterval = 0,
   showAdminControls = false,
   scopeToCurrentUser = false,
   title = "prometheus.sandboxMetrics",
 }: PrometheusSectionProps) {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const auth = useAtomValue(authAtom)
   const isActualAdmin = useAtomValue(isActualAdminAtom)
   const impersonation = useAtomValue(impersonationAtom)
@@ -131,16 +140,15 @@ export function PrometheusSection({
   }, [scopeToCurrentUser, impersonation, isActualAdmin, auth])
 
   const [timeRange, setTimeRange] = useTimeRangeSearchParams()
-  const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(0)
 
   const filters: SandboxFilters = useMemo(
     () => ({
-      cluster: clusterID,
+      cluster: clusters,
       // scopeToCurrentUser: pin to the effective user; otherwise show unfiltered aggregate data
       team: scopeToCurrentUser ? effectiveScopeTeam : undefined,
       user: scopeToCurrentUser ? effectiveScopeUser : undefined,
     }),
-    [clusterID, scopeToCurrentUser, effectiveScopeTeam, effectiveScopeUser],
+    [clusters, scopeToCurrentUser, effectiveScopeTeam, effectiveScopeUser],
   )
 
   // Resolve concrete start/end/step for the current time range
@@ -291,7 +299,6 @@ export function PrometheusSection({
   const {
     data: overviewData,
     isFetching: overviewFetching,
-    dataUpdatedAt,
   } = useReplicasOverview(filters, effectiveRefetch, instantEndTime)
   const { isFetching: startRateFetching, data: startRateData } = useStartRate(
     filters,
@@ -383,17 +390,6 @@ export function PrometheusSection({
     scheduleDispatchLatencyFetching ||
     userStatsFetching
 
-  // Manual refresh: invalidate all prometheus queries
-  const handleRefresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["prometheus"] })
-  }, [queryClient])
-
-  // Countdown timer
-  const countdown = useRefreshCountdown(
-    dataUpdatedAt,
-    refreshInterval > 0 ? refreshInterval : undefined,
-  )
-
   // If Prometheus is not configured, hide the entire section
   if (overviewData && !overviewData.configured) {
     return null
@@ -405,24 +401,14 @@ export function PrometheusSection({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Section header with time range picker */}
+      {/* Section header. The time range comes from the page-level picker via
+          the shared `range`/`from`/`to` search params. */}
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-muted-foreground flex items-center gap-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
           <Activity className="h-3.5 w-3.5" />
           {t(title)}
         </h2>
-
-        <div className="ml-auto">
-          <GrafanaTimePicker
-            value={timeRange}
-            onValueChange={setTimeRange}
-            refreshInterval={refreshInterval}
-            onRefreshIntervalChange={setRefreshInterval}
-            onRefresh={handleRefresh}
-            countdown={countdown}
-            isFetching={isAnyFetching}
-          />
-        </div>
+        {isAnyFetching && <Loader2 className="text-muted-foreground h-3.5 w-3.5 animate-spin" />}
       </div>
 
       {/* Lifecycle stat cards — cumulative + instant */}

@@ -19,6 +19,7 @@
 import { useEffect } from "react"
 import React from "react"
 import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { useAtomValue, useSetAtom } from "jotai"
 import { PanelLeft } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
@@ -51,6 +52,11 @@ export function PageHeader() {
   const setRunningCount = useSetAtom(concurrentSandboxesAtom)
   const { isMobile, toggleSidebar } = useSidebar()
   const crumbs = useBreadcrumbs()
+  const pathname = usePathname()
+
+  // A managed agent belongs to the cluster it was created on; offering a
+  // cluster switch here would suggest the same agent exists elsewhere.
+  const hideClusterSwitcher = pathname.includes("/managed-agents")
 
   const { data: statsData } = useQuery({
     ...userSandboxStatsQueryOptions(),
@@ -102,7 +108,7 @@ export function PageHeader() {
         </Breadcrumb>
       </div>
       <div className="flex shrink-0 items-center gap-3" hidden={isMobile}>
-        <ClusterSwitcher compact />
+        {!hideClusterSwitcher && <ClusterSwitcher compact />}
         <LiveBadge />
       </div>
     </div>

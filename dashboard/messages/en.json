@@ -863,6 +863,7 @@
   "cluster.searchCluster": "Search cluster...",
   "cluster.noClustersFound": "No clusters found",
   "cluster.allClusters": "All clusters",
+  "cluster.nSelected": "{{count}} clusters",
   "changelog.newVersionAvailable": "v{{version}} available",
   "common.revoke": "Revoke",
   "common.advanced": "Advanced",

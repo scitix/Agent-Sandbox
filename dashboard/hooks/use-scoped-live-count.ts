@@ -19,29 +19,28 @@
 import { useMemo } from "react"
 import { useQueries } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
-import { authAtom, clusterIDAtom, clustersAtom } from "@/lib/atoms"
+import { clustersAtom } from "@/lib/atoms"
 import { getApiClient } from "@/lib/api/client"
-import type { ClusterScope } from "@/hooks/use-cluster-scope-search-params"
+import { resolveScopeClusterIDs, type ClusterScope } from "@/hooks/use-cluster-scope-search-params"
 
 const REFETCH_MS = 30000
 
 /**
  * Sums the current user's Running sandbox count across the cluster scope
- * selected on `/overview`. API-key sessions are single-cluster credentials
- * (getApiClient for any other cluster would fail auth), so they always
- * resolve to their login-bound cluster regardless of the `scope` param.
+ * selected on `/overview`. An API key authenticates against every cluster —
+ * the proxy injects it per cluster from the JWT — so no scope is off-limits.
  */
 export function useScopedLiveCount(scope: ClusterScope): { count: number; isLoading: boolean } {
-  const auth = useAtomValue(authAtom)
-  const boundClusterID = useAtomValue(clusterIDAtom)
   const clustersData = useAtomValue(clustersAtom)
-  const isApiKey = auth?.authMethod === "apikey"
 
-  const targetClusterIDs = useMemo(() => {
-    if (isApiKey) return [boundClusterID]
-    if (scope !== "all") return [scope]
-    return clustersData.clusters.map((c) => c.id)
-  }, [isApiKey, boundClusterID, scope, clustersData.clusters])
+  const targetClusterIDs = useMemo(
+    () =>
+      resolveScopeClusterIDs(
+        scope,
+        clustersData.clusters.map((c) => c.id),
+      ),
+    [scope, clustersData.clusters],
+  )
 
   const results = useQueries({
     queries: targetClusterIDs.map((clusterID) => ({

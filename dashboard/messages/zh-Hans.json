@@ -844,6 +844,7 @@
   "cluster.searchCluster": "搜索集群...",
   "cluster.noClustersFound": "未找到集群",
   "cluster.allClusters": "全部集群",
+  "cluster.nSelected": "{{count}} 个集群",
   "changelog.newVersionAvailable": "v{{version}} 可用",
   "common.revoke": "撤销",
   "common.noData": "暂无数据",

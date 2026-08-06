@@ -19,8 +19,8 @@
 import { useRouter, usePathname } from "next/navigation"
 import { useAtomValue, useSetAtom } from "jotai"
 import { authAtom, clusterIDAtom, clustersAtom } from "@/lib/atoms"
-import { ClusterCombobox } from "@/components/cluster-combobox"
-import { switchClusterPath, loginPath } from "@/lib/cluster-path"
+import { ClusterCombobox, ALL_CLUSTERS_ID } from "@/components/cluster-combobox"
+import { switchClusterPath, loginPath, clusterPath } from "@/lib/cluster-path"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { useTranslation } from "@/lib/i18n"
@@ -38,14 +38,21 @@ export function ClusterSwitcher({ compact = false }: { compact?: boolean }) {
   const multiCluster = clustersData.multiCluster
   const clusters = clustersData.clusters
 
-  // Only render in multi-cluster mode, and hide for API-key users
-  // (they must re-login per cluster)
-  if (!multiCluster || clusters.length === 0 || auth?.authMethod === "apikey") {
+  // Only render in multi-cluster mode. API-key sessions are included: the key
+  // authenticates against every cluster, so switching needs no re-login.
+  if (!multiCluster || clusters.length === 0) {
     return null
   }
 
   const handleSwitch = (clusterId: string | null) => {
     if (!clusterId || clusterId === currentClusterID) return
+
+    // Every page here is cluster-scoped, so "all clusters" has only one
+    // meaning: go to the view that spans them.
+    if (clusterId === ALL_CLUSTERS_ID) {
+      router.push(clusterPath(clusterId, "overview", locale))
+      return
+    }
 
     // Compute the destination path for the new cluster, preserving the current page and locale
     const destination = switchClusterPath(pathname, clusterId)
@@ -69,6 +76,7 @@ export function ClusterSwitcher({ compact = false }: { compact?: boolean }) {
         clusters={clusters}
         value={currentClusterID}
         onValueChange={handleSwitch}
+        allowAll
         inputClassName="h-8 w-[200px] font-mono text-xs"
       />
     )
