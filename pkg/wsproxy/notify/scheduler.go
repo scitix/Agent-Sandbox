@@ -36,6 +36,7 @@ func (s *Service) Run(ctx context.Context) {
 		return
 	}
 	s.ensureConfigMap(ctx)
+	s.seedDailyReportDate(ctx)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -50,19 +51,56 @@ func (s *Service) Run(ctx context.Context) {
 	wg.Wait()
 }
 
+// seedDailyReportDate marks today as already handled when the process starts
+// after the send hour and no report has been recorded for today.
+//
+// Without it, a restart past the send hour reads "today hasn't fired" and
+// sends immediately — so every afternoon deploy produced another card. The
+// trade-off is that a pod down across the send minute skips that day rather
+// than sending hours late; a stale snapshot is worse than a missing one, and
+// the admin "send now" button covers the case where it is wanted.
+func (s *Service) seedDailyReportDate(ctx context.Context) {
+	st, err := s.LoadState(ctx)
+	if err != nil {
+		log.Printf("wsproxy: notify: load scheduler state failed: %v", err)
+		return
+	}
+	now := time.Now().In(shanghai())
+	todayKey := now.Format("2006-01-02")
+	if st.LastDailyReportDate == todayKey {
+		return
+	}
+
+	cfg, err := s.LoadConfig(ctx)
+	if err != nil {
+		log.Printf("wsproxy: notify: load config for scheduler seed failed: %v", err)
+		return
+	}
+	target := time.Date(now.Year(), now.Month(), now.Day(), cfg.DailyReport.SendHourCST, 0, 0, 0, shanghai())
+	if now.Before(target) {
+		return
+	}
+
+	st.LastDailyReportDate = todayKey
+	if err := s.SaveState(ctx, st); err != nil {
+		log.Printf("wsproxy: notify: seed scheduler state failed: %v", err)
+		return
+	}
+	log.Printf("wsproxy: notify: started past today's send hour; next daily report is tomorrow")
+}
+
 // runDailyReportLoop fires the daily report at most once per calendar day,
 // the first tick at or after DailyReportConfig.SendHourCST in Asia/Shanghai.
 //
 // A naive `now.Minute() == 0` check would miss the target: ticker ticks are
 // offset from process start time, not wall-clock aligned, so they rarely
-// land exactly on :00. Comparing against the target time directly, guarded
-// by lastFiredDate for at-most-once-per-day, is correct regardless of tick
-// phase.
+// land exactly on :00. Comparing against the target time directly, guarded by
+// the persisted last-fired date for at-most-once-per-day, is correct
+// regardless of tick phase and survives a restart.
 func (s *Service) runDailyReportLoop(ctx context.Context) {
 	ticker := time.NewTicker(dailyReportTickInterval)
 	defer ticker.Stop()
 
-	lastFiredDate := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -79,14 +117,26 @@ func (s *Service) runDailyReportLoop(ctx context.Context) {
 
 			now := time.Now().In(shanghai())
 			todayKey := now.Format("2006-01-02")
-			if lastFiredDate == todayKey {
+			st, err := s.LoadState(ctx)
+			if err != nil {
+				log.Printf("wsproxy: notify: load scheduler state failed: %v", err)
+				continue
+			}
+			if st.LastDailyReportDate == todayKey {
 				continue
 			}
 			target := time.Date(now.Year(), now.Month(), now.Day(), cfg.DailyReport.SendHourCST, 0, 0, 0, shanghai())
 			if now.Before(target) {
 				continue
 			}
-			lastFiredDate = todayKey
+
+			// Record before sending: a send that fails must not be retried on
+			// the next tick, or a Feishu outage turns into a card per minute.
+			st.LastDailyReportDate = todayKey
+			if err := s.SaveState(ctx, st); err != nil {
+				log.Printf("wsproxy: notify: persist daily report date failed, skipping to avoid a resend loop: %v", err)
+				continue
+			}
 			s.sendDailyReport(ctx, target)
 		}
 	}
@@ -107,17 +157,16 @@ func (s *Service) sendDailyReport(ctx context.Context, end time.Time) {
 	const windowLiteral = "1d"
 
 	pc := newPromClient(s.prometheusURL, s.prometheusToken)
-	clusterIDs := s.allClusterIDs()
+	clusters := s.reportClusters()
 
-	report, err := buildReport(ctx, pc, clusterIDs, windowLiteral, end)
+	report, err := buildReport(ctx, pc, clusters, windowLiteral, end)
 	if err != nil {
 		log.Printf("wsproxy: notify: build daily report failed: %v", err)
 		s.appendHistory(ctx, HistoryEntry{Time: time.Now().UTC(), Type: HistoryTypeDailyReport, Result: ResultFailure, Detail: err.Error()})
 		return
 	}
 
-	combinedMatcher := strings.Join(clusterIDs, "|")
-	chart, err := collectChartData(ctx, pc, combinedMatcher, report.Window.Start, report.Window.End, chartRangeStep)
+	chart, err := collectChartData(ctx, pc, combinedMatcher(clusters), report.Window.Start, report.Window.End, chartRangeStep)
 	if err != nil {
 		log.Printf("wsproxy: notify: collect daily report chart data failed (rendering without chart): %v", err)
 		chart = nil

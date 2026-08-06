@@ -44,6 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/autoscalingstate"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
@@ -68,6 +69,11 @@ const (
 	// RequeueJitter is the relative jitter applied to RequeueAfter.
 	// ±20 % spreads the cluster wake events over an 8–12 s window.
 	RequeueJitter = 0.20
+
+	// admissionRetrySkew pads a plugin-supplied cooldown before it is used as a
+	// requeue delay, so the retry lands just past the backend's deadline rather
+	// than on it.
+	admissionRetrySkew = time.Second
 )
 
 // jitteredRequeueAfter returns RequeueAfter shifted by a uniform random
@@ -333,6 +339,110 @@ func (r *SandboxPoolReconciler) handleDeletion(ctx context.Context, sandboxPool 
 	return reconcile.Result{}, nil
 }
 
+// syncPoolStatus recomputes the Pool's observed status from pods, folds the
+// admission outcome into the Admitted condition, and writes the result when it
+// differs from what is already published.
+//
+// requeue=true means the write lost an optimistic-concurrency race; the caller
+// should retry from a fresh read rather than acting on stale state.
+func (r *SandboxPoolReconciler) syncPoolStatus(
+	ctx context.Context,
+	sandboxPool *agentsv1alpha1.SandboxPool,
+	pods []corev1.Pod,
+	admission plugins.PoolAdmission,
+	admErr *domain.AppError,
+) (agentsv1alpha1.SandboxPoolStatus, bool, error) {
+	status := r.calculatePodStatus(sandboxPool.Namespace+"/"+sandboxPool.Name, pods, sandboxPool)
+	status.Selector = fmt.Sprintf("%s=%s", agentsv1alpha1.SandboxPoolLabelKey, sandboxPool.Name)
+	status.LabelSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			agentsv1alpha1.SandboxPoolLabelKey: sandboxPool.Name,
+		},
+	}
+	status.PhaseSelectors = buildPhaseSelectors(sandboxPool.Name)
+	setAdmissionCondition(&status, sandboxPool.Spec.Replicas, admission, admErr)
+
+	if r.statusEquals(sandboxPool, status) {
+		return status, false, nil
+	}
+
+	oldPhase := sandboxPool.Status.Phase
+	sandboxPool.Status = status
+	if err := r.Status().Update(ctx, sandboxPool); err != nil {
+		if errors.IsConflict(err) {
+			return status, true, nil
+		}
+		klog.ErrorS(err, "Failed to update SandboxPool status", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
+		return status, false, err
+	}
+	klog.V(2).InfoS("Updated SandboxPool status", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name,
+		"phase", status.Phase,
+		"idle", status.IdleReplicas, "unavailableIdle", status.UnavailableIdleReplicas,
+		"running", status.RunningReplicas,
+		"starting", status.StartingReplicas, "stopping", status.StoppingReplicas, "failed", status.FailedReplicas)
+
+	// Emit Kubernetes Events on phase transitions to provide an audit trail
+	// visible via `kubectl describe sbp` and `kubectl get events`.
+	r.emitPhaseTransitionEvent(sandboxPool, oldPhase, status.Phase, status)
+	return status, false, nil
+}
+
+// handleAdmissionFailure publishes the Pool's observed status, then decides how
+// to react to an admission the plugins could not satisfy.
+//
+// Publishing first is the whole point. Replica counts, revision skew and pod
+// health are facts about what already exists; none of them depend on whether
+// the scheduler agreed to grow the Pool. Returning before writing them leaves
+// the Pool advertising whatever it last managed to publish, so a Pool wedged
+// behind an unsatisfiable admission keeps reporting itself healthy for exactly
+// as long as it is stuck — the one window where an operator needs the truth.
+func (r *SandboxPoolReconciler) handleAdmissionFailure(
+	ctx context.Context,
+	sandboxPool *agentsv1alpha1.SandboxPool,
+	pods []corev1.Pod,
+	admission plugins.PoolAdmission,
+	admErr *domain.AppError,
+) (ctrl.Result, error) {
+	if _, requeue, err := r.syncPoolStatus(ctx, sandboxPool, pods, admission, admErr); err != nil {
+		return reconcile.Result{}, err
+	} else if requeue {
+		return reconcile.Result{Requeue: true}, nil
+	}
+
+	switch plugins.KindFromAppError(admErr) {
+	case plugins.PluginErrKindInsufficientResources:
+		// Expected and self-healing: the backing quota is full right now. Pace
+		// the retry off the plugin's own cooldown rather than returning an
+		// error, which would hot-loop controller-runtime straight back into the
+		// same rejection and bury the logs in identical failures.
+		return reconcile.Result{RequeueAfter: admissionRetryDelay(admission)}, nil
+
+	case plugins.PluginErrKindInvalidSpec:
+		// The spec itself is wrong; a smaller target or a later retry produces
+		// the identical rejection. Park on the Condition and wait for the spec
+		// change that will re-trigger us.
+		klog.ErrorS(admErr, "Admission rejected: invalid pool spec",
+			"namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
+		return reconcile.Result{}, nil
+
+	default:
+		klog.ErrorS(admErr, "Plugin PreUpdatePool failed",
+			"namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
+		return reconcile.Result{}, admErr
+	}
+}
+
+// admissionRetryDelay converts a plugin's requested cooldown into a requeue
+// delay. The extra second keeps us on the far side of the backend's own clock:
+// waking at exactly the reported deadline routinely lands a hair early and
+// earns another rejection, restarting the cooldown.
+func admissionRetryDelay(admission plugins.PoolAdmission) time.Duration {
+	if admission.RetryAfter <= 0 {
+		return jitteredRequeueAfter()
+	}
+	return admission.RetryAfter + admissionRetrySkew
+}
+
 // reconcilePods reconciles the Pod replicas to match the desired count and updates status
 func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *agentsv1alpha1.SandboxPool) (ctrl.Result, error) { //nolint:gocyclo
 	poolKey := types.NamespacedName{Namespace: sandboxPool.Namespace, Name: sandboxPool.Name}
@@ -350,14 +460,14 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		pods[i] = *rawPods[i].DeepCopy()
 	}
 
-	// PreUpdate
+	// PreUpdate admission: plugins may mutate the Pool, cap how many replicas we
+	// are allowed to materialise this cycle, or reject the cycle outright.
 	oldPool := sandboxPool.DeepCopy() // defensive copy to detect mutations
-	pluginUpdated, pluginErr := r.PluginManager.PreUpdatePool(ctx, sandboxPool, pods)
-	if pluginErr != nil {
-		klog.ErrorS(pluginErr, "Plugin PreUpdatePool failed", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
-		return reconcile.Result{}, pluginErr
+	admission, admErr := r.PluginManager.PreUpdatePool(ctx, sandboxPool, pods)
+	if admErr != nil {
+		return r.handleAdmissionFailure(ctx, sandboxPool, pods, admission, admErr)
 	}
-	if pluginUpdated && !equality.Semantic.DeepEqual(oldPool, sandboxPool) {
+	if admission.Updated && !equality.Semantic.DeepEqual(oldPool, sandboxPool) {
 		if err := r.Update(ctx, sandboxPool); err != nil {
 			if errors.IsConflict(err) {
 				return reconcile.Result{Requeue: true}, nil
@@ -411,36 +521,13 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 	desiredReplicas := sandboxPool.Spec.Replicas
 	currentReplicas := int32(len(pods))
 
-	// Calculate pod phase counts, pool phase, and conditions
-	status := r.calculatePodStatus(sandboxPool.Namespace+"/"+sandboxPool.Name, pods, sandboxPool)
-	status.Selector = fmt.Sprintf("%s=%s", agentsv1alpha1.SandboxPoolLabelKey, sandboxPool.Name)
-	status.LabelSelector = &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			agentsv1alpha1.SandboxPoolLabelKey: sandboxPool.Name,
-		},
+	// Calculate pod phase counts, pool phase, and conditions; publish when changed.
+	status, requeue, err := r.syncPoolStatus(ctx, sandboxPool, pods, admission, nil)
+	if err != nil {
+		return reconcile.Result{}, err
 	}
-	status.PhaseSelectors = buildPhaseSelectors(sandboxPool.Name)
-
-	// Update status if changed; emit phase-transition events when the phase changes.
-	if !r.statusEquals(sandboxPool, status) {
-		oldPhase := sandboxPool.Status.Phase
-		sandboxPool.Status = status
-		if err := r.Status().Update(ctx, sandboxPool); err != nil {
-			if errors.IsConflict(err) {
-				return reconcile.Result{Requeue: true}, nil
-			}
-			klog.ErrorS(err, "Failed to update SandboxPool status", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name)
-			return reconcile.Result{}, err
-		}
-		klog.V(2).InfoS("Updated SandboxPool status", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name,
-			"phase", status.Phase,
-			"idle", status.IdleReplicas, "unavailableIdle", status.UnavailableIdleReplicas,
-			"running", status.RunningReplicas,
-			"starting", status.StartingReplicas, "stopping", status.StoppingReplicas, "failed", status.FailedReplicas)
-
-		// Emit Kubernetes Events on phase transitions to provide an audit trail
-		// visible via `kubectl describe sbp` and `kubectl get events`.
-		r.emitPhaseTransitionEvent(sandboxPool, oldPhase, status.Phase, status)
+	if requeue {
+		return reconcile.Result{Requeue: true}, nil
 	}
 
 	// Update Pool replica gauges.
@@ -497,6 +584,29 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		}
 
 		delta := desiredReplicas - currentReplicas
+
+		// Honour the admission cap. Spec.Replicas is untouched — it belongs to
+		// the owning Env / autoscaler and still expresses the target we are
+		// converging towards. The cap only limits how much of that gap we may
+		// close right now, so a Pool backed by an exhausted quota grows as far
+		// as the quota allows instead of refusing to grow at all.
+		if admitted := admission.AdmittedOr(desiredReplicas); admitted < desiredReplicas {
+			granted := admitted - currentReplicas
+			if granted <= 0 {
+				klog.V(2).InfoS("Scale-up deferred: admission granted no additional replicas",
+					"namespace", sandboxPool.Namespace, "name", sandboxPool.Name,
+					"current", currentReplicas, "desired", desiredReplicas, "admitted", admitted,
+					"reason", admission.Reason)
+				return reconcile.Result{RequeueAfter: admissionRetryDelay(admission)}, nil
+			}
+			if granted < delta {
+				klog.InfoS("Scale-up partially admitted",
+					"namespace", sandboxPool.Namespace, "name", sandboxPool.Name,
+					"requested", delta, "granted", granted, "reason", admission.Reason)
+				delta = granted
+			}
+		}
+
 		klog.InfoS("Scaling up Pods", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name,
 			"delta", delta)
 

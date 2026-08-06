@@ -356,11 +356,23 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 		for i := range rawPods {
 			pods[i] = *rawPods[i].DeepCopy()
 		}
-		pluginUpdated, appErr := s.pm.PreUpdatePool(ctx, candidate, pods)
+		admission, appErr := s.pm.PreUpdatePool(ctx, candidate, pods)
 		if appErr != nil {
 			return nil, appErr
 		}
-		if pluginUpdated && !equality.Semantic.DeepEqual(before, candidate) {
+		// A capped admission is progress for the Reconciler — it grows the Pool
+		// as far as the cap allows and retries the rest — but not for an
+		// interactive edit: the caller named a replica count and deserves to
+		// hear that the backing quota cannot hold it, rather than watching the
+		// Pool silently settle somewhere below what they asked for.
+		if admitted := admission.AdmittedOr(candidate.Spec.Replicas); admitted < candidate.Spec.Replicas {
+			msg := admission.Message
+			if msg == "" {
+				msg = fmt.Sprintf("only %d of %d requested replicas can be admitted", admitted, candidate.Spec.Replicas)
+			}
+			return nil, domain.NewTooManyRequests(msg, nil, plugins.PluginErrKindInsufficientResources)
+		}
+		if admission.Updated && !equality.Semantic.DeepEqual(before, candidate) {
 			// Plugin mutated the candidate — persist the new snapshot back onto
 			// the Member so the Reconciler picks up the drift on its next pass.
 			// We deliberately do NOT touch the live Pool here: the Reconciler is

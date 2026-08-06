@@ -36,12 +36,12 @@ type capPlugin struct {
 
 func (p *capPlugin) Name() string { return "cap" }
 
-func (p *capPlugin) PreUpdatePool(_ context.Context, newPool *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
+func (p *capPlugin) PreUpdatePool(_ context.Context, newPool *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (PoolAdmission, *domain.AppError) {
 	p.calls++
 	if newPool.Spec.Replicas <= p.cap {
-		return false, nil
+		return PoolAdmission{}, nil
 	}
-	return false, NewInsufficientResources("over cap", nil)
+	return PoolAdmission{}, NewInsufficientResources("over cap", nil)
 }
 
 // internalErrPlugin always returns an internal-classified error. Used to
@@ -52,8 +52,8 @@ type internalErrPlugin struct {
 }
 
 func (p *internalErrPlugin) Name() string { return "internal" }
-func (p *internalErrPlugin) PreUpdatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
-	return false, NewInternal("rpc broken", errors.New("dial tcp: i/o timeout"))
+func (p *internalErrPlugin) PreUpdatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (PoolAdmission, *domain.AppError) {
+	return PoolAdmission{}, NewInternal("rpc broken", errors.New("dial tcp: i/o timeout"))
 }
 
 // invalidSpecPlugin rejects anything as InvalidSpec.
@@ -62,8 +62,8 @@ type invalidSpecPlugin struct {
 }
 
 func (p *invalidSpecPlugin) Name() string { return "invalid" }
-func (p *invalidSpecPlugin) PreUpdatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
-	return false, NewInvalidSpec("missing required label", nil)
+func (p *invalidSpecPlugin) PreUpdatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (PoolAdmission, *domain.AppError) {
+	return PoolAdmission{}, NewInvalidSpec("missing required label", nil)
 }
 
 func makePool() *agentsv1alpha1.SandboxPool {
@@ -200,8 +200,8 @@ type pivotPlugin struct {
 }
 
 func (p *pivotPlugin) Name() string { return "pivot" }
-func (p *pivotPlugin) PreUpdatePool(_ context.Context, newPool *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
-	return false, p.probe(newPool.Spec.Replicas)
+func (p *pivotPlugin) PreUpdatePool(_ context.Context, newPool *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (PoolAdmission, *domain.AppError) {
+	return PoolAdmission{}, p.probe(newPool.Spec.Replicas)
 }
 
 func TestProbeAcceptedReplicas_NilPluginManagerAdmitsAlways(t *testing.T) {
