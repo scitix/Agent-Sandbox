@@ -831,6 +831,7 @@
   "cluster.searchCluster": "搜尋叢集...",
   "cluster.noClustersFound": "找不到叢集",
   "cluster.allClusters": "全部叢集",
+  "cluster.nSelected": "{{count}} 個叢集",
   "changelog.newVersionAvailable": "v{{version}} 現已推出",
   "common.revoke": "撤銷",
   "apiKeys.form.namespaceDesc": "此金鑰所屬的命名空間。",

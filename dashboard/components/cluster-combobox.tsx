@@ -25,8 +25,12 @@ import {
   ComboboxItem,
   ComboboxEmpty,
 } from "@/components/ui/combobox"
-import { CloudyIcon } from "lucide-react"
+import { useMemo } from "react"
+import { CloudyIcon, LayersIcon } from "lucide-react"
 import { useTranslation } from "@/lib/i18n"
+
+/** Sentinel id for the "all clusters" entry, when the caller opts into it. */
+export const ALL_CLUSTERS_ID = "all"
 
 interface ClusterComboboxProps {
   clusters: ClusterEntry[]
@@ -34,6 +38,11 @@ interface ClusterComboboxProps {
   onValueChange: (clusterId: string | null) => void
   placeholder?: string
   inputClassName?: string
+  /**
+   * Prepend an "all clusters" entry. The caller decides what selecting it
+   * means — this component only reports the id back.
+   */
+  allowAll?: boolean
   /** aria-invalid for form integration */
   "aria-invalid"?: boolean
 }
@@ -44,16 +53,25 @@ export function ClusterCombobox({
   onValueChange,
   placeholder,
   inputClassName = "h-8 font-mono text-xs",
+  allowAll = false,
   "aria-invalid": ariaInvalid,
 }: ClusterComboboxProps) {
   const { t } = useTranslation()
-  const selected = clusters.find((c) => c.id === value) ?? null
+
+  const items = useMemo<ClusterEntry[]>(
+    () =>
+      allowAll
+        ? [{ id: ALL_CLUSTERS_ID, name: t("cluster.allClusters"), url: "" }, ...clusters]
+        : clusters,
+    [allowAll, clusters, t],
+  )
+  const selected = items.find((c) => c.id === value) ?? null
 
   return (
     <Combobox
       value={selected}
       onValueChange={(cluster) => onValueChange(cluster?.id ?? null)}
-      items={clusters}
+      items={items}
       itemToStringLabel={(c) => c.name ?? c.id}
     >
       <ComboboxInput
@@ -66,7 +84,11 @@ export function ClusterCombobox({
         <ComboboxList>
           {(cluster) => (
             <ComboboxItem key={cluster.id} value={cluster}>
-              <CloudyIcon className="size-4" />
+              {cluster.id === ALL_CLUSTERS_ID ? (
+                <LayersIcon className="size-4" />
+              ) : (
+                <CloudyIcon className="size-4" />
+              )}
               <span className="font-mono">{cluster.name}</span>
             </ComboboxItem>
           )}

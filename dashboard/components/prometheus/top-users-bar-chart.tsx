@@ -38,6 +38,8 @@ interface TopUsersBarChartProps {
   isLoading?: boolean
   emptyLabel?: string
   otherLabel: string
+  /** Renders without the Card wrapper, for embedding in a card that owns its own header. */
+  bare?: boolean
 }
 
 export function TopUsersBarChart({
@@ -47,6 +49,7 @@ export function TopUsersBarChart({
   isLoading,
   emptyLabel,
   otherLabel,
+  bare = false,
 }: TopUsersBarChartProps) {
   const chartData = useMemo(() => {
     const sorted = [...rows].sort((a, b) => b.count - a.count)
@@ -55,18 +58,16 @@ export function TopUsersBarChart({
     const restTotal = rest.reduce((sum, r) => sum + r.count, 0)
     const data = top.map((r) => ({ label: `${r.team}/${r.user}`, count: r.count }))
     if (restTotal > 0) data.push({ label: otherLabel, count: restTotal })
-    // Recharts renders top-to-bottom in array order; reverse so the largest bar is on top.
-    return data.reverse()
+    // Recharts lays vertical bars out top-to-bottom in array order, so
+    // descending order already puts the biggest contributor at the top.
+    return data
   }, [rows, topN, otherLabel])
 
   const total = useMemo(() => rows.reduce((sum, r) => sum + r.count, 0), [rows])
   const height = Math.max(240, chartData.length * 28)
 
-  return (
-    <Card className="p-4">
-      <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
-        {title}
-      </h3>
+  const body = (
+    <>
       {isLoading ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="text-muted-foreground h-5 w-5 animate-spin" />
@@ -89,14 +90,36 @@ export function TopUsersBarChart({
               />
               <Tooltip formatter={(value) => Number(value).toLocaleString()} />
               <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                {chartData.map((entry) => (
-                  <Cell key={entry.label} fill={entry.label === otherLabel ? C.idle : C.desired} />
+                {chartData.map((entry, i) => (
+                  <Cell
+                    key={entry.label}
+                    // The top contributor carries the brand colour — it is the
+                    // one number a reader takes away from this chart.
+                    fill={
+                      entry.label === otherLabel
+                        ? C.idle
+                        : i === 0
+                          ? "var(--brand)"
+                          : C.desired
+                    }
+                  />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
       )}
+    </>
+  )
+
+  if (bare) return body
+
+  return (
+    <Card className="p-4">
+      <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
+        {title}
+      </h3>
+      {body}
     </Card>
   )
 }

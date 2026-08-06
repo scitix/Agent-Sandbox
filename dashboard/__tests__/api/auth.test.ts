@@ -166,7 +166,22 @@ describe("POST /api/auth/login", () => {
     expect(res.status).toBe(400)
   })
 
-  it("returns 400 for missing clusterID", async () => {
+  // An API key is not bound to a cluster — the JWT carries only the key and the
+  // per-cluster proxy injects it wherever the URL points — so omitting
+  // clusterID is valid and just picks whichever backend answers whoami.
+  it("falls back to the first cluster when clusterID is omitted", async () => {
+    mockUndici([{ statusCode: 200, body: { role: "tenant", user: "alice", team: "eng" } }])
+
+    const clusterConfig = await import("@/lib/cluster-config")
+    vi.spyOn(clusterConfig, "listClusters").mockReturnValue([
+      { id: "cluster-1", name: "Test Cluster", url: "http://localhost:8080" },
+    ])
+    vi.spyOn(clusterConfig, "getClusterConfig").mockReturnValue({
+      id: "cluster-1",
+      name: "Test Cluster",
+      url: "http://localhost:8080",
+    })
+
     const { POST } = await import("@/app/api/auth/login/route")
     const req = new Request("http://localhost/api/auth/login", {
       method: "POST",
@@ -174,7 +189,24 @@ describe("POST /api/auth/login", () => {
       body: JSON.stringify({ apiKey: "agbx_somekey" }),
     })
     const res = await POST(req)
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.clusterID).toBe("cluster-1")
+    expect(typeof body.token).toBe("string")
+  })
+
+  it("returns 503 when no clusters are configured", async () => {
+    const clusterConfig = await import("@/lib/cluster-config")
+    vi.spyOn(clusterConfig, "listClusters").mockReturnValue([])
+
+    const { POST } = await import("@/app/api/auth/login/route")
+    const req = new Request("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "agbx_somekey" }),
+    })
+    const res = await POST(req)
+    expect(res.status).toBe(503)
   })
 
   it("returns 401 when backend ping fails", async () => {

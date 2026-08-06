@@ -31,7 +31,7 @@ import {
   ShieldAlert,
   ShieldOff,
 } from "lucide-react"
-import { isAdminAtom, clusterIDAtom, clustersAtom } from "@/lib/atoms"
+import { isAdminAtom, clustersAtom } from "@/lib/atoms"
 import {
   replicasOverviewQueryOptions,
   platformUsersCountQueryOptions,
@@ -54,7 +54,10 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
-import { useClusterScopeSearchParams } from "@/hooks/use-cluster-scope-search-params"
+import {
+  useClusterScopeSearchParams,
+  clusterQueryParam,
+} from "@/hooks/use-cluster-scope-search-params"
 import { useTimeRangeSearchParams } from "@/hooks/use-time-range-search-params"
 import { useAdminSandboxStats } from "@/hooks/use-admin-sandbox-stats"
 import { useRefreshCountdown } from "@/hooks/use-refresh-countdown"
@@ -69,7 +72,7 @@ export default function AdminPage() {
   const locale = useLocale()
   const qc = useQueryClient()
   const isAdmin = useAtomValue(isAdminAtom)
-  const boundClusterID = useAtomValue(clusterIDAtom)
+  const allClusters = useAtomValue(clustersAtom).clusters
 
   useEffect(() => {
     if (!isAdmin) {
@@ -81,10 +84,14 @@ export default function AdminPage() {
   const [scope, setScope] = useClusterScopeSearchParams()
   const [timeRange, setTimeRange] = useTimeRangeSearchParams()
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(0)
-  const personalClusterID = scope === "all" ? boundClusterID : scope
-
+  const availableClusterIDs = useMemo(() => allClusters.map((c) => c.id), [allClusters])
+  // The BFF's `cluster` param: one ID, a comma list, or "all".
+  const clusterParam = useMemo(
+    () => clusterQueryParam(scope, availableClusterIDs),
+    [scope, availableClusterIDs],
+  )
   // Probe Prometheus config first — gates whether the K8s-fallback stats are shown
-  const prometheusFilters = useMemo(() => ({ cluster: personalClusterID }), [personalClusterID])
+  const prometheusFilters = useMemo(() => ({ cluster: clusterParam }), [clusterParam])
   const { data: promOverview, dataUpdatedAt } = useQuery(replicasOverviewQueryOptions(prometheusFilters))
   const promResolved = promOverview !== undefined
   const prometheusConfigured = promOverview?.configured === true
@@ -95,6 +102,8 @@ export default function AdminPage() {
 
   const handleRefresh = () => {
     void qc.refetchQueries({ queryKey: replicasOverviewQueryOptions(prometheusFilters).queryKey })
+    // The metrics section has no picker of its own; the page refresh owns it.
+    void qc.invalidateQueries({ queryKey: ["prometheus"] })
     sandboxStats.refetchAll()
   }
 
@@ -105,15 +114,15 @@ export default function AdminPage() {
   const startingCount = sandboxStats.byStatus["Starting"] ?? 0
 
   return (
-    <div className="flex flex-1 flex-col overflow-auto">
-      {/* Page header: title + cluster scope + time range */}
-      <div className="border-border flex flex-wrap items-center gap-3 border-b px-6 py-3">
-        <span className="text-foreground flex items-center gap-1.5 font-mono text-sm font-semibold tracking-wide uppercase">
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      {/* Page header. Fixed h-13 to match <PageHeader> on cluster-scoped
+          pages, which is what the sidebar header aligns to. */}
+      <div className="border-border flex h-13 shrink-0 items-center gap-3 border-b px-6">
+        <span className="text-foreground flex shrink-0 items-center gap-1.5 font-mono text-sm font-semibold tracking-wide uppercase">
           <BarChart3 className="h-4 w-4" />
           {t("admin.title")}
         </span>
-        <div className="ml-auto flex items-center gap-3">
-          <ClusterScopeSelect value={scope} onValueChange={setScope} />
+        <div className="ml-auto flex shrink-0 items-center gap-3">
           <GrafanaTimePicker
             value={timeRange}
             onValueChange={setTimeRange}
@@ -123,6 +132,7 @@ export default function AdminPage() {
             countdown={countdown}
             isFetching={sandboxStats.isFetching}
           />
+          <ClusterScopeSelect value={scope} onValueChange={setScope} />
         </div>
       </div>
 
@@ -136,7 +146,7 @@ export default function AdminPage() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-10 p-6">
+        <div className="flex min-h-0 flex-1 flex-col gap-10 overflow-y-auto p-6">
           {/* ── K8s fallback stats — only when Prometheus is not configured ── */}
           {showFallback && (
             <div className="flex flex-col gap-8">
@@ -233,7 +243,11 @@ export default function AdminPage() {
           <NotificationConsoleSection />
 
           {/* Prometheus Metrics (hidden if not configured) */}
-          <PrometheusSection clusterID={personalClusterID} showAdminControls />
+          <PrometheusSection
+            clusters={clusterParam}
+            refreshInterval={refreshInterval}
+            showAdminControls
+          />
         </div>
       )}
     </div>

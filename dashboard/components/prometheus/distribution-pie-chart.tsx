@@ -30,17 +30,19 @@ export interface DistributionSlice {
   value: number
 }
 
+// Index 0 is the brand colour: slices are sorted descending, so the largest
+// share is always the one wearing it.
 const PALETTE = [
+  "var(--brand)",
   "#6366f1",
   "#22c55e",
-  "#f59e0b",
   "#3b82f6",
   "#ec4899",
   "#14b8a6",
   "#a855f7",
-  "#f97316",
   "#84cc16",
   "#06b6d4",
+  "#eab308",
 ]
 
 interface DistributionPieChartProps {
@@ -48,6 +50,8 @@ interface DistributionPieChartProps {
   data: DistributionSlice[]
   isLoading?: boolean
   emptyLabel?: string
+  /** Renders without the Card wrapper, for embedding in a card that owns its own header. */
+  bare?: boolean
 }
 
 export function DistributionPieChart({
@@ -55,14 +59,13 @@ export function DistributionPieChart({
   data,
   isLoading,
   emptyLabel,
+  bare = false,
 }: DistributionPieChartProps) {
   const total = useMemo(() => data.reduce((sum, d) => sum + d.value, 0), [data])
+  const slices = useMemo(() => [...data].sort((a, b) => b.value - a.value), [data])
 
-  return (
-    <Card className="p-4">
-      <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
-        {title}
-      </h3>
+  const body = (
+    <>
       {isLoading ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="text-muted-foreground h-5 w-5 animate-spin" />
@@ -76,7 +79,7 @@ export function DistributionPieChart({
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
-                data={data}
+                data={slices}
                 dataKey="value"
                 nameKey="name"
                 cx="50%"
@@ -85,7 +88,7 @@ export function DistributionPieChart({
                 outerRadius={85}
                 paddingAngle={1}
               >
-                {data.map((entry, i) => (
+                {slices.map((entry, i) => (
                   <Cell key={entry.name} fill={PALETTE[i % PALETTE.length]} />
                 ))}
               </Pie>
@@ -104,6 +107,17 @@ export function DistributionPieChart({
           </ResponsiveContainer>
         </div>
       )}
+    </>
+  )
+
+  if (bare) return body
+
+  return (
+    <Card className="p-4">
+      <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
+        {title}
+      </h3>
+      {body}
     </Card>
   )
 }

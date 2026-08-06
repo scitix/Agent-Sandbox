@@ -22,6 +22,7 @@ import { useAtomValue } from "jotai"
 import { LayoutDashboard, Box, RefreshCw, TrendingUp, Users, UserCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Card } from "@/components/ui/card"
 import {
   createDistributionQueryOptions,
   createDistributionAbsoluteQueryOptions,
@@ -34,11 +35,21 @@ import { TopUsersBarChart } from "@/components/prometheus/top-users-bar-chart"
 import { ClusterScopeSelect } from "@/components/cluster-scope-select"
 import { GrafanaTimePicker } from "@/components/prometheus/grafana-time-picker"
 import { LiveBadge } from "@/components/live-badge"
-import { useClusterScopeSearchParams } from "@/hooks/use-cluster-scope-search-params"
+import {
+  useClusterScopeSearchParams,
+  clusterQueryParam,
+  isAllClusters,
+} from "@/hooks/use-cluster-scope-search-params"
 import { useTimeRangeSearchParams } from "@/hooks/use-time-range-search-params"
 import { useScopedLiveCount } from "@/hooks/use-scoped-live-count"
 import { useRefreshCountdown } from "@/hooks/use-refresh-countdown"
-import { isActualAdminAtom, impersonationAtom, authAtom, clusterIDAtom } from "@/lib/atoms"
+import {
+  isActualAdminAtom,
+  impersonationAtom,
+  authAtom,
+  clusterIDAtom,
+  clustersAtom,
+} from "@/lib/atoms"
 import { getApiClient } from "@/lib/api/client"
 import { resolveTimeRange, type RefreshInterval } from "@/lib/types/prometheus"
 import { replicasOverviewQueryOptions } from "@/lib/queries/prometheus"
@@ -96,17 +107,22 @@ export default function OverviewPage() {
   const boundClusterID = useAtomValue(clusterIDAtom)
   const isActualAdmin = useAtomValue(isActualAdminAtom)
   const impersonation = useAtomValue(impersonationAtom)
-  const isApiKey = auth?.authMethod === "apikey"
+  const clusters = useAtomValue(clustersAtom).clusters
 
-  // Cluster scope selector (shared header control) — apikey sessions are locked
-  // to their bound cluster regardless of the URL searchParam value.
+  // Cluster scope selector (shared header control). An API key authenticates
+  // against every cluster, so no session type is pinned to a single one.
   const [scope, setScope] = useClusterScopeSearchParams()
-  const effectiveClusterScope = isApiKey ? boundClusterID : scope
-  // The "personal usage" section always needs one concrete cluster (Prometheus
-  // per-cluster filters, K8s fallback stats) — default to the bound/login
-  // cluster when the scope selector is set to "all clusters".
-  const personalClusterID =
-    effectiveClusterScope === "all" ? boundClusterID : effectiveClusterScope
+  const availableClusterIDs = useMemo(() => clusters.map((c) => c.id), [clusters])
+  // The BFF's `cluster` param: one ID, a comma list, or "all". Metric queries
+  // turn it into a single PromQL matcher, so a multi-cluster scope is free.
+  const clusterParam = useMemo(
+    () => clusterQueryParam(scope, availableClusterIDs),
+    [scope, availableClusterIDs],
+  )
+  // The K8s fallback stats still need one concrete cluster to call.
+  const fallbackClusterID = isAllClusters(scope)
+    ? (availableClusterIDs[0] ?? boundClusterID)
+    : (scope[0] ?? boundClusterID)
 
   const liveCount = useScopedLiveCount(scope)
 
@@ -130,27 +146,24 @@ export default function OverviewPage() {
   const effectiveRefetch = refreshInterval > 0 ? refreshInterval : undefined
 
   // ─── Personal usage: probe + fallback stats (unchanged from the old page) ────
-  const prometheusFilters = useMemo(
-    () => ({ cluster: personalClusterID }),
-    [personalClusterID],
-  )
+  const prometheusFilters = useMemo(() => ({ cluster: clusterParam }), [clusterParam])
   const { data: promOverview } = useQuery(replicasOverviewQueryOptions(prometheusFilters))
   const promResolved = promOverview !== undefined
   const prometheusConfigured = promOverview?.configured === true
 
   const statsOptions = useMemo(
-    () => getApiClient(personalClusterID).queryOptions("get", "/statistics/sandboxes", undefined),
-    [personalClusterID],
+    () => getApiClient(fallbackClusterID).queryOptions("get", "/statistics/sandboxes", undefined),
+    [fallbackClusterID],
   )
   const sandboxOptions = useMemo(
     () =>
-      getApiClient(personalClusterID).queryOptions(
+      getApiClient(fallbackClusterID).queryOptions(
         "get",
         "/sandboxes",
         { params: { query: { limit: 10, offset: 0 } } },
         { select: (data: { items: { sandboxId: string; poolName: string; status: string; claimedAt?: string }[] }) => data.items ?? [] },
       ),
-    [personalClusterID],
+    [fallbackClusterID],
   )
 
   const { data: statsData, isFetching: statsFetching } = useQuery(statsOptions)
@@ -174,13 +187,13 @@ export default function OverviewPage() {
   const distributionOpts = useMemo(
     () =>
       (isAbsolute
-        ? createDistributionAbsoluteQueryOptions(effectiveClusterScope, start, end, {
+        ? createDistributionAbsoluteQueryOptions(clusterParam, start, end, {
             refetchInterval: effectiveRefetch,
           })
-        : createDistributionQueryOptions(effectiveClusterScope, resolvedPreset, {
+        : createDistributionQueryOptions(clusterParam, resolvedPreset, {
             refetchInterval: effectiveRefetch,
           })) as ReturnType<typeof createDistributionAbsoluteQueryOptions>,
-    [isAbsolute, effectiveClusterScope, start, end, resolvedPreset, effectiveRefetch],
+    [isAbsolute, clusterParam, start, end, resolvedPreset, effectiveRefetch],
   )
   const {
     data: distributionData,
@@ -217,23 +230,26 @@ export default function OverviewPage() {
   const handleRefreshOverall = () => {
     void qc.invalidateQueries({ queryKey: distributionOpts.queryKey })
     void qc.invalidateQueries({ queryKey: platformUsersOpts.queryKey })
+    // The metrics section has no picker of its own; the page refresh owns it.
+    void qc.invalidateQueries({ queryKey: ["prometheus"] })
   }
 
   return (
-    <div className="overflow-y-auto">
-      {/* Page header: title + cluster scope + time range + live badge */}
-      <div className="border-border flex flex-wrap items-center gap-3 border-b px-6 py-3">
-        <span className="text-foreground flex items-center gap-1.5 font-mono text-sm font-semibold tracking-wide uppercase">
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      {/* Page header. Fixed h-13 so the title line sits exactly where
+          <PageHeader> puts it on cluster-scoped pages — the sidebar header
+          aligns to that same baseline. */}
+      <div className="border-border flex h-13 shrink-0 items-center gap-3 border-b px-6">
+        <span className="text-foreground flex shrink-0 items-center gap-1.5 font-mono text-sm font-semibold tracking-wide uppercase">
           <LayoutDashboard className="h-4 w-4" />
           {t("overview.title")}
         </span>
         {scopeLabel && (
-          <span className="text-muted-foreground font-mono text-xs">
+          <span className="text-muted-foreground truncate font-mono text-xs">
             {t("overview.viewingAs", { user: scopeLabel })}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-3">
-          <ClusterScopeSelect value={scope} onValueChange={setScope} />
+        <div className="ml-auto flex shrink-0 items-center gap-3">
           <GrafanaTimePicker
             value={timeRange}
             onValueChange={setTimeRange}
@@ -243,11 +259,12 @@ export default function OverviewPage() {
             countdown={overallCountdown}
             isFetching={overallIsFetching}
           />
+          <ClusterScopeSelect value={scope} onValueChange={setScope} />
           <LiveBadge count={liveCount.count} />
         </div>
       </div>
 
-      <div className="flex flex-col gap-10 p-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-10 overflow-y-auto p-6">
         {/* ── Personal usage — unchanged cards/table, only the section title moved ── */}
         <div className="flex flex-col gap-8">
           {showFallback && (
@@ -367,7 +384,8 @@ export default function OverviewPage() {
               )}
 
               <PrometheusSection
-                clusterID={personalClusterID}
+                clusters={clusterParam}
+                refreshInterval={refreshInterval}
                 scopeToCurrentUser
                 title="overview.personalUsage"
               />
@@ -414,18 +432,21 @@ export default function OverviewPage() {
               />
             </div>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div>
-                <Tabs
-                  value={distTab}
-                  onValueChange={(v) => setDistTab(v as "byUser" | "byTeam")}
-                >
-                  <TabsList variant="line" className="mb-2">
+            {/* Three peers of the same rank, so they share one grid and sit
+                side by side once there is room for all three. */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              {/* The tabs live inside the card: as a sibling above it they
+                  stole height from this column and left it short of the
+                  neighbouring cards. */}
+              <Card className="p-4">
+                <Tabs value={distTab} onValueChange={(v) => setDistTab(v as "byUser" | "byTeam")}>
+                  <TabsList className="mb-2">
                     <TabsTrigger value="byUser">{t("overview.byUser")}</TabsTrigger>
                     <TabsTrigger value="byTeam">{t("overview.byTeam")}</TabsTrigger>
                   </TabsList>
                   <TabsContent value="byUser">
                     <DistributionPieChart
+                      bare
                       title={t("overview.byUser")}
                       data={byUserSlices}
                       isLoading={!distResolved}
@@ -434,6 +455,7 @@ export default function OverviewPage() {
                   </TabsContent>
                   <TabsContent value="byTeam">
                     <DistributionPieChart
+                      bare
                       title={t("overview.byTeam")}
                       data={byTeamSlices}
                       isLoading={!distResolved}
@@ -441,7 +463,7 @@ export default function OverviewPage() {
                     />
                   </TabsContent>
                 </Tabs>
-              </div>
+              </Card>
 
               <TopUsersBarChart
                 title={t("overview.topUsers")}
@@ -450,16 +472,14 @@ export default function OverviewPage() {
                 emptyLabel={t("overview.noData")}
                 otherLabel={t("overview.otherUsers")}
               />
-            </div>
 
-            {!isApiKey && scope === "all" && (
               <DistributionPieChart
                 title={t("overview.byCluster")}
                 data={byClusterSlices}
                 isLoading={!distResolved}
                 emptyLabel={t("overview.noData")}
               />
-            )}
+            </div>
           </div>
         )}
       </div>

@@ -31,7 +31,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server"
-import { getClusterConfig } from "@/lib/cluster-config"
+import { getClusterConfig, listClusters } from "@/lib/cluster-config"
 import type { AuthJWTPayload } from "@/lib/auth"
 import type {
   PrometheusRawResponse,
@@ -80,18 +80,43 @@ export const AGENTBOX_NAMESPACE = process.env.AGENTBOX_NAMESPACE || "agentbox-sy
 // ─── PromQL building ───────────────────────────────────────────────────────
 
 /**
- * Build the PromQL cluster matcher expression.
+ * The `cluster` label value a cluster's metrics carry.
  *
- * - If the cluster config has a `selector` field, return it verbatim. This lets
- *   operators write any full label-matcher expression, e.g.
- *     `cluster="cluster1"` or `cluster="cluster1",region="region1"`.
- * - Otherwise fall back to `cluster="<id>"` so deployments that haven't set a
- *   selector yet keep working.
+ * Read out of the configured selector when that selector pins the `cluster`
+ * label, so an operator-written `cluster="prod-bar",region="us-east"` still
+ * resolves to `prod-bar`. Only the cluster label survives: scoping metrics
+ * by cluster alone is what makes a multi-cluster selection expressible as a
+ * single regex matcher, and cluster values are unique per deployment. Configs
+ * with no selector fall back to the cluster ID.
  */
-export function buildClusterMatcher(clusterID: string): string {
+function clusterLabelValue(clusterID: string): string {
   const sel = getClusterConfig(clusterID)?.selector?.trim()
-  if (sel) return sel
-  return `cluster="${clusterID}"`
+  return sel?.match(/\bcluster\s*=\s*"([^"]*)"/)?.[1] ?? clusterID
+}
+
+const REGEX_META = /[\\^$.|?*+()[\]{}]/g
+
+/**
+ * Build the PromQL cluster matcher for a cluster scope.
+ *
+ * `spec` is a single cluster ID, a comma-separated list of them, or "all".
+ * "all" expands to every configured cluster rather than dropping the label
+ * entirely, so a cluster that reports into the same Prometheus but is not part
+ * of this deployment never leaks into the totals.
+ */
+export function buildClusterMatcher(spec: string): string {
+  const ids =
+    spec === "all"
+      ? listClusters().map((c) => c.id)
+      : spec
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+
+  const values = [...new Set(ids.map(clusterLabelValue))]
+  if (values.length === 0) return `cluster="${spec}"`
+  if (values.length === 1) return `cluster="${values[0]}"`
+  return `cluster=~"${values.map((v) => v.replace(REGEX_META, "\\$&")).join("|")}"`
 }
 
 /**

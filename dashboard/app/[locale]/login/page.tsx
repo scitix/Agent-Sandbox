@@ -29,7 +29,6 @@ import { Eye, EyeOff, Loader2, KeyRound, Building2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Field, FieldLabel, FieldError } from "@/components/ui/field"
-import { ClusterCombobox } from "@/components/cluster-combobox"
 import { useLogin, useMockLogin, oidcConfigQueryOptions } from "@/lib/queries"
 import { useQuery } from "@tanstack/react-query"
 import AgentBoxIcon from "@/components/icons/agentbox-icon"
@@ -90,11 +89,10 @@ function LoginForm() {
   const { data: oidcConfigData } = useQuery(oidcConfigQueryOptions())
   const oidcEnabled = oidcConfigData?.enabled ?? false
 
-  const multiCluster = clustersData.multiCluster
   const clusters = useMemo(() => clustersData.clusters, [clustersData.clusters])
 
   // Type-safe URL query state via nuqs (single source of truth)
-  const [clusterParam, setClusterParam] = useQueryState(
+  const [clusterParam] = useQueryState(
     "cluster",
     parseAsString.withOptions({ scroll: false, shallow: false }),
   )
@@ -128,7 +126,7 @@ function LoginForm() {
       router.push(redirectParam)
       return
     }
-    const clusterID = authState.clusterID ?? "default"
+    const clusterID = selectedClusterID || authState.clusterID || "default"
     if (authState.role === "admin") {
       router.push(clusterPath(clusterID, "sandboxes", locale))
     } else {
@@ -139,10 +137,10 @@ function LoginForm() {
   const onApiKeySubmit = async (data: ApiKeyLoginForm) => {
     setApiKeyError(null)
     try {
-      const authState = await triggerLogin({
-        apiKey: data.apiKey,
-        clusterID: multiCluster && selectedClusterID ? selectedClusterID : undefined,
-      })
+      // No clusterID: an API key authenticates against every cluster, so the
+      // BFF validates against whichever one it likes and the session spans all
+      // of them. A ?cluster= deep link still pins the post-login landing page.
+      const authState = await triggerLogin({ apiKey: data.apiKey })
       handleAuthSuccess(authState)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : t("login.invalidApiKey")
@@ -211,24 +209,6 @@ function LoginForm() {
               onSubmit={apiKeyForm.handleSubmit(onApiKeySubmit)}
               className="flex flex-col gap-4"
             >
-              {/* Cluster selector (multi-cluster mode only) */}
-              {multiCluster && clusters.length > 0 && (
-                <Field>
-                  <FieldLabel className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
-                    {t("login.cluster")}
-                  </FieldLabel>
-                  <ClusterCombobox
-                    clusters={clusters}
-                    value={selectedClusterID}
-                    onValueChange={(id) => {
-                      if (id) void setClusterParam(id)
-                    }}
-                    placeholder={t("login.selectCluster")}
-                    inputClassName="h-9 font-mono text-sm"
-                  />
-                </Field>
-              )}
-
               {/* API Key field */}
               <Field data-invalid={!!apiKeyForm.formState.errors.apiKey}>
                 <FieldLabel className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">

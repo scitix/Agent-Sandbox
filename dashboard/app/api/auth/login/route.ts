@@ -17,7 +17,7 @@
 import { NextResponse } from "next/server"
 import { request as undiciRequest } from "undici"
 import { signJWT } from "@/lib/auth"
-import { getClusterConfig } from "@/lib/cluster-config"
+import { getClusterConfig, listClusters } from "@/lib/cluster-config"
 
 export async function POST(request: Request) {
   let body: { apiKey?: string; clusterID?: string }
@@ -27,12 +27,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
   }
 
-  const { apiKey, clusterID } = body
+  const { apiKey } = body
   if (!apiKey || typeof apiKey !== "string") {
     return NextResponse.json({ error: "apiKey is required" }, { status: 400 })
   }
+
+  // An API key is not bound to a cluster: the signed JWT carries only the key,
+  // and the per-cluster proxy injects it wherever the URL points. The cluster
+  // here is just whichever backend validates the key and answers whoami, so
+  // callers may omit it and get the first configured one.
+  const clusterID = body.clusterID || listClusters()[0]?.id
   if (!clusterID) {
-    return NextResponse.json({ error: "clusterID is required" }, { status: 400 })
+    return NextResponse.json({ error: "No clusters configured" }, { status: 503 })
   }
 
   const cluster = getClusterConfig(clusterID)

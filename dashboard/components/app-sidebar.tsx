@@ -58,7 +58,7 @@ import { Button } from "@/components/ui/button"
 import { clearSessionData, isAdminAtom, isActualAdminAtom } from "@/lib/atoms"
 import { ImpersonationSelector } from "@/components/impersonation-selector"
 import AgentBoxIcon from "./icons/agentbox-icon"
-import { useClusterID } from "@/hooks/use-cluster-id"
+import { useNavClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { clusterPath, loginPath, type DashboardPage } from "@/lib/cluster-path"
 import { useTranslation } from "@/lib/i18n"
@@ -179,7 +179,7 @@ export function AppSidebar({}: AppSidebarProps) {
   const { state, toggleSidebar, isMobile } = useSidebar()
   const isCollapsed = state === "collapsed"
   const router = useRouter()
-  const clusterID = useClusterID()
+  const clusterID = useNavClusterID()
   const locale = useLocale()
   const { t } = useTranslation()
 

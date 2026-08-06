@@ -18,9 +18,9 @@
 
 import { useQueries } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
-import { authAtom, clusterIDAtom, clustersAtom } from "@/lib/atoms"
+import { clustersAtom } from "@/lib/atoms"
 import { getApiClient } from "@/lib/api/client"
-import type { ClusterScope } from "@/hooks/use-cluster-scope-search-params"
+import { resolveScopeClusterIDs, type ClusterScope } from "@/hooks/use-cluster-scope-search-params"
 
 export interface AdminSandboxStatsRow {
   clusterID: string
@@ -36,16 +36,12 @@ type StatsResponse = { statistics?: { total?: number; byStatus?: Record<string, 
  * Mirrors the `useQueries` fan-out pattern in `use-scoped-live-count.ts`.
  */
 export function useAdminSandboxStats(scope: ClusterScope) {
-  const auth = useAtomValue(authAtom)
-  const boundClusterID = useAtomValue(clusterIDAtom)
   const clustersData = useAtomValue(clustersAtom)
-  const isApiKey = auth?.authMethod === "apikey"
 
-  const targetClusterIDs = isApiKey
-    ? [boundClusterID]
-    : scope !== "all"
-      ? [scope]
-      : clustersData.clusters.map((c) => c.id)
+  const targetClusterIDs = resolveScopeClusterIDs(
+    scope,
+    clustersData.clusters.map((c) => c.id),
+  )
 
   const results = useQueries({
     queries: targetClusterIDs.map((clusterID) => ({
