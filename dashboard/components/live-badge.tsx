@@ -20,8 +20,14 @@ import { useAtomValue } from "jotai"
 import { concurrentSandboxesAtom } from "@/lib/atoms"
 import { useTranslation } from "@/lib/i18n"
 
-export function LiveBadge() {
-  const count = useAtomValue(concurrentSandboxesAtom)
+export interface LiveBadgeProps {
+  /** Overrides the login-bound-cluster atom, e.g. a cross-cluster scoped sum on /overview. */
+  count?: number
+}
+
+export function LiveBadge({ count: countOverride }: LiveBadgeProps = {}) {
+  const atomCount = useAtomValue(concurrentSandboxesAtom)
+  const count = countOverride ?? atomCount
   const { t } = useTranslation()
 
   return (

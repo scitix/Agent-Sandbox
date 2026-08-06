@@ -31,10 +31,10 @@ import type {
   StartRateData,
   PeakConcurrentData,
   TimeSeriesData,
-  UserSummaryData,
   SandboxCumulativeStatsData,
   SandboxUserStatsData,
   EnvoyBandwidthData,
+  CreateDistributionData,
   SandboxFilters,
   TimeRangePreset,
 } from "@/lib/types/prometheus"
@@ -518,32 +518,49 @@ export function usePodDiskIo(params: PodResourceParams, refetchInterval?: number
   return useQuery(podDiskIoQueryOptions(params, { enabled: true, refetchInterval }))
 }
 
-// ─── User summary ──────────────────────────────────────────────────────────
+// ─── Create distribution (platform-wide, not team-isolated) ───────────────
 
-export const userSummaryQueryOptions = (
-  filters: SandboxFilters,
+/**
+ * Platform-wide sandbox creation totals broken down by cluster/team/user.
+ * `clusterScope` is "all" or a specific clusterID (the cluster-scope selector on
+ * /overview and /admin) — shared by both pages, which differ only in which
+ * aggregate dimensions the UI renders.
+ */
+export const createDistributionQueryOptions = (
+  clusterScope: string,
+  preset: TimeRangePreset,
   options?: { refetchInterval?: number },
 ) =>
   queryOptions({
-    queryKey: ["prometheus", "user-summary", ...filterKey(filters)],
+    queryKey: ["prometheus", "create-distribution", clusterScope, preset],
     queryFn: () =>
-      prometheusGet<UserSummaryData>("user-summary", {
-        cluster: filters.cluster,
-        team: filters.team,
-        user: filters.user,
-        pool: filters.pool,
-        sandbox_env: filters.sandboxEnv,
+      prometheusGet<CreateDistributionData>("create-distribution", {
+        cluster: clusterScope,
+        preset,
       }),
     staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
     ...(options?.refetchInterval ? { refetchInterval: options.refetchInterval } : {}),
   })
 
-/** Running sandbox counts grouped by team / user. Auto-refetches at given interval (default: off). */
-export function useUserSummary(filters: SandboxFilters, refetchInterval?: number) {
-  return useQuery(
-    userSummaryQueryOptions(filters, { refetchInterval: refetchInterval || undefined }),
-  )
-}
+export const createDistributionAbsoluteQueryOptions = (
+  clusterScope: string,
+  start: number,
+  end: number,
+  options?: { refetchInterval?: number },
+) =>
+  queryOptions({
+    queryKey: ["prometheus", "create-distribution", clusterScope, start, end],
+    queryFn: () =>
+      prometheusGet<CreateDistributionData>("create-distribution", {
+        cluster: clusterScope,
+        start,
+        end,
+      }),
+    staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
+    ...(options?.refetchInterval ? { refetchInterval: options.refetchInterval } : {}),
+  })
 
 // ─── Sandbox create rate (all users) ──────────────────────────────────────
 

@@ -236,6 +236,7 @@ export function computeTimeRange(preset: TimeRangePreset): TimeRange {
     "2d": 172800,
     "7d": 604800,
     "30d": 2592000,
+    "90d": 7776000,
   }
   const duration = durations[preset] ?? durations["1h"]
   return { start: now - duration, end: now, step: deriveStep(duration) }

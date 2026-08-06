@@ -23,13 +23,13 @@
  *
  * Props:
  *   clusterID        — cluster label for Prometheus queries
- *   showAdminControls — admin page: show Team/User filter Comboboxes + user summary tables
+ *   showAdminControls — admin page: show the HTTP & Sandbox Activity charts
  */
 
 import { useState, useMemo, useCallback } from "react"
 import { useTranslation } from "@/lib/i18n"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useAtom, useAtomValue } from "jotai"
+import { useAtomValue } from "jotai"
 import {
   Activity,
   TrendingUp,
@@ -37,27 +37,16 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Users,
   Server,
-  ArrowUpRight,
 } from "lucide-react"
-import { impersonationAtom, authAtom, isActualAdminAtom } from "@/lib/atoms"
+import { authAtom, impersonationAtom, isActualAdminAtom } from "@/lib/atoms"
 import { GrafanaTimePicker } from "@/components/prometheus/grafana-time-picker"
 import { MetricsChart } from "@/components/prometheus/metrics-chart"
 import { C } from "./colors"
 import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox"
-import {
   useReplicasOverview,
   useStartRate,
   usePeakConcurrent,
-  useUserSummary,
   sandboxUserStatsQueryOptions,
   sandboxUserStatsAbsoluteQueryOptions,
   replicasTrendQueryOptions,
@@ -81,11 +70,12 @@ import {
   scheduleDispatchLatencyQueryOptions,
   scheduleDispatchLatencyAbsoluteQueryOptions,
 } from "@/lib/queries"
-import { adminTeamsQueryOptions, adminUsersByTeamQueryOptions } from "@/lib/queries"
 import { formatRate, formatDuration } from "@/lib/prometheus/transform"
 import type { SandboxFilters } from "@/lib/types/prometheus"
-import { type TimeRangeValue, type RefreshInterval, resolveTimeRange } from "@/lib/types/prometheus"
+import { type RefreshInterval, resolveTimeRange } from "@/lib/types/prometheus"
+import type { TranslationKey } from "@/lib/i18n"
 import { useRefreshCountdown } from "@/hooks/use-refresh-countdown"
+import { useTimeRangeSearchParams } from "@/hooks/use-time-range-search-params"
 import { StatCard } from "./stat-card"
 import { AdminMetricsSection } from "./prometheus-admin-section"
 
@@ -95,7 +85,7 @@ import { AdminMetricsSection } from "./prometheus-admin-section"
 
 export interface PrometheusSectionProps {
   clusterID: string
-  /** When true, show Team/User filter Comboboxes and user summary tables (admin page only) */
+  /** When true, show admin-only HTTP & Sandbox Activity charts (admin page only) */
   showAdminControls?: boolean
   /**
    * When true (overview page), scope Prometheus queries to the current user.
@@ -104,6 +94,8 @@ export interface PrometheusSectionProps {
    * - Tenant: JWT team/user are always enforced server-side, this flag is a no-op.
    */
   scopeToCurrentUser?: boolean
+  /** Section header title override. Defaults to prometheus.sandboxMetrics. */
+  title?: TranslationKey
 }
 
 // ─── PrometheusSection ─────────────────────────────────────────────────────────
@@ -112,10 +104,10 @@ export function PrometheusSection({
   clusterID,
   showAdminControls = false,
   scopeToCurrentUser = false,
+  title = "prometheus.sandboxMetrics",
 }: PrometheusSectionProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [, setImpersonation] = useAtom(impersonationAtom)
   const auth = useAtomValue(authAtom)
   const isActualAdmin = useAtomValue(isActualAdminAtom)
   const impersonation = useAtomValue(impersonationAtom)
@@ -138,29 +130,17 @@ export function PrometheusSection({
     return undefined
   }, [scopeToCurrentUser, impersonation, isActualAdmin, auth])
 
-  const [timeRange, setTimeRange] = useState<TimeRangeValue>({ type: "preset", preset: "1h" })
+  const [timeRange, setTimeRange] = useTimeRangeSearchParams()
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(0)
-  const [filterTeam, setFilterTeam] = useState<string | null>(null)
-  const [filterUser, setFilterUser] = useState<string | null>(null)
-
-  // Admin filter data (only fetched when showAdminControls)
-  const { data: teams } = useQuery({
-    ...adminTeamsQueryOptions(),
-    enabled: showAdminControls,
-  })
-  const { data: users } = useQuery({
-    ...adminUsersByTeamQueryOptions(filterTeam ?? undefined),
-    enabled: showAdminControls && !!filterTeam,
-  })
 
   const filters: SandboxFilters = useMemo(
     () => ({
       cluster: clusterID,
-      // scopeToCurrentUser: pin to effective user; otherwise use the admin filter dropdowns
-      team: scopeToCurrentUser ? effectiveScopeTeam : (filterTeam ?? undefined),
-      user: scopeToCurrentUser ? effectiveScopeUser : (filterUser ?? undefined),
+      // scopeToCurrentUser: pin to the effective user; otherwise show unfiltered aggregate data
+      team: scopeToCurrentUser ? effectiveScopeTeam : undefined,
+      user: scopeToCurrentUser ? effectiveScopeUser : undefined,
     }),
-    [clusterID, scopeToCurrentUser, effectiveScopeTeam, effectiveScopeUser, filterTeam, filterUser],
+    [clusterID, scopeToCurrentUser, effectiveScopeTeam, effectiveScopeUser],
   )
 
   // Resolve concrete start/end/step for the current time range
@@ -385,10 +365,6 @@ export function PrometheusSection({
     isLoading: userStatsLoading,
     isFetching: userStatsFetching,
   } = useQuery(userStatsOpts)
-  const { data: userSummaryData, isFetching: userSummaryFetching } = useUserSummary(
-    filters,
-    effectiveRefetch,
-  )
 
   const isAnyFetching =
     overviewFetching ||
@@ -405,21 +381,12 @@ export function PrometheusSection({
     scheduleSuccessRateFetching ||
     recycleSuccessRateFetching ||
     scheduleDispatchLatencyFetching ||
-    userStatsFetching ||
-    userSummaryFetching
+    userStatsFetching
 
   // Manual refresh: invalidate all prometheus queries
   const handleRefresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["prometheus"] })
   }, [queryClient])
-
-  const handleImpersonate = useCallback(
-    (team: string, user: string) => {
-      setImpersonation({ team, user })
-      void queryClient.invalidateQueries()
-    },
-    [setImpersonation, queryClient],
-  )
 
   // Countdown timer
   const countdown = useRefreshCountdown(
@@ -434,69 +401,16 @@ export function PrometheusSection({
 
   // For the shared Start Rate card, show only the successful create rate
   const startRate = startRateData?.data?.success ?? null
-  const byUser = userSummaryData?.data?.byUser ?? []
   const userStats = userStatsData?.data
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Section header with optional admin filters + time range picker */}
+      {/* Section header with time range picker */}
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-muted-foreground flex items-center gap-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
           <Activity className="h-3.5 w-3.5" />
-          {t("prometheus.sandboxMetrics")}
+          {t(title)}
         </h2>
-
-        {showAdminControls && (
-          <div className="ml-2 flex items-center gap-2">
-            {/* Team filter */}
-            <Combobox
-              value={filterTeam}
-              onValueChange={(val) => {
-                setFilterTeam(val)
-                setFilterUser(null) // reset user when team changes
-              }}
-              items={teams ?? []}
-            >
-              <ComboboxInput
-                placeholder={t("prometheus.allTeams")}
-                className="h-8 w-45 font-mono text-xs"
-                showClear
-              />
-              <ComboboxContent>
-                <ComboboxEmpty>{t("prometheus.noTeams")}</ComboboxEmpty>
-                <ComboboxList>
-                  {(team) => (
-                    <ComboboxItem key={team} value={team}>
-                      {team}
-                    </ComboboxItem>
-                  )}
-                </ComboboxList>
-              </ComboboxContent>
-            </Combobox>
-
-            {/* User filter (only active when team is selected) */}
-            <Combobox value={filterUser} onValueChange={setFilterUser} items={users ?? []}>
-              <ComboboxInput
-                placeholder={
-                  filterTeam ? t("prometheus.allUsers") : t("prometheus.selectTeamFirst")
-                }
-                className="h-8 w-45 font-mono text-xs"
-                disabled={!filterTeam}
-                showClear
-              />
-              <ComboboxContent>
-                <ComboboxEmpty>{t("prometheus.noUsers")}</ComboboxEmpty>
-                <ComboboxList>
-                  {(user) => (
-                    <ComboboxItem key={user} value={user}>
-                      {user}
-                    </ComboboxItem>
-                  )}
-                </ComboboxList>
-              </ComboboxContent>
-            </Combobox>
-          </div>
-        )}
 
         <div className="ml-auto">
           <GrafanaTimePicker
@@ -783,90 +697,6 @@ export function PrometheusSection({
           onTimeRangeSelect={setTimeRange}
         />
       </div>
-
-      {/* User Summary Table (admin only) */}
-      {showAdminControls && byUser.length > 0 && (
-        <div>
-          <h2 className="text-muted-foreground mb-3 flex items-center gap-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
-            <Users className="h-3.5 w-3.5" />
-            {t("prometheus.sandboxReplicasByUser")}
-          </h2>
-          <div className="border-border overflow-hidden rounded-xl border">
-            <table className="w-full">
-              <thead>
-                <tr className="border-border bg-secondary border-b">
-                  <th className="text-muted-foreground px-4 py-2 text-left font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.team")}
-                  </th>
-                  <th className="text-muted-foreground px-4 py-2 text-left font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.user")}
-                  </th>
-                  <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.desired")}
-                  </th>
-                  <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.starting")}
-                  </th>
-                  <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.running")}
-                  </th>
-                  <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.stopping")}
-                  </th>
-                  <th className="text-muted-foreground px-4 py-2 text-right font-mono text-xs font-bold tracking-wider uppercase">
-                    {t("prometheus.failed")}
-                  </th>
-                  <th className="w-10 px-2 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {byUser.map((row, i) => (
-                  <tr
-                    key={`${row.team}-${row.user ?? i}`}
-                    className="border-border hover:bg-secondary/50 border-b last:border-0"
-                  >
-                    <td className="text-muted-foreground px-4 py-2.5 font-mono text-sm">
-                      {row.team}
-                    </td>
-                    <td className="text-foreground px-4 py-2.5 font-mono text-sm">
-                      {row.user ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-sm text-indigo-600 dark:text-indigo-400">
-                      {row.desired}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-sm text-yellow-600 dark:text-yellow-400">
-                      {row.starting}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-sm font-semibold text-green-600 dark:text-green-400">
-                      {row.running}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-sm text-orange-600 dark:text-orange-400">
-                      {row.stopping}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-sm text-red-600 dark:text-red-400">
-                      {row.failed}
-                    </td>
-                    <td className="px-2 py-2.5 text-center">
-                      {row.user && row.team && (
-                        <button
-                          onClick={() => handleImpersonate(row.team, row.user!)}
-                          className="text-muted-foreground hover:text-foreground rounded p-0.5 transition-colors"
-                          title={t("prometheus.impersonateUser", {
-                            team: row.team,
-                            user: row.user,
-                          })}
-                        >
-                          <ArrowUpRight className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* Admin-only: HTTP & Sandbox Activity charts */}
       {showAdminControls && (

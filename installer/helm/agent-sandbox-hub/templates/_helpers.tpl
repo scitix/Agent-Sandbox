@@ -55,6 +55,16 @@ and writes it via the AGENTBOX_IMAGES_CATALOG_CONFIGMAP env var.
 {{- end }}
 
 {{/*
+Name of the notification ConfigMap. The chart does not render the object —
+ws-proxy owns it entirely, bootstrapping it on first run and rewriting it on
+every config change and every send, so a chart-managed copy would clobber
+runtime state on upgrade.
+*/}}
+{{- define "agent-sandbox-hub.notificationConfigMapName" -}}
+{{- printf "%s-notifications" (include "agent-sandbox-hub.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Selector labels for the ws-proxy Deployment / Service.
 */}}
 {{- define "agent-sandbox-hub.proxySelectorLabels" -}}

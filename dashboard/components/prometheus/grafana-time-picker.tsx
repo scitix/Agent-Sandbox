@@ -69,6 +69,7 @@ const PRESET_LABEL_KEYS: Record<TimeRangePreset, TranslationKey> = {
   "2d": "prometheus.preset.2d",
   "7d": "prometheus.preset.7d",
   "30d": "prometheus.preset.30d",
+  "90d": "prometheus.preset.90d",
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────

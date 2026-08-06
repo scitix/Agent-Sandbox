@@ -44,8 +44,20 @@ function localePrefix(locale?: Locale): string {
   return `/${locale}`
 }
 
-/** Returns /{locale}/clusters/{clusterID}/{page} (locale omitted for "en") */
+/**
+ * Pages that live at a top-level, cluster-agnostic route (`/overview`,
+ * `/admin`) instead of under `/clusters/{clusterID}/`. They carry their own
+ * in-page cluster-scope selector (`useClusterScopeSearchParams`) rather than
+ * taking the cluster from the route segment.
+ */
+const STANDALONE_PAGES: ReadonlySet<DashboardPage> = new Set(["overview", "admin"])
+
+/**
+ * Returns /{locale}/clusters/{clusterID}/{page} (locale omitted for "en"), or
+ * /{locale}/{page} for standalone pages (see STANDALONE_PAGES).
+ */
 export function clusterPath(clusterID: string, page: DashboardPage, locale?: Locale): string {
+  if (STANDALONE_PAGES.has(page)) return `${localePrefix(locale)}/${page}`
   return `${localePrefix(locale)}/clusters/${clusterID}/${page}`
 }
 

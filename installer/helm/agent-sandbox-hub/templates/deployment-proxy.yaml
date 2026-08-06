@@ -32,6 +32,28 @@ spec:
           {{- if or .Values.globalApiKey.enabled .Values.managedAgent.enabled }}
           env:
           {{- end }}
+          {{- if .Values.globalApiKey.enabled }}
+          {{- if and .Values.prometheus.url .Values.prometheus.token }}
+            # The notification service queries these directly; it does not go
+            # through the dashboard BFF.
+            - name: PROMETHEUS_URL
+              value: {{ .Values.prometheus.url | quote }}
+            - name: PROMETHEUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: PROMETHEUS_TOKEN
+          {{- end }}
+            - name: AGENTBOX_NOTIFICATION_CONFIGMAP
+              value: {{ include "agent-sandbox-hub.notificationConfigMapName" . | quote }}
+          {{- if .Values.notification.feishu.webhookUrl }}
+            - name: FEISHU_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-hub.fullname" . }}-secret
+                  key: FEISHU_WEBHOOK_URL
+          {{- end }}
+          {{- end }}
           {{- if .Values.managedAgent.enabled }}
             - name: AGENTBOX_MANAGED_AGENT_ENABLED
               value: "1"

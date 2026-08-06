@@ -146,6 +146,15 @@ logs:
   appId: ""
   token: ""
 
+# Platform notifications sent by ws-proxy: the daily usage report and the
+# idle alert. Requires globalApiKey.enabled (the notification service runs in
+# the same sync-manager scope) plus prometheus.url/token as its data source.
+# The webhook is given here in plaintext and the chart moves it into the
+# release Secret; leaving it empty disables sending.
+notification:
+  feishu:
+    webhookUrl: ""
+
 # Global API Key management via ws-proxy.
 # When enabled:
 #   - ws-proxy gains a Kubernetes ServiceAccount with Secret CRUD in the chart's release namespace.
