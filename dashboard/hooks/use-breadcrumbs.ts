@@ -64,6 +64,15 @@ export function useBreadcrumbs(): Crumb[] {
   const locale = useLocale()
   const { t } = useTranslation()
 
+  // Standalone, cluster-agnostic pages (/overview, /admin) have no [clusterID]
+  // route segment and no sub-routes — a single, non-linking crumb.
+  const standaloneMatch = pathname.match(/^(?:\/[a-z]{2}(?:-[A-Za-z]{2,8})?)?\/(overview|admin)\/?$/)
+  if (standaloneMatch) {
+    const page = standaloneMatch[1]
+    const labelKey = SEGMENT_LABEL_KEY[page]
+    return [{ label: labelKey ? t(labelKey) : page, isCurrent: true }]
+  }
+
   // Strip the optional [locale] prefix and the /clusters/{id} prefix, then keep
   // whatever follows. Mirrors the matcher shape in lib/cluster-path.ts.
   const match = pathname.match(/^(?:\/[a-z]{2}(?:-[A-Za-z]{2,8})?)?\/clusters\/[^/]+\/(.*)$/)

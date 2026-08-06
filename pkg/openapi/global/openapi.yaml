@@ -78,6 +78,120 @@ components:
           type: string
           description: "Import mode: original team."
 
+    # ── Platform Users schemas ───────────────────────────────────────────────
+    PlatformUsersCount:
+      type: object
+      required: [totalUsers, generatedAt]
+      properties:
+        totalUsers:
+          type: integer
+          description: "Deduplicated (team, user) pair count across every API key, including expired keys."
+        generatedAt:
+          type: string
+          format: date-time
+
+    AdminUsersSummaryTeam:
+      type: object
+      required: [team, users]
+      properties:
+        team:
+          type: string
+        users:
+          type: integer
+          description: "Deduplicated user count within this team."
+
+    AdminUsersSummary:
+      type: object
+      required: [totalUsers, byTeam, generatedAt]
+      properties:
+        totalUsers:
+          type: integer
+        byTeam:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUsersSummaryTeam'
+        generatedAt:
+          type: string
+          format: date-time
+
+    # ── Notification schemas ─────────────────────────────────────────────────
+    DailyReportConfig:
+      type: object
+      required: [enabled, sendHourCST]
+      properties:
+        enabled:
+          type: boolean
+        sendHourCST:
+          type: integer
+          description: "Hour of day (0-23) in Asia/Shanghai the daily report is sent."
+
+    IdleAlertConfig:
+      type: object
+      required: [enabled, watchedClusters, idleThresholdMinutes, armed]
+      properties:
+        enabled:
+          type: boolean
+        watchedClusters:
+          type: array
+          items:
+            type: string
+          description: "Cluster IDs monitored for the idle condition. Alert fires only when ALL of them are simultaneously idle."
+        idleThresholdMinutes:
+          type: integer
+          description: "Minutes of zero sandbox-create activity (any result) required to consider a cluster idle."
+        armed:
+          type: boolean
+          description: "Whether idle detection is currently active. Auto-disarmed after firing once."
+        armedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    NotificationConfig:
+      type: object
+      required: [dailyReport, idleAlert]
+      properties:
+        dailyReport:
+          $ref: '#/components/schemas/DailyReportConfig'
+        idleAlert:
+          $ref: '#/components/schemas/IdleAlertConfig'
+
+    NotificationHistoryEntry:
+      type: object
+      required: [time, type, result]
+      properties:
+        time:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [dailyReport, idleAlert]
+        result:
+          type: string
+          enum: [success, failure]
+        detail:
+          type: string
+          description: "Failure reason, or a short human-readable summary on success."
+
+    NotificationHistory:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationHistoryEntry'
+
+    DailyReportTriggerResult:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+          enum: [success, failure]
+        detail:
+          type: string
+
     # ── Images Catalog schemas ───────────────────────────────────────────────
     ImageDataset:
       type: object
@@ -473,6 +587,294 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Platform Users endpoints ─────────────────────────────────────────────────
+
+  /v1/platform/users/count:
+    get:
+      operationId: PlatformUsersCount
+      summary: Get the deduplicated platform-wide user count
+      description: |
+        Returns a single deduplicated (team, user) count across every API key,
+        platform-wide with no team isolation. Available to any authenticated
+        caller — this is aggregate, desensitized data (a count), not key detail.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [platform-users]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformUsersCount'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/admin/users/summary:
+    get:
+      operationId: AdminUsersSummary
+      summary: Get platform user summary with per-team breakdown (admin)
+      description: |
+        Returns the deduplicated (team, user) user count platform-wide plus a
+        per-team breakdown. Requires admin role — this backs the Key management
+        detail view, distinct from the lightweight PlatformUsersCount endpoint.
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [platform-users]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUsersSummary'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Notification endpoints ───────────────────────────────────────────────────
+
+  /v1/admin/notifications/config:
+    get:
+      operationId: AdminGetNotificationConfig
+      summary: Get daily-report and idle-alert notification config (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [notifications]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationConfig'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: AdminUpdateNotificationConfig
+      summary: Update daily-report and idle-alert notification config (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationConfig'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationConfig'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/admin/notifications/daily-report/trigger:
+    post:
+      operationId: AdminTriggerDailyReport
+      summary: Manually trigger the daily report immediately (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [notifications]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyReportTriggerResult'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/admin/notifications/idle-alert/arm:
+    post:
+      operationId: AdminArmIdleAlert
+      summary: Arm idle detection, resetting the per-cluster idle timers (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [notifications]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdleAlertConfig'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/admin/notifications/idle-alert/disarm:
+    post:
+      operationId: AdminDisarmIdleAlert
+      summary: Disarm idle detection (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [notifications]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdleAlertConfig'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/admin/notifications/history:
+    get:
+      operationId: AdminGetNotificationHistory
+      summary: Get the recent notification send history (admin)
+      security:
+        - BearerAuth: []
+        - ManagerTokenAuth: []
+      tags: [notifications]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationHistory'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
           content:
             application/json:
               schema:

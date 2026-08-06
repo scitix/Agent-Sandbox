@@ -22,6 +22,75 @@ const (
 	ManagerTokenAuthScopes = "ManagerTokenAuth.Scopes"
 )
 
+// Defines values for DailyReportTriggerResultResult.
+const (
+	DailyReportTriggerResultResultFailure DailyReportTriggerResultResult = "failure"
+	DailyReportTriggerResultResultSuccess DailyReportTriggerResultResult = "success"
+)
+
+// Valid indicates whether the value is a known member of the DailyReportTriggerResultResult enum.
+func (e DailyReportTriggerResultResult) Valid() bool {
+	switch e {
+	case DailyReportTriggerResultResultFailure:
+		return true
+	case DailyReportTriggerResultResultSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationHistoryEntryResult.
+const (
+	NotificationHistoryEntryResultFailure NotificationHistoryEntryResult = "failure"
+	NotificationHistoryEntryResultSuccess NotificationHistoryEntryResult = "success"
+)
+
+// Valid indicates whether the value is a known member of the NotificationHistoryEntryResult enum.
+func (e NotificationHistoryEntryResult) Valid() bool {
+	switch e {
+	case NotificationHistoryEntryResultFailure:
+		return true
+	case NotificationHistoryEntryResultSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationHistoryEntryType.
+const (
+	DailyReport NotificationHistoryEntryType = "dailyReport"
+	IdleAlert   NotificationHistoryEntryType = "idleAlert"
+)
+
+// Valid indicates whether the value is a known member of the NotificationHistoryEntryType enum.
+func (e NotificationHistoryEntryType) Valid() bool {
+	switch e {
+	case DailyReport:
+		return true
+	case IdleAlert:
+		return true
+	default:
+		return false
+	}
+}
+
+// AdminUsersSummary defines model for AdminUsersSummary.
+type AdminUsersSummary struct {
+	ByTeam      []AdminUsersSummaryTeam `json:"byTeam"`
+	GeneratedAt time.Time               `json:"generatedAt"`
+	TotalUsers  int                     `json:"totalUsers"`
+}
+
+// AdminUsersSummaryTeam defines model for AdminUsersSummaryTeam.
+type AdminUsersSummaryTeam struct {
+	Team string `json:"team"`
+
+	// Users Deduplicated user count within this team.
+	Users int `json:"users"`
+}
+
 // CreateAPIKeyRequest defines model for CreateAPIKeyRequest.
 type CreateAPIKeyRequest struct {
 	Description *string    `json:"description,omitempty"`
@@ -49,9 +118,40 @@ type CreateAPIKeyRequest struct {
 // CreateAPIKeyResult defines model for CreateAPIKeyResult.
 type CreateAPIKeyResult = externalRef0.CreateAPIKeyResult
 
+// DailyReportConfig defines model for DailyReportConfig.
+type DailyReportConfig struct {
+	Enabled bool `json:"enabled"`
+
+	// SendHourCST Hour of day (0-23) in Asia/Shanghai the daily report is sent.
+	SendHourCST int `json:"sendHourCST"`
+}
+
+// DailyReportTriggerResult defines model for DailyReportTriggerResult.
+type DailyReportTriggerResult struct {
+	Detail *string                        `json:"detail,omitempty"`
+	Result DailyReportTriggerResultResult `json:"result"`
+}
+
+// DailyReportTriggerResultResult defines model for DailyReportTriggerResult.Result.
+type DailyReportTriggerResultResult string
+
 // ErrorResponse Standard error envelope. Individual endpoints override the `example` per response
 // code so the shape of `detail` is accurate for that specific failure mode.
 type ErrorResponse = externalRef0.ErrorResponse
+
+// IdleAlertConfig defines model for IdleAlertConfig.
+type IdleAlertConfig struct {
+	// Armed Whether idle detection is currently active. Auto-disarmed after firing once.
+	Armed   bool       `json:"armed"`
+	ArmedAt *time.Time `json:"armedAt,omitempty"`
+	Enabled bool       `json:"enabled"`
+
+	// IdleThresholdMinutes Minutes of zero sandbox-create activity (any result) required to consider a cluster idle.
+	IdleThresholdMinutes int `json:"idleThresholdMinutes"`
+
+	// WatchedClusters Cluster IDs monitored for the idle condition. Alert fires only when ALL of them are simultaneously idle.
+	WatchedClusters []string `json:"watchedClusters"`
+}
 
 // ImageDataset defines model for ImageDataset.
 type ImageDataset struct {
@@ -71,6 +171,40 @@ type ListAPIKeysResult = externalRef0.ListAPIKeysResult
 
 // ListSandboxTemplatesResult defines model for ListSandboxTemplatesResult.
 type ListSandboxTemplatesResult = externalRef0.ListSandboxTemplatesResult
+
+// NotificationConfig defines model for NotificationConfig.
+type NotificationConfig struct {
+	DailyReport DailyReportConfig `json:"dailyReport"`
+	IdleAlert   IdleAlertConfig   `json:"idleAlert"`
+}
+
+// NotificationHistory defines model for NotificationHistory.
+type NotificationHistory struct {
+	Entries []NotificationHistoryEntry `json:"entries"`
+}
+
+// NotificationHistoryEntry defines model for NotificationHistoryEntry.
+type NotificationHistoryEntry struct {
+	// Detail Failure reason, or a short human-readable summary on success.
+	Detail *string                        `json:"detail,omitempty"`
+	Result NotificationHistoryEntryResult `json:"result"`
+	Time   time.Time                      `json:"time"`
+	Type   NotificationHistoryEntryType   `json:"type"`
+}
+
+// NotificationHistoryEntryResult defines model for NotificationHistoryEntry.Result.
+type NotificationHistoryEntryResult string
+
+// NotificationHistoryEntryType defines model for NotificationHistoryEntry.Type.
+type NotificationHistoryEntryType string
+
+// PlatformUsersCount defines model for PlatformUsersCount.
+type PlatformUsersCount struct {
+	GeneratedAt time.Time `json:"generatedAt"`
+
+	// TotalUsers Deduplicated (team, user) pair count across every API key, including expired keys.
+	TotalUsers int `json:"totalUsers"`
+}
 
 // SandboxTemplateEnvelope defines model for SandboxTemplateEnvelope.
 type SandboxTemplateEnvelope = externalRef0.SandboxTemplateEnvelope
@@ -96,6 +230,9 @@ type CreateApiKeyParams struct {
 	XImpersonateUser *string `json:"X-Impersonate-User,omitempty"`
 }
 
+// AdminUpdateNotificationConfigJSONRequestBody defines body for AdminUpdateNotificationConfig for application/json ContentType.
+type AdminUpdateNotificationConfigJSONRequestBody = NotificationConfig
+
 // AdminCreateSandboxTemplateJSONRequestBody defines body for AdminCreateSandboxTemplate for application/json ContentType.
 type AdminCreateSandboxTemplateJSONRequestBody = UpsertSandboxTemplateRequest
 
@@ -113,6 +250,24 @@ type UpdateImageDatasetJSONRequestBody = ImageDataset
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Get daily-report and idle-alert notification config (admin)
+	// (GET /v1/admin/notifications/config)
+	AdminGetNotificationConfig(c *gin.Context)
+	// Update daily-report and idle-alert notification config (admin)
+	// (PUT /v1/admin/notifications/config)
+	AdminUpdateNotificationConfig(c *gin.Context)
+	// Manually trigger the daily report immediately (admin)
+	// (POST /v1/admin/notifications/daily-report/trigger)
+	AdminTriggerDailyReport(c *gin.Context)
+	// Get the recent notification send history (admin)
+	// (GET /v1/admin/notifications/history)
+	AdminGetNotificationHistory(c *gin.Context)
+	// Arm idle detection, resetting the per-cluster idle timers (admin)
+	// (POST /v1/admin/notifications/idle-alert/arm)
+	AdminArmIdleAlert(c *gin.Context)
+	// Disarm idle detection (admin)
+	// (POST /v1/admin/notifications/idle-alert/disarm)
+	AdminDisarmIdleAlert(c *gin.Context)
 	// Create a global sandbox template (admin)
 	// (POST /v1/admin/sandbox-templates)
 	AdminCreateSandboxTemplate(c *gin.Context)
@@ -122,6 +277,9 @@ type ServerInterface interface {
 	// Update a global sandbox template (admin)
 	// (PUT /v1/admin/sandbox-templates/{name})
 	AdminUpdateSandboxTemplate(c *gin.Context, name string)
+	// Get platform user summary with per-team breakdown (admin)
+	// (GET /v1/admin/users/summary)
+	AdminUsersSummary(c *gin.Context)
 	// List API keys for the authenticated user
 	// (GET /v1/api-keys)
 	ListMyApiKeys(c *gin.Context, params ListMyApiKeysParams)
@@ -143,6 +301,9 @@ type ServerInterface interface {
 	// Update an image dataset (admin)
 	// (PUT /v1/images-catalog/{id})
 	UpdateImageDataset(c *gin.Context, id string)
+	// Get the deduplicated platform-wide user count
+	// (GET /v1/platform/users/count)
+	PlatformUsersCount(c *gin.Context)
 	// List global sandbox templates
 	// (GET /v1/sandbox-templates)
 	ListSandboxTemplates(c *gin.Context)
@@ -159,6 +320,108 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
+
+// AdminGetNotificationConfig operation middleware
+func (siw *ServerInterfaceWrapper) AdminGetNotificationConfig(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminGetNotificationConfig(c)
+}
+
+// AdminUpdateNotificationConfig operation middleware
+func (siw *ServerInterfaceWrapper) AdminUpdateNotificationConfig(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminUpdateNotificationConfig(c)
+}
+
+// AdminTriggerDailyReport operation middleware
+func (siw *ServerInterfaceWrapper) AdminTriggerDailyReport(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminTriggerDailyReport(c)
+}
+
+// AdminGetNotificationHistory operation middleware
+func (siw *ServerInterfaceWrapper) AdminGetNotificationHistory(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminGetNotificationHistory(c)
+}
+
+// AdminArmIdleAlert operation middleware
+func (siw *ServerInterfaceWrapper) AdminArmIdleAlert(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminArmIdleAlert(c)
+}
+
+// AdminDisarmIdleAlert operation middleware
+func (siw *ServerInterfaceWrapper) AdminDisarmIdleAlert(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminDisarmIdleAlert(c)
+}
 
 // AdminCreateSandboxTemplate operation middleware
 func (siw *ServerInterfaceWrapper) AdminCreateSandboxTemplate(c *gin.Context) {
@@ -231,6 +494,23 @@ func (siw *ServerInterfaceWrapper) AdminUpdateSandboxTemplate(c *gin.Context) {
 	}
 
 	siw.Handler.AdminUpdateSandboxTemplate(c, name)
+}
+
+// AdminUsersSummary operation middleware
+func (siw *ServerInterfaceWrapper) AdminUsersSummary(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminUsersSummary(c)
 }
 
 // ListMyApiKeys operation middleware
@@ -451,6 +731,23 @@ func (siw *ServerInterfaceWrapper) UpdateImageDataset(c *gin.Context) {
 	siw.Handler.UpdateImageDataset(c, id)
 }
 
+// PlatformUsersCount operation middleware
+func (siw *ServerInterfaceWrapper) PlatformUsersCount(c *gin.Context) {
+
+	c.Set(BearerAuthScopes, []string{})
+
+	c.Set(ManagerTokenAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PlatformUsersCount(c)
+}
+
 // ListSandboxTemplates operation middleware
 func (siw *ServerInterfaceWrapper) ListSandboxTemplates(c *gin.Context) {
 
@@ -523,9 +820,16 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 		ErrorHandler:       errorHandler,
 	}
 
+	router.GET(options.BaseURL+"/v1/admin/notifications/config", wrapper.AdminGetNotificationConfig)
+	router.PUT(options.BaseURL+"/v1/admin/notifications/config", wrapper.AdminUpdateNotificationConfig)
+	router.POST(options.BaseURL+"/v1/admin/notifications/daily-report/trigger", wrapper.AdminTriggerDailyReport)
+	router.GET(options.BaseURL+"/v1/admin/notifications/history", wrapper.AdminGetNotificationHistory)
+	router.POST(options.BaseURL+"/v1/admin/notifications/idle-alert/arm", wrapper.AdminArmIdleAlert)
+	router.POST(options.BaseURL+"/v1/admin/notifications/idle-alert/disarm", wrapper.AdminDisarmIdleAlert)
 	router.POST(options.BaseURL+"/v1/admin/sandbox-templates", wrapper.AdminCreateSandboxTemplate)
 	router.DELETE(options.BaseURL+"/v1/admin/sandbox-templates/:name", wrapper.AdminDeleteSandboxTemplate)
 	router.PUT(options.BaseURL+"/v1/admin/sandbox-templates/:name", wrapper.AdminUpdateSandboxTemplate)
+	router.GET(options.BaseURL+"/v1/admin/users/summary", wrapper.AdminUsersSummary)
 	router.GET(options.BaseURL+"/v1/api-keys", wrapper.ListMyApiKeys)
 	router.POST(options.BaseURL+"/v1/api-keys", wrapper.CreateApiKey)
 	router.DELETE(options.BaseURL+"/v1/api-keys/:name", wrapper.DeleteApiKey)
@@ -533,8 +837,277 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/v1/images-catalog", wrapper.CreateImageDataset)
 	router.DELETE(options.BaseURL+"/v1/images-catalog/:id", wrapper.DeleteImageDataset)
 	router.PUT(options.BaseURL+"/v1/images-catalog/:id", wrapper.UpdateImageDataset)
+	router.GET(options.BaseURL+"/v1/platform/users/count", wrapper.PlatformUsersCount)
 	router.GET(options.BaseURL+"/v1/sandbox-templates", wrapper.ListSandboxTemplates)
 	router.GET(options.BaseURL+"/v1/sandbox-templates/:name", wrapper.GetSandboxTemplate)
+}
+
+type AdminGetNotificationConfigRequestObject struct {
+}
+
+type AdminGetNotificationConfigResponseObject interface {
+	VisitAdminGetNotificationConfigResponse(w http.ResponseWriter) error
+}
+
+type AdminGetNotificationConfig200JSONResponse NotificationConfig
+
+func (response AdminGetNotificationConfig200JSONResponse) VisitAdminGetNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminGetNotificationConfig401JSONResponse ErrorResponse
+
+func (response AdminGetNotificationConfig401JSONResponse) VisitAdminGetNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminGetNotificationConfig403JSONResponse ErrorResponse
+
+func (response AdminGetNotificationConfig403JSONResponse) VisitAdminGetNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminGetNotificationConfig503JSONResponse ErrorResponse
+
+func (response AdminGetNotificationConfig503JSONResponse) VisitAdminGetNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUpdateNotificationConfigRequestObject struct {
+	Body *AdminUpdateNotificationConfigJSONRequestBody
+}
+
+type AdminUpdateNotificationConfigResponseObject interface {
+	VisitAdminUpdateNotificationConfigResponse(w http.ResponseWriter) error
+}
+
+type AdminUpdateNotificationConfig200JSONResponse NotificationConfig
+
+func (response AdminUpdateNotificationConfig200JSONResponse) VisitAdminUpdateNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUpdateNotificationConfig400JSONResponse ErrorResponse
+
+func (response AdminUpdateNotificationConfig400JSONResponse) VisitAdminUpdateNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUpdateNotificationConfig401JSONResponse ErrorResponse
+
+func (response AdminUpdateNotificationConfig401JSONResponse) VisitAdminUpdateNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUpdateNotificationConfig403JSONResponse ErrorResponse
+
+func (response AdminUpdateNotificationConfig403JSONResponse) VisitAdminUpdateNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUpdateNotificationConfig503JSONResponse ErrorResponse
+
+func (response AdminUpdateNotificationConfig503JSONResponse) VisitAdminUpdateNotificationConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminTriggerDailyReportRequestObject struct {
+}
+
+type AdminTriggerDailyReportResponseObject interface {
+	VisitAdminTriggerDailyReportResponse(w http.ResponseWriter) error
+}
+
+type AdminTriggerDailyReport200JSONResponse DailyReportTriggerResult
+
+func (response AdminTriggerDailyReport200JSONResponse) VisitAdminTriggerDailyReportResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminTriggerDailyReport401JSONResponse ErrorResponse
+
+func (response AdminTriggerDailyReport401JSONResponse) VisitAdminTriggerDailyReportResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminTriggerDailyReport403JSONResponse ErrorResponse
+
+func (response AdminTriggerDailyReport403JSONResponse) VisitAdminTriggerDailyReportResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminTriggerDailyReport503JSONResponse ErrorResponse
+
+func (response AdminTriggerDailyReport503JSONResponse) VisitAdminTriggerDailyReportResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminGetNotificationHistoryRequestObject struct {
+}
+
+type AdminGetNotificationHistoryResponseObject interface {
+	VisitAdminGetNotificationHistoryResponse(w http.ResponseWriter) error
+}
+
+type AdminGetNotificationHistory200JSONResponse NotificationHistory
+
+func (response AdminGetNotificationHistory200JSONResponse) VisitAdminGetNotificationHistoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminGetNotificationHistory401JSONResponse ErrorResponse
+
+func (response AdminGetNotificationHistory401JSONResponse) VisitAdminGetNotificationHistoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminGetNotificationHistory403JSONResponse ErrorResponse
+
+func (response AdminGetNotificationHistory403JSONResponse) VisitAdminGetNotificationHistoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminGetNotificationHistory503JSONResponse ErrorResponse
+
+func (response AdminGetNotificationHistory503JSONResponse) VisitAdminGetNotificationHistoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminArmIdleAlertRequestObject struct {
+}
+
+type AdminArmIdleAlertResponseObject interface {
+	VisitAdminArmIdleAlertResponse(w http.ResponseWriter) error
+}
+
+type AdminArmIdleAlert200JSONResponse IdleAlertConfig
+
+func (response AdminArmIdleAlert200JSONResponse) VisitAdminArmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminArmIdleAlert401JSONResponse ErrorResponse
+
+func (response AdminArmIdleAlert401JSONResponse) VisitAdminArmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminArmIdleAlert403JSONResponse ErrorResponse
+
+func (response AdminArmIdleAlert403JSONResponse) VisitAdminArmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminArmIdleAlert503JSONResponse ErrorResponse
+
+func (response AdminArmIdleAlert503JSONResponse) VisitAdminArmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminDisarmIdleAlertRequestObject struct {
+}
+
+type AdminDisarmIdleAlertResponseObject interface {
+	VisitAdminDisarmIdleAlertResponse(w http.ResponseWriter) error
+}
+
+type AdminDisarmIdleAlert200JSONResponse IdleAlertConfig
+
+func (response AdminDisarmIdleAlert200JSONResponse) VisitAdminDisarmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminDisarmIdleAlert401JSONResponse ErrorResponse
+
+func (response AdminDisarmIdleAlert401JSONResponse) VisitAdminDisarmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminDisarmIdleAlert403JSONResponse ErrorResponse
+
+func (response AdminDisarmIdleAlert403JSONResponse) VisitAdminDisarmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminDisarmIdleAlert503JSONResponse ErrorResponse
+
+func (response AdminDisarmIdleAlert503JSONResponse) VisitAdminDisarmIdleAlertResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type AdminCreateSandboxTemplateRequestObject struct {
@@ -717,6 +1290,49 @@ func (response AdminUpdateSandboxTemplate409JSONResponse) VisitAdminUpdateSandbo
 type AdminUpdateSandboxTemplate503JSONResponse ErrorResponse
 
 func (response AdminUpdateSandboxTemplate503JSONResponse) VisitAdminUpdateSandboxTemplateResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUsersSummaryRequestObject struct {
+}
+
+type AdminUsersSummaryResponseObject interface {
+	VisitAdminUsersSummaryResponse(w http.ResponseWriter) error
+}
+
+type AdminUsersSummary200JSONResponse AdminUsersSummary
+
+func (response AdminUsersSummary200JSONResponse) VisitAdminUsersSummaryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUsersSummary401JSONResponse ErrorResponse
+
+func (response AdminUsersSummary401JSONResponse) VisitAdminUsersSummaryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUsersSummary403JSONResponse ErrorResponse
+
+func (response AdminUsersSummary403JSONResponse) VisitAdminUsersSummaryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AdminUsersSummary503JSONResponse ErrorResponse
+
+func (response AdminUsersSummary503JSONResponse) VisitAdminUsersSummaryResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
 
@@ -1066,6 +1682,40 @@ func (response UpdateImageDataset503JSONResponse) VisitUpdateImageDatasetRespons
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PlatformUsersCountRequestObject struct {
+}
+
+type PlatformUsersCountResponseObject interface {
+	VisitPlatformUsersCountResponse(w http.ResponseWriter) error
+}
+
+type PlatformUsersCount200JSONResponse PlatformUsersCount
+
+func (response PlatformUsersCount200JSONResponse) VisitPlatformUsersCountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PlatformUsersCount401JSONResponse ErrorResponse
+
+func (response PlatformUsersCount401JSONResponse) VisitPlatformUsersCountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PlatformUsersCount503JSONResponse ErrorResponse
+
+func (response PlatformUsersCount503JSONResponse) VisitPlatformUsersCountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type ListSandboxTemplatesRequestObject struct {
 }
 
@@ -1146,6 +1796,24 @@ func (response GetSandboxTemplate503JSONResponse) VisitGetSandboxTemplateRespons
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Get daily-report and idle-alert notification config (admin)
+	// (GET /v1/admin/notifications/config)
+	AdminGetNotificationConfig(ctx context.Context, request AdminGetNotificationConfigRequestObject) (AdminGetNotificationConfigResponseObject, error)
+	// Update daily-report and idle-alert notification config (admin)
+	// (PUT /v1/admin/notifications/config)
+	AdminUpdateNotificationConfig(ctx context.Context, request AdminUpdateNotificationConfigRequestObject) (AdminUpdateNotificationConfigResponseObject, error)
+	// Manually trigger the daily report immediately (admin)
+	// (POST /v1/admin/notifications/daily-report/trigger)
+	AdminTriggerDailyReport(ctx context.Context, request AdminTriggerDailyReportRequestObject) (AdminTriggerDailyReportResponseObject, error)
+	// Get the recent notification send history (admin)
+	// (GET /v1/admin/notifications/history)
+	AdminGetNotificationHistory(ctx context.Context, request AdminGetNotificationHistoryRequestObject) (AdminGetNotificationHistoryResponseObject, error)
+	// Arm idle detection, resetting the per-cluster idle timers (admin)
+	// (POST /v1/admin/notifications/idle-alert/arm)
+	AdminArmIdleAlert(ctx context.Context, request AdminArmIdleAlertRequestObject) (AdminArmIdleAlertResponseObject, error)
+	// Disarm idle detection (admin)
+	// (POST /v1/admin/notifications/idle-alert/disarm)
+	AdminDisarmIdleAlert(ctx context.Context, request AdminDisarmIdleAlertRequestObject) (AdminDisarmIdleAlertResponseObject, error)
 	// Create a global sandbox template (admin)
 	// (POST /v1/admin/sandbox-templates)
 	AdminCreateSandboxTemplate(ctx context.Context, request AdminCreateSandboxTemplateRequestObject) (AdminCreateSandboxTemplateResponseObject, error)
@@ -1155,6 +1823,9 @@ type StrictServerInterface interface {
 	// Update a global sandbox template (admin)
 	// (PUT /v1/admin/sandbox-templates/{name})
 	AdminUpdateSandboxTemplate(ctx context.Context, request AdminUpdateSandboxTemplateRequestObject) (AdminUpdateSandboxTemplateResponseObject, error)
+	// Get platform user summary with per-team breakdown (admin)
+	// (GET /v1/admin/users/summary)
+	AdminUsersSummary(ctx context.Context, request AdminUsersSummaryRequestObject) (AdminUsersSummaryResponseObject, error)
 	// List API keys for the authenticated user
 	// (GET /v1/api-keys)
 	ListMyApiKeys(ctx context.Context, request ListMyApiKeysRequestObject) (ListMyApiKeysResponseObject, error)
@@ -1176,6 +1847,9 @@ type StrictServerInterface interface {
 	// Update an image dataset (admin)
 	// (PUT /v1/images-catalog/{id})
 	UpdateImageDataset(ctx context.Context, request UpdateImageDatasetRequestObject) (UpdateImageDatasetResponseObject, error)
+	// Get the deduplicated platform-wide user count
+	// (GET /v1/platform/users/count)
+	PlatformUsersCount(ctx context.Context, request PlatformUsersCountRequestObject) (PlatformUsersCountResponseObject, error)
 	// List global sandbox templates
 	// (GET /v1/sandbox-templates)
 	ListSandboxTemplates(ctx context.Context, request ListSandboxTemplatesRequestObject) (ListSandboxTemplatesResponseObject, error)
@@ -1194,6 +1868,164 @@ func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareF
 type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
+}
+
+// AdminGetNotificationConfig operation middleware
+func (sh *strictHandler) AdminGetNotificationConfig(ctx *gin.Context) {
+	var request AdminGetNotificationConfigRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminGetNotificationConfig(ctx, request.(AdminGetNotificationConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminGetNotificationConfig")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AdminGetNotificationConfigResponseObject); ok {
+		if err := validResponse.VisitAdminGetNotificationConfigResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminUpdateNotificationConfig operation middleware
+func (sh *strictHandler) AdminUpdateNotificationConfig(ctx *gin.Context) {
+	var request AdminUpdateNotificationConfigRequestObject
+
+	var body AdminUpdateNotificationConfigJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminUpdateNotificationConfig(ctx, request.(AdminUpdateNotificationConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminUpdateNotificationConfig")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AdminUpdateNotificationConfigResponseObject); ok {
+		if err := validResponse.VisitAdminUpdateNotificationConfigResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminTriggerDailyReport operation middleware
+func (sh *strictHandler) AdminTriggerDailyReport(ctx *gin.Context) {
+	var request AdminTriggerDailyReportRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminTriggerDailyReport(ctx, request.(AdminTriggerDailyReportRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminTriggerDailyReport")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AdminTriggerDailyReportResponseObject); ok {
+		if err := validResponse.VisitAdminTriggerDailyReportResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminGetNotificationHistory operation middleware
+func (sh *strictHandler) AdminGetNotificationHistory(ctx *gin.Context) {
+	var request AdminGetNotificationHistoryRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminGetNotificationHistory(ctx, request.(AdminGetNotificationHistoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminGetNotificationHistory")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AdminGetNotificationHistoryResponseObject); ok {
+		if err := validResponse.VisitAdminGetNotificationHistoryResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminArmIdleAlert operation middleware
+func (sh *strictHandler) AdminArmIdleAlert(ctx *gin.Context) {
+	var request AdminArmIdleAlertRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminArmIdleAlert(ctx, request.(AdminArmIdleAlertRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminArmIdleAlert")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AdminArmIdleAlertResponseObject); ok {
+		if err := validResponse.VisitAdminArmIdleAlertResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminDisarmIdleAlert operation middleware
+func (sh *strictHandler) AdminDisarmIdleAlert(ctx *gin.Context) {
+	var request AdminDisarmIdleAlertRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminDisarmIdleAlert(ctx, request.(AdminDisarmIdleAlertRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminDisarmIdleAlert")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AdminDisarmIdleAlertResponseObject); ok {
+		if err := validResponse.VisitAdminDisarmIdleAlertResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // AdminCreateSandboxTemplate operation middleware
@@ -1284,6 +2116,31 @@ func (sh *strictHandler) AdminUpdateSandboxTemplate(ctx *gin.Context, name strin
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(AdminUpdateSandboxTemplateResponseObject); ok {
 		if err := validResponse.VisitAdminUpdateSandboxTemplateResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminUsersSummary operation middleware
+func (sh *strictHandler) AdminUsersSummary(ctx *gin.Context) {
+	var request AdminUsersSummaryRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminUsersSummary(ctx, request.(AdminUsersSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminUsersSummary")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(AdminUsersSummaryResponseObject); ok {
+		if err := validResponse.VisitAdminUsersSummaryResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {
@@ -1493,6 +2350,31 @@ func (sh *strictHandler) UpdateImageDataset(ctx *gin.Context, id string) {
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(UpdateImageDatasetResponseObject); ok {
 		if err := validResponse.VisitUpdateImageDatasetResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PlatformUsersCount operation middleware
+func (sh *strictHandler) PlatformUsersCount(ctx *gin.Context) {
+	var request PlatformUsersCountRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PlatformUsersCount(ctx, request.(PlatformUsersCountRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PlatformUsersCount")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PlatformUsersCountResponseObject); ok {
+		if err := validResponse.VisitPlatformUsersCountResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {

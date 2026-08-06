@@ -30,6 +30,7 @@ const (
 	defaultClustersFilePath        = "/etc/agentbox/clusters.yaml"
 	defaultAPIKeyNamespace         = "agentbox-system"
 	defaultImagesCatalogConfigMap  = "agentbox-images-catalog"
+	defaultNotificationConfigMap   = "agentbox-notifications"
 )
 
 // Config holds all wsproxy runtime settings.
@@ -107,6 +108,27 @@ type Config struct {
 	// namespace. Empty watches all namespaces, which needs cluster-wide RBAC.
 	// Flag: --managed-agent-namespace  Env: AGENTBOX_MANAGED_AGENT_NAMESPACE
 	ManagedAgentNamespace string
+
+	// NotificationConfigMap is the name of the ConfigMap that holds the
+	// notification service's config + runtime state. Stored in APIKeyNamespace.
+	// Flag: --notification-configmap  Env: AGENTBOX_NOTIFICATION_CONFIGMAP
+	// Default: agentbox-notifications
+	NotificationConfigMap string
+
+	// FeishuWebhookURL is the Feishu (Lark) bot webhook the notification
+	// service posts daily reports and idle alerts to. Empty disables sending.
+	// Flag: --feishu-webhook-url  Env: FEISHU_WEBHOOK_URL
+	FeishuWebhookURL string
+
+	// PrometheusURL is the base query URL of the Prometheus-compatible metrics
+	// store the notification service reads sandbox-create counters from.
+	// Empty disables the daily report and idle alert (no data source).
+	// Flag: --prometheus-url  Env: PROMETHEUS_URL
+	PrometheusURL string
+
+	// PrometheusToken is the bearer token sent with every PrometheusURL query.
+	// Flag: --prometheus-token  Env: PROMETHEUS_TOKEN
+	PrometheusToken string
 }
 
 // FromFlags registers all wsproxy flags on fs and returns a *Config whose
@@ -170,6 +192,22 @@ func FromFlags(fs *flag.FlagSet) *Config {
 	fs.StringVar(&cfg.ImagesCatalogConfigMap, "images-catalog-configmap",
 		envOr("AGENTBOX_IMAGES_CATALOG_CONFIGMAP", defaultImagesCatalogConfigMap),
 		"Name of the ConfigMap holding the images catalog (stored in --apikey-namespace).")
+
+	fs.StringVar(&cfg.NotificationConfigMap, "notification-configmap",
+		envOr("AGENTBOX_NOTIFICATION_CONFIGMAP", defaultNotificationConfigMap),
+		"Name of the ConfigMap holding notification config + runtime state (stored in --apikey-namespace).")
+
+	fs.StringVar(&cfg.FeishuWebhookURL, "feishu-webhook-url",
+		os.Getenv("FEISHU_WEBHOOK_URL"),
+		"Feishu bot webhook URL for daily reports and idle alerts. Empty disables sending.")
+
+	fs.StringVar(&cfg.PrometheusURL, "prometheus-url",
+		os.Getenv("PROMETHEUS_URL"),
+		"Base query URL of the Prometheus-compatible metrics store. Empty disables the notification service's data source.")
+
+	fs.StringVar(&cfg.PrometheusToken, "prometheus-token",
+		os.Getenv("PROMETHEUS_TOKEN"),
+		"Bearer token sent with every Prometheus query.")
 
 	return cfg
 }

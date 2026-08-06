@@ -24,18 +24,21 @@ import (
 
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/notify"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/syncmgr"
 )
 
 // Server implements wsproxygen.StrictServerInterface.
 // It holds a reference to the SyncManager and delegates all operations to it.
 type Server struct {
-	m *syncmgr.SyncManager
+	m      *syncmgr.SyncManager
+	notify *notify.Service
 }
 
-// New creates a new handlers.Server backed by the given SyncManager.
-func New(m *syncmgr.SyncManager) *Server {
-	return &Server{m: m}
+// New creates a new handlers.Server backed by the given SyncManager and
+// (optionally nil, when the notification service is not configured) notify.Service.
+func New(m *syncmgr.SyncManager, notifySvc *notify.Service) *Server {
+	return &Server{m: m, notify: notifySvc}
 }
 
 // requireAdmin returns true when the request context contains an admin AuthInfo.

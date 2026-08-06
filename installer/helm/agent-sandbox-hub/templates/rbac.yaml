@@ -8,8 +8,9 @@ metadata:
   labels:
     {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
 ---
-# Role grants Secret CRUD (API keys) and ConfigMap CRUD (images catalog)
-# in the chart's release namespace on the master cluster.
+# Role grants Secret CRUD (API keys) and ConfigMap CRUD (images catalog,
+# notification config + runtime state) in the chart's release namespace on the
+# master cluster.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -23,11 +24,13 @@ rules:
     verbs: [get, list, create, delete]
   - apiGroups: [""]
     resources: [configmaps]
-    resourceNames: [{{ include "agent-sandbox-hub.imagesCatalogConfigMapName" . }}]
+    resourceNames:
+      - {{ include "agent-sandbox-hub.imagesCatalogConfigMapName" . }}
+      - {{ include "agent-sandbox-hub.notificationConfigMapName" . }}
     verbs: [get, create, update]
 ---
-# Separate rule to allow creating the ConfigMap when it doesn't exist yet
-# (resourceNames cannot be used with create on non-existent objects).
+# Separate rule to allow creating the ConfigMaps above when they don't exist
+# yet (resourceNames cannot be used with create on non-existent objects).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

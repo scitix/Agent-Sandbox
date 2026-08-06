@@ -175,6 +175,7 @@ export type TimeRangePreset =
   | "2d"
   | "7d"
   | "30d"
+  | "90d"
 
 /**
  * Time range value: either a preset (relative to now) or an absolute range.
@@ -232,6 +233,7 @@ export function computeTimeRange(preset: TimeRangePreset): TimeRange {
     "2d": 172800,
     "7d": 604800,
     "30d": 2592000,
+    "90d": 7776000,
   }
   const duration = durations[preset]
   return { start: now - duration, end: now, step: stepFor(duration) }
@@ -264,6 +266,7 @@ export const TIME_RANGE_PRESET_LABELS: Record<TimeRangePreset, string> = {
   "2d": "Last 2 days",
   "7d": "Last 7 days",
   "30d": "Last 30 days",
+  "90d": "Last 90 days",
 }
 
 /** Short labels for compact display */
@@ -279,6 +282,7 @@ export const TIME_RANGE_PRESET_SHORT_LABELS: Record<TimeRangePreset, string> = {
   "2d": "2d",
   "7d": "7d",
   "30d": "30d",
+  "90d": "90d",
 }
 
 /** Ordered list for zoom-out progression */
@@ -294,7 +298,13 @@ export const PRESET_ORDER: TimeRangePreset[] = [
   "2d",
   "7d",
   "30d",
+  "90d",
 ]
+
+/** Type guard for validating a searchParam string as a TimeRangePreset. */
+export function isTimeRangePreset(value: string | null | undefined): value is TimeRangePreset {
+  return !!value && (PRESET_ORDER as string[]).includes(value)
+}
 
 /**
  * Format a unix timestamp into "YYYY-MM-DD HH:mm" (browser local time).
@@ -444,19 +454,39 @@ export interface SandboxUserStatsData extends PrometheusConfigStatus {
   }
 }
 
-export interface UserSummaryRow {
-  team: string
-  user?: string
-  desired: number
-  starting: number
-  running: number
-  stopping: number
-  failed: number
+export interface CreateDistributionClusterRow {
+  clusterID: string
+  count: number
 }
 
-export interface UserSummaryData extends PrometheusConfigStatus {
+export interface CreateDistributionTeamRow {
+  team: string
+  count: number
+}
+
+export interface CreateDistributionUserRow {
+  team: string
+  user: string
+  count: number
+}
+
+/**
+ * GET /api/prometheus/create-distribution
+ * Platform-wide sandbox creation totals over the selected window, broken
+ * down by cluster/team/user. Not team-isolated — available to any
+ * authenticated caller (shared by /overview's "overall usage" section and
+ * /admin, differing only in which aggregate dimensions the UI renders).
+ * `cluster` filter is "all" or a specific clusterID (the cluster-scope
+ * selector), not a per-tenant restriction.
+ */
+export interface CreateDistributionData extends PrometheusConfigStatus {
   data?: {
-    byTeam: UserSummaryRow[]
-    byUser: UserSummaryRow[]
+    /** Total successful creates in the window, across the selected cluster scope */
+    totalCreated: number
+    byCluster: CreateDistributionClusterRow[]
+    byTeam: CreateDistributionTeamRow[]
+    byUser: CreateDistributionUserRow[]
+    /** Distinct users with at least one successful create in the window */
+    activeUsers: string[]
   }
 }

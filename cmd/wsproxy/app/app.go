@@ -50,6 +50,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/config"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/notify"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/server"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/syncmgr"
 )
@@ -121,12 +122,29 @@ func Run() {
 			ImagesCatalogConfigMap: cfg.ImagesCatalogConfigMap,
 		})
 
+		notifySvc := notify.New(notify.Params{
+			Client:           k8sClient,
+			Namespace:        cfg.APIKeyNamespace,
+			ConfigMapName:    cfg.NotificationConfigMap,
+			PrometheusURL:    cfg.PrometheusURL,
+			PrometheusToken:  cfg.PrometheusToken,
+			FeishuWebhookURL: cfg.FeishuWebhookURL,
+			Clusters:         store,
+		})
+		if notifySvc.Enabled() {
+			go notifySvc.Run(context.Background())
+			log.Printf("wsproxy: notification service enabled (configmap=%s/%s)", cfg.APIKeyNamespace, cfg.NotificationConfigMap)
+		} else {
+			log.Printf("wsproxy: notification service disabled (no prometheus-url configured)")
+		}
+
 		routerDeps := server.RouterDeps{
 			SyncManager:  sm,
 			AdminKeyMgr:  adminKeyMgr,
 			KeyStore:     ks,
 			JWTSecret:    cfg.Secret,
 			ManagerToken: cfg.Secret,
+			Notify:       notifySvc,
 		}
 		if cfg.ManagedAgentEnabled {
 			ns := cfg.ManagedAgentNamespace
