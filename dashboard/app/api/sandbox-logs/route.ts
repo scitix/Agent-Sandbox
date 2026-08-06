@@ -23,8 +23,15 @@
  * Canceled sandboxes are explicitly rejected.
  * Streams the full log history as NDJSON in the same format as the AgentBox log stream endpoint.
  *
- * Feature gate: requires LOG_DOWNLOAD_URL, LOG_APP_ID, LOG_TOKEN env vars.
+ * Feature gate: requires LOG_DOWNLOAD_URL and LOG_TOKEN env vars.
  * When not configured, returns { configured: false }.
+ *
+ * Two auth schemes, selected by whether LOG_APP_ID is set:
+ *   - set   → the signed scheme (Signature/AppID/Timestamp/Randstr headers)
+ *   - unset → Bearer, used by the unified observability query gateway
+ * LOG_PROJECT, when set, is appended as the ?project= query param the gateway
+ * scopes every query by. The request body and the NDJSON response are
+ * identical between the two — only the envelope differs.
  *
  * Tenant users: may only query sandboxes belonging to their own team/user.
  * Admin users: unrestricted.
@@ -45,23 +52,49 @@ type Sandbox = components["schemas"]["Sandbox"]
 
 // ─── External log service config ──────────────────────────────────────────────
 
-function getLogConfig(): { url: string; appId: string; token: string } | null {
-  const url = process.env.LOG_DOWNLOAD_URL
-  const appId = process.env.LOG_APP_ID
-  const token = process.env.LOG_TOKEN
-  if (!url || !appId || !token) return null
-  return { url, appId, token }
+interface LogConfig {
+  url: string
+  /** Empty selects Bearer auth; set selects the signed scheme. */
+  appId: string
+  token: string
+  /** Empty omits the query param entirely. */
+  project: string
 }
 
-function buildLogServiceHeaders(appId: string, token: string): Record<string, string> {
+function getLogConfig(): LogConfig | null {
+  const url = process.env.LOG_DOWNLOAD_URL
+  const token = process.env.LOG_TOKEN
+  if (!url || !token) return null
+  return {
+    url,
+    appId: process.env.LOG_APP_ID ?? "",
+    token,
+    project: process.env.LOG_PROJECT ?? "",
+  }
+}
+
+/** Full request URL, carrying the gateway's project scope when configured. */
+function buildLogServiceUrl(cfg: LogConfig): string {
+  if (!cfg.project) return cfg.url
+  const sep = cfg.url.includes("?") ? "&" : "?"
+  return `${cfg.url}${sep}project=${encodeURIComponent(cfg.project)}`
+}
+
+function buildLogServiceHeaders(cfg: LogConfig): Record<string, string> {
+  if (!cfg.appId) {
+    return {
+      Authorization: `Bearer ${cfg.token}`,
+      "Content-Type": "application/json",
+    }
+  }
   const nonce = randomBytes(5).toString("hex") // 10-char hex
   const timestamp = String(Math.floor(Date.now() / 1000))
   const signature = createHash("sha256")
-    .update(token + nonce + timestamp)
+    .update(cfg.token + nonce + timestamp)
     .digest("hex")
   return {
     Signature: signature,
-    AppID: appId,
+    AppID: cfg.appId,
     Timestamp: timestamp,
     Randstr: nonce,
     "Content-Type": "application/json",
@@ -141,22 +174,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // 7. Call the external log service and stream the NDJSON response
-  const logHeaders = buildLogServiceHeaders(logConfig.appId, logConfig.token)
+  const logHeaders = buildLogServiceHeaders(logConfig)
+  const logServiceUrl = buildLogServiceUrl(logConfig)
 
-  // DEBUG: print equivalent cURL command
+  // DEBUG: print equivalent cURL command. Authorization carries the raw token
+  // under Bearer auth, so it is redacted — the signed scheme's headers are
+  // derived values and safe to print.
   {
     const headerFlags = Object.entries(logHeaders)
-      .map(([k, v]) => `-H '${k}: ${v}'`)
+      .map(([k, v]) => `-H '${k}: ${k === "Authorization" ? "Bearer <redacted>" : v}'`)
       .join(" ")
     console.log(
-      `[sandbox-logs] cURL:\ncurl -s -X POST '${logConfig.url}' ${headerFlags} -d '${JSON.stringify(requestBody)}'`,
+      `[sandbox-logs] cURL:\ncurl -s -X POST '${logServiceUrl}' ${headerFlags} -d '${JSON.stringify(requestBody)}'`,
     )
     console.log("[sandbox-logs] requestBody:", JSON.stringify(requestBody, null, 2))
   }
 
   let externalRes: Response
   try {
-    externalRes = await fetch(logConfig.url, {
+    externalRes = await fetch(logServiceUrl, {
       method: "POST",
       headers: logHeaders,
       body: JSON.stringify(requestBody),
