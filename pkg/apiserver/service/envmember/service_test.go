@@ -676,7 +676,7 @@ type capturingPlugin struct {
 	lastCreate *agentsv1alpha1.SandboxPool
 
 	createFn func(p *agentsv1alpha1.SandboxPool) (bool, *domain.AppError)
-	updateFn func(p *agentsv1alpha1.SandboxPool) (bool, *domain.AppError)
+	updateFn func(p *agentsv1alpha1.SandboxPool) (plugins.PoolAdmission, *domain.AppError)
 	deleteFn func(p *agentsv1alpha1.SandboxPool) (bool, *domain.AppError)
 }
 
@@ -694,12 +694,12 @@ func (a *capturingPlugin) PreCreatePool(_ context.Context, p *agentsv1alpha1.San
 	}
 	return false, nil
 }
-func (a *capturingPlugin) PreUpdatePool(_ context.Context, p *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
+func (a *capturingPlugin) PreUpdatePool(_ context.Context, p *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (plugins.PoolAdmission, *domain.AppError) {
 	a.updateCalls++
 	if a.updateFn != nil {
 		return a.updateFn(p)
 	}
-	return false, nil
+	return plugins.PoolAdmission{}, nil
 }
 func (a *capturingPlugin) PreDeletePool(_ context.Context, p *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
 	a.deleteCalls++

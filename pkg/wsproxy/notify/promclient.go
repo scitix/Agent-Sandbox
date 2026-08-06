@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -267,6 +268,37 @@ func clusterSelector(entry cluster.ClusterEntry) string {
 		return sel
 	}
 	return fmt.Sprintf(`cluster="%s"`, entry.ID)
+}
+
+var clusterLabelRe = regexp.MustCompile(`\bcluster\s*=\s*"([^"]*)"`)
+
+var regexMetaRe = regexp.MustCompile(`[\\^$.|?*+()\[\]{}]`)
+
+// clusterLabelValue is the `cluster` label value a cluster's series carry.
+//
+// A cluster ID is this platform's own handle for a config entry; the label
+// value is whatever the scrape pipeline stamps on the metric, and the two
+// differ in practice (`bar` vs `prod-bar`). Report queries match on the
+// cluster label alone, so they must use this — matching on the ID silently
+// returns no series at all. Read out of the configured selector when it pins
+// the label; otherwise the ID is the best guess available.
+func clusterLabelValue(entry cluster.ClusterEntry) string {
+	if m := clusterLabelRe.FindStringSubmatch(entry.Selector); m != nil {
+		return m[1]
+	}
+	return entry.ID
+}
+
+// escapeRegexMeta keeps a label value a literal inside a `=~` alternation.
+func escapeRegexMeta(s string) string {
+	return regexMetaRe.ReplaceAllString(s, `\$0`)
+}
+
+// reportCluster pairs a cluster's display ID with the label value its metrics
+// carry. The report shows the former and queries the latter.
+type reportCluster struct {
+	ID         string
+	LabelValue string
 }
 
 // ── Daily report query engine (ported from dashboard/scripts/prometheus-report-core.ts) ──
@@ -534,7 +566,7 @@ type Report struct {
 // script) since they share the same Prometheus backend and running them
 // concurrently would multiply the query load with no latency benefit for a
 // once-a-day report.
-func buildReport(ctx context.Context, pc *promClient, clusterIDs []string, windowLiteral string, end time.Time) (*Report, error) {
+func buildReport(ctx context.Context, pc *promClient, clusters []reportCluster, windowLiteral string, end time.Time) (*Report, error) {
 	windowSeconds, err := parseWindowLiteral(windowLiteral)
 	if err != nil {
 		return nil, err
@@ -550,35 +582,54 @@ func buildReport(ctx context.Context, pc *promClient, clusterIDs []string, windo
 			Seconds: windowSeconds,
 			Literal: windowLiteral,
 		},
-		Clusters: clusterIDs,
+		Clusters: clusterIDs(clusters),
 	}
 
-	combinedMatcher := strings.Join(clusterIDs, "|")
-	report.Scopes = append(report.Scopes, collectScope(ctx, pc, ScopeCombined, combinedMatcher, end, windowLiteral))
+	report.Scopes = append(report.Scopes,
+		collectScope(ctx, pc, ScopeCombined, combinedMatcher(clusters), end, windowLiteral))
 
-	for _, id := range clusterIDs {
-		scope := collectScope(ctx, pc, id, id, end, windowLiteral)
+	for _, c := range clusters {
+		// Scope carries the ID for display; the matcher must be the label value.
+		scope := collectScope(ctx, pc, c.ID, escapeRegexMeta(c.LabelValue), end, windowLiteral)
 		report.Scopes = append(report.Scopes, scope)
 		if !scope.HasData {
-			report.NoDataClusters = append(report.NoDataClusters, id)
+			report.NoDataClusters = append(report.NoDataClusters, c.ID)
 		}
 	}
 
 	return report, nil
 }
 
-// allClusterIDs returns the IDs of every cluster configured in
-// clusters.yaml, sorted. The daily report covers all of them unconditionally
-// — it is a broadcast operational notification with no per-viewer audience,
-// so the ACL-style Visible field on ClusterEntry (which restricts which
-// dashboard users may see a cluster) does not apply here.
-func (s *Service) allClusterIDs() []string {
+// reportClusters returns every cluster configured in clusters.yaml with the
+// label value its metrics carry. The daily report covers all of them
+// unconditionally — it is a broadcast operational notification with no
+// per-viewer audience, so the ACL-style Visible field on ClusterEntry (which
+// restricts which dashboard users may see a cluster) does not apply here.
+func (s *Service) reportClusters() []reportCluster {
 	entries := s.clusters.All()
-	ids := make([]string, len(entries))
+	out := make([]reportCluster, len(entries))
 	for i, e := range entries {
-		ids[i] = e.ID
+		out[i] = reportCluster{ID: e.ID, LabelValue: clusterLabelValue(e)}
+	}
+	return out
+}
+
+// clusterIDs projects the display IDs, for the report's cluster list.
+func clusterIDs(clusters []reportCluster) []string {
+	ids := make([]string, len(clusters))
+	for i, c := range clusters {
+		ids[i] = c.ID
 	}
 	return ids
+}
+
+// combinedMatcher is the regex body matching every cluster in the set.
+func combinedMatcher(clusters []reportCluster) string {
+	parts := make([]string, len(clusters))
+	for i, c := range clusters {
+		parts[i] = escapeRegexMeta(c.LabelValue)
+	}
+	return strings.Join(parts, "|")
 }
 
 func parseWindowLiteral(literal string) (int64, error) {

@@ -37,6 +37,7 @@ import (
 const (
 	configDataKey  = "config.json"
 	historyDataKey = "history.json"
+	stateDataKey   = "state.json"
 	maxHistoryLen  = 50
 
 	managedByLabel = "app.kubernetes.io/managed-by"
@@ -244,6 +245,76 @@ func (s *Service) saveConfig(ctx context.Context, cfg Config) error {
 		updated.Data = make(map[string]string)
 	}
 	updated.Data[configDataKey] = string(raw)
+	return s.k8sClient.Update(ctx, updated)
+}
+
+// runtimeState is scheduler bookkeeping that has to survive a restart.
+//
+// Kept in its own ConfigMap key rather than alongside Config, because
+// UpdateConfig replaces config.json wholesale on every admin edit and would
+// otherwise wipe it.
+type runtimeState struct {
+	// LastDailyReportDate is the Asia/Shanghai calendar date (2006-01-02) the
+	// scheduled daily report last fired for. Without it every pod restart
+	// past the send hour looks like "today hasn't fired yet" and sends again,
+	// so a day of deploys becomes a day of duplicate cards.
+	LastDailyReportDate string `json:"lastDailyReportDate,omitempty"`
+}
+
+// LoadState returns the persisted scheduler state, zero-valued when absent.
+func (s *Service) LoadState(ctx context.Context) (runtimeState, error) {
+	if s.k8sClient == nil {
+		return runtimeState{}, nil
+	}
+	cm, err := s.get(ctx)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return runtimeState{}, nil
+		}
+		return runtimeState{}, err
+	}
+	raw, ok := cm.Data[stateDataKey]
+	if !ok || raw == "" {
+		return runtimeState{}, nil
+	}
+	var st runtimeState
+	if err := json.Unmarshal([]byte(raw), &st); err != nil {
+		return runtimeState{}, fmt.Errorf("parse notification state: %w", err)
+	}
+	return st, nil
+}
+
+// SaveState persists scheduler state, creating the ConfigMap if necessary.
+func (s *Service) SaveState(ctx context.Context, st runtimeState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.k8sClient == nil {
+		return fmt.Errorf("notification service has no k8s client configured")
+	}
+	raw, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	cm, err := s.get(ctx)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+		newCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      s.name,
+				Namespace: s.namespace,
+				Labels:    map[string]string{managedByLabel: managedByValue},
+			},
+			Data: map[string]string{stateDataKey: string(raw), historyDataKey: "[]"},
+		}
+		return s.k8sClient.Create(ctx, newCM)
+	}
+	updated := cm.DeepCopy()
+	if updated.Data == nil {
+		updated.Data = make(map[string]string)
+	}
+	updated.Data[stateDataKey] = string(raw)
 	return s.k8sClient.Update(ctx, updated)
 }
 

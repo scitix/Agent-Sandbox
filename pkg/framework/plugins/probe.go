@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -73,9 +74,12 @@ type ProbeResult struct {
 //     the corresponding kind. Internal errors must not look like saturation
 //     (transient infra problem); InvalidSpec must surface a Condition.
 //
-// PreUpdatePool MUST be side-effect-free / idempotent — the existing plugin
-// framework treats it as admission only, but plugin authors should be aware
-// that ProbeAcceptedReplicas may call it O(log(candidate-current)) times.
+// PreUpdatePool MUST be side-effect-free / idempotent for this to be safe:
+// the search probes several targets and keeps only the largest that admitted,
+// so a plugin whose "admit" path allocates backing capacity would leak one
+// allocation per accepted probe. Plugins backed by a stateful scheduler should
+// instead report their own ceiling through PoolAdmission.Admitted, which needs
+// no probing at all — prefer that whenever the plugin can compute it.
 //
 // pm may be nil (no plugins registered) — in that case every probe trivially
 // succeeds and the function returns ProbeOK{Accepted: candidate} without
@@ -123,6 +127,10 @@ func ProbeAcceptedReplicas(
 // probeAt runs a single PreUpdatePool admission probe against a clone of pool
 // with spec.replicas set to target. Returns (ProbeOK, nil) on admit, otherwise
 // the classified kind plus the raw error for diagnostic surfacing.
+//
+// A plugin that admits the call but caps PoolAdmission.Admitted below target
+// has told us target does not fit; that counts as InsufficientResources so the
+// search narrows exactly as it would on an explicit rejection.
 func probeAt(
 	ctx context.Context,
 	pm *PluginManager,
@@ -135,8 +143,15 @@ func probeAt(
 	}
 	clone := pool.DeepCopy()
 	clone.Spec.Replicas = target
-	_, err := pm.PreUpdatePool(ctx, clone, pods)
+	adm, err := pm.PreUpdatePool(ctx, clone, pods)
 	if err == nil {
+		if adm.Admitted != nil && *adm.Admitted < target {
+			msg := adm.Message
+			if msg == "" {
+				msg = fmt.Sprintf("plugin admitted only %d of %d replicas", *adm.Admitted, target)
+			}
+			return ProbeInsufficientResources, NewInsufficientResources(msg, nil)
+		}
 		return ProbeOK, nil
 	}
 	switch KindFromAppError(err) {

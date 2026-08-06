@@ -93,11 +93,22 @@ func NewInternal(msg string, cause error) *domain.AppError {
 	}
 }
 
+// KindedDetail is implemented by structured error details that classify
+// themselves. A plugin that needs AppError.Detail for its own payload (a
+// scheduler response, a quota breakdown) cannot also store a bare
+// PluginErrorKind there; implementing this interface on the payload keeps the
+// classification explicit instead of leaving it to the HTTP-code fallback.
+type KindedDetail interface {
+	Kind() PluginErrorKind
+}
+
 // KindFromAppError extracts the PluginErrorKind from an *AppError.
 //
 // Lookup order:
 //  1. err.Detail is a PluginErrorKind — return it directly (plugin opted in).
-//  2. Fall back to mapping err.Code:
+//  2. err.Detail implements KindedDetail — ask it (structured payload that
+//     also classifies itself).
+//  3. Fall back to mapping err.Code:
 //     - 503 ServiceUnavailable / 429 TooManyRequests → InsufficientResources
 //     - 400 BadRequest / 422 UnprocessableEntity     → InvalidSpec
 //     - anything else (including 500 Internal)       → Internal
@@ -112,6 +123,11 @@ func KindFromAppError(err *domain.AppError) PluginErrorKind {
 	}
 	if k, ok := err.Detail.(PluginErrorKind); ok && k != "" {
 		return k
+	}
+	if kd, ok := err.Detail.(KindedDetail); ok {
+		if k := kd.Kind(); k != "" {
+			return k
+		}
 	}
 	switch err.Code {
 	case domain.ErrCodeServiceUnavailable, domain.ErrCodeTooManyRequests:

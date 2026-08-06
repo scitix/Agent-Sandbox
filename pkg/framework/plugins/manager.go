@@ -82,24 +82,25 @@ func (m *PluginManager) PreCreatePool(ctx context.Context, pool *agentsv1alpha1.
 	return updated, nil
 }
 
-// PreUpdatePool calls PreUpdate on every registered plugin in order.
-// Returns updated=true if any plugin mutated newPool, and the first error encountered (short-circuits).
-func (m *PluginManager) PreUpdatePool(ctx context.Context, newPool *agentsv1alpha1.SandboxPool, pods []corev1.Pod) (bool, *domain.AppError) {
+// PreUpdatePool calls PreUpdate on every registered plugin in order and folds
+// their admissions together (see PoolAdmission.mergeInto for the rules).
+// Returns the first error encountered, short-circuiting the remaining plugins
+// but preserving the admission accumulated so far — a plugin that already
+// mutated newPool must still have its mutation persisted.
+func (m *PluginManager) PreUpdatePool(ctx context.Context, newPool *agentsv1alpha1.SandboxPool, pods []corev1.Pod) (PoolAdmission, *domain.AppError) {
 	if m == nil {
-		return false, nil
+		return PoolAdmission{}, nil
 	}
-	updated := false
+	merged := PoolAdmission{}
 	for _, p := range m.plugins {
-		u, err := p.PreUpdatePool(ctx, newPool, pods)
-		if u {
-			updated = true
-		}
+		adm, err := p.PreUpdatePool(ctx, newPool, pods)
+		merged = merged.mergeInto(adm)
 		if err != nil {
 			log.FromContext(ctx).Error(err, "plugin PreUpdate failed", "plugin", p.Name())
-			return updated, err
+			return merged, err
 		}
 	}
-	return updated, nil
+	return merged, nil
 }
 
 // PreDeletePool calls PreDelete on every registered plugin in order.

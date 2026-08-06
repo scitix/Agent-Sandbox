@@ -24,6 +24,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 	pkgmetrics "github.com/scitix/agent-sandbox/pkg/metrics"
 )
@@ -167,6 +169,54 @@ func (r *SandboxPoolReconciler) calculatePodStatus(poolKey string, pods []corev1
 		UpdatedReplicas:         updatedReplicas,
 		Conditions:              conditions,
 	}
+}
+
+// setAdmissionCondition folds the outcome of the pool-level admission hooks
+// into the Admitted condition.
+//
+// admErr is the error the admission returned, or nil. A capacity shortfall
+// reaches here either as a capped admission (admission.Admitted set, admErr
+// nil) or as an InsufficientResources error, depending on whether the plugin
+// could quantify what it would grant; both surface the same reason so an
+// operator reads one story regardless of which path produced it.
+func setAdmissionCondition(
+	status *agentsv1alpha1.SandboxPoolStatus,
+	desired int32,
+	admission plugins.PoolAdmission,
+	admErr *domain.AppError,
+) {
+	cond := metav1.Condition{Type: agentsv1alpha1.SandboxPoolConditionAdmitted}
+
+	switch {
+	case admErr != nil:
+		cond.Status = metav1.ConditionFalse
+		cond.Message = admErr.Message
+		switch plugins.KindFromAppError(admErr) {
+		case plugins.PluginErrKindInsufficientResources:
+			cond.Reason = agentsv1alpha1.SandboxPoolReasonQuotaExhausted
+		case plugins.PluginErrKindInvalidSpec:
+			cond.Reason = agentsv1alpha1.SandboxPoolReasonAdmissionRejected
+		default:
+			cond.Reason = agentsv1alpha1.SandboxPoolReasonAdmissionError
+		}
+	case admission.Capped() && admission.AdmittedOr(desired) < desired:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = admission.Reason
+		if cond.Reason == "" {
+			cond.Reason = agentsv1alpha1.SandboxPoolReasonQuotaExhausted
+		}
+		cond.Message = admission.Message
+		if cond.Message == "" {
+			cond.Message = fmt.Sprintf("only %d of %d replicas admitted this cycle",
+				admission.AdmittedOr(desired), desired)
+		}
+	default:
+		cond.Status = metav1.ConditionTrue
+		cond.Reason = agentsv1alpha1.SandboxPoolReasonAdmissionGranted
+		cond.Message = fmt.Sprintf("all %d replicas admitted", desired)
+	}
+
+	apimeta.SetStatusCondition(&status.Conditions, cond)
 }
 
 // statusEquals checks if the current status equals the new status.

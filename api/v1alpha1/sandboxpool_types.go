@@ -51,6 +51,12 @@ const (
 	SandboxPoolConditionScaling = "Scaling"
 	// SandboxPoolConditionDegraded indicates whether the pool has unhealthy or failed pods.
 	SandboxPoolConditionDegraded = "Degraded"
+	// SandboxPoolConditionAdmitted indicates whether the backing scheduler / quota
+	// system accepts the pool's desired replica count. It is orthogonal to Scaling:
+	// Scaling says the pool wants to grow, Admitted says whether it is allowed to.
+	// A pool can be Scaling=True and Admitted=False for a long time when the quota
+	// backing it is exhausted.
+	SandboxPoolConditionAdmitted = "Admitted"
 )
 
 // Condition reason constants for SandboxPool.
@@ -69,6 +75,12 @@ const (
 	SandboxPoolReasonUnhealthyIdlePods  = "UnhealthyIdlePods"      // idle pods are NotReady
 	SandboxPoolReasonFailedPodsPresent  = "FailedPodsPresent"      // failed pods exist
 	SandboxPoolReasonUnhealthyAndFailed = "UnhealthyAndFailedPods" // both unhealthy idle and failed pods
+
+	// Admitted condition reasons
+	SandboxPoolReasonAdmissionGranted  = "AdmissionGranted"       // the desired replica count was fully admitted
+	SandboxPoolReasonQuotaExhausted    = "ResourceQuotaExhausted" // quota/capacity limits how many replicas may be created
+	SandboxPoolReasonAdmissionRejected = "AdmissionRejected"      // the pool spec itself was rejected; retrying will not help
+	SandboxPoolReasonAdmissionError    = "AdmissionError"         // admission could not be evaluated (backend unreachable, etc.)
 )
 
 // SandboxPoolSpec defines the desired state of SandboxPool

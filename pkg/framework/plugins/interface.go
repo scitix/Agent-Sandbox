@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"context"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -23,6 +24,90 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	"github.com/scitix/agent-sandbox/pkg/framework"
 )
+
+// PoolAdmission is the structured outcome of the PreUpdatePool hook.
+//
+// Its zero value means "fully admitted, nothing to retry" and is exactly
+// equivalent to the plain (updated=false, err=nil) result other hooks return.
+// Plugins that only mutate the Pool need to set nothing but Updated.
+//
+// The type exists because "the scheduler granted me 6 of the 8 replicas I
+// asked for" is neither success nor failure: reporting it as an error forces
+// callers to abandon the whole reconcile over a condition that is both
+// expected and partially satisfiable, while reporting it as plain success
+// silently over-creates Pods the backing quota cannot hold.
+type PoolAdmission struct {
+	// Updated reports whether the plugin mutated the Pool. Semantics are
+	// identical to the bool the other hooks return: callers snapshot the
+	// input first and persist only when Updated is true AND a semantic
+	// comparison confirms an actual change.
+	Updated bool
+
+	// Admitted, when non-nil, caps how many replicas the caller may
+	// materialise during THIS reconcile cycle. nil means no cap — the caller
+	// converges towards pool.Spec.Replicas as usual.
+	//
+	// It is emphatically NOT a desired replica count. Spec.Replicas is owned
+	// by the SandboxEnv / autoscaler; a plugin must never rewrite it. Admitted
+	// throttles a single cycle and is recomputed from scratch on the next one,
+	// so a Pool whose backing quota frees up converges without anyone editing
+	// the spec.
+	Admitted *int32
+
+	// RetryAfter asks the caller to re-reconcile after this delay. Zero
+	// leaves the pacing to the caller's own default. Backends that impose a
+	// submit cooldown report the remaining wait here so the caller stops
+	// hot-looping into a rejection it already knows is coming.
+	RetryAfter time.Duration
+
+	// Reason is a machine-readable CamelCase token suitable for a Condition
+	// reason (e.g. "ResourceQuotaExhausted"). Empty when the admission was
+	// unconstrained.
+	Reason string
+
+	// Message is the human-readable explanation surfaced on the Pool's
+	// Condition. It should carry the numbers an operator needs to act —
+	// which quota, which resource, how much was requested versus available.
+	Message string
+}
+
+// Capped reports whether the admission limits this cycle's replica count.
+func (a PoolAdmission) Capped() bool { return a.Admitted != nil }
+
+// AdmittedOr returns the admitted replica cap, or full when uncapped.
+func (a PoolAdmission) AdmittedOr(full int32) int32 {
+	if a.Admitted == nil {
+		return full
+	}
+	return *a.Admitted
+}
+
+// mergeInto folds other into a, applying the aggregation rules used when
+// several plugins each return an admission for the same Pool:
+//
+//   - Updated   — logical OR; any plugin's mutation must be persisted.
+//   - Admitted  — the smallest non-nil cap wins; the most conservative
+//     plugin decides how far the caller may go.
+//   - RetryAfter — the longest wait wins; retrying sooner than the slowest
+//     backend allows only reproduces its rejection.
+//   - Reason/Message — taken from whichever plugin supplied the winning
+//     (smallest) cap, so the surfaced Condition explains the binding
+//     constraint rather than an incidental one.
+func (a PoolAdmission) mergeInto(other PoolAdmission) PoolAdmission {
+	merged := a
+	if other.Updated {
+		merged.Updated = true
+	}
+	if other.RetryAfter > merged.RetryAfter {
+		merged.RetryAfter = other.RetryAfter
+	}
+	if other.Admitted != nil && (merged.Admitted == nil || *other.Admitted < *merged.Admitted) {
+		merged.Admitted = other.Admitted
+		merged.Reason = other.Reason
+		merged.Message = other.Message
+	}
+	return merged
+}
 
 // Plugin defines lifecycle hooks for SandboxPool operations.
 // Implement only the hooks you need; embed BasePlugin for no-op defaults.
@@ -51,9 +136,18 @@ type Plugin interface {
 
 	// PreUpdatePool is called before the SandboxPool update is persisted.
 	// newPool is the state that will be written; pods is the current Pod list
-	// for context. The plugin may mutate newPool or reject the operation.
-	// Return updated=true if newPool was mutated and must be persisted.
-	PreUpdatePool(ctx context.Context, newPool *agentsv1alpha1.SandboxPool, pods []corev1.Pod) (updated bool, err *domain.AppError)
+	// for context. The plugin may mutate newPool, throttle it, or reject it.
+	//
+	// The returned PoolAdmission carries three separable outcomes: whether
+	// newPool was mutated (Updated), how many replicas the caller may
+	// materialise this cycle (Admitted), and how long to wait before trying
+	// again (RetryAfter). Its zero value is the unconstrained "yes".
+	//
+	// Reserve the error return for admissions that cannot be satisfied at any
+	// size — a malformed spec, an unreachable backend. Capacity shortfalls
+	// belong in Admitted, so the caller can make partial progress instead of
+	// abandoning the cycle.
+	PreUpdatePool(ctx context.Context, newPool *agentsv1alpha1.SandboxPool, pods []corev1.Pod) (admission PoolAdmission, err *domain.AppError)
 
 	// PreDeletePool is called before the SandboxPool is deleted from Kubernetes.
 	// The plugin may reject the operation. Mutation is rarely meaningful here
@@ -87,8 +181,8 @@ func (BasePlugin) Start(_ context.Context, _ framework.Handle) error { return ni
 func (BasePlugin) PreCreatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
 	return false, nil
 }
-func (BasePlugin) PreUpdatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (bool, *domain.AppError) {
-	return false, nil
+func (BasePlugin) PreUpdatePool(_ context.Context, _ *agentsv1alpha1.SandboxPool, _ []corev1.Pod) (PoolAdmission, *domain.AppError) {
+	return PoolAdmission{}, nil
 }
 func (BasePlugin) PreDeletePool(_ context.Context, _ *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
 	return false, nil
