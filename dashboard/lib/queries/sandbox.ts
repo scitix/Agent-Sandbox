@@ -18,6 +18,8 @@
 
 import { useQueryClient } from "@tanstack/react-query"
 import { AgentSandbox, currentApiClient, currentFetchClient } from "@/lib/api/client"
+import { SUPPRESSED_ERROR_CODES, basePath, getToken, handleErrorResponse } from "@/lib/api/client"
+import type { E2BCreateBody } from "@/lib/utils/e2b-sandbox"
 import { apiFor, delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
@@ -85,4 +87,37 @@ export async function deleteSandboxImperative(sandboxId: string): Promise<void> 
 export function useCreateExecToken() {
   // No cache invalidation — the token is one-time use and not cacheable.
   return currentApiClient().useMutation("post", "/sandboxes/{sandboxId}/exec-token")
+}
+
+/**
+ * Creates a sandbox through the cluster's E2B-compatible API.
+ *
+ * Not on the openapi client: the E2B surface has no generated types here, and it
+ * needs a header the typed clients do not send. `apiKey` is the caller's own
+ * AgentBox key — the E2B auth middleware accepts API keys only, never the session
+ * JWT — and the BFF forwards it as `X-API-Key` (see
+ * app/api/clusters/[clusterID]/e2b/[...path]/route.ts).
+ *
+ * Reads stay on the native API; only creation goes through here.
+ */
+export async function createSandboxViaE2B(
+  body: E2BCreateBody,
+  opts: { clusterID: string; apiKey: string },
+): Promise<{ sandboxID?: string }> {
+  const res = await fetch(`${basePath}/api/clusters/${opts.clusterID}/e2b/sandboxes`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getToken()}`,
+      "X-API-Key": opts.apiKey,
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    // The BFF has already normalised E2B's {code,message} into the native
+    // {error,errorCode} shape, so this is the same handling every other call gets.
+    return handleErrorResponse(res, SUPPRESSED_ERROR_CODES)
+  }
+  return (await res.json()) as { sandboxID?: string }
 }

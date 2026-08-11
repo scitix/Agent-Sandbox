@@ -15,7 +15,12 @@
  */
 
 import { describe, it, expect } from "vitest"
-import { filterClustersByVisibility, type ClusterEntry } from "@/lib/cluster-config"
+import {
+  applyHostAlias,
+  filterClustersByVisibility,
+  type ClusterEntry,
+  type ClusterHostAlias,
+} from "@/lib/cluster-config"
 
 describe("filterClustersByVisibility", () => {
   const clusters: ClusterEntry[] = [
@@ -66,5 +71,56 @@ describe("filterClustersByVisibility", () => {
     const result = filterClustersByVisibility(clusters, "other-org", "anyone")
     // only c1, c2 have no visible restriction
     expect(result.map((c) => c.id)).toEqual(["c1", "c2"])
+  })
+})
+
+// ─── Host aliases ─────────────────────────────────────────────────────────────
+
+describe("applyHostAlias", () => {
+  // The real block from the hub ConfigMap's clusters.yaml.
+  const aliases: ClusterHostAlias[] = [
+    { ip: "10.0.0.1", hostnames: ["gw-a.example.internal"] },
+    { ip: "10.0.0.2", hostnames: ["gw-b.example.internal"] },
+  ]
+
+  it("dials the aliased IP while keeping the hostname as Host", () => {
+    // Without this the dashboard pod cannot resolve the gateway hostname at all:
+    // hostAliases live in the ConfigMap data, not on the pod's spec.hostAliases.
+    const out = applyHostAlias(
+      "http://gw-a.example.internal:30080/agent-sandbox/api/e2b",
+      aliases,
+    )
+    expect(out.url).toBe("http://10.0.0.1:30080/agent-sandbox/api/e2b")
+    expect(out.hostHeader).toBe("gw-a.example.internal:30080")
+  })
+
+  it("leaves a publicly resolvable gateway untouched", () => {
+    // Production gateways are real DNS names; rewriting them would break TLS.
+    const url = "https://gw.example.com/agent-sandbox/api/e2b"
+    const out = applyHostAlias(url, aliases)
+    expect(out.url).toBe(url)
+    expect(out.hostHeader).toBeUndefined()
+  })
+
+  it("is a no-op when no aliases are configured", () => {
+    const url = "http://gw-a.example.internal:30080/agent-sandbox/api/e2b"
+    expect(applyHostAlias(url, [])).toEqual({ url })
+  })
+
+  it("matches on hostname only, never on a substring", () => {
+    const url = "http://not-gw-a.example.internal:30080/x"
+    expect(applyHostAlias(url, aliases)).toEqual({ url })
+  })
+
+  it("passes a malformed url through rather than throwing", () => {
+    expect(applyHostAlias("not a url", aliases)).toEqual({ url: "not a url" })
+  })
+
+  it("preserves the path and query it was given", () => {
+    const out = applyHostAlias(
+      "http://gw-b.example.internal:30080/agent-sandbox/api/e2b/sandboxes?x=1",
+      aliases,
+    )
+    expect(out.url).toBe("http://10.0.0.2:30080/agent-sandbox/api/e2b/sandboxes?x=1")
   })
 })

@@ -23,14 +23,13 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  ScrollDialogBody,
+  ScrollDialogContent,
+  ScrollDialogFooter,
+  ScrollDialogHeader,
+} from "@/components/custom/scroll-dialog"
 import { createEnvImperative } from "@/lib/queries"
 import { useEnvNameAcrossClusters, type EnvPresence } from "@/hooks/use-env-name-across-clusters"
 import { useTranslation } from "@/lib/i18n"
@@ -83,9 +82,9 @@ function classify(presence: EnvPresence, templateName: string | undefined): Row 
 export function ExtendEnvDialog({ env, open, onOpenChange }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <ScrollDialogContent className="sm:max-w-lg">
         {open && env && <ExtendEnvBody env={env} onClose={() => onOpenChange(false)} />}
-      </DialogContent>
+      </ScrollDialogContent>
     </Dialog>
   )
 }
@@ -150,35 +149,37 @@ function ExtendEnvBody({ env, onClose }: { env: AgentSandboxEnv; onClose: () => 
 
   return (
     <>
-      <DialogHeader>
+      <ScrollDialogHeader>
         <DialogTitle>{t("envs.extend.title")}</DialogTitle>
         <DialogDescription>
           {t("envs.extend.description", { name: env.name, template: templateName ?? "—" })}
         </DialogDescription>
-      </DialogHeader>
+      </ScrollDialogHeader>
 
-      {rows.length === 0 ? (
-        <p className="text-muted-foreground py-4 text-sm">{t("envs.extend.noOtherClusters")}</p>
-      ) : (
-        <div className="max-h-72 space-y-2 overflow-y-auto">
-          {rows.map((row) => (
-            <ClusterRow
-              key={row.clusterID}
-              row={row}
-              checked={selected.has(row.clusterID)}
-              onToggle={() => toggle(row.clusterID)}
-            />
-          ))}
-        </div>
-      )}
+      <ScrollDialogBody>
+        {rows.length === 0 ? (
+          <p className="text-muted-foreground text-sm">{t("envs.extend.noOtherClusters")}</p>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((row) => (
+              <ClusterRow
+                key={row.clusterID}
+                row={row}
+                checked={selected.has(row.clusterID)}
+                onToggle={() => toggle(row.clusterID)}
+              />
+            ))}
+          </div>
+        )}
 
-      {chosen.length > 0 && (
-        <p className="text-muted-foreground rounded-md border border-dashed p-3 text-xs">
-          {t("envs.extend.poolsNote")}
-        </p>
-      )}
+        {chosen.length > 0 && (
+          <p className="text-muted-foreground rounded-md border border-dashed p-3 text-xs">
+            {t("envs.extend.poolsNote")}
+          </p>
+        )}
+      </ScrollDialogBody>
 
-      <DialogFooter>
+      <ScrollDialogFooter>
         <Button variant="ghost" onClick={onClose} disabled={submitting}>
           {t("common.cancel")}
         </Button>
@@ -190,7 +191,7 @@ function ExtendEnvBody({ env, onClose }: { env: AgentSandboxEnv; onClose: () => 
           )}
           {t("envs.extend.confirm", { count: String(chosen.length) })}
         </Button>
-      </DialogFooter>
+      </ScrollDialogFooter>
     </>
   )
 }

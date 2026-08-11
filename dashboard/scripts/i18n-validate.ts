@@ -22,7 +22,9 @@
  * Checks ALL locale files (zh-Hans.json, zh-Hant.json, etc.) against en.json:
  *   1. All en.json keys exist in each locale file (and vice versa)
  *   2. {{placeholder}} tokens match between en and each locale
- *   3. No empty string values
+ *   3. No single-brace {placeholder} — lib/i18n/interpolate.ts only substitutes
+ *      {{double}}, so a single-brace token reaches the user verbatim
+ *   4. No empty string values
  *
  * Exit code 1 if any issues found (CI-friendly).
  */
@@ -47,6 +49,25 @@ function discoverLocaleFiles(): { locale: string; filePath: string }[] {
 function extractPlaceholders(text: string): string[] {
   const matches = text.match(/\{\{(\w+)\}\}/g)
   return matches ? matches.sort() : []
+}
+
+/**
+ * Keys whose single braces are deliberate prose, not interpolation — they are
+ * rendered with no params and the braces illustrate a naming pattern.
+ */
+const LITERAL_BRACE_KEYS = new Set(["envs.form.imagePullSecret.hint"])
+
+/**
+ * Finds `{token}` written with one brace instead of two.
+ *
+ * The comparison in check 2 cannot catch these: `interpolate` ignores them, so
+ * en and every locale agree on having zero placeholders while the raw `{count}`
+ * ships to the user. That happened — buttons reading "Extend to {count}
+ * cluster(s)" reached a review before anyone noticed.
+ */
+function findSingleBracePlaceholders(text: string): string[] {
+  const matches = text.match(/(?<!\{)\{(\w+)\}(?!\})/g)
+  return matches ?? []
 }
 
 function validateLocale(
@@ -88,6 +109,13 @@ function validateLocale(
 
   // Check for empty values
   for (const [key, value] of Object.entries(dict)) {
+    const singles = LITERAL_BRACE_KEYS.has(key) ? [] : findSingleBracePlaceholders(dict[key])
+    if (singles.length > 0) {
+      errors.push(
+        `❌ Single-brace placeholder(s) ${singles.join(",")} in ${locale}.json: "${key}" — use {{double}}`,
+      )
+    }
+
     if (!value.trim()) {
       errors.push(`❌ Empty value in ${locale}.json: "${key}"`)
     }
@@ -106,6 +134,12 @@ function main() {
   for (const [key, value] of Object.entries(en)) {
     if (!value.trim()) {
       enErrors.push(`❌ Empty value in en.json: "${key}"`)
+    }
+    const singles = LITERAL_BRACE_KEYS.has(key) ? [] : findSingleBracePlaceholders(value)
+    if (singles.length > 0) {
+      enErrors.push(
+        `❌ Single-brace placeholder(s) ${singles.join(",")} in en.json: "${key}" — use {{double}}`,
+      )
     }
   }
 

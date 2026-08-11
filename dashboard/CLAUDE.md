@@ -104,6 +104,18 @@ envQueryOptions("slimedev", "foo") // that cluster, its own cache entry
 
 Use `apiFor(clusterID?)` / `fetchFor(clusterID?)` from `lib/queries/utils.ts` when adding one. This is what the cross-cluster features need: probing whether an Env of the same name exists elsewhere (`hooks/use-env-name-across-clusters.ts`), reading a peer cluster's Pool behind a foreign-cluster link, creating an Env on a cluster the user is not viewing (`createEnvImperative`).
 
+**③ E2B proxy — sandbox creation only.** Creating a sandbox goes through the cluster's E2B-compatible API (`app/api/clusters/[clusterID]/e2b/[...path]/route.ts` → `createSandboxViaE2B`); list, get and every other sandbox read stay on the native client. The point is that the console exercises the same surface the E2B SDK does, so E2B's own capabilities (envVars, network policy, autoPause, secure) are reachable and verifiable from the UI. The native `POST /v1/sandboxes` is untouched and still serves any caller that wants it.
+
+Three constraints that path has to respect:
+
+- **Auth is an API key, never the session JWT.** The E2B middleware accepts `X-API-Key` / `AGENTBOX-API-KEY` only. The form therefore picks the caller's newest key whose plaintext the platform still holds (`GlobalApiKeyItem.rawToken`) and sends it; the BFF forwards it upstream. No usable key → `ApiKeyRequiredNotice` instead of a form that would 401.
+- **Gateway hostnames need `resolveHostAlias`.** `gateway.e2bURL` is an ingress hostname. Where there is no public DNS the config carries a `hostAliases` block for it, but nothing puts those on the dashboard Pod — so the BFF dials the aliased IP and sends the hostname as `Host` itself. Same trick the native `url` + `headers.Host` pair uses, and the reason that route uses undici rather than fetch.
+- **Error bodies differ.** E2B answers `{code, message}`; `handleErrorResponse` parses the native `{error, errorCode, detail}`. The route normalises them, otherwise every failure shows up as a bare `HTTP 500` toast.
+
+Parameter mapping lives in `lib/utils/e2b-sandbox.ts` (unit-tested). Note one gap: E2B's network config has no field for `allowPrivateNetworks`, so the create form hides that switch rather than offering one that cannot take effect — declare it on the SandboxEnv instead.
+
+A cluster with no `gateway.e2bURL` falls back to the native create, with the E2B-only fields hidden.
+
 > When fanning a probe out across clusters, read the **list** endpoint rather than the by-name one. A miss on `GET /envs/{name}` is a 404, and the middleware turns every non-2xx into a toast off a global error-code allow-list with no per-request opt-out — so probing N clusters by name fires a toast per cluster that legitimately lacks the resource. Pair it with `retry: false` so unreachable clusters settle promptly.
 
 **② BFF raw fetch** — plain `fetch()` against Next.js API routes, used for cross-cluster / control-plane operations (no per-cluster routing):
@@ -195,15 +207,15 @@ Page components use `useQuery(xxxQueryOptions())` to fetch data, and render list
 
 Any dialog that needs to fetch data **MUST** be split into a "Shell + Inner Form" pattern — the shell renders `{open && <InnerForm />}` so `useQuery` only fires when the dialog is visible.
 
-**See the canonical example**: [`components/sandboxes/create-dialog.tsx`](./components/sandboxes/create-dialog.tsx)
+**See the canonical example**: [`components/sandboxes/create-sheet.tsx`](./components/sandboxes/create-sheet.tsx)
 
-| What to look at                 | Location                                         |
-| ------------------------------- | ------------------------------------------------ |
-| Zod schema definition           | Line 56 — `const schema = z.object({...})`       |
-| Inner form + `useQuery` mount   | Line 79 — `function CreateSandboxForm`           |
-| Object Combobox in `Controller` | Line 142 — `poolName` field                      |
-| Plain `register` input          | Line 181 — `image` field                         |
-| Dialog shell (`{open && ...}`)  | Line 277 — `export function CreateSandboxDialog` |
+| What to look at                 | Location                             |
+| ------------------------------- | ------------------------------------ |
+| Zod schema definition           | `const schema = z.object({...})`     |
+| Inner form + `useQuery` mount   | `function CreateSandboxForm`         |
+| Object Combobox in `Controller` | the `poolName` Controller block      |
+| Plain `register` input          | the `image` Field block              |
+| Sheet shell (`{open && ...}`)   | `export function CreateSandboxSheet` |
 
 Key rules:
 
@@ -233,7 +245,7 @@ Use `Combobox` for any dropdown that fetches option data. Four hard rules — vi
 3. **Object items require `itemToStringLabel`**; `value` must be the full object; extract the string key in `onValueChange`.
 4. **`ComboboxInput` in forms needs `aria-invalid={fieldState.invalid}`** (from `Controller`'s `render` prop).
 
-See working example: [`components/sandboxes/create-dialog.tsx` L142](./components/sandboxes/create-dialog.tsx) — `poolName` Controller block.
+See working example: [`components/sandboxes/create-sheet.tsx`](./components/sandboxes/create-sheet.tsx) — `poolName` Controller block.
 
 ## Auto-generated Files (Strictly forbidden to edit manually)
 
@@ -337,6 +349,26 @@ Flat dot-namespaced format, organized by module:
 - Toast components: Please use `import { toast } from 'sonner'` — not `useToast`.
 - Custom business components should be placed in `components/<business-domain>/`, absolutely NEVER place them in the `components/ui/` directory.
 - For conditional class names, always use the `cn()` function in `lib/utils.ts`.
+
+## Tall dialogs
+
+A dialog that lists something unbounded — every cluster, every template, a long form — must not grow past the viewport, or its footer buttons leave the screen. Use `components/custom/scroll-dialog.tsx` rather than capping heights by hand:
+
+```tsx
+<Dialog open={open} onOpenChange={onOpenChange}>
+  <ScrollDialogContent className="sm:max-w-lg">
+    <ScrollDialogHeader>
+      <DialogTitle>…</DialogTitle>
+    </ScrollDialogHeader>
+    <ScrollDialogBody>{/* the long part */}</ScrollDialogBody>
+    <ScrollDialogFooter>{/* stays put */}</ScrollDialogFooter>
+  </ScrollDialogContent>
+</Dialog>
+```
+
+The cap (`max-h-[85dvh]`) has to sit on the content because a child cannot shorten its parent, and the body needs `min-h-0` or flex refuses to shrink it below its content and the overflow never fires. Getting one of the two wrong looks fine until the list is long, which is why this is a component and not a className to copy.
+
+Put `overflow-y-auto` on an inner list only when one _section_ should scroll independently. A dialog whose footer lives inside its form keeps its own body wrapper and reuses just the content + header.
 
 ## Form JSON export / import
 
