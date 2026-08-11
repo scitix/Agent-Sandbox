@@ -48,7 +48,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { CloneToolbar } from "@/components/managed-agents/clone-toolbar"
+import { FormCloneActions } from "@/components/custom/form-clone-actions"
+import { managedAgentClone } from "@/lib/utils/managed-agent-clone"
 import type {
   AgentSandboxEnvSummary,
   AgentSandboxTemplateSummary,
@@ -69,6 +70,7 @@ import {
   buildCredentials,
   buildSchema,
   buildSpec,
+  managedAgentFormDefaults,
 } from "@/lib/utils/managed-agent-form"
 import type { FormErrors, FormValues, StoredCredentials } from "@/lib/utils/managed-agent-form"
 import {
@@ -1062,6 +1064,9 @@ function UpsertForm({
 }) {
   const { t } = useTranslation()
   const isEdit = !!agent
+  // Cluster ids an imported file is checked against — an id this deployment does
+  // not know is cleared rather than left to render as an empty picker.
+  const clusters = useAtomValue(clustersAtom).clusters
 
   const stored = useMemo<StoredCredentials>(
     () => ({
@@ -1174,14 +1179,6 @@ function UpsertForm({
       </SheetHeader>
       <Separator />
 
-      <CloneToolbar
-        isEdit={isEdit}
-        getValues={getValues}
-        trigger={trigger}
-        onImport={applyImportedValues}
-      />
-      <Separator />
-
       <form onSubmit={onSubmit} className="flex flex-1 flex-col overflow-hidden">
         <Tabs
           value={tab}
@@ -1230,14 +1227,23 @@ function UpsertForm({
         </Tabs>
 
         <Separator />
-        <div className="flex justify-end gap-2 px-6 py-3">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting} className="gap-1.5">
-            <Save className="h-3.5 w-3.5" />
-            {isEdit ? t("common.save") : t("common.create")}
-          </Button>
+        <div className="flex items-center gap-2 px-6 py-3">
+          <FormCloneActions
+            clone={managedAgentClone(clusters.map((c) => c.id))}
+            getValues={getValues}
+            defaults={managedAgentFormDefaults()}
+            canImport={!isEdit}
+            onImport={applyImportedValues}
+          />
+          <div className="ml-auto flex items-center gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={isSubmitting} className="gap-1.5">
+              <Save className="h-3.5 w-3.5" />
+              {isEdit ? t("common.save") : t("common.create")}
+            </Button>
+          </div>
         </div>
       </form>
     </Fragment>
