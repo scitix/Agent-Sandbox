@@ -51,9 +51,9 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
-import { Textarea } from "@/components/ui/textarea"
 import { CopyEnvDialog } from "@/components/envs/copy-env-dialog"
 import { FormCloneActions } from "@/components/custom/form-clone-actions"
+import { NetworkPolicyFields } from "@/components/custom/network-policy-fields"
 import type { AgentSandboxEnv, AgentSandboxTemplateSummary } from "@/lib/api/client"
 import { useEnvNameAcrossClusters } from "@/hooks/use-env-name-across-clusters"
 import { envQueryOptions, templatesQueryOptions, useCreateEnv, useUpdateEnv } from "@/lib/queries"
@@ -400,7 +400,12 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                   </AccordionTrigger>
                   <AccordionContent className="px-3">
                     <div className="flex flex-col gap-5 pb-2">
-                      <NetworkPolicySection control={control} register={register} errors={errors} />
+                      <NetworkPolicyFields
+                        control={control}
+                        register={register}
+                        errors={errors}
+                        heading={t("envs.form.section.networkPolicy")}
+                      />
                       <Separator />
                       <SecretInjectionSection
                         control={control}
@@ -906,132 +911,6 @@ function SecretInjectionSection({ control, register, errors }: SecretInjectionSe
 }
 
 // ─── Network policy section ─────────────────────────────────────────────────
-
-interface NetworkPolicySectionProps {
-  control: ReturnType<typeof useForm<FormValues>>["control"]
-  register: ReturnType<typeof useForm<FormValues>>["register"]
-  errors: ReturnType<typeof useForm<FormValues>>["formState"]["errors"]
-}
-
-function NetworkPolicySection({ control, register, errors }: NetworkPolicySectionProps) {
-  const { t } = useTranslation()
-  const mode = useWatch({ control, name: "networkPolicyMode" })
-  return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
-          {t("envs.form.section.networkPolicy")}
-        </h3>
-        <p className="text-muted-foreground mt-1 text-xs">{t("envs.form.networkPolicy.hint")}</p>
-      </div>
-
-      <Field>
-        <FieldLabel>{t("envs.form.networkPolicy.mode")}</FieldLabel>
-        <Controller
-          control={control}
-          name="networkPolicyMode"
-          render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="unrestricted">
-                  {t("envs.form.networkPolicy.modeUnrestricted")}
-                </SelectItem>
-                <SelectItem value="disable">{t("envs.form.networkPolicy.modeDisable")}</SelectItem>
-                <SelectItem value="allowlist">
-                  {t("envs.form.networkPolicy.modeAllowlist")}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          )}
-        />
-        <FieldDescription>{t("envs.form.networkPolicy.modeDescription")}</FieldDescription>
-      </Field>
-
-      {mode === "unrestricted" && (
-        <p className="text-muted-foreground rounded-md border border-dashed p-3 text-xs">
-          {t("envs.form.networkPolicy.unrestrictedPrivateNote")}
-        </p>
-      )}
-
-      {mode === "allowlist" && (
-        <>
-          <Field>
-            <FieldLabel htmlFor="np-domains">
-              {t("envs.form.networkPolicy.allowedDomains")}
-            </FieldLabel>
-            <Textarea
-              id="np-domains"
-              rows={3}
-              placeholder={"pypi.org\n*.pythonhosted.org"}
-              className="font-mono text-sm"
-              {...register("allowedDomains")}
-            />
-            {errors.allowedDomains && (
-              <FieldError>{t(errors.allowedDomains.message as never)}</FieldError>
-            )}
-            <FieldDescription>
-              {t("envs.form.networkPolicy.allowedDomainsDescription")}
-            </FieldDescription>
-          </Field>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field>
-              <FieldLabel htmlFor="np-allow-cidr">
-                {t("envs.form.networkPolicy.allowedCIDRs")}
-              </FieldLabel>
-              <Textarea
-                id="np-allow-cidr"
-                rows={2}
-                placeholder="8.8.8.8/32"
-                className="font-mono text-sm"
-                {...register("allowedCIDRs")}
-              />
-              {errors.allowedCIDRs && (
-                <FieldError>{t(errors.allowedCIDRs.message as never)}</FieldError>
-              )}
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="np-deny-cidr">
-                {t("envs.form.networkPolicy.deniedCIDRs")}
-              </FieldLabel>
-              <Textarea
-                id="np-deny-cidr"
-                rows={2}
-                placeholder="1.2.3.4/32"
-                className="font-mono text-sm"
-                {...register("deniedCIDRs")}
-              />
-              {errors.deniedCIDRs && (
-                <FieldError>{t(errors.deniedCIDRs.message as never)}</FieldError>
-              )}
-            </Field>
-          </div>
-        </>
-      )}
-
-      {mode !== "unrestricted" && (
-        <Controller
-          control={control}
-          name="allowPrivateNetworks"
-          render={({ field }) => (
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="space-y-0.5 pr-3">
-                <FieldLabel>{t("envs.form.networkPolicy.allowPrivateNetworks")}</FieldLabel>
-                <FieldDescription>
-                  {t("envs.form.networkPolicy.allowPrivateNetworksDescription")}
-                </FieldDescription>
-              </div>
-              <Switch checked={field.value} onCheckedChange={field.onChange} />
-            </div>
-          )}
-        />
-      )}
-    </section>
-  )
-}
 
 interface UpdateStrategySectionProps {
   control: ReturnType<typeof useForm<FormValues>>["control"]

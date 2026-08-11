@@ -25,7 +25,7 @@ import { useTranslation } from "@/lib/i18n"
 import { QueryTable } from "@/components/custom/query-table/table-with-query"
 import { createSandboxColumns, sandboxNumberFilterOptions } from "@/components/sandboxes/columns"
 import { TerminalDialog, TERMINAL_SANDBOX_ID_PARAM } from "@/components/sandboxes/terminal-dialog"
-import { CreateSandboxDialog } from "@/components/sandboxes/create-dialog"
+import { CreateSandboxSheet } from "@/components/sandboxes/create-sheet"
 import { DeleteSandboxDialog } from "@/components/sandboxes/delete-dialog"
 import { sandboxesQueryOptions, deleteSandboxImperative } from "@/lib/queries"
 import type { AgentSandbox } from "@/lib/api/client"
@@ -225,7 +225,7 @@ export default function SandboxesPage() {
         </QueryTable>
       </div>
 
-      <CreateSandboxDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateSandboxSheet open={createOpen} onOpenChange={setCreateOpen} />
       <DeleteSandboxDialog
         sandbox={deleteTarget}
         onOpenChange={(open) => {

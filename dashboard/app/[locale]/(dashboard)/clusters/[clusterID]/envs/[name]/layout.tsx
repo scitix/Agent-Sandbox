@@ -17,7 +17,6 @@
 "use client"
 
 import { use, useState } from "react"
-import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import {
@@ -25,7 +24,6 @@ import {
   Boxes,
   DatabaseIcon,
   InfoIcon,
-  KeyRound,
   Loader2,
   Network,
   Pencil,
@@ -39,6 +37,7 @@ import { DetailTabsNav } from "@/components/custom/detail-tabs-nav"
 import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
 import { ExtendEnvDialog } from "@/components/envs/extend-env-dialog"
+import { ApiKeyRequiredNotice } from "@/components/custom/api-key-required-notice"
 import { envQueryOptions } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -141,7 +140,7 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
             <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
           </div>
         ) : isApiKeyRequired ? (
-          <ApiKeyRequiredNotice />
+          <ApiKeyRequiredNotice description={t("envs.apiKeyRequired.envDocsDescription")} />
         ) : isError || !env ? (
           <div className="flex flex-1 items-center justify-center">
             <p className="text-muted-foreground text-sm">{t("envs.empty")}</p>
@@ -158,31 +157,6 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
         env={deleteOpen && env ? { name: env.name, memberCount: env.status?.memberCount } : null}
         onOpenChange={(open) => setDeleteOpen(open)}
       />
-    </div>
-  )
-}
-
-// ─── API Key Required notice ───────────────────────────────────────────────────
-
-function ApiKeyRequiredNotice() {
-  const { t } = useTranslation()
-  const clusterID = useClusterID()
-  const locale = useLocale()
-
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
-      <div className="bg-muted flex h-12 w-12 items-center justify-center rounded-full">
-        <KeyRound className="text-muted-foreground h-6 w-6" />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-semibold">{t("envs.apiKeyRequired.title")}</p>
-        <p className="text-muted-foreground max-w-md text-xs">
-          {t("envs.apiKeyRequired.envDocsDescription")}
-        </p>
-      </div>
-      <Button size="sm" render={<Link href={clusterPath(clusterID, "api-keys", locale)} />}>
-        {t("envs.apiKeyRequired.goToApiKeys")}
-      </Button>
     </div>
   )
 }

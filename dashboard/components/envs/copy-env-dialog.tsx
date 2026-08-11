@@ -21,15 +21,13 @@ import { useQuery } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogClose, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  ScrollDialogBody,
+  ScrollDialogContent,
+  ScrollDialogFooter,
+  ScrollDialogHeader,
+} from "@/components/custom/scroll-dialog"
 import { envQueryOptions } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
@@ -62,9 +60,9 @@ export function CopyEnvDialog({ name, candidates, onClose, onCopy }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <ScrollDialogContent className="sm:max-w-lg">
         {open && <CopyEnvBody name={name} candidates={present} onClose={onClose} onCopy={onCopy} />}
-      </DialogContent>
+      </ScrollDialogContent>
     </Dialog>
   )
 }
@@ -93,43 +91,45 @@ function CopyEnvBody({
 
   return (
     <>
-      <DialogHeader>
+      <ScrollDialogHeader>
         <DialogTitle>{t("envs.form.copyFrom.title")}</DialogTitle>
         <DialogDescription>
           {t("envs.form.copyFrom.description", { name, count: String(candidates.length) })}
         </DialogDescription>
-      </DialogHeader>
+      </ScrollDialogHeader>
 
-      <div className="max-h-64 space-y-2 overflow-y-auto">
-        {candidates.map((c) => (
-          <button
-            key={c.clusterID}
-            type="button"
-            onClick={() => setSelected(c.clusterID)}
-            aria-pressed={selected === c.clusterID}
-            className={cn(
-              "hover:bg-accent flex w-full items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors",
-              selected === c.clusterID && "border-brand bg-accent/50",
-            )}
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{c.clusterName}</p>
-              <p className="text-muted-foreground truncate font-mono text-xs">
-                {c.env.templateName ?? "—"}
-              </p>
-            </div>
-            <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
-              {t("envs.col.members")}: {c.env.memberCount ?? 0}
-            </span>
-          </button>
-        ))}
-      </div>
+      <ScrollDialogBody>
+        <div className="space-y-2">
+          {candidates.map((c) => (
+            <button
+              key={c.clusterID}
+              type="button"
+              onClick={() => setSelected(c.clusterID)}
+              aria-pressed={selected === c.clusterID}
+              className={cn(
+                "hover:bg-accent flex w-full items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors",
+                selected === c.clusterID && "border-brand bg-accent/50",
+              )}
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{c.clusterName}</p>
+                <p className="text-muted-foreground truncate font-mono text-xs">
+                  {c.env.templateName ?? "—"}
+                </p>
+              </div>
+              <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
+                {t("envs.col.members")}: {c.env.memberCount ?? 0}
+              </span>
+            </button>
+          ))}
+        </div>
 
-      <p className="text-muted-foreground rounded-md border border-dashed p-3 text-xs">
-        {t("envs.form.copyFrom.secretsNote")}
-      </p>
+        <p className="text-muted-foreground rounded-md border border-dashed p-3 text-xs">
+          {t("envs.form.copyFrom.secretsNote")}
+        </p>
+      </ScrollDialogBody>
 
-      <DialogFooter>
+      <ScrollDialogFooter>
         <DialogClose
           render={
             <Button variant="ghost" onClick={onClose}>
@@ -148,7 +148,7 @@ function CopyEnvBody({
           {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {t("envs.form.copyFrom.confirm")}
         </Button>
-      </DialogFooter>
+      </ScrollDialogFooter>
     </>
   )
 }

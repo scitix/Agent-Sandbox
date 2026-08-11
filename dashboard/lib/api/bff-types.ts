@@ -33,16 +33,27 @@
 /**
  * A single cluster entry as returned by GET /api/clusters.
  *
- * Fields omitted vs. the server-side ClusterEntry:
- *   - `visible`  — visibility filtering is applied by the BFF before responding;
- *                  clients always receive only the clusters they are allowed to see.
- *   - `gateway`  — internal cross-cluster forwarding config (Go-only, never exposed).
+ * The route returns the parsed config entries as-is, so this mirrors the
+ * server-side ClusterEntry rather than a projection of it. The one field that
+ * genuinely never reaches a client is `visible`-based filtering: visibility is
+ * applied by the BFF before responding, so clients only receive the clusters
+ * they are allowed to see.
  */
 export interface ClusterEntry {
   id: string
   name: string
-  /** Dashboard-facing base URL of the cluster's AgentBox API. */
+  /** Dashboard-facing base URL of the cluster's AgentBox API (native control plane). */
   url: string
+  /**
+   * Per-API gateway base URLs. `e2bURL` is what the create-sandbox path proxies
+   * to; its presence is how the client decides whether a cluster can create via
+   * E2B at all (absent → fall back to the native endpoint).
+   */
+  gateway?: {
+    nativeURL?: string
+    e2bURL?: string
+    dataURL?: string
+  }
   /** Extra HTTP headers to forward to this cluster (e.g. Host override). */
   headers?: Record<string, string>
   /** Optional display selector / grouping label. */
