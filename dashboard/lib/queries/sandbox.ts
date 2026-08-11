@@ -18,17 +18,20 @@
 
 import { useQueryClient } from "@tanstack/react-query"
 import { AgentSandbox, currentApiClient, currentFetchClient } from "@/lib/api/client"
-import { delayedInvalidate } from "./utils"
+import { apiFor, delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
 
-export const sandboxesQueryOptions = (params?: {
-  poolName?: string
-  status?: string
-  limit?: number
-  offset?: number
-}) =>
-  currentApiClient().queryOptions(
+export const sandboxesQueryOptions = (
+  params?: {
+    poolName?: string
+    status?: string
+    limit?: number
+    offset?: number
+  },
+  clusterID?: string,
+) =>
+  apiFor(clusterID).queryOptions(
     "get",
     "/sandboxes",
     {
@@ -39,8 +42,8 @@ export const sandboxesQueryOptions = (params?: {
     },
   )
 
-export const sandboxQueryOptions = (sandboxId: string) =>
-  currentApiClient().queryOptions("get", "/sandboxes/{sandboxId}", {
+export const sandboxQueryOptions = (sandboxId: string, clusterID?: string) =>
+  apiFor(clusterID).queryOptions("get", "/sandboxes/{sandboxId}", {
     params: { path: { sandboxId } },
   })
 

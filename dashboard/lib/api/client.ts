@@ -18,7 +18,9 @@
 
 import createFetchClient, { type Middleware } from "openapi-fetch"
 import createClient from "openapi-react-query"
+import { useQuery, useSuspenseQuery, type QueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
+import { clusterQueryKey } from "./cluster-query-key"
 import { errorReportAtom, clearSessionData, store, impersonationAtom } from "@/lib/atoms"
 import { getLocaleFromPath } from "@/lib/cluster-path"
 import type { paths, components } from "./schema"
@@ -277,13 +279,79 @@ export function getFetchClient(clusterID: string): FetchClient {
 }
 
 /**
+ * Wraps an openapi-react-query client so every key it produces carries the
+ * cluster. See `clusterQueryKey` for why the cluster is appended rather than
+ * prefixed, and why index 2 must stay reserved for `init`.
+ *
+ * `queryOptions` is the single entry point the query layer uses, so scoping it
+ * covers every read. `useQuery` / `useSuspenseQuery` build their own keys
+ * internally, so they are re-derived from the scoped options rather than
+ * delegated — otherwise a future call site would silently get an unscoped key.
+ *
+ * openapi-react-query types `queryKey` as a 3-tuple, so the appended cluster is
+ * invisible to the compiler. Pass the key around whole (every `invalidateQueries`
+ * / `refetchQueries` call site already does) rather than indexing into it.
+ */
+function clusterScoped(client: ApiClient, clusterID: string): ApiClient {
+  // The wrapper is written against this loose mirror of the client's surface and
+  // cast back to the generic member types below, so call sites keep full type
+  // inference. The generic signatures cannot be reused directly here: taking
+  // `Parameters<>` of one widens its type parameters to `never`.
+  type LooseQueryOptions = (
+    method: string,
+    path: string,
+    init?: unknown,
+    options?: unknown,
+  ) => Parameters<typeof useQuery>[0]
+
+  const inner = client.queryOptions as unknown as LooseQueryOptions
+
+  const queryOptions: LooseQueryOptions = (method, path, init, options) => ({
+    ...inner(method, path, init, options),
+    queryKey: clusterQueryKey(method, path, init, clusterID),
+  })
+
+  const useScopedQuery = (
+    method: string,
+    path: string,
+    init?: unknown,
+    options?: unknown,
+    queryClient?: QueryClient,
+  ) => useQuery(queryOptions(method, path, init, options), queryClient)
+
+  const useScopedSuspenseQuery = (
+    method: string,
+    path: string,
+    init?: unknown,
+    options?: unknown,
+    queryClient?: QueryClient,
+  ) =>
+    useSuspenseQuery(
+      queryOptions(method, path, init, options) as Parameters<typeof useSuspenseQuery>[0],
+      queryClient,
+    )
+
+  return {
+    ...client,
+    queryOptions: queryOptions as unknown as ApiClient["queryOptions"],
+    useQuery: useScopedQuery as unknown as ApiClient["useQuery"],
+    useSuspenseQuery: useScopedSuspenseQuery as unknown as ApiClient["useSuspenseQuery"],
+    // Left delegating, and therefore NOT cluster-scoped: its keys are built
+    // inside the library around the pageParam machinery. Nothing calls it today;
+    // scope it here before the first caller arrives.
+    useInfiniteQuery: client.useInfiniteQuery,
+  }
+}
+
+/**
  * Returns a cached openapi-react-query client scoped to the given cluster.
- * Provides .queryOptions(), .useQuery(), .useMutation() etc.
+ * Provides .queryOptions(), .useQuery(), .useMutation() etc. Keys it produces
+ * are cluster-scoped, so each cluster keeps its own cache entries.
  */
 export function getApiClient(clusterID: string): ApiClient {
   let client = _apiClientCache.get(clusterID)
   if (!client) {
-    client = createClient(getFetchClient(clusterID))
+    client = clusterScoped(createClient(getFetchClient(clusterID)), clusterID)
     _apiClientCache.set(clusterID, client)
   }
   return client
