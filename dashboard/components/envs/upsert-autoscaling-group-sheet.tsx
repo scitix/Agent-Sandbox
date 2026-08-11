@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
+import { FormCloneActions } from "@/components/custom/form-clone-actions"
+import { createFormClone } from "@/lib/utils/form-clone"
 import { Switch } from "@/components/ui/switch"
 import type { AgentEnvAutoscalingGroup, AgentSandboxEnv } from "@/lib/api/client"
 import { useUpdateEnvAutoscalingGroup } from "@/lib/queries"
@@ -70,6 +72,15 @@ const formSchema = z.object({
 })
 
 type FormValues = z.infer<typeof formSchema>
+
+// Autoscaling policy is pure numbers — no credentials to strip, and no name of
+// its own (the group is named by the resource key it scales).
+const autoscalingGroupClone = createFormClone<FormValues>({
+  kind: "EnvAutoscalingGroupFormExport",
+  version: 1,
+  schema: formSchema.partial(),
+  filePrefix: "autoscaling-group",
+})
 
 // crdDefaults mirrors the kubebuilder `+kubebuilder:default=` markers on
 // PoolScaleUpPolicy / PoolScaleDownPolicy / EnvAutoscalingGroup. Used as the
@@ -125,6 +136,9 @@ function UpsertInner({
     control,
     register,
     handleSubmit,
+    reset,
+    trigger,
+    getValues,
     formState: { isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -278,14 +292,25 @@ function UpsertInner({
         </div>
 
         <Separator />
-        <div className="flex justify-end gap-2 px-6 py-3">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting} className="gap-1.5">
-            <Save className="h-3.5 w-3.5" />
-            {t("common.save")}
-          </Button>
+        <div className="flex items-center gap-2 px-6 py-3">
+          <FormCloneActions
+            clone={autoscalingGroupClone}
+            getValues={getValues}
+            defaults={defaults}
+            onImport={(v) => {
+              reset(v)
+              void trigger()
+            }}
+          />
+          <div className="ml-auto flex items-center gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={isSubmitting} className="gap-1.5">
+              <Save className="h-3.5 w-3.5" />
+              {t("common.save")}
+            </Button>
+          </div>
         </div>
       </form>
     </Fragment>

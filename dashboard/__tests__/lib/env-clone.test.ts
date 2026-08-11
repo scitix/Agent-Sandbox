@@ -189,7 +189,7 @@ describe("envCloneFileName", () => {
     expect(envCloneFileName(filled())).toBe("sandbox-env-slimedev.json")
   })
 
-  it("falls back when the name is still blank", () => {
-    expect(envCloneFileName(filled({ name: "  " }))).toBe("sandbox-env-env.json")
+  it("drops the suffix when the name is still blank", () => {
+    expect(envCloneFileName(filled({ name: "  " }))).toBe("sandbox-env.json")
   })
 })

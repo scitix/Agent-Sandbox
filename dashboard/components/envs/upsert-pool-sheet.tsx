@@ -48,6 +48,8 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { FormCloneActions } from "@/components/custom/form-clone-actions"
+import { createFormClone } from "@/lib/utils/form-clone"
 import { getPoolMeta, PoolTypeBadge, poolDisplayName } from "@/components/quota/pool-meta"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -188,6 +190,17 @@ const updateSchema = baseObject.superRefine(refineReplicaBounds)
 
 type FormValues = z.infer<typeof baseObject>
 
+// A member Pool's form holds no credentials, so there is nothing to strip. A
+// Pool has no name field either — its name is derived from the resource key — so
+// the export is named after the instance type when there is one.
+const poolClone = createFormClone<FormValues>({
+  kind: "SandboxPoolFormExport",
+  version: 1,
+  schema: baseObject.partial(),
+  filePrefix: "sandbox-pool",
+  nameOf: (v) => v.instanceType,
+})
+
 // ─── Sheet shell ─────────────────────────────────────────────────────────────
 
 export function UpsertPoolSheet({ env, pool, open, onOpenChange }: Props) {
@@ -230,6 +243,9 @@ function UpsertPoolInner({
     control,
     register,
     handleSubmit,
+    reset,
+    trigger,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(isEdit ? updateSchema : createSchema),
@@ -466,9 +482,7 @@ function UpsertPoolInner({
                               type="number"
                               min={1}
                               max={envelope?.memGiB || undefined}
-                              placeholder={
-                                envelope?.memGiB != null ? String(envelope.memGiB) : "—"
-                              }
+                              placeholder={envelope?.memGiB != null ? String(envelope.memGiB) : "—"}
                               disabled={isEdit}
                               aria-invalid={overrideMemExceeds || !!errors.overrideMemoryGiB}
                               {...register("overrideMemoryGiB")}
@@ -565,7 +579,10 @@ function UpsertPoolInner({
             </Field>
             <Field>
               <FieldLabel>{t("envs.form.updateStrategy.maxUnavailable")}</FieldLabel>
-              <Input placeholder={t("envs.poolForm.inheritPlaceholder")} {...register("maxUnavailable")} />
+              <Input
+                placeholder={t("envs.poolForm.inheritPlaceholder")}
+                {...register("maxUnavailable")}
+              />
               <FieldDescription>
                 {t("envs.form.updateStrategy.maxUnavailableDescription")}
               </FieldDescription>
@@ -574,14 +591,26 @@ function UpsertPoolInner({
         </div>
 
         <Separator />
-        <div className="flex justify-end gap-2 px-6 py-3">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting} className="gap-1.5">
-            <Save className="h-3.5 w-3.5" />
-            {isEdit ? t("common.save") : t("common.create")}
-          </Button>
+        <div className="flex items-center gap-2 px-6 py-3">
+          <FormCloneActions
+            clone={poolClone}
+            getValues={getValues}
+            defaults={defaultValues}
+            canImport={!isEdit}
+            onImport={(v) => {
+              reset(v)
+              void trigger()
+            }}
+          />
+          <div className="ml-auto flex items-center gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={isSubmitting} className="gap-1.5">
+              <Save className="h-3.5 w-3.5" />
+              {isEdit ? t("common.save") : t("common.create")}
+            </Button>
+          </div>
         </div>
       </form>
     </Fragment>

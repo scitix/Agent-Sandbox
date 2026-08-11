@@ -53,11 +53,13 @@ import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { CopyEnvDialog } from "@/components/envs/copy-env-dialog"
-import { EnvCloneToolbar } from "@/components/envs/clone-toolbar"
+import { FormCloneActions } from "@/components/custom/form-clone-actions"
 import type { AgentSandboxEnv, AgentSandboxTemplateSummary } from "@/lib/api/client"
 import { useEnvNameAcrossClusters } from "@/hooks/use-env-name-across-clusters"
 import { envQueryOptions, templatesQueryOptions, useCreateEnv, useUpdateEnv } from "@/lib/queries"
+import { envClone } from "@/lib/utils/env-clone"
 import {
+  envFormDefaults,
   envToFormValues,
   formSchema,
   formValuesToCreateBody,
@@ -225,9 +227,6 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
       <Separator />
 
       <form onSubmit={onSubmit} className="flex flex-1 flex-col overflow-hidden">
-        {!isEdit && (
-          <EnvCloneToolbar getValues={getValues} trigger={trigger} onImport={(v) => reset(v)} />
-        )}
         <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
           {/* Basics — always visible */}
           <section className="space-y-4">
@@ -442,18 +441,30 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
         </div>
 
         <Separator />
-        <div className="flex justify-end gap-2 px-6 py-3">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button
-            type="submit"
-            disabled={isSubmitting || isCheckingName || takenHere}
-            className="gap-1.5"
-          >
-            <Save className="h-3.5 w-3.5" />
-            {isEdit ? t("common.save") : t("common.create")}
-          </Button>
+        <div className="flex items-center gap-2 px-6 py-3">
+          <FormCloneActions
+            clone={envClone}
+            getValues={getValues}
+            defaults={envFormDefaults()}
+            canImport={!isEdit}
+            onImport={(v) => {
+              reset(v)
+              void trigger()
+            }}
+          />
+          <div className="ml-auto flex items-center gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="submit"
+              disabled={isSubmitting || isCheckingName || takenHere}
+              className="gap-1.5"
+            >
+              <Save className="h-3.5 w-3.5" />
+              {isEdit ? t("common.save") : t("common.create")}
+            </Button>
+          </div>
         </div>
       </form>
 

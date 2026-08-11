@@ -337,3 +337,41 @@ Flat dot-namespaced format, organized by module:
 - Toast components: Please use `import { toast } from 'sonner'` — not `useToast`.
 - Custom business components should be placed in `components/<business-domain>/`, absolutely NEVER place them in the `components/ui/` directory.
 - For conditional class names, always use the `cn()` function in `lib/utils.ts`.
+
+## Form JSON export / import
+
+Every upsert sheet carries Export / Import JSON buttons on the **left of its footer**, with cancel/submit pushed right by `ml-auto`. Adding them to a new form is two steps and needs no new copy — all strings are shared under `common.formClone.*`:
+
+```ts
+// module scope, next to the form's schema
+const fooClone = createFormClone<FormValues>({
+  kind: "FooFormExport", // envelope discriminator; a file from another form is refused
+  version: 1, // bump only when an older importer would misread the file
+  schema: baseObject.partial(), // pass the OBJECT schema, not a superRefine'd one
+  filePrefix: "foo",
+  nameOf: (v) => v.name, // optional, names the downloaded file
+  stripSecrets: (v) => ({ ...v, token: "" }), // only if the form holds secrets
+  countBlankedSecrets: (v) => (v.token ? 0 : 1), // drives the "re-enter N" warning
+})
+```
+
+```tsx
+<FormCloneActions
+  clone={fooClone}
+  getValues={getValues}
+  defaults={defaultValues} /* the defaults in force now — an import merges onto them */
+  canImport={!isEdit}
+  onImport={(v) => {
+    reset(v)
+    void trigger()
+  }}
+/>
+```
+
+Three rules worth knowing:
+
+- **The payload is form values, not the resource spec.** That is what makes an import a plain `reset()` needing no inverse of the payload builders, and it bounds the secret surface to what the form-values type can express.
+- **A form holding secrets MUST set `stripSecrets`.** Exported files get attached to tickets and checked into repos. `lib/utils/env-clone.ts` blanks `injectionCredentialRows[].value` and `imagePullSecretRows[].password`; `lib/utils/managed-agent-clone.ts` blanks its four API-key fields. Both have unit tests asserting no secret survives serialization — add one alongside any new spec that strips.
+- **Import is create-only** (`canImport={!isEdit}`). Replacing a live resource's whole configuration from a file is a different, riskier operation than seeding a new one.
+
+Runtime-dependent behaviour goes in the spec factory rather than a module constant — see `managedAgentClone(knownClusterIDs)`, which clears cluster ids this deployment does not know via the `sanitize` hook.
