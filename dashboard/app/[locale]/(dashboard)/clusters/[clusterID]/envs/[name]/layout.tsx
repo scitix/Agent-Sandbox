@@ -27,6 +27,7 @@ import {
   InfoIcon,
   KeyRound,
   Loader2,
+  Network,
   Pencil,
   TrendingUp,
   Trash2,
@@ -37,6 +38,7 @@ import { DetailHeader } from "@/components/custom/detail-header"
 import { DetailTabsNav } from "@/components/custom/detail-tabs-nav"
 import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
+import { ExtendEnvDialog } from "@/components/envs/extend-env-dialog"
 import { envQueryOptions } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -68,6 +70,7 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
     (error as { errorCode?: string } | null)?.errorCode === "API_KEY_REQUIRED"
 
   const [editOpen, setEditOpen] = useState(false)
+  const [extendOpen, setExtendOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
   // A specific child detail route (`…/pools/{poolName}` or
@@ -109,6 +112,16 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
               variant="outline"
               size="sm"
               disabled={!env}
+              onClick={() => setExtendOpen(true)}
+              className="h-8 gap-1 text-xs"
+            >
+              <Network className="h-3.5 w-3.5" />
+              {t("envs.action.extend")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!env}
               onClick={() => setDeleteOpen(true)}
               className="text-destructive hover:text-destructive h-8 gap-1 text-xs"
             >
@@ -140,6 +153,7 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
 
       {/* Env-level sheets & dialogs */}
       <UpsertEnvSheet envName={env?.name ?? null} open={editOpen} onOpenChange={setEditOpen} />
+      <ExtendEnvDialog env={env ?? null} open={extendOpen} onOpenChange={setExtendOpen} />
       <DeleteEnvDialog
         env={deleteOpen && env ? { name: env.name, memberCount: env.status?.memberCount } : null}
         onOpenChange={(open) => setDeleteOpen(open)}

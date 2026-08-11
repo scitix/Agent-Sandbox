@@ -16,14 +16,13 @@
 
 "use client"
 
-import { Fragment, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form"
-import { useQuery, useQueries } from "@tanstack/react-query"
-import { useAtomValue } from "jotai"
+import { useQuery } from "@tanstack/react-query"
+import { useDebouncedCallback } from "use-debounce"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { z } from "zod"
 import { toast } from "sonner"
-import { Plus, Save, Trash2 } from "lucide-react"
+import { Loader2, Plus, Save, Trash2 } from "lucide-react"
 
 import {
   Accordion,
@@ -52,13 +51,19 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { CopyEnvDialog } from "@/components/envs/copy-env-dialog"
+import { EnvCloneToolbar } from "@/components/envs/clone-toolbar"
 import type { AgentSandboxEnv, AgentSandboxTemplateSummary } from "@/lib/api/client"
-import { getApiClient } from "@/lib/api/client"
-import { clustersAtom } from "@/lib/atoms"
-import { useClusterID } from "@/hooks/use-cluster-id"
+import { useEnvNameAcrossClusters } from "@/hooks/use-env-name-across-clusters"
 import { envQueryOptions, templatesQueryOptions, useCreateEnv, useUpdateEnv } from "@/lib/queries"
+import {
+  envToFormValues,
+  formSchema,
+  formValuesToCreateBody,
+  formValuesToUpdateBody,
+  type FormValues,
+} from "@/lib/utils/env-form"
 import { useTranslation } from "@/lib/i18n"
 
 interface Props {
@@ -71,128 +76,6 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
-
-// ─── Form schema ─────────────────────────────────────────────────────────────
-//
-// The env-creation form holds only env-level identity + overrides. Member
-// SandboxPools (with their resource choice + replica counts) are created
-// afterwards from the Env detail page via /v1/envs/{name}/sandboxpools.
-// Autoscaling lives at the env level but is edited per-pool (one
-// scaling-group entry at a time) from the pool table — not from this sheet.
-
-const emptyToUndef = (val: unknown) =>
-  typeof val === "string" && val.trim() === "" ? undefined : val
-
-const dnsLabel = /^[a-z]([a-z0-9-]*[a-z0-9])?$/
-
-const injectionCredentialRowSchema = z.object({
-  name: z.string().optional(),
-  // Write-only. Left blank on an edit it means "keep what is stored" — the API
-  // never returns a value, so the form cannot round-trip one.
-  value: z.string().optional(),
-  // configured marks a credential the server already holds a value for, so a
-  // value can be required for new rows without demanding a re-type of old ones.
-  configured: z.boolean().optional(),
-  exposeAs: z.string().optional(),
-  placeholder: z.string().optional(),
-})
-
-// The credential name doubles as the key inside the Env's credential Secret,
-// so it is limited to what Kubernetes accepts there.
-const credNameRe = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/
-
-const injectionRuleRowSchema = z.object({
-  host: z.string().optional(),
-  headerName: z.string().optional(),
-  headerValue: z.string().optional(),
-  mode: z.enum(["Override", "IfAbsent"]).optional(),
-  substitute: z.string().optional(),
-  pathPrefixes: z.string().optional(),
-})
-
-const registryRowSchema = z.object({
-  registry: z.preprocess(emptyToUndef, z.string().optional()),
-  username: z.preprocess(emptyToUndef, z.string().optional()),
-  password: z.preprocess(emptyToUndef, z.string().optional()),
-})
-
-// splitLines turns a textarea value into a trimmed, de-duplicated list, split on
-// newlines or commas. Shared by validation, payload assembly, and read-back.
-function splitLines(s?: string): string[] {
-  const seen = new Set<string>()
-  return (s ?? "")
-    .split(/[\n,]+/)
-    .map((x) => x.trim())
-    .filter((x) => x !== "" && !seen.has(x) && seen.add(x) !== undefined)
-}
-
-const domainRe = /^(\*|\*\.([a-z0-9-]+\.)+[a-z]{2,}|([a-z0-9-]+\.)+[a-z]{2,})$/i
-
-function isCIDRorIP(s: string): boolean {
-  if (s.includes(":")) return true // IPv6 (incl. CIDR) — accept loosely
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(\/(\d{1,2}))?$/.exec(s)
-  if (!m) return false
-  if (m[1]! > "255" || [m[1], m[2], m[3], m[4]].some((o) => Number(o) > 255)) return false
-  if (m[6] !== undefined && Number(m[6]) > 32) return false
-  return true
-}
-
-const formSchema = z
-  .object({
-    name: z
-      .string()
-      .min(1, "envs.form.errors.nameRequired")
-      .max(24, "envs.form.errors.nameTooLong")
-      .regex(dnsLabel, "envs.form.errors.nameDnsLabel"),
-    templateName: z.string().min(1, "envs.form.errors.templateRequired"),
-    image: z.preprocess(emptyToUndef, z.string().optional()),
-    podCreationImagePolicy: z.enum(["PoolDefaultImage", "IdleImage"]).optional(),
-    imagePullSecretRows: z.array(registryRowSchema),
-    defaultStartupTimeout: z.preprocess(emptyToUndef, z.string().optional()),
-    defaultIdleTimeout: z.preprocess(emptyToUndef, z.string().optional()),
-    // Network policy: a 3-way mode gates the egress rules.
-    networkPolicyMode: z.enum(["unrestricted", "disable", "allowlist"]),
-    allowedDomains: z.preprocess(emptyToUndef, z.string().optional()),
-    allowedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
-    deniedCIDRs: z.preprocess(emptyToUndef, z.string().optional()),
-    allowPrivateNetworks: z.boolean(),
-    // Credential injection: the sidecar adds these headers on the way out, so
-    // the sandbox can use a credential it can never read.
-    injectionCredentialRows: z.array(injectionCredentialRowSchema),
-    injectionRuleRows: z.array(injectionRuleRowSchema),
-    // Auto-update rollout policy (Env-level default; per-member override lives
-    // on the pool sheet). maxUnavailable is a free-form int-or-percent string.
-    autoUpdate: z.boolean(),
-    maxUnavailable: z.preprocess(emptyToUndef, z.string().optional()),
-  })
-  .superRefine((v, ctx) => {
-    validateInjection(v, ctx)
-    if (v.networkPolicyMode !== "allowlist") return
-    for (const d of splitLines(v.allowedDomains)) {
-      if (!domainRe.test(d)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["allowedDomains"],
-          message: "envs.form.errors.invalidDomain",
-        })
-        break
-      }
-    }
-    for (const key of ["allowedCIDRs", "deniedCIDRs"] as const) {
-      for (const c of splitLines(v[key])) {
-        if (!isCIDRorIP(c)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [key],
-            message: "envs.form.errors.invalidCidr",
-          })
-          break
-        }
-      }
-    }
-  })
-
-type FormValues = z.infer<typeof formSchema>
 
 // ─── Sheet shell ─────────────────────────────────────────────────────────────
 
@@ -250,7 +133,9 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
     control,
     register,
     handleSubmit,
-    setValue,
+    reset,
+    trigger,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -260,41 +145,41 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
   const createMutation = useCreateEnv()
   const updateMutation = useUpdateEnv()
 
-  // Create mode. "new" builds a fresh Env; "extend" pins the name to an Env
-  // that already exists in another cluster — creating a same-named Env here
-  // joins its cross-cluster federation. The extend picker fans GET /envs out
-  // across every other cluster.
-  const [createMode, setCreateMode] = useState<"new" | "extend">("new")
-  const [extendSel, setExtendSel] = useState<{
-    clusterID: string
-    clusterName: string
-    name: string
-  } | null>(null)
-  const clustersData = useAtomValue(clustersAtom)
-  const currentCluster = useClusterID()
-  const otherClusters = useMemo(
-    () => (clustersData?.clusters ?? []).filter((c) => c.id && c.id !== currentCluster),
-    [clustersData, currentCluster],
+  // ── Name availability (create only) ────────────────────────────────────────
+  //
+  // An Env name is meaningful beyond this cluster: the same name on another
+  // cluster with the same template is the same logical environment, extended.
+  // So a name is checked against every cluster, not just this one — taken here
+  // is an error, taken elsewhere is an offer to copy that env's configuration.
+  //
+  // The probe runs off the per-cluster Env lists, which are fetched once and
+  // then cached; debouncing gates when the typed name is *compared*, so no
+  // request is made per keystroke.
+  const typedName = useWatch({ control, name: "name" }) ?? ""
+  const [checkedName, setCheckedName] = useState("")
+  const settleName = useDebouncedCallback((v: string) => setCheckedName(v), 400)
+
+  useEffect(() => {
+    if (isEdit) return
+    settleName(typedName.trim())
+  }, [typedName, isEdit, settleName])
+
+  const presence = useEnvNameAcrossClusters(isEdit ? "" : checkedName)
+  const nameSettled = !isEdit && checkedName === typedName.trim()
+  const isCheckingName = !isEdit && typedName.trim() !== "" && (!nameSettled || presence.isProbing)
+
+  const takenHere = nameSettled && presence.current?.state === "present"
+  const takenElsewhere = useMemo(
+    () => (nameSettled ? presence.others.filter((p) => p.state === "present") : []),
+    [nameSettled, presence.others],
   )
-  const otherEnvQueries = useQueries({
-    queries: otherClusters.map((c) => ({
-      ...getApiClient(c.id).queryOptions("get", "/envs", undefined, {
-        select: (d: { items?: { name: string }[] }) => d.items ?? [],
-      }),
-      enabled: !isEdit && createMode === "extend",
-    })),
-  })
-  const otherEnvs = useMemo(
-    () =>
-      otherClusters.flatMap((c, i) =>
-        ((otherEnvQueries[i]?.data as { name: string }[] | undefined) ?? []).map((e) => ({
-          clusterID: c.id,
-          clusterName: c.name ?? c.id,
-          name: e.name,
-        })),
-      ),
-    [otherClusters, otherEnvQueries],
-  )
+
+  // Whether the copy offer is showing is derived, not stored: the only thing
+  // worth remembering is which name the user has already said no to, so
+  // dismissing it does not re-prompt on the next render for that same name.
+  const [copyDismissed, setCopyDismissed] = useState<string | null>(null)
+  const copyOfferFor =
+    !takenHere && takenElsewhere.length > 0 && copyDismissed !== checkedName ? checkedName : null
 
   const onSubmit = handleSubmit(async (values) => {
     if (isEdit) {
@@ -340,208 +225,220 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
       <Separator />
 
       <form onSubmit={onSubmit} className="flex flex-1 flex-col overflow-hidden">
+        {!isEdit && (
+          <EnvCloneToolbar getValues={getValues} trigger={trigger} onImport={(v) => reset(v)} />
+        )}
         <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
           {/* Basics — always visible */}
           <section className="space-y-4">
-            {!isEdit && otherClusters.length > 0 && (
-              <Tabs
-                value={createMode}
-                onValueChange={(v) => {
-                  setCreateMode(v as "new" | "extend")
-                  setExtendSel(null)
-                  setValue("name", "", { shouldValidate: false })
-                }}
-              >
-                <TabsList className="w-full">
-                  <TabsTrigger value="new" className="flex-1 text-xs">
-                    {t("envs.form.tab.new")}
-                  </TabsTrigger>
-                  <TabsTrigger value="extend" className="flex-1 text-xs">
-                    {t("envs.form.tab.extend")}
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-            )}
             <Field>
               <FieldLabel htmlFor="env-name">{t("envs.form.name")}</FieldLabel>
-              {!isEdit && createMode === "extend" ? (
-                <Combobox
-                  autoHighlight
-                  value={extendSel}
-                  onValueChange={(
-                    v: { clusterID: string; clusterName: string; name: string } | null,
-                  ) => {
-                    setExtendSel(v)
-                    setValue("name", v?.name ?? "", { shouldValidate: true })
-                  }}
-                  items={otherEnvs}
-                  itemToStringLabel={(e: {
-                    clusterID: string
-                    clusterName: string
-                    name: string
-                  }) => e.name}
-                >
-                  <ComboboxInput
-                    aria-invalid={!!errors.name}
-                    placeholder={t("envs.form.extendPlaceholder")}
-                    className="h-9 font-mono text-sm"
-                  />
-                  <ComboboxContent>
-                    <ComboboxEmpty>{t("common.noResultsFound")}</ComboboxEmpty>
-                    <ComboboxList>
-                      {(e: { clusterID: string; clusterName: string; name: string }) => (
-                        <ComboboxItem key={`${e.clusterID}/${e.name}`} value={e}>
-                          <span className="font-mono text-sm">{e.name}</span>
-                          <span className="text-muted-foreground ml-2 text-xs">
-                            {e.clusterName}
-                          </span>
-                        </ComboboxItem>
-                      )}
-                    </ComboboxList>
-                  </ComboboxContent>
-                </Combobox>
-              ) : (
+              <div className="relative">
                 <Input
                   id="env-name"
                   disabled={isEdit}
+                  aria-invalid={!!errors.name || takenHere}
+                  aria-busy={isCheckingName}
                   {...register("name")}
                   placeholder="my-env"
                   maxLength={24}
+                  className={isCheckingName ? "pr-9" : undefined}
                 />
-              )}
-              {errors.name && <FieldError>{t(errors.name.message as never)}</FieldError>}
-              <FieldDescription>
-                {createMode === "extend"
-                  ? t("envs.form.extendDescription")
-                  : t("envs.form.nameDescription")}
-              </FieldDescription>
-            </Field>
-
-            <Field>
-              <FieldLabel>{t("envs.form.template")}</FieldLabel>
-              <Controller
-                control={control}
-                name="templateName"
-                render={({ field, fieldState }) => (
-                  <TemplateCombobox
-                    items={templates}
-                    value={field.value}
-                    onChange={field.onChange}
-                    invalid={fieldState.invalid}
-                    disabled={isEdit}
+                {isCheckingName && (
+                  <Loader2
+                    aria-hidden
+                    className="text-muted-foreground pointer-events-none absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 animate-spin"
                   />
                 )}
-              />
-              {errors.templateName && (
-                <FieldError>{t(errors.templateName.message as never)}</FieldError>
+              </div>
+              {errors.name ? (
+                <FieldError>{t(errors.name.message as never)}</FieldError>
+              ) : takenHere ? (
+                <FieldError>{t("envs.form.nameCheck.takenHere")}</FieldError>
+              ) : null}
+              <FieldDescription>
+                {isCheckingName
+                  ? t("envs.form.nameCheck.checking")
+                  : takenElsewhere.length > 0
+                    ? t("envs.form.nameCheck.takenElsewhere", {
+                        clusters: takenElsewhere.map((p) => p.clusterName).join(", "),
+                      })
+                    : t("envs.form.nameDescription")}
+              </FieldDescription>
+              {takenElsewhere.length > 0 && !takenHere && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-1 h-7 w-fit text-xs"
+                  onClick={() => setCopyDismissed(null)}
+                >
+                  {t("envs.form.copyFrom.reopen")}
+                </Button>
               )}
-              <SelectedTemplateInfo templates={templates} control={control} />
             </Field>
           </section>
 
-          {/* Advanced — collapsed by default */}
-          <div className="border-border rounded-md border">
-            <Accordion>
-              <AccordionItem value="advanced">
-                <AccordionTrigger className="text-muted-foreground px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
-                  {t("common.advanced")}
-                </AccordionTrigger>
-                <AccordionContent className="px-3">
-                  <div className="flex flex-col gap-5 pb-2">
-                    {/* Env-level overrides */}
-                    <section className="space-y-3">
-                      <div>
-                        <h4 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
-                          {t("envs.form.section.overrides")}
-                        </h4>
-                        <p className="text-muted-foreground mt-1 text-xs">
+          {/* Everything past the name is gated on the availability check: a name
+              that turns out to be taken here, or copied from another cluster,
+              changes what the rest of the form should say. */}
+          <fieldset disabled={isCheckingName} className="min-w-0 space-y-5 disabled:opacity-60">
+            <section className="space-y-4">
+              <Field>
+                <FieldLabel>{t("envs.form.template")}</FieldLabel>
+                <Controller
+                  control={control}
+                  name="templateName"
+                  render={({ field, fieldState }) => (
+                    <TemplateCombobox
+                      items={templates}
+                      value={field.value}
+                      onChange={field.onChange}
+                      invalid={fieldState.invalid}
+                      disabled={isEdit}
+                    />
+                  )}
+                />
+                {errors.templateName && (
+                  <FieldError>{t(errors.templateName.message as never)}</FieldError>
+                )}
+                <SelectedTemplateInfo templates={templates} control={control} />
+              </Field>
+            </section>
+
+            {/* Advanced — one collapsed panel per concern, so the headers alone
+                say what is configurable without anything being expanded. */}
+            <div className="border-border divide-border divide-y rounded-md border">
+              <Accordion>
+                <AccordionItem value="image">
+                  <AccordionTrigger className="text-muted-foreground px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
+                    {t("envs.form.section.imageAndTimeout")}
+                  </AccordionTrigger>
+                  <AccordionContent className="px-3">
+                    <div className="flex flex-col gap-5 pb-2">
+                      {/* Env-level overrides */}
+                      <section className="space-y-3">
+                        <p className="text-muted-foreground text-xs">
                           {t("envs.form.overridesHint")}
                         </p>
-                      </div>
 
-                      <Field>
-                        <FieldLabel htmlFor="env-image">{t("envs.form.image")}</FieldLabel>
-                        <Input
-                          id="env-image"
-                          {...register("image")}
-                          placeholder="ghcr.io/org/runtime:1.2"
-                          className="font-mono text-sm"
-                        />
-                        <FieldDescription>{t("envs.form.imageDescription")}</FieldDescription>
-                      </Field>
-
-                      <Field>
-                        <FieldLabel>{t("envs.form.podCreationImagePolicy")}</FieldLabel>
-                        <Controller
-                          control={control}
-                          name="podCreationImagePolicy"
-                          render={({ field }) => (
-                            <Select
-                              value={field.value ?? ""}
-                              onValueChange={(v) => field.onChange(v || undefined)}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder={t("envs.form.imagePolicyDefault")} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="IdleImage">IdleImage</SelectItem>
-                                <SelectItem value="PoolDefaultImage">PoolDefaultImage</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          )}
-                        />
-                        <FieldDescription>
-                          {t("envs.form.podCreationImagePolicyDescription")}
-                        </FieldDescription>
-                      </Field>
-
-                      <div className="grid grid-cols-2 gap-3">
                         <Field>
-                          <FieldLabel htmlFor="env-startup">
-                            {t("envs.form.defaultStartupTimeout")}
-                          </FieldLabel>
+                          <FieldLabel htmlFor="env-image">{t("envs.form.image")}</FieldLabel>
                           <Input
-                            id="env-startup"
-                            placeholder="5m"
-                            {...register("defaultStartupTimeout")}
+                            id="env-image"
+                            {...register("image")}
+                            placeholder="ghcr.io/org/runtime:1.2"
+                            className="font-mono text-sm"
+                          />
+                          <FieldDescription>{t("envs.form.imageDescription")}</FieldDescription>
+                        </Field>
+
+                        <Field>
+                          <FieldLabel>{t("envs.form.podCreationImagePolicy")}</FieldLabel>
+                          <Controller
+                            control={control}
+                            name="podCreationImagePolicy"
+                            render={({ field }) => (
+                              <Select
+                                value={field.value ?? ""}
+                                onValueChange={(v) => field.onChange(v || undefined)}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder={t("envs.form.imagePolicyDefault")} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="IdleImage">IdleImage</SelectItem>
+                                  <SelectItem value="PoolDefaultImage">PoolDefaultImage</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
                           />
                           <FieldDescription>
-                            {t("envs.form.defaultStartupTimeoutDescription")}
+                            {t("envs.form.podCreationImagePolicyDescription")}
                           </FieldDescription>
                         </Field>
-                        <Field>
-                          <FieldLabel htmlFor="env-idle">
-                            {t("envs.form.defaultIdleTimeout")}
-                          </FieldLabel>
-                          <Input
-                            id="env-idle"
-                            placeholder="30m"
-                            {...register("defaultIdleTimeout")}
-                          />
-                          <FieldDescription>
-                            {t("envs.form.defaultIdleTimeoutDescription")}
-                          </FieldDescription>
-                        </Field>
-                      </div>
-                    </section>
 
-                    <Separator />
+                        <div className="grid grid-cols-2 gap-3">
+                          <Field>
+                            <FieldLabel htmlFor="env-startup">
+                              {t("envs.form.defaultStartupTimeout")}
+                            </FieldLabel>
+                            <Input
+                              id="env-startup"
+                              placeholder="5m"
+                              {...register("defaultStartupTimeout")}
+                            />
+                            <FieldDescription>
+                              {t("envs.form.defaultStartupTimeoutDescription")}
+                            </FieldDescription>
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="env-idle">
+                              {t("envs.form.defaultIdleTimeout")}
+                            </FieldLabel>
+                            <Input
+                              id="env-idle"
+                              placeholder="30m"
+                              {...register("defaultIdleTimeout")}
+                            />
+                            <FieldDescription>
+                              {t("envs.form.defaultIdleTimeoutDescription")}
+                            </FieldDescription>
+                          </Field>
+                        </div>
+                      </section>
 
-                    <ImagePullSecretSection control={control} register={register} />
+                      <Separator />
 
-                    <Separator />
+                      <ImagePullSecretSection control={control} register={register} />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
 
-                    <NetworkPolicySection control={control} register={register} errors={errors} />
-                    <SecretInjectionSection control={control} register={register} errors={errors} />
+                <AccordionItem value="network">
+                  <AccordionTrigger className="text-muted-foreground px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
+                    {t("envs.form.section.networkPolicy")}
+                  </AccordionTrigger>
+                  <AccordionContent className="px-3">
+                    <div className="flex flex-col gap-5 pb-2">
+                      <NetworkPolicySection control={control} register={register} errors={errors} />
+                      <Separator />
+                      <SecretInjectionSection
+                        control={control}
+                        register={register}
+                        errors={errors}
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
 
-                    <Separator />
-
-                    <UpdateStrategySection control={control} register={register} />
+                <AccordionItem value="update">
+                  {/* The switch is a SIBLING of the trigger, not a child: the
+                      trigger is itself a <button>, so nesting would be invalid
+                      markup and every toggle would also open the panel. */}
+                  <div className="flex items-center pr-3">
+                    <AccordionTrigger className="text-muted-foreground flex-1 px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
+                      {t("envs.form.section.updateStrategy")}
+                    </AccordionTrigger>
+                    <Controller
+                      control={control}
+                      name="autoUpdate"
+                      render={({ field }) => (
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          aria-label={t("envs.form.updateStrategy.autoUpdate")}
+                        />
+                      )}
+                    />
                   </div>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          </div>
+                  <AccordionContent className="px-3">
+                    <UpdateStrategySection control={control} register={register} />
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </div>
+          </fieldset>
         </div>
 
         <Separator />
@@ -549,12 +446,28 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
           <Button type="button" variant="ghost" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" disabled={isSubmitting} className="gap-1.5">
+          <Button
+            type="submit"
+            disabled={isSubmitting || isCheckingName || takenHere}
+            className="gap-1.5"
+          >
             <Save className="h-3.5 w-3.5" />
             {isEdit ? t("common.save") : t("common.create")}
           </Button>
         </div>
       </form>
+
+      {/* Same name on another cluster: offer to start from that env's config. */}
+      <CopyEnvDialog
+        name={copyOfferFor}
+        candidates={takenElsewhere}
+        onClose={() => setCopyDismissed(copyOfferFor)}
+        onCopy={(source) => {
+          reset({ ...envToFormValues(source), name: source.name })
+          setCopyDismissed(copyOfferFor)
+          toast.success(t("envs.form.copyFrom.applied", { name: source.name }))
+        }}
+      />
     </Fragment>
   )
 }
@@ -736,149 +649,6 @@ function ImagePullSecretSection({ control, register }: ImagePullSecretSectionPro
       </div>
     </section>
   )
-}
-
-// ─── Credential injection ───────────────────────────────────────────────────
-
-// splitCommas parses a comma-separated free-text field into trimmed entries.
-function splitCommas(v: string | undefined): string[] {
-  return (v ?? "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean)
-}
-
-// buildSecretInjection folds the credential and rule rows into the wire shape.
-// Rows are keyed by host so several header rows on one host become one rule
-// carrying several headers, matching how the proxy evaluates them.
-function buildSecretInjection(v: FormValues): Record<string, unknown> | undefined {
-  const credentials = v.injectionCredentialRows
-    .filter((c) => c.name)
-    .map((c) => ({
-      name: c.name!,
-      // Omitted when left blank on an edit, so the server keeps the stored
-      // value rather than clearing it.
-      ...(c.value ? { value: c.value } : {}),
-      ...(c.exposeAs ? { exposeAs: c.exposeAs } : {}),
-      ...(c.placeholder ? { placeholder: c.placeholder } : {}),
-    }))
-
-  const byHost = new Map<string, Record<string, unknown>>()
-  for (const r of v.injectionRuleRows) {
-    if (!r.host) continue
-    let rule = byHost.get(r.host)
-    if (!rule) {
-      rule = { host: r.host, headers: [] as Record<string, unknown>[] }
-      byHost.set(r.host, rule)
-    }
-    if (r.headerName && r.headerValue) {
-      ;(rule.headers as Record<string, unknown>[]).push({
-        name: r.headerName,
-        value: r.headerValue,
-        ...(r.mode && r.mode !== "Override" ? { mode: r.mode } : {}),
-      })
-    }
-    const sub = splitCommas(r.substitute)
-    if (sub.length) rule.substitute = sub
-    const paths = splitCommas(r.pathPrefixes)
-    if (paths.length) rule.pathPrefixes = paths
-  }
-  const rules = [...byHost.values()].map((r) => {
-    const headers = r.headers as Record<string, unknown>[]
-    if (headers.length === 0) delete r.headers
-    return r
-  })
-
-  if (credentials.length === 0 && rules.length === 0) return undefined
-  return { credentials, rules }
-}
-
-// validateInjection mirrors the server-side checks that would otherwise only
-// surface when a sandbox is created hours later.
-function validateInjection(v: FormValues, ctx: z.RefinementCtx): void {
-  const names = new Set<string>()
-  v.injectionCredentialRows.forEach((c, i) => {
-    if (!c.name && !c.value) return
-    if (!c.name) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["injectionCredentialRows", i, "name"],
-        message: "envs.form.errors.injectionCredentialIncomplete",
-      })
-      return
-    }
-    if (!credNameRe.test(c.name)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["injectionCredentialRows", i, "name"],
-        message: "envs.form.errors.injectionCredentialName",
-      })
-    }
-    // Blank is fine only when the server already holds a value for this one.
-    if (!c.value && !c.configured) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["injectionCredentialRows", i, "value"],
-        message: "envs.form.errors.injectionValueRequired",
-      })
-    }
-    names.add(c.name)
-    if (c.placeholder && c.placeholder.length < 16) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["injectionCredentialRows", i, "placeholder"],
-        message: "envs.form.errors.placeholderTooShort",
-      })
-    }
-    if (c.placeholder && !c.exposeAs) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["injectionCredentialRows", i, "exposeAs"],
-        message: "envs.form.errors.placeholderNeedsExposeAs",
-      })
-    }
-  })
-
-  const allowed = new Set(splitLines(v.allowedDomains))
-  v.injectionRuleRows.forEach((r, i) => {
-    if (!r.host) return
-    if (r.host.includes("*")) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["injectionRuleRows", i, "host"],
-        message: "envs.form.errors.injectionWildcardHost",
-      })
-    }
-    // A host outside the allowlist is dropped before the L7 path ever runs.
-    if (v.networkPolicyMode === "allowlist" && allowed.size > 0 && !allowed.has(r.host)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["injectionRuleRows", i, "host"],
-        message: "envs.form.errors.injectionHostNotAllowed",
-      })
-    }
-    if (r.headerValue) {
-      const refs = [...r.headerValue.matchAll(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g)].map((m) => m[1])
-      if (refs.length === 0) {
-        // A literal here would be a plaintext secret stored in the CR.
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["injectionRuleRows", i, "headerValue"],
-          message: "envs.form.errors.injectionValueNeedsCredential",
-        })
-      }
-      for (const ref of refs) {
-        if (!names.has(ref)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["injectionRuleRows", i, "headerValue"],
-            message: "envs.form.errors.injectionUnknownCredential",
-          })
-          break
-        }
-      }
-    }
-  })
 }
 
 interface SecretInjectionSectionProps {
@@ -1257,35 +1027,20 @@ interface UpdateStrategySectionProps {
   register: ReturnType<typeof useForm<FormValues>>["register"]
 }
 
+/**
+ * Panel body only — the auto-update toggle itself lives in the accordion header
+ * so its state is readable without expanding anything.
+ */
 function UpdateStrategySection({ control, register }: UpdateStrategySectionProps) {
   const { t } = useTranslation()
   const autoUpdate = useWatch({ control, name: "autoUpdate" })
   return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
-          {t("envs.form.section.updateStrategy")}
-        </h3>
-        <p className="text-muted-foreground mt-1 text-xs">{t("envs.form.updateStrategy.hint")}</p>
-      </div>
+    <section className="space-y-3 pb-2">
+      <p className="text-muted-foreground text-xs">
+        {t("envs.form.updateStrategy.autoUpdateDescription")}
+      </p>
 
-      <Controller
-        control={control}
-        name="autoUpdate"
-        render={({ field }) => (
-          <div className="flex items-center justify-between rounded-md border p-3">
-            <div className="space-y-0.5 pr-3">
-              <FieldLabel>{t("envs.form.updateStrategy.autoUpdate")}</FieldLabel>
-              <FieldDescription>
-                {t("envs.form.updateStrategy.autoUpdateDescription")}
-              </FieldDescription>
-            </div>
-            <Switch checked={field.value} onCheckedChange={field.onChange} />
-          </div>
-        )}
-      />
-
-      {autoUpdate && (
+      {autoUpdate ? (
         <Field>
           <FieldLabel htmlFor="us-max-unavailable">
             {t("envs.form.updateStrategy.maxUnavailable")}
@@ -1295,148 +1050,13 @@ function UpdateStrategySection({ control, register }: UpdateStrategySectionProps
             {t("envs.form.updateStrategy.maxUnavailableDescription")}
           </FieldDescription>
         </Field>
+      ) : (
+        <p className="text-muted-foreground rounded-md border border-dashed p-3 text-xs">
+          {t("envs.form.updateStrategy.hint")}
+        </p>
       )}
     </section>
   )
-}
-
-// ─── Form ↔ API mapping ──────────────────────────────────────────────────────
-
-function envToFormValues(env: AgentSandboxEnv | null): FormValues {
-  if (!env) {
-    return {
-      name: "",
-      templateName: "",
-      image: undefined,
-      podCreationImagePolicy: "IdleImage",
-      defaultStartupTimeout: undefined,
-      defaultIdleTimeout: undefined,
-      imagePullSecretRows: [],
-      networkPolicyMode: "unrestricted",
-      allowedDomains: undefined,
-      allowedCIDRs: undefined,
-      deniedCIDRs: undefined,
-      allowPrivateNetworks: false,
-      injectionCredentialRows: [],
-      injectionRuleRows: [],
-      autoUpdate: true,
-      maxUnavailable: undefined,
-    }
-  }
-  const overrides = env.spec.overrides
-  const np = overrides?.networkPolicy
-  const mode: FormValues["networkPolicyMode"] = np?.disableEgress
-    ? "disable"
-    : np?.egress
-      ? "allowlist"
-      : "unrestricted"
-  return {
-    name: env.name,
-    templateName: env.spec.templateRef.name,
-    image: overrides?.image,
-    podCreationImagePolicy: overrides?.podCreationImagePolicy ?? "IdleImage",
-    defaultStartupTimeout: overrides?.defaultStartupTimeout,
-    defaultIdleTimeout: overrides?.defaultIdleTimeout,
-    imagePullSecretRows: [],
-    networkPolicyMode: mode,
-    allowedDomains: (np?.egress?.allowedDomains ?? []).join("\n") || undefined,
-    allowedCIDRs: (np?.egress?.allowedCIDRs ?? []).join("\n") || undefined,
-    deniedCIDRs: (np?.egress?.deniedCIDRs ?? []).join("\n") || undefined,
-    allowPrivateNetworks: np?.allowPrivateNetworks ?? false,
-    injectionCredentialRows: (np?.secretInjection?.credentials ?? []).map((c) => ({
-      name: c.name,
-      value: "", // never returned by the API
-      configured: Boolean(c.valueFrom),
-      exposeAs: c.exposeAs ?? "",
-      placeholder: c.placeholder ?? "",
-    })),
-    injectionRuleRows: (np?.secretInjection?.rules ?? []).flatMap((r) =>
-      (r.headers && r.headers.length > 0
-        ? r.headers
-        : [{ name: "", value: "", mode: undefined }]
-      ).map((h) => ({
-        host: r.host,
-        headerName: h.name,
-        headerValue: h.value,
-        mode: (h.mode as "Override" | "IfAbsent" | undefined) ?? "Override",
-        substitute: (r.substitute ?? []).join(", "),
-        pathPrefixes: (r.pathPrefixes ?? []).join(", "),
-      })),
-    ),
-    autoUpdate: overrides?.updateStrategy?.autoUpdate ?? true,
-    maxUnavailable: overrides?.updateStrategy?.maxUnavailable,
-  }
-}
-
-function formValuesToCreateBody(v: FormValues) {
-  return {
-    name: v.name,
-    mode: "WarmPool" as const,
-    templateRef: { name: v.templateName },
-    overrides: buildOverrides(v),
-  }
-}
-
-function formValuesToUpdateBody(v: FormValues) {
-  return {
-    overrides: buildOverrides(v),
-  }
-}
-
-function buildOverrides(v: FormValues) {
-  const o: Record<string, unknown> = {}
-  if (v.image) o.image = v.image
-  if (v.podCreationImagePolicy) o.podCreationImagePolicy = v.podCreationImagePolicy
-  if (v.defaultStartupTimeout) o.defaultStartupTimeout = v.defaultStartupTimeout
-  if (v.defaultIdleTimeout) o.defaultIdleTimeout = v.defaultIdleTimeout
-  const registries = v.imagePullSecretRows
-    .filter((r) => r.registry && r.username && r.password)
-    .map((r) => ({ registry: r.registry!, username: r.username!, password: r.password! }))
-  if (registries.length > 0) {
-    o.imagePullSecret = { registries }
-  }
-  const np = buildNetworkPolicy(v)
-  if (np) o.networkPolicy = np
-  const us = buildUpdateStrategy(v)
-  if (us) o.updateStrategy = us
-  return Object.keys(o).length ? o : undefined
-}
-
-// buildUpdateStrategy emits the rollout override only when it deviates from the
-// inherited defaults (autoUpdate=true, maxUnavailable=20%), keeping the CR clean.
-function buildUpdateStrategy(v: FormValues): Record<string, unknown> | undefined {
-  const us: Record<string, unknown> = {}
-  if (v.autoUpdate === false) us.autoUpdate = false
-  if (v.maxUnavailable) us.maxUnavailable = v.maxUnavailable
-  return Object.keys(us).length ? us : undefined
-}
-
-// buildNetworkPolicy maps the form's mode + fields onto the wire networkPolicy
-// object, or undefined for "unrestricted" (omit the field).
-function buildNetworkPolicy(v: FormValues): Record<string, unknown> | undefined {
-  const injection = buildSecretInjection(v)
-  // Injection alone is a valid configuration: it still needs the sidecar, which
-  // is what "networkPolicy is set" means, but it filters nothing.
-  if (v.networkPolicyMode === "unrestricted") {
-    return injection ? { secretInjection: injection } : undefined
-  }
-  const np: Record<string, unknown> = {}
-  if (injection) np.secretInjection = injection
-  if (v.allowPrivateNetworks) np.allowPrivateNetworks = true
-  if (v.networkPolicyMode === "disable") {
-    np.disableEgress = true
-    return np
-  }
-  // allowlist
-  const egress: Record<string, string[]> = {}
-  const domains = splitLines(v.allowedDomains)
-  const allow = splitLines(v.allowedCIDRs)
-  const deny = splitLines(v.deniedCIDRs)
-  if (domains.length) egress.allowedDomains = domains
-  if (allow.length) egress.allowedCIDRs = allow
-  if (deny.length) egress.deniedCIDRs = deny
-  np.egress = egress
-  return np
 }
 
 function extractError(err: unknown): string {

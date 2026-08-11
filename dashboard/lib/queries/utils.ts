@@ -15,6 +15,36 @@
  */
 
 import { useQueryClient } from "@tanstack/react-query"
+import {
+  currentApiClient,
+  currentFetchClient,
+  getApiClient,
+  getFetchClient,
+} from "@/lib/api/client"
+
+/**
+ * Client accessors for the query layer, in the two shapes a call site needs.
+ *
+ * Omitting `clusterID` targets the cluster in the current browser URL — what
+ * nearly every page wants. Passing one targets that cluster explicitly, for the
+ * cross-cluster cases: probing whether an Env of the same name exists elsewhere,
+ * reading a peer cluster's Pool behind a foreign-cluster link, creating an Env
+ * on a cluster the user is not currently viewing.
+ *
+ * Read factories in this directory follow the convention of taking `clusterID`
+ * as an optional LAST parameter, so existing call sites keep working untouched:
+ *
+ *     envQueryOptions("slimedev")           // current cluster
+ *     envQueryOptions("slimedev", "foo")  // that cluster
+ *
+ * Each cluster keeps its own cache entries (see `lib/api/cluster-query-key.ts`),
+ * so the two forms above never overwrite one another.
+ */
+export const apiFor = (clusterID?: string) =>
+  clusterID ? getApiClient(clusterID) : currentApiClient()
+
+export const fetchFor = (clusterID?: string) =>
+  clusterID ? getFetchClient(clusterID) : currentFetchClient()
 
 const DELAY_MS = 300
 

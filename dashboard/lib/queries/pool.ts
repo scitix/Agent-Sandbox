@@ -20,12 +20,12 @@
 
 import { useQueryClient } from "@tanstack/react-query"
 import { currentApiClient, currentFetchClient } from "@/lib/api/client"
-import { delayedInvalidate } from "./utils"
+import { apiFor, delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
 
-export const envPoolsQueryOptions = (envName: string) =>
-  currentApiClient().queryOptions(
+export const envPoolsQueryOptions = (envName: string, clusterID?: string) =>
+  apiFor(clusterID).queryOptions(
     "get",
     "/envs/{name}/sandboxpools",
     {
@@ -36,8 +36,8 @@ export const envPoolsQueryOptions = (envName: string) =>
     },
   )
 
-export const envPoolQueryOptions = (envName: string, poolName: string) =>
-  currentApiClient().queryOptions("get", "/envs/{name}/sandboxpools/{poolName}", {
+export const envPoolQueryOptions = (envName: string, poolName: string, clusterID?: string) =>
+  apiFor(clusterID).queryOptions("get", "/envs/{name}/sandboxpools/{poolName}", {
     params: { path: { name: envName, poolName } },
   })
 

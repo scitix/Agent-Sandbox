@@ -91,6 +91,21 @@ export function getFetchClient(clusterID) // named-cluster variant
 
 The middleware auto-injects Bearer token, handles 401 redirect, and shows toast + throws on non-2xx errors.
 
+**Query keys are cluster-scoped.** `openapi-react-query` derives a key from the operation alone — `[method, path, init]` — while the only difference between two clusters' clients is the baseUrl. `getApiClient` therefore wraps `queryOptions` to append the cluster (`lib/api/cluster-query-key.ts`), giving each cluster its own cache entries. Without it, navigating from cluster A to cluster B renders A's cached data under B's URL, and anything derived from it (a pool name read out of the cached Env) gets requested from B and 404s.
+
+Two invariants live in that module — the cluster is appended, never prefixed (every `invalidateQueries` in `lib/queries` matches by key prefix), and index 2 stays reserved for `init` (the library's shared `queryFn` spreads it into the fetch options). Note that `openapi-react-query` types `queryKey` as a 3-tuple, so the appended element is invisible to the compiler: pass keys around whole rather than indexing into them.
+
+**Reads may target a named cluster.** Cluster-scoped read factories take `clusterID` as an optional LAST parameter, defaulting to the cluster in the browser URL:
+
+```ts
+envQueryOptions("slimedev") // current cluster
+envQueryOptions("slimedev", "foo") // that cluster, its own cache entry
+```
+
+Use `apiFor(clusterID?)` / `fetchFor(clusterID?)` from `lib/queries/utils.ts` when adding one. This is what the cross-cluster features need: probing whether an Env of the same name exists elsewhere (`hooks/use-env-name-across-clusters.ts`), reading a peer cluster's Pool behind a foreign-cluster link, creating an Env on a cluster the user is not viewing (`createEnvImperative`).
+
+> When fanning a probe out across clusters, read the **list** endpoint rather than the by-name one. A miss on `GET /envs/{name}` is a 404, and the middleware turns every non-2xx into a toast off a global error-code allow-list with no per-request opt-out — so probing N clusters by name fires a toast per cluster that legitimately lacks the resource. Pair it with `retry: false` so unreachable clusters settle promptly.
+
 **② BFF raw fetch** — plain `fetch()` against Next.js API routes, used for cross-cluster / control-plane operations (no per-cluster routing):
 
 ```ts

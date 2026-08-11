@@ -23,19 +23,20 @@
 
 import { useQueryClient } from "@tanstack/react-query"
 import { currentApiClient, currentFetchClient } from "@/lib/api/client"
-import { delayedInvalidate } from "./utils"
+import type { AgentCreateSandboxEnvRequest } from "@/lib/api/client"
+import { apiFor, fetchFor, delayedInvalidate } from "./utils"
 
 // ─── Query options ─────────────────────────────────────────────────────────────
 
 /** List SandboxEnvs visible to the caller (filtered by team/user labels). */
-export const envsQueryOptions = () =>
-  currentApiClient().queryOptions("get", "/envs", undefined, {
+export const envsQueryOptions = (clusterID?: string) =>
+  apiFor(clusterID).queryOptions("get", "/envs", undefined, {
     select: (data) => data.items ?? [],
   })
 
 /** Fetch a single SandboxEnv by name. */
-export const envQueryOptions = (name: string) =>
-  currentApiClient().queryOptions("get", "/envs/{name}", {
+export const envQueryOptions = (name: string, clusterID?: string) =>
+  apiFor(clusterID).queryOptions("get", "/envs/{name}", {
     params: { path: { name } },
   })
 
@@ -43,8 +44,8 @@ export const envQueryOptions = (name: string) =>
  * Recent K8s Events for the Env and its member SandboxPools, sorted newest
  * first. Drives the activity timeline on the Env detail page.
  */
-export const envEventsQueryOptions = (name: string, limit = 100) =>
-  currentApiClient().queryOptions(
+export const envEventsQueryOptions = (name: string, limit = 100, clusterID?: string) =>
+  apiFor(clusterID).queryOptions(
     "get",
     "/envs/{name}/events",
     {
@@ -115,3 +116,16 @@ export async function deleteEnvImperative(name: string): Promise<void> {
   if (error) throw error
 }
 
+/**
+ * Imperative create against a named cluster, for extending an Env to clusters
+ * the user is not currently viewing. A hook cannot serve this: the set of target
+ * clusters is chosen at click time, so there is no fixed number of `useMutation`
+ * calls to make. Cache invalidation is the caller's responsibility.
+ */
+export async function createEnvImperative(
+  body: AgentCreateSandboxEnvRequest,
+  clusterID: string,
+): Promise<void> {
+  const { error } = await fetchFor(clusterID).POST("/envs", { body })
+  if (error) throw error
+}
