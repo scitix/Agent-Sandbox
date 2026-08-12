@@ -237,17 +237,48 @@ function answersOf(entry: {
   return out
 }
 
-function userKeyOf(url: URL, body: unknown): string {
+/**
+ * A header that PINS the end user, overriding anything the request says.
+ *
+ * The gateway otherwise takes the caller's word for `userKey`, which is right for
+ * a trusted integration acting on behalf of many of its own users — an API-key
+ * caller naming which of its users is asking. It is wrong for a browser: there the
+ * value is chosen by the person it identifies, so a user could read any other
+ * user's threads by editing a query string.
+ *
+ * A front door that authenticates the person sets this instead, and whatever the
+ * request body or query says is ignored. It is safe to trust only because nothing
+ * outside the cluster can reach this port: the header has to be set by the hop
+ * that authenticated, and that hop strips any inbound copy.
+ */
+const USER_KEY_HEADER = 'x-agentbox-user'
+
+function userKeyOf(
+  url: URL,
+  body: unknown,
+  headers?: NodeJS.Dict<string | string[]>
+): string {
+  const pinned = headers?.[USER_KEY_HEADER]
+  const fromHeader = Array.isArray(pinned) ? pinned[0] : pinned
+  if (typeof fromHeader === 'string' && fromHeader) {
+    return sanitizeUserKey(fromHeader)
+  }
   const fromBody =
     body && typeof body === 'object'
       ? (body as { userKey?: unknown }).userKey
       : undefined
-  const raw =
+  return sanitizeUserKey(
     (typeof fromBody === 'string' ? fromBody : undefined) ||
-    url.searchParams.get('userKey') ||
-    DEFAULT_USER_KEY
-  // The user key becomes a directory segment and a Langfuse user id, so it is
-  // constrained the same way the workspace-fs daemon constrains it.
+      url.searchParams.get('userKey') ||
+      DEFAULT_USER_KEY
+  )
+}
+
+/** The user key becomes a directory segment and a Langfuse user id, so it is
+ *  constrained the same way the workspace-fs daemon constrains it. Applied to the
+ *  pinned header too: being trusted to name the user is not the same as being
+ *  trusted to name a path. */
+function sanitizeUserKey(raw: string): string {
   return /^[A-Za-z0-9._-]{1,128}$/.test(raw) ? raw : DEFAULT_USER_KEY
 }
 
@@ -367,7 +398,7 @@ export function createGateway(opts: GatewayOptions): Server {
 
     // --- threads -----------------------------------------------------------
     if (path === '/threads' && method === 'GET') {
-      const userKey = userKeyOf(url, {})
+      const userKey = userKeyOf(url, {}, req.headers)
       // Threads from EVERY serving backend: the list is the user's history, not
       // the current pick's history, and hiding the other harness's threads would
       // look like data loss right after a switch.
@@ -399,7 +430,7 @@ export function createGateway(opts: GatewayOptions): Server {
     // answer is complete. So they come down here instead, and the client never
     // polls.
     if (path === '/threads/events' && method === 'GET') {
-      const userKey = userKeyOf(url, {})
+      const userKey = userKeyOf(url, {}, req.headers)
       res.writeHead(200, SSE_HEADERS)
       res.flushHeaders?.()
       const send = (payload: unknown) => {
@@ -431,7 +462,7 @@ export function createGateway(opts: GatewayOptions): Server {
 
     if (path === '/threads' && method === 'POST') {
       const body = (await readBody(req)) as { title?: string }
-      const userKey = userKeyOf(url, body)
+      const userKey = userKeyOf(url, body, req.headers)
       const id = await pick({
         requested:
           (body as { backend?: string }).backend ??
@@ -502,7 +533,7 @@ export function createGateway(opts: GatewayOptions): Server {
       const threadId = decodeURIComponent(threadMatch[1])
       const sub = threadMatch[2]
       const body = method === 'GET' ? {} : await readBody(req)
-      const userKey = userKeyOf(url, body)
+      const userKey = userKeyOf(url, body, req.headers)
 
       if (!sub && method === 'PATCH') {
         const { title } = body as { title?: string }
@@ -590,7 +621,7 @@ export function createGateway(opts: GatewayOptions): Server {
       if (!classifier) return json(res, 200, { enabled: false })
       if (!body.newInput)
         return json(res, 400, { error: 'newInput is required' })
-      const userKey = userKeyOf(url, body)
+      const userKey = userKeyOf(url, body, req.headers)
       return json(
         res,
         200,
@@ -625,7 +656,7 @@ export function createGateway(opts: GatewayOptions): Server {
         jobKey?: string
         backend?: string
       }
-      const userKey = userKeyOf(url, body)
+      const userKey = userKeyOf(url, body, req.headers)
       // A background bot has no picker, so its caller may pin the harness — and
       // production does. Otherwise a change to the BROWSER's default harness
       // would silently move the unattended analysis flows onto it, which is
@@ -648,7 +679,7 @@ export function createGateway(opts: GatewayOptions): Server {
         sandboxName?: string
         content?: string
       }
-      const userKey = userKeyOf(url, body)
+      const userKey = userKeyOf(url, body, req.headers)
       if (!body.threadId || !threads.getForUser(body.threadId, userKey))
         return json(res, 404, { error: 'unknown thread' })
       if (!body.sandboxName || typeof body.content !== 'string')
@@ -674,7 +705,7 @@ export function createGateway(opts: GatewayOptions): Server {
         jobKey?: string
         model?: string
       }
-      const userKey = userKeyOf(url, body)
+      const userKey = userKeyOf(url, body, req.headers)
       if (!body.threadId || !threads.getForUser(body.threadId, userKey))
         return json(res, 404, { error: 'unknown thread' })
       if (!body.input?.trim())
@@ -741,7 +772,7 @@ export function createGateway(opts: GatewayOptions): Server {
       // pick, the user key) ride in `forwardedProps`.
       const body = (await readBody(req)) as AgUiRunBody
       const forwarded = body.forwardedProps ?? {}
-      const userKey = userKeyOf(url, forwarded)
+      const userKey = userKeyOf(url, forwarded, req.headers)
       // A brand-new conversation: AG-UI mints a threadId client-side, but ours
       // are gateway-owned, so an id we do not know means "start a new thread".
       const knownThread =

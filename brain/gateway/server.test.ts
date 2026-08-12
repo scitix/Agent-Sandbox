@@ -1320,3 +1320,82 @@ describe('analysis (read-only bot transcripts)', () => {
     expect(r.status).toBe(404)
   })
 })
+
+describe('the pinned end user', () => {
+  // The gateway takes the caller's word for `userKey` by default, which is right
+  // for an integration acting for many of its own users and wrong for a browser.
+  // A front door that authenticates the person sends the header instead, and it
+  // has to win over BOTH channels a request can carry the value on — a query
+  // string is the easy one to remember, a JSON body the easy one to forget.
+  it('wins over the query string', async () => {
+    const created = await fetch(`${base}/threads?userKey=someone-else`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-agentbox-user': 'alice' },
+      body: JSON.stringify({}),
+    })
+    expect(created.status).toBe(201)
+
+    // The thread must belong to the pinned user, not the requested one.
+    const mine = await fetch(`${base}/threads`, {
+      headers: { 'x-agentbox-user': 'alice' },
+    })
+    expect(
+      ((await mine.json()) as { threads: unknown[] }).threads.length
+    ).toBeGreaterThan(0)
+
+    const theirs = await fetch(`${base}/threads?userKey=someone-else`, {
+      headers: { 'x-agentbox-user': 'someone-else' },
+    })
+    expect(((await theirs.json()) as { threads: unknown[] }).threads).toEqual([])
+  })
+
+  it('wins over the request body', async () => {
+    const created = await fetch(`${base}/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-agentbox-user': 'bob' },
+      body: JSON.stringify({ userKey: 'someone-else' }),
+    })
+    expect(created.status).toBe(201)
+    const { threadId } = (await created.json()) as { threadId: string }
+
+    // Reachable as bob...
+    const asBob = await fetch(`${base}/threads`, {
+      headers: { 'x-agentbox-user': 'bob' },
+    })
+    const bobIds = ((await asBob.json()) as { threads: { id: string }[] }).threads.map(
+      t => t.id
+    )
+    expect(bobIds).toContain(threadId)
+
+    // ...and not as the name the body asked for.
+    const asOther = await fetch(`${base}/threads`, {
+      headers: { 'x-agentbox-user': 'someone-else' },
+    })
+    const otherIds = (
+      (await asOther.json()) as { threads: { id: string }[] }
+    ).threads.map(t => t.id)
+    expect(otherIds).not.toContain(threadId)
+  })
+
+  // Being trusted to name the user is not being trusted to name a path: the value
+  // becomes a directory segment, so it goes through the same filter as the rest.
+  it('falls back to the default when the pinned value is not a safe segment', async () => {
+    const created = await fetch(`${base}/threads`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-agentbox-user': '../../etc/passwd',
+      },
+      body: JSON.stringify({}),
+    })
+    expect(created.status).toBe(201)
+    const { threadId } = (await created.json()) as { threadId: string }
+
+    // It landed in the shared default namespace, not in one named by a traversal.
+    const asDefault = await fetch(`${base}/threads`)
+    const ids = ((await asDefault.json()) as { threads: { id: string }[] }).threads.map(
+      t => t.id
+    )
+    expect(ids).toContain(threadId)
+  })
+})

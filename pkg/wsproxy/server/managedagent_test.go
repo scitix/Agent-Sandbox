@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +32,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/controllers/managedagent"
 )
 
@@ -212,5 +215,120 @@ func TestUpdateRejectsSandboxEnv(t *testing.T) {
 	}
 	if hands.calls != 0 {
 		t.Errorf("CreateEnv must not run on update (called %d time(s))", hands.calls)
+	}
+}
+
+// The console reaches an agent through the internal API, which means the two
+// things that make that safe have to hold: tenant scoping, and not depending on
+// the agent being published to the internet.
+//
+// Driven through a REAL server rather than a synthetic gin context, because the
+// proxy streams: it needs a ResponseWriter that a recorder does not implement, and
+// a test that skips that is testing a different code path from production.
+func consoleProxyServer(t *testing.T, api *ManagedAgentAPI, user string) *httptest.Server {
+	t.Helper()
+	api.Gateway = NewManagedAgentGateway(api.Client, api.Namespace)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	g := r.Group("/internal", func(c *gin.Context) {
+		c.Set(middleware.AuthContextKey, domain.AuthInfo{User: user})
+	})
+	api.RegisterManagedAgentRoutes(g)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func seedAgent(t *testing.T, api *ManagedAgentAPI, name, owner string) {
+	t.Helper()
+	agent := &agentsv1alpha1.ManagedAgent{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: api.Namespace},
+		Spec: agentsv1alpha1.ManagedAgentSpec{
+			// No spec.ingress at all: deliberately NOT published.
+			Owner: &agentsv1alpha1.ManagedAgentOwner{User: owner},
+		},
+	}
+	if err := api.Client.Create(context.Background(), agent); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+}
+
+func TestConsoleProxyReachesTheBrainWithoutPublishing(t *testing.T) {
+	api := newManagedAgentAPI(t, nil)
+	seedAgent(t, api, "alpha", "alice")
+	srv := consoleProxyServer(t, api, "alice")
+
+	// The Brain's Service does not resolve in a unit test, so the proxy answers
+	// with its own unreachable error. That is the right assertion anyway: it
+	// proves the request was FORWARDED rather than refused, which is what
+	// distinguishes "the console may talk to this agent" from "it may not".
+	res, err := srv.Client().Get(srv.URL + "/internal/managedagents/alpha/proxy/threads")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, _ := io.ReadAll(res.Body)
+
+	if res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (forwarded then unreachable); body: %s",
+			res.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "agent is unreachable") {
+		t.Errorf("body = %s, want the proxy's unreachable error", body)
+	}
+}
+
+// Another tenant's agent is absent, not forbidden — the same rule every other
+// route here follows, so the proxy cannot become the one way to discover which
+// agents someone else owns.
+func TestConsoleProxyHidesAnotherTenantsAgent(t *testing.T) {
+	api := newManagedAgentAPI(t, nil)
+	seedAgent(t, api, "beta", "alice")
+	srv := consoleProxyServer(t, api, "bob")
+
+	res, err := srv.Client().Get(srv.URL + "/internal/managedagents/beta/proxy/threads")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for another tenant's agent", res.StatusCode)
+	}
+}
+
+// The browser must not be able to name which end user it is. The gateway behind
+// this takes the caller's word for it by default, so if the request's own value
+// survived, any console user could read another's conversations by editing a query
+// string. Asserted on the wire, against a stub Brain, because the pin is only worth
+// anything if it is what actually arrives.
+func TestConsoleProxyPinsTheEndUserAgainstTheRequest(t *testing.T) {
+	var got http.Header
+	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer brain.Close()
+
+	api := newManagedAgentAPI(t, nil)
+	seedAgent(t, api, "gamma", "alice")
+	srv := consoleProxyServer(t, api, "alice")
+	// Point the proxy at the stub instead of a Service that does not resolve.
+	api.Gateway.targetHost = strings.TrimPrefix(brain.URL, "http://")
+
+	req, err := http.NewRequest(http.MethodGet,
+		srv.URL+"/internal/managedagents/gamma/proxy/threads?userKey=bob", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	// Both channels the gateway would otherwise read, plus a forged pin.
+	req.Header.Set("X-Agentbox-User", "carol")
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if v := got.Get("X-Agentbox-User"); v != "alice" {
+		t.Errorf("pinned user = %q, want the authenticated caller %q", v, "alice")
 	}
 }

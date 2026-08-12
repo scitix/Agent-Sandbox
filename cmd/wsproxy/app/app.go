@@ -160,6 +160,11 @@ func Run() {
 				Scheme:    k8sClient.Scheme(),
 				Namespace: ns,
 				Hands:     hands,
+				// Lets the console talk to an agent. Built here rather than only
+				// for the public listener, which is optional and off by default —
+				// an in-platform conversation must not require publishing the
+				// agent to the internet first.
+				Gateway: server.NewManagedAgentGateway(k8sClient, ns),
 			}
 		}
 		if cfg.ManagedAgentEnabled && cfg.ManagedAgentGatewayAddr != "" {

@@ -43,6 +43,15 @@ const APIKeyHeader = "AGENTBOX-API-KEY"
 // cannot shadow a real endpoint now or after the gateway grows new ones.
 const WorkspaceFSPrefix = "/_fs"
 
+// brainUserHeader pins which of the agent's end users a request speaks for,
+// overriding whatever the request body or query says.
+//
+// Only a hop that has authenticated the person may set it, and that hop must strip
+// any inbound copy — see ManagedAgentAPI.proxy, which is the one place that does.
+// The public listener deliberately does NOT set it: an API-key caller is a tenant
+// acting for many of its own users, and pinning there would collapse them into one.
+const brainUserHeader = "X-Agentbox-User"
+
 // ManagedAgentGateway publishes agents outside the cluster.
 //
 // It exists because the Brain has no authentication of its own: it takes the
@@ -59,6 +68,14 @@ type ManagedAgentGateway struct {
 	Namespace string
 
 	proxy *httputil.ReverseProxy
+
+	// targetHost replaces the Brain's derived "<service>.<namespace>:<port>".
+	//
+	// A test seam, and the only one: what this file does that is worth asserting —
+	// which headers reach the Brain, and which do not — cannot be observed without
+	// a Brain to reach. Empty in production, where the host always comes from the
+	// agent, so an unset value cannot silently redirect anyone's traffic.
+	targetHost string
 }
 
 // NewManagedAgentGateway wires the reverse proxy.
@@ -135,11 +152,12 @@ func (g *ManagedAgentGateway) forward(c *gin.Context, ma *agentsv1alpha1.Managed
 		}
 	}
 
-	target := &url.URL{
-		Scheme: "http",
-		Host: fmt.Sprintf("%s.%s:%d",
-			managedagent.BrainName(ma.Name), ma.Namespace, port),
+	host := g.targetHost
+	if host == "" {
+		host = fmt.Sprintf("%s.%s:%d",
+			managedagent.BrainName(ma.Name), ma.Namespace, port)
 	}
+	target := &url.URL{Scheme: "http", Host: host}
 
 	req := c.Request.Clone(c.Request.Context())
 	req.URL.Scheme = target.Scheme
