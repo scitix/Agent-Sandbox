@@ -29,6 +29,7 @@ import {
   InfoIcon,
   Layers,
   Loader2,
+  MessageSquare,
   Pencil,
   Trash2,
 } from "lucide-react"
@@ -71,6 +72,7 @@ export default function ManagedAgentDetailLayout({ children, params }: LayoutPro
   const tabs = [
     { value: "", label: t("managedAgents.tab.docs"), icon: BookOpen },
     { value: "overview", label: t("managedAgents.tab.overview"), icon: InfoIcon },
+    { value: "preview", label: t("managedAgents.tab.preview"), icon: MessageSquare },
     { value: "runtime", label: t("managedAgents.tab.runtime"), icon: Cpu },
     { value: "scenarios", label: t("managedAgents.tab.scenarios"), icon: Layers },
     { value: "hands", label: t("managedAgents.tab.hands"), icon: Boxes },

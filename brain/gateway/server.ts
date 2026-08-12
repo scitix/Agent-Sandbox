@@ -374,10 +374,22 @@ export function createGateway(opts: GatewayOptions): Server {
       // `backend=` lets the browser read the capabilities of the harness it is
       // ABOUT to switch to, before any thread exists under it.
       const b = pick({ requested: url.searchParams.get('backend') })
+      const userKey = userKeyOf(url, {}, req.headers)
       return json(res, 200, {
         backendId: b.id,
         capabilities: b.capabilities,
         defaultBackendId,
+        // Who the caller turned out to be, and the workspace directory that
+        // follows from it.
+        //
+        // Reported rather than left for the caller to derive, because a caller
+        // whose identity is PINNED by the front door cannot derive it: it never
+        // learns the value that was substituted. The file API requires this
+        // directory on every request and rejects any other, so without it the
+        // attachment and workspace surfaces are unusable by exactly the clients
+        // that are authenticated properly.
+        userKey,
+        workspaceDir: userDirectory(userKey),
       })
     }
 

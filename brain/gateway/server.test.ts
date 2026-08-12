@@ -241,6 +241,23 @@ describe('capability negotiation', () => {
       backendId: 'claude-code',
       capabilities: CAPS,
       defaultBackendId: 'claude-code',
+      userKey: 'default',
+      workspaceDir: '/home/agents/u/default',
+    })
+  })
+
+  // A caller whose identity the front door PINNED cannot derive its own workspace
+  // directory: it never learns the value that was substituted for what it sent.
+  // The file API requires that directory on every request and rejects any other,
+  // so reporting it here is what keeps attachments and the workspace panel usable
+  // by exactly the clients that authenticate properly.
+  it('reports the resolved user and workspace directory', async () => {
+    const r = await fetch(`${base}/capabilities`, {
+      headers: { 'x-agentbox-user': 'alice' },
+    })
+    expect(await r.json()).toMatchObject({
+      userKey: 'alice',
+      workspaceDir: '/home/agents/u/alice',
     })
   })
 
