@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentbox-hands"
+version = "0.0.1"
+description = "Session-keyed sandbox daemon and workspace file API for AgentBox agent harnesses"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+
+# Pinned rather than ranged. This package is consumed as one half of a running
+# pod — the other half is a harness whose tool calls it serves — so a transitive
+# upgrade shows up as a tool call failing mid-conversation, which is both the
+# hardest place to notice a dependency change and the worst place to debug one.
+#
+# The two sandbox SDKs are pinned hardest of all: `patch_e2b` reaches into the e2b
+# client's internals to point it at an AgentBox endpoint, so the pair has to move
+# together and a floating e2b would break the patch with no signal here.
+dependencies = [
+    "agent-sandbox-e2b==0.0.6",
+    "e2b==2.28.0",
+    "fastapi==0.136.3",
+    "pydantic==2.9.2",
+    "uvicorn==0.48.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/scitix/Agent-Sandbox"
+Source = "https://github.com/scitix/Agent-Sandbox/tree/develop/sdk/hands/python"
+
+# The `test_*.py` modules sit inside the package and therefore ship with it. That
+# is deliberate: they are the specification for behaviour that is otherwise
+# invisible — which sandbox a session gets, whether a replaced one is announced —
+# so an image can verify the daemon it actually installed rather than the source
+# tree it was built from.
+[tool.hatch.build.targets.wheel]
+packages = ["agentbox_hands"]

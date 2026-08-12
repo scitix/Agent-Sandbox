@@ -30,8 +30,10 @@ import (
 	"context"
 	"flag"
 	"log"
+	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -290,11 +292,12 @@ func startManagedAgentController(cfg *config.Config, hands managedagent.HandsPro
 			return
 		}
 		if err := (&managedagent.Reconciler{
-			Client:        mgr.GetClient(),
-			Scheme:        mgr.GetScheme(),
-			Hands:         hands,
-			ProxyService:  cfg.ManagedAgentProxyService,
-			PublicBaseURL: cfg.ManagedAgentPublicBaseURL,
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			Hands:             hands,
+			ProxyService:      cfg.ManagedAgentProxyService,
+			PublicBaseURL:     cfg.ManagedAgentPublicBaseURL,
+			DefaultBrainImage: defaultBrainImage(cfg),
 		}).SetupWithManager(mgr); err != nil {
 			log.Printf("wsproxy: ManagedAgent controller setup failed: %v", err)
 			return
@@ -306,6 +309,27 @@ func startManagedAgentController(cfg *config.Config, hands managedagent.HandsPro
 			log.Printf("wsproxy: ManagedAgent controller stopped: %v", err)
 		}
 	}()
+}
+
+// defaultBrainImage assembles the deployment's default Brain image.
+//
+// An empty repository is passed through as empty rather than defaulted to
+// something: the renderer treats that as "this deployment has no default" and
+// keeps spec.image.repository required, which fails at admission with a readable
+// message. Substituting a guess here would instead produce a Deployment that
+// reconciles cleanly and then sits in ImagePullBackOff.
+func defaultBrainImage(cfg *config.Config) agentsv1alpha1.ManagedAgentImage {
+	img := agentsv1alpha1.ManagedAgentImage{
+		Repository: strings.TrimSpace(cfg.ManagedAgentBrainImage),
+		Tag:        strings.TrimSpace(cfg.ManagedAgentBrainImageTag),
+	}
+	for name := range strings.SplitSeq(cfg.ManagedAgentBrainPullSecrets, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			img.PullSecrets = append(img.PullSecrets,
+				corev1.LocalObjectReference{Name: name})
+		}
+	}
+	return img
 }
 
 // buildK8sClient creates a controller-runtime client for the in-cluster config.

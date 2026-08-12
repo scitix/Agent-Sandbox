@@ -1,0 +1,51 @@
+{
+  "name": "@scitix/agentbox-hands",
+  "version": "0.0.1",
+  "description": "Confine an agent harness's file and shell tools to an AgentBox sandbox",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scitix/Agent-Sandbox.git",
+    "directory": "sdk/hands/typescript"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core/tools.ts",
+    "./claude-code": "./src/harness/claude-code/bind.ts",
+    "./opencode": "./src/harness/opencode/bind.ts",
+    "./opencode/tools/*": "./src/harness/opencode/tools/*.ts",
+    "./mcp": "./src/harness/mcp/server.ts",
+    "./mcp/http": "./src/harness/mcp/http.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src",
+    "lint": "eslint src"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": ">=0.1.0",
+    "@opencode-ai/plugin": ">=0.1.0",
+    "zod": "^3 || ^4"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    },
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10",
+    "zod": "^4.4.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}

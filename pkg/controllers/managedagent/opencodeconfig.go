@@ -32,8 +32,29 @@ const DefaultProviderID = "platform"
 
 // Keys the generated config owns outright. An overlay may supply anything
 // else, but these decide which endpoint the harness may reach and with whose
-// credential, so an overlay never gets to influence them.
-var generatedKeys = []string{"$schema", "enabled_providers", "model", "provider"}
+// credential — and whether the sandbox confinement holds — so an overlay never
+// gets to influence them.
+var generatedKeys = []string{
+	"$schema", "enabled_providers", "model", "provider", "tool_output",
+}
+
+// Caps for the harness's own truncation of a tool result, raised far out of the
+// way so that it never fires.
+//
+// This is platform-owned rather than tenant-configurable because lowering it
+// breaks the sandbox guarantee, silently. When the harness decides a result is
+// too large it writes the full text to a file ON THE POD and hands the agent that
+// path — but the agent's `read` runs in the sandbox and cannot open a pod-side
+// file, so the content is simply gone, reported as a path that looks valid.
+//
+// The sandbox toolset does its own offload first (at 48 KB or 1500 lines) and
+// writes the spill file INTO the sandbox, where `read` can reach it. These caps
+// exist only to keep the harness from getting there first, so they are set well
+// above any figure the toolset could hand over.
+var generatedToolOutput = map[string]int64{
+	"max_bytes": 50_000_000,
+	"max_lines": 1_000_000,
+}
 
 // toolsKey is merged per entry rather than replaced. Tools arrive from two
 // places — the platform's registry and whatever the overlay's plugins bring —
@@ -84,6 +105,7 @@ func RenderOpenCodeConfig(ma *agentsv1alpha1.ManagedAgent, apiKey string) ([]byt
 		// sending this deployment's data to a third party. Naming the single
 		// provider makes anything else unusable rather than merely hidden.
 		"enabled_providers": []string{providerID},
+		"tool_output":       generatedToolOutput,
 		"provider": map[string]any{
 			providerID: map[string]any{
 				"name": providerName,

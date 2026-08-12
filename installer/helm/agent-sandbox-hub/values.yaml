@@ -208,6 +208,23 @@ imagesCatalog:
 managedAgent:
   enabled: false
   namespace: ""
+  # The Brain image an agent gets when it names none.
+  #
+  # This is what lets an agent be created from a prompt alone. Asking the caller
+  # for an image means asking them which one ships a gateway this control plane
+  # can talk to, and that is the deployment's business rather than the tenant's.
+  #
+  # An empty repository keeps spec.image.repository required, which is the right
+  # behaviour for a deployment that has not published an image: the alternative is
+  # a guessed reference that reconciles cleanly and then sits in ImagePullBackOff.
+  brain:
+    image:
+      repository: ""
+      tag: ""
+      # Names existing Secrets in the agent's namespace — the chart does not
+      # create them. An agent created from a prompt alone has nowhere to declare
+      # these, so a private registry needs them here.
+      pullSecrets: []
   # Publishing an agent to callers outside the cluster. Off by default: an
   # agent that is merely deployed must not become reachable from the internet
   # as a side effect. With this on, each agent still has to opt in through its

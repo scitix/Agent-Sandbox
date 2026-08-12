@@ -70,22 +70,8 @@ func ToE2BSandboxDetail(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool, gatew
 	cpuCount, memoryMB := extractResourcesFromPool(pool)
 	state := e2bgen.SandboxState(SandboxStateFromStatus(string(sb.Status)))
 
-	endAtStr := ""
-	if !sb.ClaimedAt.IsZero() && pool != nil {
-		endAtStr = computeEndAt(sb, pool)
-	}
-
-	now := time.Now()
-	startedAt := now
-	if sb.StartedAt != nil {
-		startedAt = *sb.StartedAt
-	}
-	endAt := now.Add(5 * time.Minute)
-	if endAtStr != "" {
-		if t, err := time.Parse(time.RFC3339, endAtStr); err == nil {
-			endAt = t
-		}
-	}
+	startedAt := e2bStartedAt(sb)
+	endAt := e2bEndAt(sb, pool)
 
 	var domainPtr *string
 	if gatewayDomain != "" {
@@ -130,21 +116,8 @@ func ToE2BListedSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) e2bge
 	cpuCount, memoryMB := extractResourcesFromPool(pool)
 	state := e2bgen.SandboxState(SandboxStateFromStatus(string(sb.Status)))
 
-	endAtStr := ""
-	if !sb.ClaimedAt.IsZero() && pool != nil {
-		endAtStr = computeEndAt(sb, pool)
-	}
-
-	startedAt := time.Now()
-	if sb.StartedAt != nil {
-		startedAt = *sb.StartedAt
-	}
-	endAt := startedAt.Add(5 * time.Minute)
-	if endAtStr != "" {
-		if t, err := time.Parse(time.RFC3339, endAtStr); err == nil {
-			endAt = t
-		}
-	}
+	startedAt := e2bStartedAt(sb)
+	endAt := e2bEndAt(sb, pool)
 
 	var metadata *e2bgen.SandboxMetadata
 	merged := make(map[string]string)
@@ -216,12 +189,54 @@ func ToE2BTemplate(pool *agentsv1alpha1.SandboxPool) e2bgen.Template {
 // SandboxStateFromStatus maps AgentBox sandbox status to E2B state.
 // E2B only has "running" and "paused" states.
 func SandboxStateFromStatus(status string) string {
-	switch strings.ToLower(status) {
-	case "running", "starting":
-		return e2bStateRunning
+	// The E2B state enum is `running` | `paused` and nothing else, and AgentBox has
+	// no pause, so every sandbox this surface is willing to describe is `running`.
+	//
+	// That is only sound because terminated sandboxes are filtered out before they
+	// get here — see IsLiveStatus. Mapping a finished sandbox onto `running`
+	// instead reports it as usable forever, which is how a reclaimed sandbox came
+	// to look alive in a sandbox listing.
+	return e2bStateRunning
+}
+
+// IsLiveStatus reports whether a native sandbox status describes a sandbox that
+// still exists to be acted on.
+//
+// The native API keeps terminated sandboxes queryable, merging historical records
+// into its listing so a finished run stays inspectable. The E2B surface has no way
+// to express "finished": its state enum holds only `running` and `paused`. So the
+// compatibility layer has to drop what it cannot describe rather than mislabel it —
+// upstream E2B likewise does not list a killed sandbox. Callers that want the
+// history should read the native API, which is where it lives.
+func IsLiveStatus(status string) bool {
+	switch gen.SandboxStatus(status) {
+	case gen.SandboxStatusCompleted,
+		gen.SandboxStatusFailed,
+		gen.SandboxStatusCanceled,
+		gen.SandboxStatusReleased:
+		return false
 	default:
-		return e2bStateRunning // E2B doesn't have a concept for stopping/failed – default to running
+		// Pending / Starting / Running / Stopping are all still claimed by their
+		// caller. Unknown values are treated as live on purpose: a status added
+		// later should surface as an odd entry in a listing rather than silently
+		// vanish from it.
+		return true
 	}
+}
+
+// IsLive reports whether a sandbox record describes a live sandbox.
+//
+// Checks the termination timestamp as well as the status, because they are set on
+// different paths: a historical record carries terminatedAt, while a status alone
+// can lag behind a release that has already happened.
+func IsLive(sb *gen.Sandbox) bool {
+	if sb == nil {
+		return false
+	}
+	if sb.TerminatedAt != nil && !sb.TerminatedAt.IsZero() {
+		return false
+	}
+	return IsLiveStatus(string(sb.Status))
 }
 
 // poolNameFromSandbox returns the pool name, preferring the pool object if available.
@@ -244,6 +259,43 @@ func extractResourcesFromPool(pool *agentsv1alpha1.SandboxPool) (cpuCount int32,
 		return 0, 0
 	}
 	return ExtractCPUFromQuantity(*cpu), ExtractMemoryMBFromQuantity(*memory)
+}
+
+// defaultSandboxLifetime is the deadline assumed when the pool declares no idle
+// timeout. Matches the E2B SDKs' own default sandbox timeout, so a caller that set
+// nothing anywhere sees the number it would have expected.
+const defaultSandboxLifetime = 5 * time.Minute
+
+// e2bStartedAt is the sandbox's start instant, anchored to recorded data.
+//
+// Never `time.Now()`. A start time that answers "now" every time it is asked is not
+// a fact about the sandbox, and anything derived from it — notably endAt — then
+// moves forward on every read.
+func e2bStartedAt(sb *gen.Sandbox) time.Time {
+	if sb.StartedAt != nil && !sb.StartedAt.IsZero() {
+		return *sb.StartedAt
+	}
+	// Always present on a live sandbox; zero only on a record that never got
+	// claimed, in which case there is genuinely no timing information to report and
+	// the zero time says so honestly.
+	return sb.ClaimedAt
+}
+
+// e2bEndAt is the sandbox's deadline: its idle timeout counted from the claim, or
+// the default lifetime counted from its start.
+//
+// One function rather than one per response shape. The detail and listing
+// converters each carried their own copy of this and drifted apart — the detail
+// copy fell back to `now + 5m`, so every read of a sandbox whose pool declared no
+// idle timeout reported a deadline five minutes into the future, and the sandbox
+// looked like it was about to expire and never did.
+func e2bEndAt(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) time.Time {
+	if raw := computeEndAt(sb, pool); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			return t
+		}
+	}
+	return e2bStartedAt(sb).Add(defaultSandboxLifetime)
 }
 
 // computeEndAt calculates endAt from claimedAt + idle-timeout annotation.

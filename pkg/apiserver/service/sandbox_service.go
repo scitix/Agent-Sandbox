@@ -79,6 +79,10 @@ type SandboxService interface {
 	Create(ctx context.Context, input CreateSandboxInput) (*gen.Sandbox, *domain.AppError)
 	List(ctx context.Context, filter SandboxListFilter) (*ListSandboxesResult, *domain.AppError)
 	Get(ctx context.Context, namespace, sandboxID string) (*gen.Sandbox, *domain.AppError)
+	// GetLive is Get without the history-store fallback: NotFound once the
+	// sandbox has no Pod. Use it wherever the result is handed back as something
+	// the caller will then act on.
+	GetLive(ctx context.Context, namespace, sandboxID string) (*gen.Sandbox, *domain.AppError)
 	Delete(ctx context.Context, namespace, sandboxID string) (*gen.DeleteSandboxResult, *domain.AppError)
 	// SetTimeout updates the idle timeout annotation on the sandbox pod.
 	// A timeout of 0 removes the annotation (no expiry).
@@ -826,22 +830,45 @@ func (s *k8sSandboxService) List(ctx context.Context, filter SandboxListFilter) 
 }
 
 func (s *k8sSandboxService) Get(ctx context.Context, namespace, sandboxID string) (*gen.Sandbox, *domain.AppError) {
+	result, appErr := s.GetLive(ctx, namespace, sandboxID)
+	if appErr == nil {
+		return result, nil
+	}
+	if appErr.Code != domain.ErrCodeNotFound {
+		return nil, appErr
+	}
+	// No live Pod — fall back to the history store, so a finished sandbox stays
+	// inspectable. Callers that hand the result back as something to act on must
+	// use GetLive instead; see the warning on it.
+	if s.store != nil {
+		record, storeErr := s.store.Get(namespace, s.stripSandboxID(sandboxID))
+		if storeErr != nil {
+			return nil, domain.NewInternal(storeErr.Error(), storeErr)
+		}
+		if record != nil {
+			return record, nil
+		}
+	}
+	return nil, appErr
+}
+
+// GetLive returns a sandbox only while it still has a Pod, and NotFound once it
+// does not.
+//
+// Distinct from Get because the two answer different questions. Get answers "tell
+// me about this sandbox", so it falls back to the history store and a terminated
+// sandbox comes back with the shape of a live one. GetLive answers "can this
+// sandbox still be used" — the question a caller is really asking whenever it is
+// about to return a handle, re-attach, or accept a mutation. Serving a historical
+// record there produces the worst failure available: the caller believes it
+// succeeded, then every subsequent operation fails somewhere further away, with an
+// error that describes a transport problem rather than a reclaimed sandbox.
+func (s *k8sSandboxService) GetLive(ctx context.Context, namespace, sandboxID string) (*gen.Sandbox, *domain.AppError) {
 	rawID := s.stripSandboxID(sandboxID)
 	pod, err := sandboxpool.FindClaimedPodBySandboxID(ctx, s.client, namespace, rawID)
 	if err != nil {
 		if !errors.Is(err, sandboxpool.ErrSandboxNotFound) {
 			return nil, domain.NewInternal(err.Error(), err)
-		}
-
-		// K8s not found — fall back to the history store
-		if s.store != nil {
-			record, storeErr := s.store.Get(namespace, rawID)
-			if storeErr != nil {
-				return nil, domain.NewInternal(storeErr.Error(), storeErr)
-			}
-			if record != nil {
-				return record, nil
-			}
 		}
 		return nil, domain.NewNotFound(err.Error())
 	}

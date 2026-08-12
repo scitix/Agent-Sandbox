@@ -15,6 +15,7 @@
 package managedagent
 
 import (
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -274,6 +275,54 @@ func TestRenderStateVolumeIsMountedAtRootWithoutSubPath(t *testing.T) {
 	}
 }
 
+// Everything a restart must not lose has to land ON the mounted volume.
+//
+// Asserting each variable equals its own constant proves nothing — that passes for
+// any value, including the arrangement this replaces, where the Claude transcripts
+// and the thread map were SIBLINGS of the mount point rather than under it. A
+// restart then kept OpenCode's sessions and lost the map naming them, so every
+// conversation came back empty while the transcripts sat on disk intact. The
+// invariant is the containment, so that is what this checks.
+func TestRenderPersistedPathsAreUnderTheMountedVolume(t *testing.T) {
+	r, err := Render(fullAgent(), "")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	c := r.Deployment.Spec.Template.Spec.Containers[0]
+
+	var mountPath string
+	for _, m := range c.VolumeMounts {
+		if m.Name == stateVolumeName {
+			mountPath = m.MountPath
+		}
+	}
+	if mountPath == "" {
+		t.Fatal("no state volume mount rendered")
+	}
+
+	env := map[string]string{}
+	for _, e := range c.Env {
+		env[e.Name] = e.Value
+	}
+	// Named by the variable the RUNTIME reads, not by the Go constant, so a
+	// variable that stops being rendered at all fails here too.
+	for _, name := range []string{
+		"CLAUDE_CONFIG_DIR",      // one JSONL transcript per session
+		"ASSISTANT_THREAD_STORE", // the map naming them
+		"OPENCODE_DB",            // sessions, messages, parts
+	} {
+		got := env[name]
+		if got == "" {
+			t.Errorf("%s is not rendered; its owner falls back to a path "+
+				"outside the volume and loses everything on restart", name)
+			continue
+		}
+		if !strings.HasPrefix(got, mountPath+"/") {
+			t.Errorf("%s = %q is outside the mounted volume %q", name, got, mountPath)
+		}
+	}
+}
+
 // A second replica does not share work: the session-to-sandbox map is in-process
 // and a sandbox handle cannot be adopted by another process, so the second pod
 // creates a second sandbox for the same thread.
@@ -460,5 +509,99 @@ func TestRenderIsDeterministic(t *testing.T) {
 func TestEndpointIsInCluster(t *testing.T) {
 	if got := Endpoint("demo", "agents", 4099, ""); got != "http://agentbox-brain-demo.agents:4099" {
 		t.Errorf("Endpoint = %q", got)
+	}
+}
+
+// Creating an agent from a prompt alone is the point of a default image: knowing
+// which image carries a compatible gateway is the platform's business, not the
+// tenant's.
+func TestRenderWithDefaults_FillsAnUnsetImage(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Image = agentsv1alpha1.ManagedAgentImage{}
+	def := agentsv1alpha1.ManagedAgentImage{
+		Repository:  "registry.example.com/agentbox/brain-default",
+		Tag:         "v9",
+		PullPolicy:  corev1.PullAlways,
+		PullSecrets: []corev1.LocalObjectReference{{Name: "regcred"}},
+	}
+
+	r, err := RenderWithDefaults(ma, "", RenderDefaults{BrainImage: def})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	c := r.Deployment.Spec.Template.Spec.Containers[0]
+	if c.Image != "registry.example.com/agentbox/brain-default:v9" {
+		t.Errorf("image = %q, want the default", c.Image)
+	}
+	if c.ImagePullPolicy != corev1.PullAlways {
+		t.Errorf("pull policy = %q, want the default", c.ImagePullPolicy)
+	}
+	if got := r.Deployment.Spec.Template.Spec.ImagePullSecrets; len(got) != 1 ||
+		got[0].Name != "regcred" {
+		t.Errorf("pull secrets = %v, want the default", got)
+	}
+}
+
+// An agent that named its own image keeps it: a default must never silently
+// relocate a tenant onto a different build.
+func TestRenderWithDefaults_LeavesAnExplicitImageAlone(t *testing.T) {
+	ma := fullAgent()
+	r, err := RenderWithDefaults(ma, "", RenderDefaults{
+		BrainImage: agentsv1alpha1.ManagedAgentImage{
+			Repository: "registry.example.com/agentbox/brain-default", Tag: "v9",
+		},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got := r.Deployment.Spec.Template.Spec.Containers[0].Image; got !=
+		"registry.example.com/agentbox/brain:v1" {
+		t.Errorf("image = %q, want the agent's own", got)
+	}
+}
+
+// Repository and tag travel together. An agent's tag applied to the default
+// repository would name an image nobody published.
+func TestRenderWithDefaults_DoesNotMixAgentTagWithDefaultRepository(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Image = agentsv1alpha1.ManagedAgentImage{Tag: "tenant-tag"}
+
+	r, err := RenderWithDefaults(ma, "", RenderDefaults{
+		BrainImage: agentsv1alpha1.ManagedAgentImage{
+			Repository: "registry.example.com/agentbox/brain-default", Tag: "v9",
+		},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got := r.Deployment.Spec.Template.Spec.Containers[0].Image; got !=
+		"registry.example.com/agentbox/brain-default:v9" {
+		t.Errorf("image = %q, want the default repository AND tag", got)
+	}
+}
+
+// A deployment that publishes no default must reject an agent without an image
+// rather than guess: a guessed reference fails later as a pull error, a long way
+// from the cause.
+func TestRenderWithDefaults_NoDefaultAndNoImageIsAnError(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Image = agentsv1alpha1.ManagedAgentImage{}
+	if _, err := RenderWithDefaults(ma, "", RenderDefaults{}); err == nil {
+		t.Fatal("expected an error when neither the agent nor the deployment names an image")
+	}
+}
+
+// Render is documented pure, and the golden test depends on it. Filling a default
+// must not write back onto the object the caller passed.
+func TestRenderWithDefaults_DoesNotMutateTheInput(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Image = agentsv1alpha1.ManagedAgentImage{}
+	if _, err := RenderWithDefaults(ma, "", RenderDefaults{
+		BrainImage: agentsv1alpha1.ManagedAgentImage{Repository: "r", Tag: "t"},
+	}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if ma.Spec.Image.Repository != "" {
+		t.Errorf("input spec.image was mutated to %q", ma.Spec.Image.Repository)
 	}
 }

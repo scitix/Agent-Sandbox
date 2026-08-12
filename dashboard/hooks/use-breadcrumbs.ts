@@ -20,7 +20,13 @@ import { usePathname } from "next/navigation"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import { useTranslation, type TranslationKey } from "@/lib/i18n"
-import { clusterPath, type DashboardPage } from "@/lib/cluster-path"
+import type { Locale } from "@/lib/i18n/config"
+import {
+  STANDALONE_PAGES,
+  clusterPath,
+  standalonePath,
+  type DashboardPage,
+} from "@/lib/cluster-path"
 
 export interface Crumb {
   label: string
@@ -51,26 +57,72 @@ const SEGMENT_LABEL_KEY: Partial<Record<string, TranslationKey>> = {
 }
 
 /**
+ * One crumb for the page, then one per deeper segment. `pageHref` is where the
+ * page crumb links once there are deeper segments; the trailing crumb never
+ * links, because it is the current view.
+ *
+ * Deeper segments show verbatim from the URL rather than waiting on a fetch, so
+ * a detail page's title does not flash on load.
+ */
+function buildCrumbs(
+  t: ReturnType<typeof useTranslation>["t"],
+  pageSegment: string,
+  rest: string,
+  pageHref: string,
+): Crumb[] {
+  const trimmed = rest.replace(/^\/+|\/+$/g, "")
+  const segments = trimmed ? trimmed.split("/") : []
+  const labelKey = SEGMENT_LABEL_KEY[pageSegment]
+
+  const crumbs: Crumb[] = [
+    {
+      label: labelKey ? t(labelKey) : decodeURIComponent(pageSegment),
+      href: segments.length > 0 ? pageHref : undefined,
+      isCurrent: segments.length === 0,
+    },
+  ]
+
+  let acc = pageHref
+  segments.forEach((segment, i) => {
+    acc = `${acc}/${segment}`
+    const last = i === segments.length - 1
+    crumbs.push({
+      label: decodeURIComponent(segment),
+      href: last ? undefined : acc,
+      isCurrent: last,
+    })
+  })
+
+  return crumbs
+}
+
+/**
  * Builds breadcrumbs purely from the route. The trailing crumb is the current
- * page (rendered bold by the header, doubling as the title); deeper segments
- * (detail ids/names) show verbatim from the URL so there is no load-time flash.
+ * page, rendered bold by the header and doubling as the title.
  *
  * Returns an empty array for the bare `/clusters/{id}` redirect path, which has
  * no page segment to label.
+ *
+ * Split out of the hook so the route parsing is testable without React: the two
+ * matchers below and `lib/cluster-path.ts` have to agree on which pages carry a
+ * cluster in their URL, and when they drift the failure is a silently empty
+ * breadcrumb bar (which is also the page title) rather than an error.
  */
-export function useBreadcrumbs(): Crumb[] {
-  const pathname = usePathname()
-  const clusterID = useClusterID()
-  const locale = useLocale()
-  const { t } = useTranslation()
-
-  // Standalone, cluster-agnostic pages (/overview, /admin) have no [clusterID]
-  // route segment and no sub-routes — a single, non-linking crumb.
-  const standaloneMatch = pathname.match(/^(?:\/[a-z]{2}(?:-[A-Za-z]{2,8})?)?\/(overview|admin)\/?$/)
-  if (standaloneMatch) {
-    const page = standaloneMatch[1]
-    const labelKey = SEGMENT_LABEL_KEY[page]
-    return [{ label: labelKey ? t(labelKey) : page, isCurrent: true }]
+export function breadcrumbsFor(
+  pathname: string,
+  clusterID: string,
+  locale: Locale,
+  t: ReturnType<typeof useTranslation>["t"],
+): Crumb[] {
+  // Standalone, cluster-agnostic pages have no [clusterID] route segment. They
+  // are not all leaves — a managed agent has detail tabs under it — so capture
+  // the remainder instead of anchoring the match at the page segment.
+  const standalone = pathname.match(
+    new RegExp(`^(?:/[a-z]{2}(?:-[A-Za-z]{2,8})?)?/(${STANDALONE_PAGES.join("|")})(?:/(.*))?$`),
+  )
+  if (standalone) {
+    const page = standalone[1] as DashboardPage
+    return buildCrumbs(t, page, standalone[2] ?? "", standalonePath(page, locale))
   }
 
   // Strip the optional [locale] prefix and the /clusters/{id} prefix, then keep
@@ -79,36 +131,11 @@ export function useBreadcrumbs(): Crumb[] {
   const remainder = match?.[1]?.replace(/\/+$/, "") ?? ""
   if (!remainder) return []
 
-  const segments = remainder.split("/")
-  const page = segments[0] as DashboardPage
-  const labelKey = SEGMENT_LABEL_KEY[segments[0]]
-  const pageLabel = labelKey ? t(labelKey) : decodeURIComponent(segments[0])
+  const [page, ...rest] = remainder.split("/")
+  return buildCrumbs(t, page, rest.join("/"), clusterPath(clusterID, page as DashboardPage, locale))
+}
 
-  const hasDetail = segments.length > 1
-
-  const crumbs: Crumb[] = [
-    {
-      label: pageLabel,
-      href: hasDetail ? clusterPath(clusterID, page, locale) : undefined,
-      isCurrent: !hasDetail,
-    },
-  ]
-
-  if (hasDetail) {
-    // The trailing segment is the current view; intermediate segments (e.g. the
-    // resource name above a tab sub-route) link to their own cumulative path so
-    // they stay navigable.
-    let acc = clusterPath(clusterID, page, locale)
-    for (let i = 1; i < segments.length; i++) {
-      acc = `${acc}/${segments[i]}`
-      const last = i === segments.length - 1
-      crumbs.push({
-        label: decodeURIComponent(segments[i]),
-        href: last ? undefined : acc,
-        isCurrent: last,
-      })
-    }
-  }
-
-  return crumbs
+/** Route-derived breadcrumbs for the current page. */
+export function useBreadcrumbs(): Crumb[] {
+  return breadcrumbsFor(usePathname(), useClusterID(), useLocale(), useTranslation().t)
 }

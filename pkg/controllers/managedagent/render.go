@@ -55,25 +55,36 @@ const (
 	// DefaultOpenCodePort is the loopback port for `opencode serve`.
 	DefaultOpenCodePort int32 = 4096
 
+	// RuntimeHome is the Brain image's HOME. Every path below is derived from it
+	// rather than written out, because the image's runtime user owns these
+	// directories and a path that disagrees with HOME is not a crash — it is an
+	// unwritable directory the process falls back from silently.
+	RuntimeHome = "/home/agents"
+
 	// StateRoot is where the Brain keeps everything a restart must not lose:
 	// the thread map, the Claude Code transcripts and the OpenCode session DB.
 	//
-	// It is mounted at exactly one path, at the volume root. The runtime treats
-	// a volume without its layout marker as one to convert, and converting
-	// clears the root — a marker written under one subPath is invisible to the
-	// others, so per-owner subPath mounts would make every restart look like a
-	// fresh volume and discard the history.
-	StateRoot = "/home/opencode/.local/share/opencode"
+	// All three live UNDER it, and it is mounted at exactly one path with no
+	// subPath. That is the whole point of the layout: the volume used to be
+	// mounted on the OpenCode data directory, which left the thread map and the
+	// transcripts on the container filesystem — so a restart kept OpenCode's
+	// sessions and lost the map naming them, and every conversation came back
+	// empty while the transcripts sat there intact.
+	StateRoot = RuntimeHome + "/state"
+	// OpenCodeDBPath is OpenCode's SQLite file: sessions, messages, parts. Only
+	// the database is placed on the volume, not the whole data directory — the
+	// rest of it is an unused credential file and a log directory.
+	OpenCodeDBPath = StateRoot + "/opencode/opencode.db"
 	// ClaudeConfigDir holds one JSONL transcript per session.
-	ClaudeConfigDir = "/home/opencode/.local/share/claude"
+	ClaudeConfigDir = StateRoot + "/claude"
 	// ThreadStorePath is the gateway's thread map. Every harness builds its
 	// history list from this file, so losing it loses the history even when the
 	// transcripts survive.
-	ThreadStorePath = ClaudeConfigDir + "/gateway/threads.json"
+	ThreadStorePath = StateRoot + "/gateway/threads.json"
 
 	// OpenCodeConfigPath is where the OpenCode harness reads its runtime
-	// config. The filename is fixed by the harness.
-	OpenCodeConfigPath = "/home/opencode/.config/opencode/opencode.json"
+	// config. The filename is fixed by the harness, and the directory by HOME.
+	OpenCodeConfigPath = RuntimeHome + "/.config/opencode/opencode.json"
 
 	labelName      = "app.kubernetes.io/name"
 	labelInstance  = "app.kubernetes.io/instance"
@@ -139,11 +150,48 @@ func Endpoint(agent, namespace string, port int32, proxyService string) string {
 // It is pure: same spec in, same bytes out. `checksum` is the caller's hash of
 // the referenced Secrets and ConfigMaps; passing "" omits the annotation.
 func Render(ma *agentsv1alpha1.ManagedAgent, checksum string) (*Rendered, error) {
+	return RenderWithDefaults(ma, checksum, RenderDefaults{})
+}
+
+// RenderDefaults supplies values the deployment owns rather than the agent.
+//
+// Passed in rather than read from a package variable so Render stays pure: the
+// golden test and every unit test depend on the same spec producing the same bytes,
+// and a default that could be mutated at process scope would make that conditional
+// on whatever ran first.
+type RenderDefaults struct {
+	// BrainImage is used when the agent names no image of its own. Lets a caller
+	// create an agent from a prompt alone, which is the point — requiring an image
+	// reference means knowing which one carries a compatible gateway, and that is
+	// the platform's business, not the tenant's.
+	//
+	// Empty keeps the image required, which is the correct behaviour for a
+	// deployment that has not published one: inventing a reference would fail later
+	// as an ImagePullBackOff, a long way from the cause.
+	BrainImage agentsv1alpha1.ManagedAgentImage
+}
+
+// RenderWithDefaults renders an agent, filling anything it left unset from
+// deployment-level defaults.
+func RenderWithDefaults(
+	ma *agentsv1alpha1.ManagedAgent,
+	checksum string,
+	defaults RenderDefaults,
+) (*Rendered, error) {
 	if ma == nil {
 		return nil, fmt.Errorf("managedagent is nil")
 	}
 	if ma.Spec.Image.Repository == "" {
-		return nil, fmt.Errorf("spec.image.repository is required")
+		if defaults.BrainImage.Repository == "" {
+			return nil, fmt.Errorf(
+				"spec.image.repository is required: this deployment has no default " +
+					"Brain image configured")
+		}
+		// Copied rather than mutated in place: Render must not write to the object
+		// its caller handed it, or a reconcile would be observed to change the spec
+		// it was reconciling.
+		ma = ma.DeepCopy()
+		ma.Spec.Image = mergeImageDefaults(ma.Spec.Image, defaults.BrainImage)
 	}
 	if err := validateScenarios(ma.Spec.Scenarios); err != nil {
 		return nil, err
@@ -276,8 +324,14 @@ func renderEnv(ma *agentsv1alpha1.ManagedAgent) ([]corev1.EnvVar, error) {
 	}
 
 	// --- session storage --------------------------------------------------
+	// All three are rendered, not left to the runtime's defaults. A default that
+	// resolves outside the mounted volume is the failure this layout exists to
+	// prevent, and it is invisible until a restart loses the history.
 	add("CLAUDE_CONFIG_DIR", ClaudeConfigDir)
 	add("ASSISTANT_THREAD_STORE", ThreadStorePath)
+	if openCodeEnabled(ma) {
+		add("OPENCODE_DB", OpenCodeDBPath)
+	}
 
 	appendClassifierEnv(ma.Spec.Classifier, add, addRef)
 	appendTelemetryEnv(ma.Spec.Observability, add, addRef)
@@ -478,8 +532,8 @@ func renderVolumes(ma *agentsv1alpha1.ManagedAgent, pvcName string) ([]corev1.Vo
 	var vols []corev1.Volume
 	var mounts []corev1.VolumeMount
 
-	// State volume. Mounted at the root of StateRoot with no subPath — see the
-	// note on StateRoot for why splitting it is destructive.
+	// State volume. Mounted at StateRoot with no subPath, so all three owners
+	// land on it — see the note on StateRoot for what mounting it deeper cost.
 	stateVol := corev1.Volume{Name: stateVolumeName}
 	if claim := persistentClaimName(ma, pvcName); claim != "" {
 		stateVol.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim}
@@ -706,6 +760,26 @@ func renderPVC(ma *agentsv1alpha1.ManagedAgent, name string, labels map[string]s
 		pvc.Spec.StorageClassName = &p.StorageClass
 	}
 	return pvc
+}
+
+// mergeImageDefaults fills an agent's image from the deployment default.
+//
+// Field by field rather than wholesale, so an agent that set only a pull policy or
+// only pull secrets keeps them while still getting the default repository and tag.
+// Those two travel together: a tag from the agent applied to the default repository
+// would name an image nobody published.
+func mergeImageDefaults(
+	img, def agentsv1alpha1.ManagedAgentImage,
+) agentsv1alpha1.ManagedAgentImage {
+	img.Repository = def.Repository
+	img.Tag = def.Tag
+	if img.PullPolicy == "" {
+		img.PullPolicy = def.PullPolicy
+	}
+	if len(img.PullSecrets) == 0 {
+		img.PullSecrets = def.PullSecrets
+	}
+	return img
 }
 
 func imageRef(img agentsv1alpha1.ManagedAgentImage) string {

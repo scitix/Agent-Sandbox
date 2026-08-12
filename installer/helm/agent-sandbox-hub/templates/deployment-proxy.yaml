@@ -59,6 +59,18 @@ spec:
               value: "1"
             - name: AGENTBOX_MANAGED_AGENT_NAMESPACE
               value: {{ .Values.managedAgent.namespace | default .Release.Namespace | quote }}
+          {{- with .Values.managedAgent.brain.image }}
+          {{- if .repository }}
+            - name: AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE
+              value: {{ .repository | quote }}
+            - name: AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE_TAG
+              value: {{ .tag | quote }}
+          {{- if .pullSecrets }}
+            - name: AGENTBOX_MANAGED_AGENT_BRAIN_PULL_SECRETS
+              value: {{ join "," .pullSecrets | quote }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
           {{- if .Values.managedAgent.publish.enabled }}
             - name: WSPROXY_MANAGED_AGENT_GATEWAY_ADDR
               value: ":{{ .Values.managedAgent.publish.port }}"

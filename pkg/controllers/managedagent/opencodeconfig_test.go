@@ -110,9 +110,8 @@ func TestOpenCodeConfigAddressesModelsByProviderID(t *testing.T) {
 // notification tools.
 func TestOpenCodeConfigOverlaySurvives(t *testing.T) {
 	overlay := `{
-	  "plugin": ["/home/opencode/plugin/offload-large-output.ts"],
+	  "plugin": ["/home/agents/plugin/extra.ts"],
 	  "experimental": {"openTelemetry": true},
-	  "tool_output": {"max_bytes": 50000000, "max_lines": 1000000},
 	  "agent": {},
 	  "mcp": {}
 	}`
@@ -124,13 +123,57 @@ func TestOpenCodeConfigOverlaySurvives(t *testing.T) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("generated config is not valid JSON: %v", err)
 	}
-	for _, key := range []string{"plugin", "experimental", "tool_output", "agent", "mcp"} {
+	for _, key := range []string{"plugin", "experimental", "agent", "mcp"} {
 		if _, ok := cfg[key]; !ok {
 			t.Errorf("overlay key %q was dropped", key)
 		}
 	}
 	if got := cfg["experimental"].(map[string]any)["openTelemetry"]; got != true {
 		t.Errorf("experimental.openTelemetry = %v, want true", got)
+	}
+}
+
+// The harness's own truncation of an oversized tool result must never fire, and
+// that cannot be left to the tenant.
+//
+// When it fires, the harness writes the full text to a file ON THE POD and hands
+// the agent that path — but the agent's read tool runs in the sandbox and cannot
+// open a pod-side file, so the content is gone and the agent is looking at a path
+// that reads as valid. An agent created from a prompt alone supplies no overlay at
+// all, so anything left to the overlay is absent exactly in the default case.
+func TestOpenCodeConfigOwnsToolOutputCaps(t *testing.T) {
+	for name, overlay := range map[string]string{
+		"no overlay at all":        "",
+		"an overlay that omits it": `{"plugin": []}`,
+		// The reason it is in generatedKeys rather than merely defaulted: a
+		// tenant lowering these caps re-enables the silent path above.
+		"an overlay that lowers it": `{"tool_output": {"max_bytes": 100, "max_lines": 5}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := RenderOpenCodeConfig(openCodeAgent(overlay), "sk-test")
+			if err != nil {
+				t.Fatalf("RenderOpenCodeConfig: %v", err)
+			}
+			var cfg struct {
+				ToolOutput struct {
+					MaxBytes int64 `json:"max_bytes"`
+					MaxLines int64 `json:"max_lines"`
+				} `json:"tool_output"`
+			}
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				t.Fatalf("generated config is not valid JSON: %v", err)
+			}
+			// Both must sit well above what the sandbox toolset offloads at
+			// (48 KB / 1500 lines), or the harness gets there first.
+			if cfg.ToolOutput.MaxBytes < 1_000_000 {
+				t.Errorf("tool_output.max_bytes = %d, want the platform's cap",
+					cfg.ToolOutput.MaxBytes)
+			}
+			if cfg.ToolOutput.MaxLines < 100_000 {
+				t.Errorf("tool_output.max_lines = %d, want the platform's cap",
+					cfg.ToolOutput.MaxLines)
+			}
+		})
 	}
 }
 
