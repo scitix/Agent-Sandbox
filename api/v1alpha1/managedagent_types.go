@@ -56,8 +56,12 @@ type ManagedAgentSpec struct {
 
 	// Image is the Brain image. It must ship every harness listed under
 	// `runtime`, plus the sandbox daemon and the workspace-fs server.
-	// +required
-	Image ManagedAgentImage `json:"image"`
+	//
+	// Optional: omitted, the agent runs the deployment's default Brain image, which
+	// is what lets an agent be created from a prompt alone. Set it to pin a specific
+	// build, or when the deployment publishes no default.
+	// +optional
+	Image ManagedAgentImage `json:"image,omitempty"`
 
 	// Runtime declares which harnesses this agent can serve and how each reaches
 	// its model endpoint. At least one must be configured, otherwise the Brain
@@ -129,11 +133,14 @@ type ManagedAgentSpec struct {
 	// +optional
 	Docs string `json:"docs,omitempty"`
 
-	// Brain tunes the Deployment. Replicas are always 1 with strategy Recreate:
-	// the session-to-sandbox map lives in the daemon's memory and sandbox
-	// handles cannot be recovered across processes (the E2B layer answers
-	// `Sandbox.connect` with "not supported in AgentBox"), so a second replica
-	// would silently create a second sandbox for the same thread.
+	// Brain tunes the Deployment. Replicas are always 1 with strategy Recreate,
+	// because the session-to-sandbox map lives in the daemon's memory: a second
+	// replica that has not served a thread would build it a second sandbox, and the
+	// thread's files would appear and disappear depending on which replica answered.
+	//
+	// This is a property of the daemon, not of the platform. Re-attaching to a
+	// running sandbox by id works, so lifting the constraint is a matter of moving
+	// that map somewhere both replicas can read.
 	// +optional
 	Brain *ManagedAgentBrain `json:"brain,omitempty"`
 }
@@ -152,8 +159,12 @@ type ManagedAgentOwner struct {
 
 // ManagedAgentImage is the Brain container image.
 type ManagedAgentImage struct {
-	// +required
-	Repository string `json:"repository"`
+	// Repository is the image to run. Optional: left empty, the agent gets the
+	// deployment's default Brain image, so an agent can be created from a prompt
+	// alone. A deployment that publishes no default rejects an agent without one,
+	// rather than guessing a reference that would surface later as a pull failure.
+	// +optional
+	Repository string `json:"repository,omitempty"`
 	// +optional
 	Tag string `json:"tag,omitempty"`
 	// +kubebuilder:validation:Enum=Always;IfNotPresent;Never

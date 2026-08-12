@@ -34,6 +34,17 @@ docs/website/tsconfig.tsbuildinfo
 # OpenAPI spec is copied by Dockerfile.docs at a specific path.
 !pkg/openapi/native/openapi.yaml
 
+# --- Brain (bun gateway + python daemon) build context (used by brain/Dockerfile) ---
+# The image needs both, from the same commit: the gateway imports the hands
+# package as a file: dependency, so a build that carried only one of them would
+# resolve against whatever the other happened to be.
+!brain/**
+!sdk/hands/**
+brain/node_modules/
+sdk/hands/typescript/node_modules/
+**/__pycache__/
+**/*.pyc
+
 # --- Generic noise that should never land in any image layer ---
 **/.git
 **/.github

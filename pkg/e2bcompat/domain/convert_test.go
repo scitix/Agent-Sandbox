@@ -310,3 +310,110 @@ func TestToE2BTemplate_TypeAlias(t *testing.T) {
 	var _ = result.MemoryMB
 	var _ = result.EnvdVersion
 }
+
+// endAt used to be derived from time.Now() whenever the pool declared no idle
+// timeout, so a caller polling a sandbox saw a deadline that stayed five minutes
+// away no matter how long it waited — the sandbox looked perpetually about to
+// expire and never did. Two reads of an unchanged sandbox must agree.
+func TestToE2BSandboxDetail_EndAtDoesNotDriftBetweenReads(t *testing.T) {
+	started := time.Now().Add(-2 * time.Hour)
+	sb := gen.Sandbox{
+		SandboxId: "sbx-1",
+		Status:    gen.SandboxStatusRunning,
+		StartedAt: &started,
+		ClaimedAt: started,
+	}
+	// nil pool: no idle-timeout annotation to read, which is the path that fell
+	// back to now.
+	first := ToE2BSandboxDetail(&sb, nil, "")
+	time.Sleep(10 * time.Millisecond)
+	second := ToE2BSandboxDetail(&sb, nil, "")
+
+	if !first.EndAt.Equal(second.EndAt) {
+		t.Errorf("endAt moved between reads: %v then %v", first.EndAt, second.EndAt)
+	}
+	if !first.StartedAt.Equal(started) {
+		t.Errorf("startedAt = %v, want the recorded %v", first.StartedAt, started)
+	}
+	if want := started.Add(defaultSandboxLifetime); !first.EndAt.Equal(want) {
+		t.Errorf("endAt = %v, want startedAt + default lifetime %v", first.EndAt, want)
+	}
+}
+
+// The detail and listing shapes each had their own copy of this arithmetic and had
+// already drifted apart. Same sandbox, same numbers.
+func TestEndAtAgreesBetweenDetailAndListing(t *testing.T) {
+	started := time.Now().Add(-time.Hour)
+	sb := gen.Sandbox{
+		SandboxId: "sbx-1",
+		Status:    gen.SandboxStatusRunning,
+		StartedAt: &started,
+		ClaimedAt: started,
+	}
+	pool := makeTestPool("p", "ns", 1000, 2048)
+	pool.Annotations = map[string]string{
+		agentsv1alpha1.SandboxIdleTimeoutAnnotationKey: "3600",
+	}
+
+	detail := ToE2BSandboxDetail(&sb, pool, "")
+	listed := ToE2BListedSandbox(&sb, pool)
+	if !detail.EndAt.Equal(listed.EndAt) {
+		t.Errorf("detail endAt %v != listed endAt %v", detail.EndAt, listed.EndAt)
+	}
+	// Compared at second granularity: this path formats through RFC3339, which
+	// carries no sub-second component. Deadlines do not need one.
+	if want := started.Add(time.Hour).UTC().Truncate(time.Second); !detail.EndAt.Equal(want) {
+		t.Errorf("endAt = %v, want claimedAt + idle timeout %v", detail.EndAt, want)
+	}
+}
+
+// A sandbox with no recorded start still must not report a moving start time.
+func TestStartedAtFallsBackToClaimedAtNotNow(t *testing.T) {
+	claimed := time.Now().Add(-30 * time.Minute)
+	sb := gen.Sandbox{SandboxId: "sbx-1", Status: gen.SandboxStatusRunning, ClaimedAt: claimed}
+	if got := e2bStartedAt(&sb); !got.Equal(claimed) {
+		t.Errorf("startedAt = %v, want claimedAt %v", got, claimed)
+	}
+}
+
+// A killed sandbox stays queryable on the native API, and its record is merged
+// into the native listing. The E2B state enum is running|paused with nothing for
+// "finished", so these have to be dropped from the E2B surface — reporting them as
+// running is what made a reclaimed sandbox look alive indefinitely.
+func TestIsLive(t *testing.T) {
+	terminated := time.Now()
+	cases := []struct {
+		name string
+		sb   gen.Sandbox
+		want bool
+	}{
+		{"running", gen.Sandbox{Status: gen.SandboxStatusRunning}, true},
+		{"starting", gen.Sandbox{Status: gen.SandboxStatusStarting}, true},
+		{"pending", gen.Sandbox{Status: gen.SandboxStatusPending}, true},
+		{"stopping still belongs to its caller", gen.Sandbox{Status: gen.SandboxStatusStopping}, true},
+		{"completed", gen.Sandbox{Status: gen.SandboxStatusCompleted}, false},
+		{"failed", gen.Sandbox{Status: gen.SandboxStatusFailed}, false},
+		{"canceled", gen.Sandbox{Status: gen.SandboxStatusCanceled}, false},
+		{"released", gen.Sandbox{Status: gen.SandboxStatusReleased}, false},
+		// Status and terminatedAt are written on different paths, so a status that
+		// has not caught up yet must not resurrect a terminated sandbox.
+		{
+			"terminatedAt wins over a stale running status",
+			gen.Sandbox{Status: gen.SandboxStatusRunning, TerminatedAt: &terminated},
+			false,
+		},
+		// A status added later should show up as an odd listing entry rather than
+		// silently disappear.
+		{"unknown status is treated as live", gen.Sandbox{Status: "SomethingNew"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsLive(&tc.sb); got != tc.want {
+				t.Errorf("IsLive = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if IsLive(nil) {
+		t.Error("IsLive(nil) = true, want false")
+	}
+}

@@ -109,6 +109,33 @@ type Config struct {
 	// Flag: --managed-agent-namespace  Env: AGENTBOX_MANAGED_AGENT_NAMESPACE
 	ManagedAgentNamespace string
 
+	// ManagedAgentBrainImage is the Brain image an agent gets when it names none.
+	//
+	// This is what lets an agent be created from a prompt alone: requiring the
+	// caller to name an image means knowing which one ships a gateway compatible
+	// with this control plane, and that is the deployment's business rather than
+	// the tenant's.
+	//
+	// Empty keeps the image required, which is correct for a deployment that has
+	// not published one — inventing a reference would surface much later as an
+	// ImagePullBackOff, a long way from the cause.
+	// Flag: --managed-agent-brain-image  Env: AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE
+	ManagedAgentBrainImage string
+
+	// ManagedAgentBrainImageTag is the tag paired with the repository above.
+	// Kept separate so the chart can carry `image.repository` and `image.tag` as
+	// two values, the way every other image in it is expressed.
+	// Flag: --managed-agent-brain-image-tag
+	// Env: AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE_TAG
+	ManagedAgentBrainImageTag string
+
+	// ManagedAgentBrainPullSecrets names imagePullSecrets for the default Brain
+	// image, comma-separated. A private registry needs them, and an agent created
+	// from a prompt alone has no place to declare them.
+	// Flag: --managed-agent-brain-pull-secrets
+	// Env: AGENTBOX_MANAGED_AGENT_BRAIN_PULL_SECRETS
+	ManagedAgentBrainPullSecrets string
+
 	// NotificationConfigMap is the name of the ConfigMap that holds the
 	// notification service's config + runtime state. Stored in APIKeyNamespace.
 	// Flag: --notification-configmap  Env: AGENTBOX_NOTIFICATION_CONFIGMAP
@@ -188,6 +215,19 @@ func FromFlags(fs *flag.FlagSet) *Config {
 	fs.StringVar(&cfg.ManagedAgentNamespace, "managed-agent-namespace",
 		os.Getenv("AGENTBOX_MANAGED_AGENT_NAMESPACE"),
 		"Namespace the ManagedAgent controller watches. Empty watches all namespaces.")
+
+	fs.StringVar(&cfg.ManagedAgentBrainImage, "managed-agent-brain-image",
+		os.Getenv("AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE"),
+		"Default Brain image repository for agents that name none. "+
+			"Empty keeps spec.image.repository required.")
+
+	fs.StringVar(&cfg.ManagedAgentBrainImageTag, "managed-agent-brain-image-tag",
+		os.Getenv("AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE_TAG"),
+		"Tag for --managed-agent-brain-image.")
+
+	fs.StringVar(&cfg.ManagedAgentBrainPullSecrets, "managed-agent-brain-pull-secrets",
+		os.Getenv("AGENTBOX_MANAGED_AGENT_BRAIN_PULL_SECRETS"),
+		"Comma-separated imagePullSecrets for the default Brain image.")
 
 	fs.StringVar(&cfg.ImagesCatalogConfigMap, "images-catalog-configmap",
 		envOr("AGENTBOX_IMAGES_CATALOG_CONFIGMAP", defaultImagesCatalogConfigMap),

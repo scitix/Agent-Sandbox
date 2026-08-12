@@ -307,19 +307,32 @@ func TestPostSandboxes_MetadataKeys(t *testing.T) {
 // connect can be checked for both what it returns and what it changed.
 type mockConnectService struct {
 	service.SandboxService
-	sandbox    *gen.Sandbox
-	getErr     *apidomain.AppError
+	sandbox *gen.Sandbox
+	getErr  *apidomain.AppError
+	// liveErr is what GetLive returns when the sandbox has no Pod any more, while
+	// Get still answers from history. Separating the two is what lets a test
+	// reproduce a reclaimed sandbox, which is the only interesting case here.
+	liveErr    *apidomain.AppError
 	timeoutSet time.Duration
 	timeoutHit int
+	getHit     int
 }
 
 func (m *mockConnectService) Get(_ context.Context, _, id string) (*gen.Sandbox, *apidomain.AppError) {
+	m.getHit++
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
 	sb := *m.sandbox
 	sb.SandboxId = id
 	return &sb, nil
+}
+
+func (m *mockConnectService) GetLive(ctx context.Context, ns, id string) (*gen.Sandbox, *apidomain.AppError) {
+	if m.liveErr != nil {
+		return nil, m.liveErr
+	}
+	return m.Get(ctx, ns, id)
 }
 
 func (m *mockConnectService) SetTimeout(_ context.Context, _, _ string, d time.Duration) *apidomain.AppError {
@@ -356,10 +369,45 @@ func TestPostSandboxesSandboxIDConnect_ReturnsSandboxAndAppliesTimeout(t *testin
 	}
 }
 
+// A reclaimed sandbox is still readable through the history store, and connect
+// must not serve it. Attaching to a record with no Pod behind it returns 200 with
+// a handle that looks usable, and the caller only finds out when its first command
+// fails somewhere else with an error about transport rather than about a sandbox
+// that is gone. That is worse than a plain 404, which the SDKs surface directly as
+// sandbox-not-found — so connect asks GetLive and the history fallback stays out
+// of the attach path.
+func TestPostSandboxesSandboxIDConnect_HistoricalRecordIsNotAttachable(t *testing.T) {
+	sb := mkSandbox("sbx-done", nil)
+	svc := &mockConnectService{
+		sandbox: &sb,
+		liveErr: apidomain.NewNotFound("sandbox \"sbx-done\" not found"),
+	}
+	s := &Server{sandbox: svc}
+	gc, _ := ginCtxWithAuth()
+
+	resp, err := s.PostSandboxesSandboxIDConnect(gc, e2bgen.PostSandboxesSandboxIDConnectRequestObject{
+		SandboxID: "sbx-done",
+		Body:      &e2bgen.PostSandboxesSandboxIDConnectJSONRequestBody{Timeout: 120},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, is404 := resp.(e2bgen.PostSandboxesSandboxIDConnect404JSONResponse); !is404 {
+		t.Fatalf("expected 404 for a sandbox that only exists in history, got %T", resp)
+	}
+	// And it must not have moved the deadline of something it refused to attach to.
+	if svc.timeoutHit != 0 {
+		t.Errorf("SetTimeout called %d time(s) on a non-attachable sandbox; want 0", svc.timeoutHit)
+	}
+}
+
 // A killed or expired sandbox has nothing to attach to. 404 is what the SDKs
 // turn into sandbox-not-found; a 500 would read as a broken server.
 func TestPostSandboxesSandboxIDConnect_MissingSandboxIs404(t *testing.T) {
-	svc := &mockConnectService{getErr: apidomain.NewNotFound("sandbox \"sbx-gone\" not found")}
+	svc := &mockConnectService{
+		getErr:  apidomain.NewNotFound("sandbox \"sbx-gone\" not found"),
+		liveErr: apidomain.NewNotFound("sandbox \"sbx-gone\" not found"),
+	}
 	s := &Server{sandbox: svc}
 	gc, _ := ginCtxWithAuth()
 

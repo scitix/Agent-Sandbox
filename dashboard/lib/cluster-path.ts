@@ -45,19 +45,43 @@ function localePrefix(locale?: Locale): string {
 }
 
 /**
- * Pages that live at a top-level, cluster-agnostic route (`/overview`,
- * `/admin`) instead of under `/clusters/{clusterID}/`. They carry their own
- * in-page cluster-scope selector (`useClusterScopeSearchParams`) rather than
- * taking the cluster from the route segment.
+ * Pages that live at a top-level, cluster-agnostic route instead of under
+ * `/clusters/{clusterID}/`. Two different reasons put a page here:
+ *
+ *   - It aggregates across clusters and carries its own in-page scope selector
+ *     (`useClusterScopeSearchParams`): `overview`, `admin`.
+ *   - The resource itself is control-plane-only and exists once per deployment:
+ *     `managed-agents`. ManagedAgent CRs live on the master cluster and are
+ *     served by ws-proxy, not by any worker's API, so a cluster in the route
+ *     would be decoration that invites the reader to believe agents are
+ *     per-cluster. (An agent's *Hands* still name a worker cluster — that lives
+ *     in `spec.hands`, not in the URL.)
  */
-const STANDALONE_PAGES: ReadonlySet<DashboardPage> = new Set(["overview", "admin"])
+export const STANDALONE_PAGES = ["overview", "admin", "managed-agents"] as const satisfies
+  readonly DashboardPage[]
+
+const STANDALONE_PAGE_SET: ReadonlySet<DashboardPage> = new Set(STANDALONE_PAGES)
+
+/** True when this page's route carries no `/clusters/{clusterID}/` prefix. */
+export function isStandalonePage(page: DashboardPage): boolean {
+  return STANDALONE_PAGE_SET.has(page)
+}
+
+/**
+ * Returns /{locale}/{page} for a page with no cluster in its route. Prefer this
+ * over `clusterPath` at call sites that are only ever standalone, so they need
+ * no cluster id to pass in.
+ */
+export function standalonePath(page: DashboardPage, locale?: Locale): string {
+  return `${localePrefix(locale)}/${page}`
+}
 
 /**
  * Returns /{locale}/clusters/{clusterID}/{page} (locale omitted for "en"), or
  * /{locale}/{page} for standalone pages (see STANDALONE_PAGES).
  */
 export function clusterPath(clusterID: string, page: DashboardPage, locale?: Locale): string {
-  if (STANDALONE_PAGES.has(page)) return `${localePrefix(locale)}/${page}`
+  if (STANDALONE_PAGE_SET.has(page)) return standalonePath(page, locale)
   return `${localePrefix(locale)}/clusters/${clusterID}/${page}`
 }
 

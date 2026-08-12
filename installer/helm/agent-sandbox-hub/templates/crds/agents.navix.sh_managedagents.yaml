@@ -72,16 +72,25 @@ spec:
             properties:
               brain:
                 description: 'Brain tunes the Deployment. Replicas are always 1 with
-                  strategy Recreate:
+                  strategy Recreate,
 
-                  the session-to-sandbox map lives in the daemon''s memory and sandbox
+                  because the session-to-sandbox map lives in the daemon''s memory:
+                  a second
 
-                  handles cannot be recovered across processes (the E2B layer answers
+                  replica that has not served a thread would build it a second sandbox,
+                  and the
 
-                  `Sandbox.connect` with "not supported in AgentBox"), so a second
-                  replica
+                  thread''s files would appear and disappear depending on which replica
+                  answered.
 
-                  would silently create a second sandbox for the same thread.'
+
+                  This is a property of the daemon, not of the platform. Re-attaching
+                  to a
+
+                  running sandbox by id works, so lifting the constraint is a matter
+                  of moving
+
+                  that map somewhere both replicas can read.'
                 properties:
                   affinity:
                     description: Affinity is a group of affinity scheduling rules.
@@ -5186,7 +5195,16 @@ spec:
                 description: 'Image is the Brain image. It must ship every harness
                   listed under
 
-                  `runtime`, plus the sandbox daemon and the workspace-fs server.'
+                  `runtime`, plus the sandbox daemon and the workspace-fs server.
+
+
+                  Optional: omitted, the agent runs the deployment''s default Brain
+                  image, which
+
+                  is what lets an agent be created from a prompt alone. Set it to
+                  pin a specific
+
+                  build, or when the deployment publishes no default.'
                 properties:
                   pullPolicy:
                     description: PullPolicy describes a policy for if/when to pull
@@ -5221,11 +5239,20 @@ spec:
                       x-kubernetes-map-type: atomic
                     type: array
                   repository:
+                    description: 'Repository is the image to run. Optional: left empty,
+                      the agent gets the
+
+                      deployment''s default Brain image, so an agent can be created
+                      from a prompt
+
+                      alone. A deployment that publishes no default rejects an agent
+                      without one,
+
+                      rather than guessing a reference that would surface later as
+                      a pull failure.'
                     type: string
                   tag:
                     type: string
-                required:
-                - repository
                 type: object
               ingress:
                 description: "Ingress publishes this agent outside the cluster.\n\n\
@@ -6023,7 +6050,6 @@ spec:
                 type: object
             required:
             - hands
-            - image
             - runtime
             type: object
           status:

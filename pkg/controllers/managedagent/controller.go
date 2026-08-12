@@ -62,6 +62,10 @@ type Reconciler struct {
 	// spec.hands.auto reports "unavailable" instead of failing: the other two
 	// hands modes stay usable.
 	Hands HandsProvisioner
+
+	// DefaultBrainImage is the image an agent gets when it names none, letting a
+	// caller create one from a prompt alone. Unset keeps spec.image required.
+	DefaultBrainImage agentsv1alpha1.ManagedAgentImage
 }
 
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=managedagents,verbs=get;list;watch;create;update;patch;delete
@@ -102,7 +106,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	rendered, err := Render(&ma, checksum)
+	rendered, err := RenderWithDefaults(&ma, checksum, RenderDefaults{
+		BrainImage: r.DefaultBrainImage,
+	})
 	if err != nil {
 		// A spec the renderer rejects is a user error, not a transient one:
 		// report it and stop rather than hot-looping.

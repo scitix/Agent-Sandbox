@@ -335,6 +335,12 @@ func (s *Server) GetSandboxes(ctx context.Context, _ e2bgen.GetSandboxesRequestO
 	items := make([]e2bgen.ListedSandbox, 0, len(result.Items))
 	for i := range result.Items {
 		sb := &result.Items[i]
+		// The native listing merges terminated sandboxes in from the history store
+		// and the E2B state enum has no way to say "finished", so they are dropped
+		// rather than reported as running. History lives on the native API.
+		if !e2bdomain.IsLive(sb) {
+			continue
+		}
 		pool := poolMap[sb.PoolName]
 		items = append(items, domainSandboxToListedSandbox(sb, pool))
 	}
@@ -349,7 +355,10 @@ func (s *Server) GetSandboxesSandboxID(ctx context.Context, req e2bgen.GetSandbo
 		s.forwarder.Forward(httpctx.GinFromCtx(ctx), clusterID, service.URLKindE2B, nil)
 		return nil, nil
 	}
-	result, appErr := s.sandbox.Get(ctx, auth.Namespace, sandboxID)
+	// GetLive, not Get: a SandboxDetail can only report `running`, so answering from
+	// the history store would describe a reclaimed sandbox as usable. Upstream E2B
+	// 404s a killed sandbox too; the native API is where its record stays readable.
+	result, appErr := s.sandbox.GetLive(ctx, auth.Namespace, sandboxID)
 	if appErr != nil {
 		if appErr.Code == apidomain.ErrCodeNotFound {
 			return e2bgen.GetSandboxesSandboxID404JSONResponse{N404JSONResponse: e2bgen.N404JSONResponse(errRespCode(404, appErr.Message))}, nil
@@ -455,7 +464,10 @@ func (s *Server) PostSandboxesSandboxIDConnect(ctx context.Context, req e2bgen.P
 		return nil, nil
 	}
 
-	result, appErr := s.sandbox.Get(ctx, auth.Namespace, sandboxID)
+	// GetLive, not Get: a reclaimed sandbox must 404 here so the SDK raises
+	// sandbox-not-found. Get would answer from the history store, and the caller
+	// would build a handle onto a sandbox that no longer exists.
+	result, appErr := s.sandbox.GetLive(ctx, auth.Namespace, sandboxID)
 	if appErr != nil {
 		if appErr.Code == apidomain.ErrCodeNotFound {
 			return e2bgen.PostSandboxesSandboxIDConnect404JSONResponse{N404JSONResponse: e2bgen.N404JSONResponse(errRespCode(404, appErr.Message))}, nil
@@ -750,6 +762,9 @@ func (s *Server) GetV2Sandboxes(ctx context.Context, req e2bgen.GetV2SandboxesRe
 	items := make([]e2bgen.ListedSandbox, 0, len(result.Items))
 	for i := range result.Items {
 		sb := &result.Items[i]
+		if !e2bdomain.IsLive(sb) {
+			continue
+		}
 		listed := domainSandboxToListedSandbox(sb, poolMap[sb.PoolName])
 		if !stateFilter.matches(listed.State) {
 			continue
