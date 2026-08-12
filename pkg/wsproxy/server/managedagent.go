@@ -50,6 +50,15 @@ type ManagedAgentAPI struct {
 	// supply. Shared with the ManagedAgent controller, which uses it for
 	// hands.auto.
 	Hands managedagent.HandsProvisioner
+
+	// Gateway forwards the console's own requests to an agent's Brain, so a user
+	// can talk to their agent from the platform. Nil leaves that surface off,
+	// which is why every route below still works without it.
+	//
+	// It is the SAME proxy the public listener uses, deliberately: the alternative
+	// is two forwarders that agree today and diverge on the next Brain endpoint —
+	// and the one that diverges silently is whichever gets less traffic.
+	Gateway *ManagedAgentGateway
 }
 
 // managedAgentWire is the shape the console consumes: flattened metadata plus
@@ -221,6 +230,45 @@ func (a *ManagedAgentAPI) RegisterManagedAgentRoutes(g *gin.RouterGroup) {
 	g.GET("/managedagents/:name", a.get)
 	g.PUT("/managedagents/:name", a.update)
 	g.DELETE("/managedagents/:name", a.remove)
+	if a.Gateway != nil {
+		g.Any("/managedagents/:name/proxy", a.proxy)
+		g.Any("/managedagents/:name/proxy/*path", a.proxy)
+	}
+}
+
+// proxy forwards a console request to the agent's Brain.
+//
+// Two things differ from the public listener, and both follow from who is asking.
+//
+// It does NOT require spec.ingress.enabled. That flag answers "may callers outside
+// the cluster reach this agent", and the console is not one of them — it arrives on
+// the internal API, already authenticated, having been reached through the BFF.
+// Gating the console on it would mean publishing an agent to the internet just to
+// talk to it from the platform that owns it, which is the wrong trade to force.
+//
+// Tenant scoping is `fetch`'s, so it is the same rule as every other route here:
+// an agent belonging to someone else is absent rather than forbidden.
+// The end user is PINNED here rather than left to the request.
+//
+// The Brain otherwise takes the caller's word for which of its end users is
+// asking, which is right for an integration acting on behalf of many of its own
+// users and wrong for a browser: there the value identifies the person choosing
+// it, so anyone could read another user's threads by editing a query string.
+// Overriding it means the console can only ever see its own caller's
+// conversations, whatever the request says.
+//
+// Any inbound copy of the header is dropped first. Trusting a header is only safe
+// when the hop that authenticated is the one that sets it.
+func (a *ManagedAgentAPI) proxy(c *gin.Context) {
+	ma, ok := a.fetch(c)
+	if !ok {
+		return
+	}
+	c.Request.Header.Del(brainUserHeader)
+	if user := callerOf(c).user; user != "" {
+		c.Request.Header.Set(brainUserHeader, user)
+	}
+	a.Gateway.forward(c, ma)
 }
 
 func (a *ManagedAgentAPI) list(c *gin.Context) {
