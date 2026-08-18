@@ -225,6 +225,80 @@ managedAgent:
       # create them. An agent created from a prompt alone has nowhere to declare
       # these, so a private registry needs them here.
       pullSecrets: []
+  # The sandbox supply an agent gets when it declares no hands of its own.
+  #
+  # This is the other half of creating an agent from a prompt alone. Each of the
+  # three hands branches asks the caller which cluster, which environment and
+  # which sandbox image, and the image is the trap: a sandbox started from a
+  # member pool's default image comes up healthy and then answers every command
+  # with a 502, so an omitted image is a working control plane with an agent that
+  # cannot do anything.
+  #
+  # apiURL empty disables the default entirely, and agents must then declare
+  # their own hands.
+  #
+  # The credential is the PLATFORM'S, deliberately not the tenant's: the default
+  # environment belongs to the deployment, so an agent using it neither needs nor
+  # receives a sandbox key. Agents that bring their own hands are unaffected.
+  hands:
+    default:
+      apiURL: ""
+      # Data-plane gateway: host plus any ingress path. Omitting the path is the
+      # usual cause of "the sandbox exists but no port answers".
+      domain: ""
+      https: true
+      # Written verbatim: a bare environment name, or one scoped to a cluster
+      # ("cluster::name").
+      envName: ""
+      image: ""
+      scalingGroup: ""
+      # The key itself. Rendered into this release's Secret, which is why it can
+      # only be used when the agents run in the release namespace — the Brain's
+      # kubelet resolves the reference, and it cannot read across namespaces.
+      apiKey: ""
+      # Or point at a Secret that already exists in the agents' namespace, which
+      # is what a deployment running agents elsewhere must do. Takes precedence
+      # over apiKey.
+      existingSecret:
+        name: ""
+        key: ""
+  # The model endpoint a new agent starts with: an address and a dropdown, never
+  # a key. Publishing it saves every caller from knowing where the deployment's
+  # models live; the credential stays per agent.
+  #
+  # The list is the ONLY source of the composer's dropdown — no endpoint is
+  # queried for it — so leaving it empty means each caller types their own.
+  modelProvider:
+    baseURL: ""
+    # id, or "id|Display Name", or "id|Display Name|nonreasoning". The last marker
+    # makes a model eligible to back the topic classifier: a reasoning model there
+    # spends its completion budget on the chain of thought and returns empty
+    # content, which reads as "same topic" every time.
+    models: []
+    defaultModel: ""
+    # Backs a harness's own side tasks (conversation titles and the like).
+    smallModel: ""
+    # The credential agents get alongside the endpoint above.
+    #
+    # Setting it is what makes an agent creatable from a prompt alone: without a
+    # credential the Brain comes up healthy and reports every harness unavailable,
+    # which is legible but is still an agent that cannot answer.
+    #
+    # It is a deliberate trade rather than an oversight to fix. One shared key is
+    # one quota, one revocation and one audit trail for every agent — right for an
+    # internal deployment, wrong where those must be per tenant. Leave both empty
+    # and each agent brings its own key.
+    #
+    # The key is only ever lent to an agent pointing at THIS baseURL. An agent that
+    # names its own endpoint keeps its own credential, so the platform's key is
+    # never sent to an address a tenant chose.
+    apiKey: ""
+    # Or point at a Secret that already exists in the agents' namespace, which is
+    # what a deployment running agents outside the release namespace must do.
+    # Takes precedence over apiKey.
+    existingSecret:
+      name: ""
+      key: ""
   # Publishing an agent to callers outside the cluster. Off by default: an
   # agent that is merely deployed must not become reachable from the internet
   # as a side effect. With this on, each agent still has to opt in through its

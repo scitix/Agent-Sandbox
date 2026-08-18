@@ -169,6 +169,167 @@ type RenderDefaults struct {
 	// deployment that has not published one: inventing a reference would fail later
 	// as an ImagePullBackOff, a long way from the cause.
 	BrainImage agentsv1alpha1.ManagedAgentImage
+
+	// Hands is the sandbox supply an agent gets when it declares no branch of its
+	// own. The whole block is supplied, so a deployment can default to an external
+	// service, a local SandboxEnv or a derived one without a second mechanism.
+	//
+	// It is applied on every render rather than stamped onto the object at creation:
+	// the sandbox image travels with this default, and that tag rolls with its own
+	// build, so a copy taken at creation time silently ages. Nil leaves an agent
+	// without a branch with no supply at all, which the HandsReady condition
+	// reports.
+	Hands *agentsv1alpha1.ManagedAgentHands
+
+	// Runtime is the harness configuration — endpoint, model list and credential
+	// reference — an agent gets when it declares none of its own.
+	//
+	// This is the last thing standing between "create an agent from a prompt" and
+	// an agent that cannot answer: a Brain with no model credential comes up
+	// healthy, serves its API, and reports every harness unavailable. The failure
+	// is legible but it is still an agent that does nothing.
+	//
+	// Whether a deployment SHOULD default this is its own call, and the two
+	// answers are both reasonable. A shared internal endpoint makes one key
+	// everyone's: one quota, one revocation, one audit trail. A deployment that
+	// needs those separate leaves this unset and each agent brings its own. The
+	// credential is a reference either way — this process renders a pointer and
+	// never holds the key.
+	Runtime *agentsv1alpha1.ManagedAgentRuntime
+}
+
+// WithDefaults returns the agent as the deployment actually runs it: its own
+// fields where it sets them, the deployment's defaults where it does not.
+//
+// The result is a copy. Nothing here may write to the caller's object — a
+// reconcile that mutated the spec it was reconciling would be observed as a
+// change by the next one, and the defaults would leak into etcd where a later
+// deployment could no longer re-point them.
+//
+// Every consumer of an agent's effective configuration must go through this:
+// rendering the pod from the defaults while hashing or reporting status from the
+// raw spec is how a default credential ends up live in a pod that nothing says
+// is using it.
+func WithDefaults(
+	ma *agentsv1alpha1.ManagedAgent,
+	defaults RenderDefaults,
+) *agentsv1alpha1.ManagedAgent {
+	if ma == nil {
+		return nil
+	}
+	needsImage := ma.Spec.Image.Repository == "" && defaults.BrainImage.Repository != ""
+	needsHands := !declaresHands(ma.Spec.Hands) && defaults.Hands != nil
+	needsRuntime := !declaresRuntime(ma.Spec.Runtime) && defaults.Runtime != nil
+	// Checked on the ORIGINAL, before any copy: the early return below is what
+	// makes this function cheap on the common path, and it has to know about every
+	// case that changes something — a branch reachable only after the copy would
+	// never run for an agent that needs nothing else.
+	needsLend := !needsRuntime && defaults.Runtime != nil &&
+		wouldLendCredential(ma.Spec.Runtime, defaults.Runtime)
+	if !needsImage && !needsHands && !needsRuntime && !needsLend {
+		return ma
+	}
+	out := ma.DeepCopy()
+	if needsImage {
+		out.Spec.Image = mergeImageDefaults(out.Spec.Image, defaults.BrainImage)
+	}
+	if needsHands {
+		// Only the supply branch comes from the deployment. Binding and the E2B
+		// endpoint stay the agent's: a tenant that tuned its idle timeout or
+		// attachment root has said something about its own workload, and taking the
+		// default's copy of those would undo it invisibly.
+		hands := defaults.Hands.DeepCopy()
+		hands.Binding = out.Spec.Hands.Binding
+		if out.Spec.Hands.E2B != nil {
+			hands.E2B = out.Spec.Hands.E2B
+		}
+		out.Spec.Hands = *hands
+	}
+	if needsRuntime {
+		// `default` stays the agent's. It is a required field, so it is always set,
+		// and it says which harness this agent starts conversations under — a
+		// choice about the agent, not about where the models live.
+		runtime := defaults.Runtime.DeepCopy()
+		runtime.Default = out.Spec.Runtime.Default
+		out.Spec.Runtime = *runtime
+	} else if needsLend {
+		lendPlatformCredential(&out.Spec.Runtime, defaults.Runtime)
+	}
+	return out
+}
+
+// lendPlatformCredential fills in a missing credential for an agent that names
+// the deployment's OWN model endpoint.
+//
+// It exists because a console prefills the create form from the published
+// endpoint and model list. That makes the agent declare a runtime, which
+// suppresses the whole default above — and the one field a console cannot
+// prefill is the credential, because the key never leaves the cluster. Without
+// this, using the form exactly as intended produces an agent whose harness is
+// permanently unavailable.
+//
+// The endpoints must MATCH. That is the entire safety rule and it is not a
+// formality: lending the platform's key to an agent that named its own baseURL
+// would send that credential to an address the tenant chose, which is how a
+// shared key ends up at a third party. An agent pointing elsewhere keeps its own
+// credential or has none.
+func lendPlatformCredential(
+	runtime *agentsv1alpha1.ManagedAgentRuntime,
+	defaults *agentsv1alpha1.ManagedAgentRuntime,
+) {
+	src := defaults.ClaudeCode
+	if src == nil || src.CredentialsRef.Name == "" || src.BaseURL == "" {
+		return
+	}
+	if cc := runtime.ClaudeCode; cc != nil &&
+		cc.CredentialsRef.Name == "" &&
+		cc.BaseURL == src.BaseURL {
+		cc.CredentialsRef = src.CredentialsRef
+	}
+	if oc := runtime.OpenCode; oc != nil &&
+		oc.CredentialsRef == nil &&
+		oc.BaseURL == src.BaseURL {
+		oc.CredentialsRef = src.CredentialsRef.DeepCopy()
+	}
+}
+
+// wouldLendCredential answers the same question as lendPlatformCredential without
+// mutating anything, so the early return above can consult it.
+//
+// The two must agree. They are kept adjacent, and lendPlatformCredential is a
+// no-op whenever this returns false, so a divergence shows up as a credential
+// that is never filled in rather than as one filled in somewhere unintended.
+func wouldLendCredential(
+	runtime agentsv1alpha1.ManagedAgentRuntime,
+	defaults *agentsv1alpha1.ManagedAgentRuntime,
+) bool {
+	src := defaults.ClaudeCode
+	if src == nil || src.CredentialsRef.Name == "" || src.BaseURL == "" {
+		return false
+	}
+	if cc := runtime.ClaudeCode; cc != nil &&
+		cc.CredentialsRef.Name == "" && cc.BaseURL == src.BaseURL {
+		return true
+	}
+	if oc := runtime.OpenCode; oc != nil &&
+		oc.CredentialsRef == nil && oc.BaseURL == src.BaseURL {
+		return true
+	}
+	return false
+}
+
+// declaresHands reports whether the agent names a sandbox supply of its own.
+func declaresHands(h agentsv1alpha1.ManagedAgentHands) bool {
+	return h.EnvRef != nil || h.Auto != nil || h.External != nil
+}
+
+// declaresRuntime reports whether the agent configures a harness of its own.
+//
+// `default` alone does not count: it names which harness to start under and is
+// required on every agent, so treating it as a declaration would mean no agent
+// ever received the deployment's endpoint.
+func declaresRuntime(r agentsv1alpha1.ManagedAgentRuntime) bool {
+	return r.ClaudeCode != nil || r.OpenCode != nil
 }
 
 // RenderWithDefaults renders an agent, filling anything it left unset from
@@ -181,17 +342,11 @@ func RenderWithDefaults(
 	if ma == nil {
 		return nil, fmt.Errorf("managedagent is nil")
 	}
+	ma = WithDefaults(ma, defaults)
 	if ma.Spec.Image.Repository == "" {
-		if defaults.BrainImage.Repository == "" {
-			return nil, fmt.Errorf(
-				"spec.image.repository is required: this deployment has no default " +
-					"Brain image configured")
-		}
-		// Copied rather than mutated in place: Render must not write to the object
-		// its caller handed it, or a reconcile would be observed to change the spec
-		// it was reconciling.
-		ma = ma.DeepCopy()
-		ma.Spec.Image = mergeImageDefaults(ma.Spec.Image, defaults.BrainImage)
+		return nil, fmt.Errorf(
+			"spec.image.repository is required: this deployment has no default " +
+				"Brain image configured")
 	}
 	if err := validateScenarios(ma.Spec.Scenarios); err != nil {
 		return nil, err

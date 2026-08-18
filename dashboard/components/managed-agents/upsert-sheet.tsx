@@ -55,7 +55,7 @@ import type {
   AgentSandboxTemplateSummary,
   ClusterEntry,
 } from "@/lib/api/client"
-import type { ManagedAgent } from "@/lib/api/managed-agent-types"
+import type { ManagedAgent, ManagedAgentDefaults } from "@/lib/api/managed-agent-types"
 import { clustersAtom } from "@/lib/atoms"
 import {
   MANAGED_AGENT_FORM_TABS,
@@ -72,9 +72,15 @@ import {
   buildSpec,
   managedAgentFormDefaults,
 } from "@/lib/utils/managed-agent-form"
-import type { FormErrors, FormValues, StoredCredentials } from "@/lib/utils/managed-agent-form"
+import type {
+  DeploymentDefaults,
+  FormErrors,
+  FormValues,
+  StoredCredentials,
+} from "@/lib/utils/managed-agent-form"
 import {
   envsQueryOptions,
+  managedAgentDefaultsQueryOptions,
   managedAgentQueryOptions,
   templatesQueryOptions,
   useCreateManagedAgent,
@@ -125,6 +131,8 @@ interface SectionProps {
   errors: FormErrors
   isEdit: boolean
   stored: StoredCredentials
+  /** What this deployment answers for, so a field can say so instead of asking. */
+  platform: ManagedAgentDefaults
 }
 
 type ApiKeyFieldName = "claudeApiKey" | "opencodeApiKey" | "classifierApiKey" | "sandboxApiKey"
@@ -173,8 +181,9 @@ function ApiKeyField({
 
 // ─── Basics ───────────────────────────────────────────────────────────────────
 
-function BasicsSection({ register, errors, isEdit }: SectionProps) {
+function BasicsSection({ register, errors, isEdit, platform }: SectionProps) {
   const { t } = useTranslation()
+  const platformImage = platform.brainImage
   return (
     <section className="space-y-4">
       <SectionHeading
@@ -214,15 +223,25 @@ function BasicsSection({ register, errors, isEdit }: SectionProps) {
 
       <Field data-invalid={!!errors.imageRepository}>
         <FieldLabel className={LABEL_CN}>
-          {t("managedAgents.form.imageRepository")} <RequiredMark />
+          {t("managedAgents.form.imageRepository")} {!platformImage && <RequiredMark />}
         </FieldLabel>
         <Input
-          placeholder="registry.example.com/agents/brain"
+          // The platform's image as the placeholder, so an empty field reads as
+          // "you get this one" rather than as something left unfilled.
+          placeholder={
+            platformImage
+              ? [platformImage.repository, platformImage.tag].filter(Boolean).join(":")
+              : "registry.example.com/agents/brain"
+          }
           className={INPUT_CN}
           {...register("imageRepository")}
         />
         <ErrorText message={errors.imageRepository?.message} />
-        <FieldDescription>{t("managedAgents.form.imageRepositoryDesc")}</FieldDescription>
+        <FieldDescription>
+          {platformImage
+            ? t("managedAgents.form.imageRepositoryPlatformDefault")
+            : t("managedAgents.form.imageRepositoryDesc")}
+        </FieldDescription>
       </Field>
     </section>
   )
@@ -670,9 +689,21 @@ function SandboxImageField({
   )
 }
 
-function HandsSection({ control, register, errors, stored }: SectionProps) {
+/** One read-only line of the platform default's resolved configuration. */
+function PlatformHandsRow({ label, value }: { label: string; value?: string }) {
+  if (!value) return null
+  return (
+    <>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="wrap-anywhere">{value}</dd>
+    </>
+  )
+}
+
+function HandsSection({ control, register, errors, stored, platform }: SectionProps) {
   const { t } = useTranslation()
   const handsMode = useWatch({ control, name: "handsMode" })
+  const platformHands = platform.hands
   const { data: envs } = useQuery({ ...envsQueryOptions(), enabled: handsMode === "envRef" })
   const { data: templates } = useQuery({
     ...templatesQueryOptions(),
@@ -693,6 +724,12 @@ function HandsSection({ control, register, errors, stored }: SectionProps) {
         render={({ field }) => (
           <Tabs value={field.value} onValueChange={field.onChange}>
             <TabsList className="w-full">
+              {/* Offered even where the deployment publishes none, so the reason
+                  is visible in the panel below rather than the option being
+                  silently absent. */}
+              <TabsTrigger value="platformDefault" className="flex-1 text-xs">
+                {t("managedAgents.handsMode.platformDefault")}
+              </TabsTrigger>
               <TabsTrigger value="auto" className="flex-1 text-xs">
                 {t("managedAgents.handsMode.auto")}
               </TabsTrigger>
@@ -707,12 +744,53 @@ function HandsSection({ control, register, errors, stored }: SectionProps) {
         )}
       />
       <p className="text-muted-foreground text-xs">
-        {handsMode === "auto"
-          ? t("managedAgents.handsMode.autoDesc")
-          : handsMode === "envRef"
-            ? t("managedAgents.handsMode.envRefDesc")
-            : t("managedAgents.handsMode.externalDesc")}
+        {handsMode === "platformDefault"
+          ? t("managedAgents.handsMode.platformDefaultDesc")
+          : handsMode === "auto"
+            ? t("managedAgents.handsMode.autoDesc")
+            : handsMode === "envRef"
+              ? t("managedAgents.handsMode.envRefDesc")
+              : t("managedAgents.handsMode.externalDesc")}
       </p>
+
+      {handsMode === "platformDefault" && (
+        <div className="space-y-2" data-invalid={!!errors.handsMode}>
+          <ErrorText message={errors.handsMode?.message} />
+          {platformHands ? (
+            <>
+              <dl className="bg-muted/40 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-md p-3 font-mono text-xs">
+                <PlatformHandsRow
+                  label={t("managedAgents.form.envName")}
+                  value={platformHands.envName}
+                />
+                <PlatformHandsRow
+                  label={t("managedAgents.form.sandboxImage")}
+                  value={platformHands.image}
+                />
+                <PlatformHandsRow
+                  label={t("managedAgents.form.externalApiURL")}
+                  value={platformHands.apiURL}
+                />
+                <PlatformHandsRow
+                  label={t("managedAgents.form.scalingGroup")}
+                  value={platformHands.scalingGroup}
+                />
+              </dl>
+              {/* A default without a credential creates sandboxes that never
+                  start, and the control plane looks healthy while it happens. */}
+              {!platformHands.credentialConfigured && (
+                <p className="text-destructive text-xs">
+                  {t("managedAgents.handsMode.platformDefaultNoCredential")}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              {t("managedAgents.handsMode.platformDefaultUnset")}
+            </p>
+          )}
+        </div>
+      )}
 
       {handsMode === "auto" && (
         <div className="space-y-3">
@@ -1034,8 +1112,14 @@ function UpsertLoader({
     ...managedAgentQueryOptions(agentName ?? ""),
     enabled: !!agentName,
   })
+  // Awaited before mounting the form, not merged in afterwards: react-hook-form
+  // captures defaultValues once, so a late arrival would either be ignored or have
+  // to overwrite fields the user may already be typing into.
+  const { data: platform, isLoading: platformLoading } = useQuery(
+    managedAgentDefaultsQueryOptions(),
+  )
 
-  if (agentName && isLoading) {
+  if ((agentName && isLoading) || platformLoading) {
     return (
       <>
         <SheetHeader className="px-6 py-4">
@@ -1049,16 +1133,23 @@ function UpsertLoader({
   }
 
   return (
-    <UpsertForm agent={agentName ? (data ?? null) : null} onClose={onClose} onSaved={onSaved} />
+    <UpsertForm
+      agent={agentName ? (data ?? null) : null}
+      platform={platform ?? {}}
+      onClose={onClose}
+      onSaved={onSaved}
+    />
   )
 }
 
 function UpsertForm({
   agent,
+  platform,
   onClose,
   onSaved,
 }: {
   agent: ManagedAgent | null
+  platform: ManagedAgentDefaults
   onClose: () => void
   onSaved?: (name: string) => void
 }) {
@@ -1079,8 +1170,20 @@ function UpsertForm({
     }),
     [agent],
   )
-  const defaultValues = useMemo(() => agentToFormValues(agent), [agent])
-  const resolver = useMemo(() => zodResolver(buildSchema(stored)), [stored])
+  const deployment = useMemo<DeploymentDefaults>(
+    () => ({ brainImage: !!platform.brainImage, hands: !!platform.hands }),
+    [platform],
+  )
+  // A create starts from the platform's answers; an edit starts from the agent's
+  // own, which already carry whatever it was created with.
+  const defaultValues = useMemo(
+    () => (agent ? agentToFormValues(agent) : managedAgentFormDefaults(platform)),
+    [agent, platform],
+  )
+  const resolver = useMemo(
+    () => zodResolver(buildSchema(stored, deployment)),
+    [stored, deployment],
+  )
 
   const {
     control,
@@ -1168,7 +1271,7 @@ function UpsertForm({
     },
   )
 
-  const sectionProps: SectionProps = { control, register, errors, isEdit, stored }
+  const sectionProps: SectionProps = { control, register, errors, isEdit, stored, platform }
 
   return (
     <Fragment>
@@ -1231,7 +1334,7 @@ function UpsertForm({
           <FormCloneActions
             clone={managedAgentClone(clusters.map((c) => c.id))}
             getValues={getValues}
-            defaults={managedAgentFormDefaults()}
+            defaults={managedAgentFormDefaults(platform)}
             canImport={!isEdit}
             onImport={applyImportedValues}
           />

@@ -34,6 +34,7 @@ import type {
   HandsInstanceType,
   ManagedAgent,
   ManagedAgentCredentials,
+  ManagedAgentDefaults,
   ManagedAgentScenario,
   ManagedAgentSpec,
 } from "@/lib/api/managed-agent-types"
@@ -106,7 +107,10 @@ export const baseSchema = z.object({
     .regex(DNS_LABEL, "managedAgents.form.errors.nameDnsLabel"),
   displayName: z.preprocess(emptyToUndef, z.string().optional()),
   description: z.preprocess(emptyToUndef, z.string().optional()),
-  imageRepository: z.string().min(1, "managedAgents.form.errors.imageRequired"),
+  // Requiredness is decided in buildSchema, not here: a deployment that publishes
+  // a default Brain image answers this field, and asking for it anyway would mean
+  // asking the tenant which image ships a gateway the control plane can talk to.
+  imageRepository: z.preprocess(emptyToUndef, z.string().optional()),
   imageTag: z.preprocess(emptyToUndef, z.string().optional()),
 
   defaultRuntime: z.enum(["claude-code", "opencode"]),
@@ -134,7 +138,7 @@ export const baseSchema = z.object({
 
   scenarios: z.array(scenarioSchema).min(1, "managedAgents.form.errors.scenariosRequired"),
 
-  handsMode: z.enum(["auto", "envRef", "external"]),
+  handsMode: z.enum(["platformDefault", "auto", "envRef", "external"]),
   autoClusterID: z.preprocess(emptyToUndef, z.string().optional()),
   autoTemplateRef: z.preprocess(emptyToUndef, z.string().optional()),
   autoImage: z.preprocess(emptyToUndef, z.string().optional()),
@@ -166,11 +170,28 @@ export interface StoredCredentials {
   sandbox: boolean
 }
 
-export function buildSchema(stored: StoredCredentials) {
+/**
+ * What the deployment answers for, so the form does not.
+ *
+ * Passed in rather than read from a module constant for the same reason
+ * StoredCredentials is: whether a field is required depends on the installation,
+ * and a rule compiled in would be wrong on half of them.
+ */
+export interface DeploymentDefaults {
+  /** A default Brain image exists, so `imageRepository` may be left blank. */
+  brainImage: boolean
+  /** A default sandbox supply exists, so `platformDefault` is selectable. */
+  hands: boolean
+}
+
+export function buildSchema(stored: StoredCredentials, deployment?: DeploymentDefaults) {
   return baseSchema.superRefine((v, ctx) => {
     const require = (path: keyof FormValues, message: TranslationKey) =>
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message })
 
+    if (!v.imageRepository && !deployment?.brainImage) {
+      require("imageRepository", "managedAgents.form.errors.imageRequired")
+    }
     // The harness a conversation starts under must also be configured, else the
     // Brain comes up reporting every backend unavailable.
     const defaultConfigured =
@@ -183,6 +204,16 @@ export function buildSchema(stored: StoredCredentials) {
     }
     if (v.scenarios.filter((s) => s.isDefault).length !== 1) {
       require("scenarios", "managedAgents.form.errors.exactlyOneDefault")
+    }
+
+    if (v.handsMode === "platformDefault") {
+      // Selectable only where there is one. An agent saved on this mode against a
+      // deployment with no default reconciles to HandsReady=False, and the failure
+      // would surface as an agent that answers and then cannot run a command.
+      if (!deployment?.hands) {
+        require("handsMode", "managedAgents.form.errors.platformDefaultUnavailable")
+      }
+      return
     }
 
     if (v.handsMode === "auto") {
@@ -225,9 +256,32 @@ export function buildSchema(stored: StoredCredentials) {
  *
  * Defined as agentToFormValues(null) rather than a second literal, so a field
  * added to the form cannot get one default here and a different one there.
+ *
+ * `platform` seeds the fields the deployment has an answer for. They are seeded
+ * rather than left blank and substituted server-side so the caller can see and
+ * change them: a model list that only appears after saving is one nobody can
+ * correct.
  */
-export function managedAgentFormDefaults(): FormValues {
-  return agentToFormValues(null)
+export function managedAgentFormDefaults(platform?: ManagedAgentDefaults): FormValues {
+  const values = agentToFormValues(null)
+  if (!platform) return values
+  const mp = platform.modelProvider
+  if (mp) {
+    const models = formatModels(mp.models)
+    values.claudeBaseURL = mp.baseURL ?? ""
+    values.claudeModels = models
+    values.claudeDefaultModel = mp.defaultModel ?? ""
+    values.opencodeBaseURL = mp.baseURL ?? ""
+    values.opencodeModels = models
+    values.opencodeDefaultModel = mp.defaultModel ?? ""
+    values.classifierBaseURL = mp.baseURL ?? ""
+    // Only a model the deployment marked non-reasoning may back the classifier. A
+    // reasoning model returns its whole budget as chain of thought and empty
+    // content, which reads as "same topic" on every turn.
+    values.classifierModel = mp.models?.find((m) => m.nonReasoning)?.id ?? ""
+  }
+  values.handsMode = platform.hands ? "platformDefault" : "auto"
+  return values
 }
 
 export function agentToFormValues(agent: ManagedAgent | null): FormValues {
@@ -290,6 +344,11 @@ export function agentToFormValues(agent: ManagedAgent | null): FormValues {
       },
     ],
 
+    // An existing agent with no branch is on the platform default. A create with
+    // no knowledge of the deployment falls back to `auto`, and only
+    // managedAgentFormDefaults — which has been told what the deployment offers —
+    // promotes it: a form defaulting to a supply that may not exist would fail on
+    // submit for a reason the user did not choose.
     handsMode: spec ? handsModeOf(hands) : "auto",
     autoClusterID: auto?.clusterID ?? "",
     autoTemplateRef: auto?.templateRef ?? "",
@@ -329,14 +388,22 @@ export function agentToFormValues(agent: ManagedAgent | null): FormValues {
 export function buildSpec(v: FormValues, previous?: ManagedAgentSpec): ManagedAgentSpec {
   const spec: ManagedAgentSpec = previous
     ? clone(previous)
-    : { image: { repository: "" }, runtime: { default: "claude-code" }, hands: {} }
+    : { runtime: { default: "claude-code" }, hands: {} }
 
   // Ownership is stamped by the server from the caller's identity.
   delete spec.owner
 
   spec.displayName = trimmed(v.displayName)
   spec.description = trimmed(v.description)
-  spec.image = { ...spec.image, repository: v.imageRepository, tag: trimmed(v.imageTag) }
+  // An omitted image is how an agent asks for the deployment's own, so a blank
+  // field must clear the key rather than submit an empty repository — which the
+  // renderer would read as "named an image" and reject.
+  const imageRepository = trimmed(v.imageRepository)
+  if (imageRepository) {
+    spec.image = { ...spec.image, repository: imageRepository, tag: trimmed(v.imageTag) }
+  } else {
+    delete spec.image
+  }
 
   spec.runtime = { ...spec.runtime, default: v.defaultRuntime }
   if (v.claudeEnabled) {
@@ -403,8 +470,11 @@ export function buildSpec(v: FormValues, previous?: ManagedAgentSpec): ManagedAg
     return scenario
   })
 
-  // Only the selected branch is submitted; the other two are cleared so the
-  // controller never sees two competing declarations of sandbox supply.
+  // Only the selected branch is submitted; the others are cleared so the
+  // controller never sees two competing declarations of sandbox supply. Clearing
+  // all three is the platform-default mode: binding survives, since an idle
+  // timeout or attachment root the tenant tuned is about their workload and not
+  // about which service supplies the sandbox.
   const hands = { ...spec.hands }
   delete hands.auto
   delete hands.envRef
@@ -432,7 +502,7 @@ export function buildSpec(v: FormValues, previous?: ManagedAgentSpec): ManagedAg
       scalingGroup: trimmed(v.envScalingGroup),
       image: trimmed(v.envImage),
     }
-  } else {
+  } else if (v.handsMode === "external") {
     hands.external = {
       ...previous?.hands?.external,
       apiURL: v.externalApiURL ?? "",
@@ -443,6 +513,8 @@ export function buildSpec(v: FormValues, previous?: ManagedAgentSpec): ManagedAg
       scalingGroup: trimmed(v.externalScalingGroup),
     }
   }
+  // platformDefault falls through with all three cleared: the deployment supplies
+  // the branch, and writing one here would freeze today's value onto the agent.
   spec.hands = hands
 
   return spec

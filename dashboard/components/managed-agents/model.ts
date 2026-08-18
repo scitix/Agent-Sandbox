@@ -29,14 +29,17 @@ export const MANAGED_AGENT_PHASE_COLORS: StatusBadgeColorMap = {
 }
 
 /**
- * Which of the three mutually exclusive supply branches an agent declares.
- * `auto` is the answer for a spec that declares none, matching the form's
- * default rather than leaving the caller with a null to special-case.
+ * Which supply an agent is on.
+ *
+ * A spec declaring none is `platformDefault` rather than an unset branch: the
+ * deployment answers for it on every reconcile, so "nothing declared" is a
+ * working configuration and not a form the user left half-finished.
  */
 export function handsModeOf(hands?: ManagedAgentHands): HandsMode {
   if (hands?.envRef) return "envRef"
   if (hands?.external) return "external"
-  return "auto"
+  if (hands?.auto) return "auto"
+  return "platformDefault"
 }
 
 /**

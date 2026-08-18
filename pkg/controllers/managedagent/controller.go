@@ -66,6 +66,25 @@ type Reconciler struct {
 	// DefaultBrainImage is the image an agent gets when it names none, letting a
 	// caller create one from a prompt alone. Unset keeps spec.image required.
 	DefaultBrainImage agentsv1alpha1.ManagedAgentImage
+
+	// DefaultHands is the sandbox supply an agent gets when it declares no branch.
+	// Nil means a deployment that publishes none, and an agent without a branch
+	// then reports HandsReady=False rather than coming up with no hands.
+	DefaultHands *agentsv1alpha1.ManagedAgentHands
+
+	// DefaultRuntime is the harness configuration — endpoint, models and
+	// credential reference — an agent gets when it declares none of its own. Nil
+	// leaves every agent to bring its own model credential.
+	DefaultRuntime *agentsv1alpha1.ManagedAgentRuntime
+}
+
+// renderDefaults is the deployment's half of an agent's configuration.
+func (r *Reconciler) renderDefaults() RenderDefaults {
+	return RenderDefaults{
+		BrainImage: r.DefaultBrainImage,
+		Hands:      r.DefaultHands,
+		Runtime:    r.DefaultRuntime,
+	}
 }
 
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=managedagents,verbs=get;list;watch;create;update;patch;delete
@@ -101,14 +120,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	checksum, err := r.configChecksum(ctx, &ma)
+	// Resolved once, then used for everything downstream. The checksum has to see
+	// the same configuration the pod gets or a rotated default credential would
+	// leave the old value live in a running pod; status has to report it or the
+	// object would not say which sandbox supply it is actually using.
+	effective := WithDefaults(&ma, r.renderDefaults())
+
+	checksum, err := r.configChecksum(ctx, effective)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	rendered, err := RenderWithDefaults(&ma, checksum, RenderDefaults{
-		BrainImage: r.DefaultBrainImage,
-	})
+	rendered, err := Render(effective, checksum)
 	if err != nil {
 		// A spec the renderer rejects is a user error, not a transient one:
 		// report it and stop rather than hot-looping.
@@ -122,7 +145,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	if err := r.refreshStatus(ctx, &ma, rendered); err != nil {
+	if err := r.refreshStatus(ctx, &ma, effective, rendered); err != nil {
 		return ctrl.Result{}, err
 	}
 	logger.V(1).Info("reconciled", "phase", ma.Status.Phase)
@@ -325,6 +348,14 @@ func referencedConfig(ma *agentsv1alpha1.ManagedAgent) (secrets, configmaps map[
 	if e := ma.Spec.Hands.E2B; e != nil && e.CredentialsSecret != "" {
 		secrets[e.CredentialsSecret] = true
 	}
+	// The sandbox credential of an external supply. Usually the agent's own
+	// credential Secret, which some other reference already covers — but a
+	// deployment-default supply is authenticated by a Secret nothing else on the
+	// agent points at, and left out of the hash its rotation would never reach the
+	// running pod.
+	if ext := ma.Spec.Hands.External; ext != nil {
+		noteSecret(ext.CredentialsRef)
+	}
 	if p := ma.Spec.Prompt; p != nil && p.From != nil && p.From.Name != "" {
 		configmaps[p.From.Name] = true
 	}
@@ -368,9 +399,15 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
+// refreshStatus reports what the agent is doing.
+//
+// `effective` is the agent with the deployment's defaults applied, and is what
+// the hands report is derived from: the status has to name the sandbox supply the
+// pod was rendered with, not the branch the spec happens to declare.
 func (r *Reconciler) refreshStatus(
 	ctx context.Context,
 	ma *agentsv1alpha1.ManagedAgent,
+	effective *agentsv1alpha1.ManagedAgent,
 	rendered *Rendered,
 ) error {
 	ma.Status.ObservedGeneration = ma.Generation
@@ -395,7 +432,11 @@ func (r *Reconciler) refreshStatus(
 			fmt.Sprintf("%d/%d replicas ready", dep.Status.ReadyReplicas, dep.Status.Replicas))
 	}
 
-	r.refreshHandsStatus(ctx, ma)
+	source := handsSourceAgent
+	if !declaresHands(ma.Spec.Hands) && declaresHands(effective.Spec.Hands) {
+		source = handsSourcePlatformDefault
+	}
+	r.refreshHandsStatus(ctx, ma, effective, source)
 
 	brainReady := meta_IsStatusConditionTrue(ma.Status.Conditions, agentsv1alpha1.ManagedAgentConditionBrainReady)
 	handsReady := meta_IsStatusConditionTrue(ma.Status.Conditions, agentsv1alpha1.ManagedAgentConditionHandsReady)
@@ -410,39 +451,61 @@ func (r *Reconciler) refreshStatus(
 	return r.writeStatus(ctx, ma)
 }
 
+// Values of status.hands.source.
+const (
+	handsSourceAgent           = "agent"
+	handsSourcePlatformDefault = "platformDefault"
+)
+
 // refreshHandsStatus resolves the sandbox supply.
+//
+// The supply is read from `effective` and the report is written to `ma`: an agent
+// that declares no branch is served by the deployment's default, so the two
+// objects differ exactly when `source` says platformDefault. Nothing may resolve
+// from `ma.Spec.Hands` here — that is the branch the user typed, not the one the
+// pod got.
 //
 // A referenced SandboxEnv normally lives on a worker cluster, which the control
 // plane cannot read directly; in that case the reference is recorded and left
 // unverified rather than reported as broken.
-func (r *Reconciler) refreshHandsStatus(ctx context.Context, ma *agentsv1alpha1.ManagedAgent) {
-	if ext := ma.Spec.Hands.External; ext != nil {
+func (r *Reconciler) refreshHandsStatus(
+	ctx context.Context,
+	ma *agentsv1alpha1.ManagedAgent,
+	effective *agentsv1alpha1.ManagedAgent,
+	source string,
+) {
+	hands := effective.Spec.Hands
+	if ext := hands.External; ext != nil {
 		// Nothing to reconcile: the service belongs to someone else. Whether it
 		// can actually serve is answered by the remote at call time, and the
 		// Brain reports that itself.
-		ma.Status.Hands = &agentsv1alpha1.ResolvedHands{EnvName: ext.EnvName, Ready: true}
+		ma.Status.Hands = &agentsv1alpha1.ResolvedHands{
+			EnvName: ext.EnvName, Ready: true, Source: source,
+		}
 		r.setCondition(ma, agentsv1alpha1.ManagedAgentConditionHandsReady,
 			metav1.ConditionTrue, "External",
 			fmt.Sprintf("external sandbox service at %s, environment %q", ext.APIURL, ext.EnvName))
 		return
 	}
 
-	if auto := ma.Spec.Hands.Auto; auto != nil {
-		r.refreshAutoHandsStatus(ctx, ma, auto)
+	if auto := hands.Auto; auto != nil {
+		r.refreshAutoHandsStatus(ctx, ma, effective, auto, source)
 		return
 	}
 
-	ref := ma.Spec.Hands.EnvRef
+	ref := hands.EnvRef
 	if ref == nil {
 		r.setCondition(ma, agentsv1alpha1.ManagedAgentConditionHandsReady,
 			metav1.ConditionFalse, "NoHands",
-			"hands must set one of external, envRef, or auto")
+			"hands declares no branch and this deployment publishes no default sandbox "+
+				"supply; set one of external, envRef, or auto")
 		return
 	}
 
 	ma.Status.Hands = &agentsv1alpha1.ResolvedHands{
 		ClusterID: ref.ClusterID,
 		EnvName:   ref.Name,
+		Source:    source,
 	}
 
 	ns := ref.Namespace
@@ -482,9 +545,13 @@ func (r *Reconciler) refreshHandsStatus(ctx context.Context, ma *agentsv1alpha1.
 func (r *Reconciler) refreshAutoHandsStatus(
 	ctx context.Context,
 	ma *agentsv1alpha1.ManagedAgent,
+	effective *agentsv1alpha1.ManagedAgent,
 	auto *agentsv1alpha1.HandsAutoSpec,
+	source string,
 ) {
-	spec, err := DeriveEnv(ma)
+	// Derived from the effective agent: a deployment whose default is a derived env
+	// has an auto block that is not on the object at all.
+	spec, err := DeriveEnv(effective)
 	if err != nil {
 		r.setCondition(ma, agentsv1alpha1.ManagedAgentConditionHandsReady,
 			metav1.ConditionFalse, "InvalidAutoSpec", err.Error())
@@ -493,6 +560,7 @@ func (r *Reconciler) refreshAutoHandsStatus(
 	ma.Status.Hands = &agentsv1alpha1.ResolvedHands{
 		ClusterID: auto.ClusterID,
 		EnvName:   spec.Name,
+		Source:    source,
 	}
 
 	if r.Hands == nil {

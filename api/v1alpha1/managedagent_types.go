@@ -113,9 +113,17 @@ type ManagedAgentSpec struct {
 	Ingress *ManagedAgentIngress `json:"ingress,omitempty"`
 
 	// Hands declares sandbox supply: reference an existing SandboxEnv, derive
-	// one, or point at an external service. Exactly one branch must be set.
-	// +required
-	Hands ManagedAgentHands `json:"hands"`
+	// one, or point at an external service. At most one branch may be set.
+	//
+	// Declaring none is how an agent takes the deployment's default sandbox
+	// supply, which is what lets one be created from a prompt alone. The default
+	// is resolved on every reconcile rather than copied in at creation, so the
+	// deployment can re-point it — a sandbox image tag that rolls with its own
+	// build would otherwise leave every agent pinned to whatever was current the
+	// day it was created. A deployment that publishes no default answers an agent
+	// without a branch with HandsReady=False.
+	// +optional
+	Hands ManagedAgentHands `json:"hands,omitzero"`
 
 	// Session covers thread persistence.
 	// +optional
@@ -861,6 +869,14 @@ type ManagedAgentStatus struct {
 
 // ResolvedHands is the sandbox supply the Brain will actually use.
 type ResolvedHands struct {
+	// Source says where the supply came from: "agent" when the spec declares a
+	// branch, "platformDefault" when it declares none and the deployment's default
+	// answered instead. Without it the two are indistinguishable on the object,
+	// since the default is applied per reconcile and never written to the spec.
+	// +kubebuilder:validation:Enum=agent;platformDefault
+	// +optional
+	Source string `json:"source,omitempty"`
+
 	// +optional
 	ClusterID string `json:"clusterID,omitempty"`
 	// +optional

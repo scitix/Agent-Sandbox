@@ -71,3 +71,93 @@ Selector labels for the ws-proxy Deployment / Service.
 app.kubernetes.io/name: {{ printf "%s-proxy" (include "agent-sandbox-hub.name" .) }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+Namespace the ManagedAgents (and their Brain pods) run in.
+*/}}
+{{- define "agent-sandbox-hub.managedAgentNamespace" -}}
+{{- .Values.managedAgent.namespace | default .Release.Namespace }}
+{{- end }}
+
+{{/*
+Whether the default sandbox key is carried in values and must be rendered into
+this release's Secret. Non-empty output means yes.
+
+An inline key only works when the agents run in the release namespace: the
+reference is resolved by the Brain pod's kubelet, which cannot read a Secret from
+another namespace. Failing here is the point — the alternative is a Brain stuck
+on a missing secretKeyRef, which says nothing about the value that caused it.
+*/}}
+{{- define "agent-sandbox-hub.managedAgentInlineSandboxKey" -}}
+{{- $d := .Values.managedAgent.hands.default }}
+{{- if and $d.apiKey (not $d.existingSecret.name) }}
+{{- if ne (include "agent-sandbox-hub.managedAgentNamespace" .) .Release.Namespace }}
+{{- fail "managedAgent.hands.default.apiKey cannot be used when managedAgent.namespace differs from the release namespace: the Brain resolves the Secret in its own namespace. Create the Secret there and set managedAgent.hands.default.existingSecret instead." }}
+{{- end }}
+{{- print "inline" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Secret name + key holding the default sandbox supply's API key. Empty when the
+deployment configured neither, which leaves the default without a credential —
+reported on the agent rather than guessed at.
+*/}}
+{{- define "agent-sandbox-hub.managedAgentSandboxSecretName" -}}
+{{- $d := .Values.managedAgent.hands.default }}
+{{- if $d.existingSecret.name }}
+{{- $d.existingSecret.name }}
+{{- else if include "agent-sandbox-hub.managedAgentInlineSandboxKey" . }}
+{{- include "agent-sandbox-hub.fullname" . }}-secret
+{{- end }}
+{{- end }}
+
+{{- define "agent-sandbox-hub.managedAgentSandboxSecretKey" -}}
+{{- $d := .Values.managedAgent.hands.default }}
+{{- if $d.existingSecret.name }}
+{{- $d.existingSecret.key | default "E2B_API_KEY" }}
+{{- else if include "agent-sandbox-hub.managedAgentInlineSandboxKey" . }}
+{{- print "MANAGED_AGENT_SANDBOX_API_KEY" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether the model credential is rendered inline into this release's Secret.
+
+Mirrors the sandbox key exactly, including the namespace guard: the Brain's
+kubelet resolves a secretKeyRef in the Brain's OWN namespace, so an inline key is
+only reachable when the agents run in the release namespace. Failing here beats
+rendering a reference that resolves to nothing and surfaces as a harness reporting
+itself unavailable.
+*/}}
+{{- define "agent-sandbox-hub.managedAgentInlineModelKey" -}}
+{{- $m := .Values.managedAgent.modelProvider }}
+{{- if and $m.apiKey (not $m.existingSecret.name) }}
+{{- if ne (include "agent-sandbox-hub.managedAgentNamespace" .) .Release.Namespace }}
+{{- fail "managedAgent.modelProvider.apiKey cannot be used when managedAgent.namespace differs from the release namespace: the Brain resolves the Secret in its own namespace. Create the Secret there and set managedAgent.modelProvider.existingSecret instead." }}
+{{- end }}
+{{- print "inline" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Secret name + key holding the default model credential. Empty when the deployment
+configured neither, which leaves agents to bring their own.
+*/}}
+{{- define "agent-sandbox-hub.managedAgentModelSecretName" -}}
+{{- $m := .Values.managedAgent.modelProvider }}
+{{- if $m.existingSecret.name }}
+{{- $m.existingSecret.name }}
+{{- else if include "agent-sandbox-hub.managedAgentInlineModelKey" . }}
+{{- include "agent-sandbox-hub.fullname" . }}-secret
+{{- end }}
+{{- end }}
+
+{{- define "agent-sandbox-hub.managedAgentModelSecretKey" -}}
+{{- $m := .Values.managedAgent.modelProvider }}
+{{- if $m.existingSecret.name }}
+{{- $m.existingSecret.key | default "ANTHROPIC_AUTH_TOKEN" }}
+{{- else if include "agent-sandbox-hub.managedAgentInlineModelKey" . }}
+{{- print "MANAGED_AGENT_MODEL_API_KEY" }}
+{{- end }}
+{{- end }}

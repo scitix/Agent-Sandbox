@@ -90,7 +90,7 @@ describe("buildSpec preserves what the form does not render", () => {
 
   it("still applies what the form does render", () => {
     const spec = buildSpec(validValues({ imageRepository: "new/brain" }), previous)
-    expect(spec.image.repository).toBe("new/brain")
+    expect(spec.image?.repository).toBe("new/brain")
   })
 
   it("invents none of it for a fresh agent", () => {
@@ -223,5 +223,103 @@ describe("agentToFormValues", () => {
     expect(v.imageTag).toBe("t")
     expect(v.handsMode).toBe("envRef")
     expect(v.envName).toBe("e")
+  })
+})
+
+/**
+ * The deployment answers for the Brain image and the sandbox supply, and the form
+ * has to stop asking for them — that is the whole difference between "fill in nine
+ * fields" and "type a name and a prompt".
+ */
+describe("platform defaults", () => {
+  const platform = {
+    brainImage: { repository: "reg/brain", tag: "v1" },
+    hands: { envName: "navix", image: "reg/sbx:v1", credentialConfigured: true },
+    modelProvider: {
+      baseURL: "https://api.example.com/model-api",
+      models: [
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+        { id: "glm-5.2", nonReasoning: true },
+      ],
+      defaultModel: "claude-sonnet-5",
+    },
+  }
+
+  it("starts a create on the platform's sandbox supply", () => {
+    expect(managedAgentFormDefaults(platform).handsMode).toBe("platformDefault")
+  })
+
+  it("falls back to auto when the deployment publishes no supply", () => {
+    expect(managedAgentFormDefaults({}).handsMode).toBe("auto")
+    expect(managedAgentFormDefaults().handsMode).toBe("auto")
+  })
+
+  it("seeds the model endpoint and dropdown for both harnesses", () => {
+    const v = managedAgentFormDefaults(platform)
+    expect(v.claudeBaseURL).toBe("https://api.example.com/model-api")
+    expect(v.opencodeBaseURL).toBe("https://api.example.com/model-api")
+    expect(v.claudeModels).toContain("claude-sonnet-5 | Claude Sonnet 5")
+    expect(v.claudeDefaultModel).toBe("claude-sonnet-5")
+  })
+
+  // A reasoning model in that slot returns its whole budget as chain of thought
+  // and empty content, which reads as "same topic" on every turn.
+  it("picks a non-reasoning model for the classifier", () => {
+    expect(managedAgentFormDefaults(platform).classifierModel).toBe("glm-5.2")
+  })
+
+  it("never seeds a credential", () => {
+    const v = managedAgentFormDefaults(platform)
+    expect(v.claudeApiKey).toBe("")
+    expect(v.opencodeApiKey).toBe("")
+    expect(v.sandboxApiKey).toBe("")
+  })
+
+  it("stops requiring an image once the deployment publishes one", () => {
+    const blank = validValues({ imageRepository: "" })
+    expect(buildSchema({} as never).safeParse(blank).success).toBe(false)
+    expect(
+      buildSchema({} as never, { brainImage: true, hands: true }).safeParse(blank).success,
+    ).toBe(true)
+  })
+
+  // Saved against a deployment with no default, this agent reconciles to
+  // HandsReady=False — an agent that answers and then cannot run a command.
+  it("refuses platformDefault where there is none", () => {
+    const v = validValues({ handsMode: "platformDefault" })
+    expect(buildSchema({} as never, { brainImage: true, hands: false }).safeParse(v).success).toBe(
+      false,
+    )
+    expect(buildSchema({} as never, { brainImage: true, hands: true }).safeParse(v).success).toBe(
+      true,
+    )
+  })
+
+  it("submits no image at all when the field is blank", () => {
+    const spec = buildSpec(validValues({ imageRepository: "" }))
+    expect(spec.image).toBeUndefined()
+  })
+
+  it("submits no hands branch on platformDefault, keeping binding", () => {
+    const previous = {
+      runtime: { default: "claude-code" },
+      hands: {
+        external: { apiURL: "https://old", domain: "d", envName: "e" },
+        binding: { timeoutSeconds: 120 },
+      },
+    } as unknown as ManagedAgentSpec
+    const spec = buildSpec(validValues({ handsMode: "platformDefault" }), previous)
+    expect(spec.hands?.external).toBeUndefined()
+    expect(spec.hands?.envRef).toBeUndefined()
+    expect(spec.hands?.auto).toBeUndefined()
+    expect(spec.hands?.binding?.timeoutSeconds).toBe(120)
+  })
+
+  it("reads an agent with no branch as being on the platform default", () => {
+    const agent = {
+      name: "fresh",
+      spec: { runtime: { default: "claude-code" }, hands: {} },
+    } as unknown as ManagedAgent
+    expect(agentToFormValues(agent).handsMode).toBe("platformDefault")
   })
 })

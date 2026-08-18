@@ -33,6 +33,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/controllers/managedagent"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/config"
 )
 
 // ManagedAgentAPI serves the console's CRUD over ManagedAgent objects.
@@ -59,6 +60,22 @@ type ManagedAgentAPI struct {
 	// is two forwarders that agree today and diverge on the next Brain endpoint —
 	// and the one that diverges silently is whichever gets less traffic.
 	Gateway *ManagedAgentGateway
+
+	// Defaults is what this deployment supplies for an agent that names none. It
+	// is served so a console can present the same agent the controller would
+	// render — a form that asked for an image, an endpoint and an environment the
+	// platform already has an answer for is a form the platform failed to fill in.
+	Defaults PlatformDefaults
+}
+
+// PlatformDefaults mirrors the deployment-level defaults the controller applies.
+//
+// Held here as the API types rather than a flattened copy so this and the
+// controller cannot drift on what a default means.
+type PlatformDefaults struct {
+	BrainImage    agentsv1alpha1.ManagedAgentImage
+	Hands         *agentsv1alpha1.ManagedAgentHands
+	ModelProvider config.ModelProviderDefaults
 }
 
 // managedAgentWire is the shape the console consumes: flattened metadata plus
@@ -70,6 +87,56 @@ type managedAgentWire struct {
 	Spec              agentsv1alpha1.ManagedAgentSpec   `json:"spec"`
 	Status            agentsv1alpha1.ManagedAgentStatus `json:"status,omitzero"`
 	CRDYaml           string                            `json:"crdYaml,omitempty"`
+}
+
+// defaultsName is the path segment that asks for the deployment's defaults
+// instead of an agent.
+//
+// It is served under the same prefix as an agent, so it has to be a name no agent
+// can have: an underscore is invalid in a DNS-1123 label, which every agent name
+// must be, so this cannot shadow one. The alternative — a sibling static route
+// next to `:name` — is what gin's router refuses to register.
+const defaultsName = "_defaults"
+
+// managedAgentDefaultsWire is what a console needs to render a create form the
+// caller does not have to fill in.
+//
+// No credential material appears here, and no field is a key. The sandbox
+// credential in particular is reported only as a boolean: whether the deployment
+// configured one changes what the form must ask for, while the value itself has
+// no reason to leave the cluster it is mounted in.
+type managedAgentDefaultsWire struct {
+	// BrainImage is present only when the deployment published one. Absent means
+	// the caller must still name an image.
+	BrainImage *managedAgentImageWire `json:"brainImage,omitempty"`
+	// Hands is the default sandbox supply, absent when the deployment has none.
+	Hands *managedAgentHandsDefaultWire `json:"hands,omitempty"`
+	// ModelProvider is an address and a model list, never a key.
+	ModelProvider *managedAgentModelProviderWire `json:"modelProvider,omitempty"`
+}
+
+type managedAgentImageWire struct {
+	Repository string `json:"repository"`
+	Tag        string `json:"tag,omitempty"`
+}
+
+type managedAgentHandsDefaultWire struct {
+	EnvName      string `json:"envName,omitempty"`
+	APIURL       string `json:"apiURL,omitempty"`
+	Domain       string `json:"domain,omitempty"`
+	Image        string `json:"image,omitempty"`
+	ScalingGroup string `json:"scalingGroup,omitempty"`
+	// CredentialConfigured reports that the deployment named a Secret for this
+	// supply. False with an APIURL set is a misconfigured default rather than a
+	// free one, and the console says so instead of offering it.
+	CredentialConfigured bool `json:"credentialConfigured"`
+}
+
+type managedAgentModelProviderWire struct {
+	BaseURL      string                             `json:"baseURL,omitempty"`
+	Models       []agentsv1alpha1.ManagedAgentModel `json:"models,omitempty"`
+	DefaultModel string                             `json:"defaultModel,omitempty"`
+	SmallModel   string                             `json:"smallModel,omitempty"`
 }
 
 type managedAgentCreateRequest struct {
@@ -289,11 +356,65 @@ func (a *ManagedAgentAPI) list(c *gin.Context) {
 }
 
 func (a *ManagedAgentAPI) get(c *gin.Context) {
+	// Dispatched before the lookup: `_defaults` is not a legal agent name, so this
+	// costs a string compare and can never hide an object.
+	if c.Param("name") == defaultsName {
+		a.defaults(c)
+		return
+	}
 	ma, ok := a.fetch(c)
 	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, toManagedAgentWire(ma, true))
+}
+
+// defaults reports what this deployment fills in for an agent that names nothing.
+//
+// Any authenticated caller may read it: it describes the platform, not a tenant,
+// and every value in it is one the caller would otherwise have to be told out of
+// band. Nothing tenant-scoped is disclosed and no credential is included.
+func (a *ManagedAgentAPI) defaults(c *gin.Context) {
+	out := managedAgentDefaultsWire{}
+	if img := a.Defaults.BrainImage; img.Repository != "" {
+		out.BrainImage = &managedAgentImageWire{Repository: img.Repository, Tag: img.Tag}
+	}
+	// Both remote and local supply are reported. A deployment whose default the
+	// console could not describe would leave a caller with a form that says
+	// nothing is configured while the controller quietly supplies one.
+	if h := a.Defaults.Hands; h != nil {
+		switch {
+		case h.External != nil:
+			ext := h.External
+			out.Hands = &managedAgentHandsDefaultWire{
+				EnvName:              ext.EnvName,
+				APIURL:               ext.APIURL,
+				Domain:               ext.Domain,
+				Image:                ext.Image,
+				ScalingGroup:         ext.ScalingGroup,
+				CredentialConfigured: ext.CredentialsRef != nil && ext.CredentialsRef.Name != "",
+			}
+		case h.EnvRef != nil:
+			ref := h.EnvRef
+			out.Hands = &managedAgentHandsDefaultWire{
+				EnvName:      ref.Name,
+				Image:        ref.Image,
+				ScalingGroup: ref.ScalingGroup,
+				// A local env is reached with this control plane's own credentials,
+				// so there is nothing for the tenant to supply either way.
+				CredentialConfigured: true,
+			}
+		}
+	}
+	if mp := a.Defaults.ModelProvider; mp.BaseURL != "" || len(mp.Models) > 0 {
+		out.ModelProvider = &managedAgentModelProviderWire{
+			BaseURL:      mp.BaseURL,
+			Models:       mp.Models,
+			DefaultModel: mp.DefaultModel,
+			SmallModel:   mp.SmallModel,
+		}
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (a *ManagedAgentAPI) create(c *gin.Context) {

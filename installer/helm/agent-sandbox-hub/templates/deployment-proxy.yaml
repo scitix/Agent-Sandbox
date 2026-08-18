@@ -71,6 +71,65 @@ spec:
           {{- end }}
           {{- end }}
           {{- end }}
+          {{- with .Values.managedAgent.hands.default }}
+          {{- if .apiURL }}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_API_URL
+              value: {{ .apiURL | quote }}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_DOMAIN
+              value: {{ .domain | quote }}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_HTTPS
+              value: {{ .https | quote }}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_ENV_NAME
+              value: {{ .envName | quote }}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_IMAGE
+              value: {{ .image | quote }}
+          {{- if .scalingGroup }}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_SCALING_GROUP
+              value: {{ .scalingGroup | quote }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- with include "agent-sandbox-hub.managedAgentSandboxSecretName" . }}
+          {{- /*
+            The NAME of the Secret, not its contents: what reads the key is the
+            Brain pod in the agents' namespace, so ws-proxy only ever renders the
+            reference. Passing the value here would put the platform's sandbox
+            credential in a second pod for no reason.
+          */}}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_SECRET_NAME
+              value: {{ . | quote }}
+          {{- end }}
+          {{- with include "agent-sandbox-hub.managedAgentSandboxSecretKey" . }}
+            - name: AGENTBOX_MANAGED_AGENT_HANDS_SECRET_KEY
+              value: {{ . | quote }}
+          {{- end }}
+          {{- with .Values.managedAgent.modelProvider }}
+          {{- if .baseURL }}
+            - name: AGENTBOX_MANAGED_AGENT_MODEL_BASE_URL
+              value: {{ .baseURL | quote }}
+          {{- end }}
+          {{- if .models }}
+            - name: AGENTBOX_MANAGED_AGENT_MODELS
+              value: {{ join "," .models | quote }}
+          {{- end }}
+          {{- if .defaultModel }}
+            - name: AGENTBOX_MANAGED_AGENT_MODEL_DEFAULT
+              value: {{ .defaultModel | quote }}
+          {{- end }}
+          {{- if .smallModel }}
+            - name: AGENTBOX_MANAGED_AGENT_MODEL_SMALL
+              value: {{ .smallModel | quote }}
+          {{- end }}
+          {{- end }}
+          {{- with include "agent-sandbox-hub.managedAgentModelSecretName" . }}
+          {{- /* The NAME only, for the same reason as the sandbox credential. */}}
+            - name: AGENTBOX_MANAGED_AGENT_MODEL_SECRET_NAME
+              value: {{ . | quote }}
+          {{- end }}
+          {{- with include "agent-sandbox-hub.managedAgentModelSecretKey" . }}
+            - name: AGENTBOX_MANAGED_AGENT_MODEL_SECRET_KEY
+              value: {{ . | quote }}
+          {{- end }}
           {{- if .Values.managedAgent.publish.enabled }}
             - name: WSPROXY_MANAGED_AGENT_GATEWAY_ADDR
               value: ":{{ .Values.managedAgent.publish.port }}"
