@@ -3386,7 +3386,15 @@ spec:
               hands:
                 description: |-
                   Hands declares sandbox supply: reference an existing SandboxEnv, derive
-                  one, or point at an external service. Exactly one branch must be set.
+                  one, or point at an external service. At most one branch may be set.
+
+                  Declaring none is how an agent takes the deployment's default sandbox
+                  supply, which is what lets one be created from a prompt alone. The default
+                  is resolved on every reconcile rather than copied in at creation, so the
+                  deployment can re-point it — a sandbox image tag that rolls with its own
+                  build would otherwise leave every agent pinned to whatever was current the
+                  day it was created. A deployment that publishes no default answers an agent
+                  without a branch with HandsReady=False.
                 properties:
                   auto:
                     description: |-
@@ -4389,7 +4397,6 @@ spec:
                     x-kubernetes-list-type: map
                 type: object
             required:
-            - hands
             - runtime
             type: object
           status:
@@ -4492,6 +4499,16 @@ spec:
                     type: array
                   ready:
                     type: boolean
+                  source:
+                    description: |-
+                      Source says where the supply came from: "agent" when the spec declares a
+                      branch, "platformDefault" when it declares none and the deployment's default
+                      answered instead. Without it the two are indistinguishable on the object,
+                      since the default is applied per reconcile and never written to the spec.
+                    enum:
+                    - agent
+                    - platformDefault
+                    type: string
                 type: object
               observedGeneration:
                 format: int64

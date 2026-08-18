@@ -30,10 +30,8 @@ import (
 	"context"
 	"flag"
 	"log"
-	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -165,6 +163,13 @@ func Run() {
 				// an in-platform conversation must not require publishing the
 				// agent to the internet first.
 				Gateway: server.NewManagedAgentGateway(k8sClient, ns),
+				// The same defaults the controller applies, so the console can show
+				// a caller what it will get before they create anything.
+				Defaults: server.PlatformDefaults{
+					BrainImage:    cfg.DefaultBrainImage(),
+					Hands:         cfg.DefaultHands(),
+					ModelProvider: cfg.DefaultModelProvider(),
+				},
 			}
 		}
 		if cfg.ManagedAgentEnabled && cfg.ManagedAgentGatewayAddr != "" {
@@ -302,7 +307,9 @@ func startManagedAgentController(cfg *config.Config, hands managedagent.HandsPro
 			Hands:             hands,
 			ProxyService:      cfg.ManagedAgentProxyService,
 			PublicBaseURL:     cfg.ManagedAgentPublicBaseURL,
-			DefaultBrainImage: defaultBrainImage(cfg),
+			DefaultBrainImage: cfg.DefaultBrainImage(),
+			DefaultHands:      cfg.DefaultHands(),
+			DefaultRuntime:    cfg.DefaultRuntime(),
 		}).SetupWithManager(mgr); err != nil {
 			log.Printf("wsproxy: ManagedAgent controller setup failed: %v", err)
 			return
@@ -314,27 +321,6 @@ func startManagedAgentController(cfg *config.Config, hands managedagent.HandsPro
 			log.Printf("wsproxy: ManagedAgent controller stopped: %v", err)
 		}
 	}()
-}
-
-// defaultBrainImage assembles the deployment's default Brain image.
-//
-// An empty repository is passed through as empty rather than defaulted to
-// something: the renderer treats that as "this deployment has no default" and
-// keeps spec.image.repository required, which fails at admission with a readable
-// message. Substituting a guess here would instead produce a Deployment that
-// reconciles cleanly and then sits in ImagePullBackOff.
-func defaultBrainImage(cfg *config.Config) agentsv1alpha1.ManagedAgentImage {
-	img := agentsv1alpha1.ManagedAgentImage{
-		Repository: strings.TrimSpace(cfg.ManagedAgentBrainImage),
-		Tag:        strings.TrimSpace(cfg.ManagedAgentBrainImageTag),
-	}
-	for name := range strings.SplitSeq(cfg.ManagedAgentBrainPullSecrets, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			img.PullSecrets = append(img.PullSecrets,
-				corev1.LocalObjectReference{Name: name})
-		}
-	}
-	return img
 }
 
 // buildK8sClient creates a controller-runtime client for the in-cluster config.

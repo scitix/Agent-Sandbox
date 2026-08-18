@@ -27,6 +27,7 @@ import { basePath, getToken, handleErrorResponse } from "@/lib/api/client"
 import type {
   CreateManagedAgentRequest,
   ManagedAgent,
+  ManagedAgentDefaults,
   ManagedAgentListResult,
   UpdateManagedAgentRequest,
 } from "@/lib/api/managed-agent-types"
@@ -66,6 +67,37 @@ export const managedAgentQueryOptions = (name: string) =>
     queryKey: [...MANAGED_AGENTS_QUERY_KEY, name],
     queryFn: () => managedAgentFetch<ManagedAgent>(`/${encodeURIComponent(name)}`),
     enabled: !!name,
+  })
+
+/**
+ * What this deployment fills in for an agent that names none.
+ *
+ * `_defaults` is served under the agent prefix but cannot collide with one: an
+ * underscore is invalid in a DNS-1123 label, which every agent name is.
+ *
+ * Cached for the session. These change only when the platform is redeployed, and
+ * a create form that refetched them would be re-seeding fields under a user
+ * mid-typing.
+ */
+export const managedAgentDefaultsQueryOptions = () =>
+  queryOptions({
+    queryKey: [...MANAGED_AGENTS_QUERY_KEY, "_defaults"],
+    // Failures resolve to "publishes none" rather than an error, and deliberately
+    // do not go through the shared error handler: a control plane too old to serve
+    // this route answers 404, which would put an error toast in front of every
+    // caller opening the create form. "No defaults" is also the safe reading — the
+    // form then asks for the fields itself instead of leaving them blank.
+    queryFn: async (): Promise<ManagedAgentDefaults> => {
+      const token = getToken()
+      const headers = new Headers()
+      if (token) headers.set("Authorization", `Bearer ${token}`)
+      const res = await fetch(`${API_ROOT}/_defaults`, { headers })
+      if (!res.ok) return {}
+      const text = await res.text()
+      return text ? (JSON.parse(text) as ManagedAgentDefaults) : {}
+    },
+    retry: false,
+    staleTime: Infinity,
   })
 
 // ─── Mutations ────────────────────────────────────────────────────────────────

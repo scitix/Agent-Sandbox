@@ -27,6 +27,7 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -35,6 +36,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/controllers/managedagent"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/config"
 )
 
 // fakeHands records what the API asked the worker for, and can fail on demand.
@@ -330,5 +332,105 @@ func TestConsoleProxyPinsTheEndUserAgainstTheRequest(t *testing.T) {
 
 	if v := got.Get("X-Agentbox-User"); v != "alice" {
 		t.Errorf("pinned user = %q, want the authenticated caller %q", v, "alice")
+	}
+}
+
+// ─── Platform defaults ────────────────────────────────────────────────────────
+
+func getDefaults(t *testing.T, api *ManagedAgentAPI) (int, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/internal/managedagents/_defaults", nil)
+	c.Params = gin.Params{{Key: "name", Value: defaultsName}}
+	api.get(c)
+	return rec.Code, rec.Body.String()
+}
+
+// The console needs the platform's answers to render a form the caller does not
+// have to fill in — but never the credential itself, which has no reason to leave
+// the namespace it is mounted in.
+func TestDefaultsReportTheSupplyWithoutItsCredential(t *testing.T) {
+	api := newManagedAgentAPI(t, nil)
+	https := true
+	api.Defaults = PlatformDefaults{
+		BrainImage: agentsv1alpha1.ManagedAgentImage{Repository: "reg/brain", Tag: "v1"},
+		Hands: &agentsv1alpha1.ManagedAgentHands{
+			External: &agentsv1alpha1.HandsExternal{
+				APIURL:  "https://console.example.com/api/e2b",
+				Domain:  "console.example.com/api/data",
+				HTTPS:   &https,
+				EnvName: "navix",
+				Image:   "reg/e2b-sandbox:v1",
+				CredentialsRef: &agentsv1alpha1.SecretKeySelector{
+					Name: "platform-sandbox", Key: "E2B_API_KEY",
+				},
+			},
+		},
+		ModelProvider: config.ModelProviderDefaults{
+			BaseURL: "https://api.example.com/model-api",
+			Models:  []agentsv1alpha1.ManagedAgentModel{{ID: "claude-sonnet-5"}},
+		},
+	}
+
+	code, body := getDefaults(t, api)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", code, body)
+	}
+	for _, want := range []string{
+		`"repository":"reg/brain"`, `"envName":"navix"`,
+		`"image":"reg/e2b-sandbox:v1"`, `"credentialConfigured":true`,
+		`"baseURL":"https://api.example.com/model-api"`, `"claude-sonnet-5"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("response is missing %s: %s", want, body)
+		}
+	}
+	// Not "no key was set in this test" — the Secret's name and key are the shape
+	// of a credential and have no business in a response a browser reads.
+	for _, leaked := range []string{"platform-sandbox", "E2B_API_KEY", "credentialsRef"} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("response leaked %q: %s", leaked, body)
+		}
+	}
+}
+
+// A deployment that publishes nothing answers with an empty object rather than an
+// error: "no defaults" is a valid configuration, and the console renders the full
+// form for it.
+func TestDefaultsAreEmptyWhenNothingIsConfigured(t *testing.T) {
+	api := newManagedAgentAPI(t, nil)
+	code, body := getDefaults(t, api)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", code, body)
+	}
+	if strings.TrimSpace(body) != "{}" {
+		t.Errorf("body = %s, want {}", body)
+	}
+}
+
+// A default whose credential is missing must be visibly incomplete: sandboxes
+// created against it fail to start, and the control plane looks healthy while it
+// happens.
+func TestDefaultsReportAMissingCredential(t *testing.T) {
+	api := newManagedAgentAPI(t, nil)
+	api.Defaults = PlatformDefaults{
+		Hands: &agentsv1alpha1.ManagedAgentHands{
+			External: &agentsv1alpha1.HandsExternal{
+				APIURL: "https://console.example.com/api/e2b", EnvName: "navix",
+			},
+		},
+	}
+	_, body := getDefaults(t, api)
+	if !strings.Contains(body, `"credentialConfigured":false`) {
+		t.Errorf("body = %s, want credentialConfigured false", body)
+	}
+}
+
+// The reserved name cannot shadow an agent, because no agent may be called it: an
+// underscore is invalid in the DNS-1123 label every agent name has to be.
+func TestDefaultsNameIsNotAValidAgentName(t *testing.T) {
+	if errs := validation.IsDNS1123Label(defaultsName); len(errs) == 0 {
+		t.Fatalf("%q is a legal agent name, so it can hide one", defaultsName)
 	}
 }

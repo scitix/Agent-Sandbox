@@ -208,8 +208,42 @@ export interface ManagedAgentHands {
   e2b?: HandsE2B
 }
 
-/** The three mutually exclusive shapes of sandbox supply. */
-export type HandsMode = "auto" | "envRef" | "external"
+/**
+ * How an agent gets its sandboxes. Three of these are branches of `spec.hands`;
+ * `platformDefault` is the absence of all three, which hands the choice to the
+ * deployment.
+ *
+ * The default is resolved on every reconcile rather than copied into the spec, so
+ * an agent on it follows the deployment when the sandbox image is rebuilt — which
+ * is why "no branch" is a mode rather than a missing value to fill in.
+ */
+export type HandsMode = "platformDefault" | "auto" | "envRef" | "external"
+
+/**
+ * What the deployment fills in for an agent that names none.
+ *
+ * Read from the control plane rather than compiled in: these are one
+ * installation's answers, and a console that guessed them would show a caller a
+ * form whose values are not the ones their agent will run with. Carries no
+ * credential — the sandbox key is reported only as `credentialConfigured`.
+ */
+export interface ManagedAgentDefaults {
+  brainImage?: { repository: string; tag?: string }
+  hands?: {
+    envName?: string
+    apiURL?: string
+    domain?: string
+    image?: string
+    scalingGroup?: string
+    credentialConfigured: boolean
+  }
+  modelProvider?: {
+    baseURL?: string
+    models?: ManagedAgentModel[]
+    defaultModel?: string
+    smallModel?: string
+  }
+}
 
 export interface SessionPersistence {
   enabled?: boolean
@@ -259,7 +293,8 @@ export interface ManagedAgentSpec {
    * Docs tab. Empty falls back to the console's built-in guide.
    */
   docs?: string
-  image: ManagedAgentImage
+  /** Omitted takes the deployment's default Brain image. */
+  image?: ManagedAgentImage
   runtime: ManagedAgentRuntime
   classifier?: ManagedAgentClassifier
   prompt?: ManagedAgentPrompt
@@ -273,6 +308,11 @@ export interface ManagedAgentSpec {
 // ─── Status ───────────────────────────────────────────────────────────────────
 
 export interface ResolvedHands {
+  /**
+   * Where the supply came from. `platformDefault` means the spec declares no
+   * branch — the only way to tell, since the default never lands in the spec.
+   */
+  source?: "agent" | "platformDefault"
   clusterID?: string
   envName?: string
   pools?: string[]

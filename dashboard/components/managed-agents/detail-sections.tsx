@@ -657,7 +657,24 @@ export function HandsSection({ agent }: { agent: ManagedAgent }) {
             </div>
           </>
         ) : (
-          <EmptyNote>{t("managedAgents.detail.notConfigured")}</EmptyNote>
+          // No branch is not "unconfigured": the platform supplies one, and the
+          // resolved values are the section above. Saying "not configured" here
+          // would send someone looking for a field to fill in.
+          <>
+            <KVGrid>
+              <KVRow
+                label={t("managedAgents.detail.field.handsMode")}
+                value={t("managedAgents.detail.handsSourcePlatformDefault")}
+              />
+              <KVRow
+                label={t("managedAgents.detail.field.envName")}
+                value={resolved?.envName}
+              />
+            </KVGrid>
+            <p className="text-muted-foreground mt-2 text-xs">
+              {t("managedAgents.detail.handsSourcePlatformDefaultHint")}
+            </p>
+          </>
         )}
       </section>
 

@@ -605,3 +605,246 @@ func TestRenderWithDefaults_DoesNotMutateTheInput(t *testing.T) {
 		t.Errorf("input spec.image was mutated to %q", ma.Spec.Image.Repository)
 	}
 }
+
+// ─── Default sandbox supply ───────────────────────────────────────────────────
+
+// defaultEnvName is the environment the tests' platform default launches from.
+const defaultEnvName = "platform-sandboxes"
+
+func defaultHands() *agentsv1alpha1.ManagedAgentHands {
+	https := true
+	return &agentsv1alpha1.ManagedAgentHands{
+		External: &agentsv1alpha1.HandsExternal{
+			APIURL:       "https://platform.example.com/api/e2b",
+			Domain:       "platform.example.com/api/data",
+			HTTPS:        &https,
+			EnvName:      defaultEnvName,
+			Image:        "registry.example.com/platform/sandbox:v3",
+			ScalingGroup: "1c2gi",
+			CredentialsRef: &agentsv1alpha1.SecretKeySelector{
+				Name: "platform-sandbox", Key: "E2B_API_KEY",
+			},
+		},
+	}
+}
+
+// An agent that declares no branch is served by the deployment. Every value the
+// Brain needs to reach a sandbox has to arrive, including the image: without it
+// the sandbox starts from the pool's default and then refuses every command.
+func TestRenderWithDefaults_FillsAnUndeclaredHands(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Hands = agentsv1alpha1.ManagedAgentHands{}
+
+	r, err := RenderWithDefaults(ma, "", RenderDefaults{Hands: defaultHands()})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	env := envMap(t, r.Deployment)
+
+	for name, want := range map[string]string{
+		"AGBX_ENV_NAME":     "platform-sandboxes",
+		"E2B_API_URL":       "https://platform.example.com/api/e2b",
+		"E2B_DOMAIN":        "platform.example.com/api/data",
+		"AGBX_HTTPS":        "true",
+		"SBX_IMAGE":         "registry.example.com/platform/sandbox:v3",
+		"SBX_SCALING_GROUP": "1c2gi",
+	} {
+		if got := env[name].Value; got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	ref := env["E2B_API_KEY"].ValueFrom
+	if ref == nil || ref.SecretKeyRef == nil || ref.SecretKeyRef.Name != "platform-sandbox" {
+		t.Errorf("E2B_API_KEY = %+v, want a ref to the platform's Secret", env["E2B_API_KEY"])
+	}
+}
+
+// A tenant's own supply wins. A default that overrode it would move an agent onto
+// someone else's sandboxes, taking its files with it.
+func TestRenderWithDefaults_LeavesADeclaredHandsAlone(t *testing.T) {
+	ma := fullAgent() // declares hands.envRef
+	r, err := RenderWithDefaults(ma, "", RenderDefaults{Hands: defaultHands()})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	env := envMap(t, r.Deployment)
+	if got := env["AGBX_ENV_NAME"].Value; got != "demo-env" {
+		t.Errorf("AGBX_ENV_NAME = %q, want the agent's own env", got)
+	}
+	if _, found := env["E2B_API_URL"]; found {
+		t.Error("the default's endpoint reached an agent that declared its own supply")
+	}
+}
+
+// Binding is the tenant's even when the supply is not: an idle timeout or
+// attachment root describes their workload, and the default carries neither.
+func TestRenderWithDefaults_KeepsTenantBindingUnderTheDefault(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Hands = agentsv1alpha1.ManagedAgentHands{
+		Binding: &agentsv1alpha1.HandsBinding{
+			TimeoutSeconds: 120, AttachmentRoot: "/opt/tenant-attachments",
+		},
+	}
+
+	r, err := RenderWithDefaults(ma, "", RenderDefaults{Hands: defaultHands()})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	env := envMap(t, r.Deployment)
+	if got := env["SBX_TIMEOUT"].Value; got != "120" {
+		t.Errorf("SBX_TIMEOUT = %q, want the agent's own binding", got)
+	}
+	if got := env["SBX_ATTACH_ROOT"].Value; got != "/opt/tenant-attachments" {
+		t.Errorf("SBX_ATTACH_ROOT = %q, want the agent's own binding", got)
+	}
+	if got := env["AGBX_ENV_NAME"].Value; got != defaultEnvName {
+		t.Errorf("AGBX_ENV_NAME = %q, want the default supply", got)
+	}
+}
+
+// A deployment with no default renders an agent with no sandbox configuration at
+// all — reported by the HandsReady condition rather than failing the render, so
+// the Brain still comes up and says what is missing.
+func TestRenderWithDefaults_NoDefaultLeavesHandsEmpty(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Hands = agentsv1alpha1.ManagedAgentHands{}
+
+	r, err := RenderWithDefaults(ma, "", RenderDefaults{})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	env := envMap(t, r.Deployment)
+	for _, name := range []string{"AGBX_ENV_NAME", "E2B_API_URL", "SBX_IMAGE"} {
+		if _, found := env[name]; found {
+			t.Errorf("%s rendered with no supply configured", name)
+		}
+	}
+}
+
+func TestWithDefaults_DoesNotMutateTheInputHands(t *testing.T) {
+	ma := fullAgent()
+	ma.Spec.Hands = agentsv1alpha1.ManagedAgentHands{}
+
+	out := WithDefaults(ma, RenderDefaults{Hands: defaultHands()})
+	if ma.Spec.Hands.External != nil {
+		t.Error("input spec.hands was mutated; a reconcile would report a spec change it made itself")
+	}
+	if out.Spec.Hands.External == nil {
+		t.Fatal("the copy did not get the default")
+	}
+	// The copy must not alias the default either: a later reconcile mutating one
+	// agent's spec would otherwise reach every other agent on the same default.
+	out.Spec.Hands.External.EnvName = "rewritten"
+	if again := WithDefaults(ma, RenderDefaults{Hands: defaultHands()}); again.Spec.Hands.External.EnvName != defaultEnvName {
+		t.Error("the default is shared by reference between agents")
+	}
+}
+
+// An agent created from a prompt alone must come out able to answer.
+//
+// A Brain with no model credential is the quietest way to ship a broken agent: it
+// starts, serves its API, passes its probes, and reports every harness
+// unavailable. Nothing fails — the agent simply never answers.
+func TestWithDefaults_FillsAnUndeclaredRuntime(t *testing.T) {
+	defaults := RenderDefaults{Runtime: &agentsv1alpha1.ManagedAgentRuntime{
+		ClaudeCode: &agentsv1alpha1.ClaudeCodeRuntime{
+			BaseURL:        "https://models.internal",
+			CredentialsRef: agentsv1alpha1.SecretKeySelector{Name: "platform", Key: "KEY"},
+			DefaultModel:   "m1",
+		},
+	}}
+	ma := &agentsv1alpha1.ManagedAgent{
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Spec: agentsv1alpha1.ManagedAgentSpec{
+			Runtime: agentsv1alpha1.ManagedAgentRuntime{Default: "claude-code"},
+		},
+	}
+	got := WithDefaults(ma, defaults)
+	if got.Spec.Runtime.ClaudeCode == nil {
+		t.Fatal("runtime was not filled in")
+	}
+	if got.Spec.Runtime.ClaudeCode.BaseURL != "https://models.internal" {
+		t.Errorf("baseURL = %q", got.Spec.Runtime.ClaudeCode.BaseURL)
+	}
+	// The agent's own choice of starting harness survives.
+	if got.Spec.Runtime.Default != "claude-code" {
+		t.Errorf("default = %q, want the agent's own", got.Spec.Runtime.Default)
+	}
+	// And the caller's object is untouched.
+	if ma.Spec.Runtime.ClaudeCode != nil {
+		t.Error("WithDefaults wrote to its argument")
+	}
+}
+
+// The console prefills the create form from the published endpoint and model
+// list, which makes the agent declare a runtime and suppresses the whole default.
+// The one field it cannot prefill is the credential, because the key never leaves
+// the cluster — so using the form as intended has to still produce a usable agent.
+func TestWithDefaults_LendsTheCredentialToTheDeploymentsOwnEndpoint(t *testing.T) {
+	defaults := RenderDefaults{Runtime: &agentsv1alpha1.ManagedAgentRuntime{
+		ClaudeCode: &agentsv1alpha1.ClaudeCodeRuntime{
+			BaseURL:        "https://models.internal",
+			CredentialsRef: agentsv1alpha1.SecretKeySelector{Name: "platform", Key: "KEY"},
+		},
+	}}
+	ma := &agentsv1alpha1.ManagedAgent{
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Spec: agentsv1alpha1.ManagedAgentSpec{Runtime: agentsv1alpha1.ManagedAgentRuntime{
+			Default: "claude-code",
+			// Prefilled by the console: same endpoint, no credential.
+			ClaudeCode: &agentsv1alpha1.ClaudeCodeRuntime{
+				BaseURL:      "https://models.internal",
+				DefaultModel: "m1",
+			},
+		}},
+	}
+	got := WithDefaults(ma, defaults)
+	if got.Spec.Runtime.ClaudeCode.CredentialsRef.Name != "platform" {
+		t.Fatalf("credential = %+v, want the platform's",
+			got.Spec.Runtime.ClaudeCode.CredentialsRef)
+	}
+	// The agent's own model choice is not overwritten by the default's.
+	if got.Spec.Runtime.ClaudeCode.DefaultModel != "m1" {
+		t.Errorf("defaultModel = %q, want the agent's", got.Spec.Runtime.ClaudeCode.DefaultModel)
+	}
+}
+
+// The safety rule, and the reason the endpoints have to match: lending the
+// platform's key to an agent that named its own endpoint would send that
+// credential to an address the tenant chose.
+func TestWithDefaults_NeverLendsTheCredentialToAForeignEndpoint(t *testing.T) {
+	defaults := RenderDefaults{Runtime: &agentsv1alpha1.ManagedAgentRuntime{
+		ClaudeCode: &agentsv1alpha1.ClaudeCodeRuntime{
+			BaseURL:        "https://models.internal",
+			CredentialsRef: agentsv1alpha1.SecretKeySelector{Name: "platform", Key: "KEY"},
+		},
+	}}
+	ma := &agentsv1alpha1.ManagedAgent{
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Spec: agentsv1alpha1.ManagedAgentSpec{Runtime: agentsv1alpha1.ManagedAgentRuntime{
+			Default: "claude-code",
+			ClaudeCode: &agentsv1alpha1.ClaudeCodeRuntime{
+				BaseURL: "https://somewhere-else.example.com",
+			},
+		}},
+	}
+	got := WithDefaults(ma, defaults)
+	if got.Spec.Runtime.ClaudeCode.CredentialsRef.Name != "" {
+		t.Fatalf("platform credential leaked to %q",
+			got.Spec.Runtime.ClaudeCode.BaseURL)
+	}
+}
+
+// A deployment that publishes no default leaves every agent to bring its own, and
+// must not have anything invented for it.
+func TestWithDefaults_NoRuntimeDefaultLeavesTheAgentAlone(t *testing.T) {
+	ma := &agentsv1alpha1.ManagedAgent{
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Spec: agentsv1alpha1.ManagedAgentSpec{
+			Runtime: agentsv1alpha1.ManagedAgentRuntime{Default: "claude-code"},
+		},
+	}
+	if got := WithDefaults(ma, RenderDefaults{}); got.Spec.Runtime.ClaudeCode != nil {
+		t.Error("a runtime was invented with no default configured")
+	}
+}
