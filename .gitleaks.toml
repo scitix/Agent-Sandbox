@@ -1,0 +1,46 @@
+# gitleaks configuration for the public agent-sandbox repository.
+#
+# This file carries the credential ruleset and the false-positive allowlists.
+# It deliberately does NOT enumerate the internal identifiers that must stay out
+# of this repo: writing that list down here would publish exactly the inventory
+# the scrubbing was meant to remove. Those rules live in the private release
+# tooling and are layered on top of this file when it runs.
+#
+# Placeholders to use instead of anything real: cluster names foo / bar / baz,
+# Prometheus labels prod-foo / prod-bar, hosts example.com and example.internal,
+# addresses 10.0.0.x and 192.0.2.x.
+
+title = "agent-sandbox public-repo hygiene"
+
+[extend]
+useDefault = true
+
+# Dependency manifests carry upstream package names that collide with the
+# layered codename rules, and the oapi-codegen output embeds the whole OpenAPI
+# document as a base64/gzip blob that trips the entropy-based default rules.
+# Neither carries internal data.
+[[allowlists]]
+description = "Lockfiles, vendored code and build output"
+paths = [
+  '''pnpm-lock\.yaml$''',
+  '''package-lock\.json$''',
+  '''bun\.lockb?$''',
+  '''yarn\.lock$''',
+  '''go\.sum$''',
+  '''uv\.lock$''',
+  '''poetry\.lock$''',
+  '''node_modules/''',
+  '''vendor/''',
+  '''\.next/''',
+  '''\.gitleaks\.toml$''',
+]
+
+[[allowlists]]
+description = "Generated bindings (base64/gzip OpenAPI blob, DO NOT EDIT)"
+paths = [
+  '''pkg/apiserver/gen/agentbox\.gen\.go$''',
+  '''pkg/e2bcompat/gen/e2b\.gen\.go$''',
+  '''pkg/wsproxy/gen/wsproxy\.gen\.go$''',
+  '''dashboard/lib/api/schema\.d\.ts$''',
+  '''sdk/python/abx/agentbox_sdk/_generated/''',
+]

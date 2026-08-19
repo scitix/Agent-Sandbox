@@ -97,6 +97,19 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
 .PHONY: install-hooks
+.PHONY: scan-secrets
+scan-secrets: ## Scan the full git history for credentials and internal identifiers (gitleaks).
+	@command -v gitleaks >/dev/null 2>&1 || { \
+		echo "gitleaks not found; install from https://github.com/gitleaks/gitleaks/releases"; exit 1; }
+	@if [ -f ../hack/gitleaks-internal.toml ]; then \
+		echo "Scanning with the internal deny-list layered on."; \
+		cd .. && gitleaks git "$$(basename $(CURDIR))" --config hack/gitleaks-internal.toml \
+			--no-banner --redact --verbose; \
+	else \
+		echo "Scanning with public rules only (internal deny-list not present)."; \
+		gitleaks git . --config .gitleaks.toml --no-banner --redact --verbose; \
+	fi
+
 install-hooks: ## Point git at the tracked hooks in hack/git-hooks (pre-commit lint+build gate)
 	@chmod +x hack/git-hooks/* 2>/dev/null || true
 	@git config core.hooksPath hack/git-hooks
