@@ -1,0 +1,49 @@
+# Backstop for the pre-commit hook in hack/git-hooks/pre-commit.
+#
+# The hook scans staged changes on the author's machine; this scans what
+# actually landed. On pull requests only the PR range is scanned, so the job
+# stays fast; on pushes to develop/main the full history is scanned, which is
+# what catches a force-push that reintroduces something.
+name: Secret Scan
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.28.0
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+            echo "Scanning PR range ${RANGE}"
+            gitleaks git . --log-opts="${RANGE}" \
+              --config .gitleaks.toml --no-banner --redact --verbose
+          else
+            echo "Scanning full history"
+            gitleaks git . --config .gitleaks.toml --no-banner --redact --verbose
+          fi

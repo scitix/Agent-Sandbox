@@ -27,7 +27,7 @@
 # Escape hatches:
 #   git commit --no-verify          # skip the hook entirely (native git flag)
 #   SKIP_HOOK=1 git commit ...       # same, via env var
-#   HOOK_SKIP="website go" git ...   # skip specific areas: go, dashboard, website, openapi
+#   HOOK_SKIP="website go" git ...   # skip specific areas: secrets, go, dashboard, website, openapi
 
 set -uo pipefail
 
@@ -114,6 +114,36 @@ fi
 
 printf '%spre-commit:%s areas → go=%s dashboard=%s website=%s openapi=%s\n' \
   "$BOLD" "$RESET" "$touched_go" "$touched_dashboard" "$touched_website" "$touched_openapi"
+
+# --- Secret / internal-identifier scan (always, cheap) -----------------------
+# This repository is published publicly. .gitleaks.toml holds the credential
+# ruleset and the allowlists; the deny-list of internal identifiers is layered
+# on from the parent checkout when this repo sits inside one, because naming
+# those identifiers in a public file would defeat the point. gitleaks resolves
+# extend.path relative to the working directory, hence the subshell cd.
+if ! is_skipped secrets; then
+  SECRETS_CWD="."; SECRETS_CFG=".gitleaks.toml"; SECRETS_TARGET="."; SECRETS_LAYER="public rules only"
+  PARENT="$(cd .. 2>/dev/null && pwd || true)"
+  if [ -n "$PARENT" ] && [ -f "$PARENT/hack/gitleaks-internal.toml" ]; then
+    SECRETS_CWD="$PARENT"
+    SECRETS_CFG="hack/gitleaks-internal.toml"
+    SECRETS_TARGET="$(basename "$REPO_ROOT")"
+    SECRETS_LAYER="incl. internal deny-list"
+  fi
+
+  secret_scan() {
+    ( cd "$SECRETS_CWD" && gitleaks git "$SECRETS_TARGET" --staged \
+        --config "$SECRETS_CFG" --no-banner --redact )
+  }
+
+  if command -v gitleaks >/dev/null 2>&1; then
+    run secrets "Secret scan ($SECRETS_LAYER)" secret_scan
+  else
+    printf '%s! %-22s gitleaks not installed, skipped (CI still gates)%s\n' \
+      "$YELLOW" "Secret scan" "$RESET"
+    printf '    install: https://github.com/gitleaks/gitleaks/releases\n'
+  fi
+fi
 
 # --- OpenAPI spec validation (cheap, run first) ------------------------------
 if $touched_openapi && ! is_skipped openapi; then

@@ -77,7 +77,7 @@ describe("filterClustersByVisibility", () => {
 // ─── Host aliases ─────────────────────────────────────────────────────────────
 
 describe("applyHostAlias", () => {
-  // The real block from the hub ConfigMap's clusters.yaml.
+  // Mirrors the hostAliases block of the hub ConfigMap's clusters.yaml.
   const aliases: ClusterHostAlias[] = [
     { ip: "10.0.0.1", hostnames: ["gw-a.example.internal"] },
     { ip: "10.0.0.2", hostnames: ["gw-b.example.internal"] },

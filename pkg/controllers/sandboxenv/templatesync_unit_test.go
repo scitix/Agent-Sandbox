@@ -26,8 +26,8 @@ import (
 // TestMergeRefreshedSpec_PreservesSchedulerTemplateMeta locks in the core
 // safety property: re-rendering replaces the pod-spec body (so field deletions
 // take effect) while preserving plugin-injected quota/reservation bookkeeping
-// keys that live only in spec.template.metadata (verified in production on the
-// foo cluster: instance-name, instance-quantity, worker-id, quota.data).
+// keys that live only in spec.template.metadata (verified in production:
+// instance-name, instance-quantity, worker-id, quota.data).
 func TestMergeRefreshedSpec_PreservesSchedulerTemplateMeta(t *testing.T) {
 	old := agentsv1alpha1.SandboxPoolSpec{
 		EmbeddedSandboxTemplate: agentsv1alpha1.EmbeddedSandboxTemplate{
