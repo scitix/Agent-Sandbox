@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
@@ -350,10 +351,8 @@ func TestEndAtAgreesBetweenDetailAndListing(t *testing.T) {
 		StartedAt: &started,
 		ClaimedAt: started,
 	}
+	sb.IdleTimeoutSeconds = ptr.To(int64(3600))
 	pool := makeTestPool("p", "ns", 1000, 2048)
-	pool.Annotations = map[string]string{
-		agentsv1alpha1.SandboxIdleTimeoutAnnotationKey: "3600",
-	}
 
 	detail := ToE2BSandboxDetail(&sb, pool, "")
 	listed := ToE2BListedSandbox(&sb, pool)
@@ -364,6 +363,89 @@ func TestEndAtAgreesBetweenDetailAndListing(t *testing.T) {
 	// carries no sub-second component. Deadlines do not need one.
 	if want := started.Add(time.Hour).UTC().Truncate(time.Second); !detail.EndAt.Equal(want) {
 		t.Errorf("endAt = %v, want claimedAt + idle timeout %v", detail.EndAt, want)
+	}
+}
+
+// endAt has to follow the timeout the caller asked for. The idle timeout used to be
+// looked up under the per-pod annotation key on the *pool* object, which never
+// carries it, so the lookup always missed and every sandbox reported the fallback
+// lifetime — `create(timeout=3600)` looked like it had been ignored and the pool
+// default looked like a cap that could not be overridden.
+func TestEndAtUsesSandboxIdleTimeoutNotPoolDefault(t *testing.T) {
+	claimed := time.Now().Add(-time.Minute)
+	pool := makeTestPool("p", "ns", 1000, 2048)
+	pool.Spec.DefaultIdleTimeout = &metav1.Duration{Duration: 5 * time.Minute}
+
+	sb := gen.Sandbox{
+		SandboxId:          "sbx-1",
+		Status:             gen.SandboxStatusRunning,
+		StartedAt:          &claimed,
+		ClaimedAt:          claimed,
+		IdleTimeoutSeconds: ptr.To(int64(3600)), // caller passed timeout=3600
+	}
+
+	want := claimed.Add(time.Hour).UTC().Truncate(time.Second)
+	if got := ToE2BSandboxDetail(&sb, pool, "").EndAt; !got.Equal(want) {
+		t.Errorf("detail endAt = %v, want claimedAt + the sandbox's own 1h timeout %v", got, want)
+	}
+	if got := ToE2BListedSandbox(&sb, pool).EndAt; !got.Equal(want) {
+		t.Errorf("listed endAt = %v, want claimedAt + the sandbox's own 1h timeout %v", got, want)
+	}
+}
+
+// With no per-sandbox timeout the pool default applies — and it is read from
+// spec.defaultIdleTimeout, which is where a pool actually declares it.
+func TestEndAtFallsBackToPoolSpecDefaultIdleTimeout(t *testing.T) {
+	claimed := time.Now().Add(-time.Minute)
+	pool := makeTestPool("p", "ns", 1000, 2048)
+	pool.Spec.DefaultIdleTimeout = &metav1.Duration{Duration: 30 * time.Minute}
+
+	sb := gen.Sandbox{
+		SandboxId: "sbx-1",
+		Status:    gen.SandboxStatusRunning,
+		StartedAt: &claimed,
+		ClaimedAt: claimed,
+	}
+
+	want := claimed.Add(30 * time.Minute).UTC().Truncate(time.Second)
+	if got := ToE2BSandboxDetail(&sb, pool, "").EndAt; !got.Equal(want) {
+		t.Errorf("endAt = %v, want claimedAt + pool default %v", got, want)
+	}
+}
+
+// A sandbox carrying its own timeout must report a real deadline even when the pool
+// cannot be loaded; the old code returned early on a nil pool and lost the value.
+func TestEndAtUsesSandboxTimeoutWithoutPool(t *testing.T) {
+	claimed := time.Now().Add(-time.Minute)
+	sb := gen.Sandbox{
+		SandboxId:          "sbx-1",
+		Status:             gen.SandboxStatusRunning,
+		StartedAt:          &claimed,
+		ClaimedAt:          claimed,
+		IdleTimeoutSeconds: ptr.To(int64(7200)),
+	}
+
+	want := claimed.Add(2 * time.Hour).UTC().Truncate(time.Second)
+	if got := ToE2BSandboxDetail(&sb, nil, "").EndAt; !got.Equal(want) {
+		t.Errorf("endAt = %v, want claimedAt + 2h %v", got, want)
+	}
+}
+
+// A sandbox with no idle timeout anywhere has no real deadline; the surface still has
+// to report a stable one rather than a moving target.
+func TestEndAtFallsBackToDefaultLifetimeWhenNoTimeoutAnywhere(t *testing.T) {
+	claimed := time.Now().Add(-time.Minute)
+	sb := gen.Sandbox{
+		SandboxId: "sbx-1",
+		Status:    gen.SandboxStatusRunning,
+		StartedAt: &claimed,
+		ClaimedAt: claimed,
+	}
+	pool := makeTestPool("p", "ns", 1000, 2048) // no DefaultIdleTimeout
+
+	want := claimed.Add(defaultSandboxLifetime)
+	if got := ToE2BSandboxDetail(&sb, pool, "").EndAt; !got.Equal(want) {
+		t.Errorf("endAt = %v, want startedAt + default lifetime %v", got, want)
 	}
 }
 

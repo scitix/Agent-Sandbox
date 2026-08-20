@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -298,29 +297,39 @@ func e2bEndAt(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) time.Time {
 	return e2bStartedAt(sb).Add(defaultSandboxLifetime)
 }
 
-// computeEndAt calculates endAt from claimedAt + idle-timeout annotation.
-// Returns empty string if timeout cannot be determined.
+// computeEndAt calculates endAt from claimedAt + the sandbox's idle timeout.
+// Returns empty string if the timeout cannot be determined.
 func computeEndAt(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) string {
-	if pool == nil || sb.ClaimedAt.IsZero() {
+	if sb.ClaimedAt.IsZero() {
 		return ""
 	}
-
-	// Check for default idle timeout in pool annotations
-	var timeoutSecs int64
-	if pool.Annotations != nil {
-		if ts, ok := pool.Annotations[agentsv1alpha1.SandboxIdleTimeoutAnnotationKey]; ok {
-			if v, parseErr := strconv.ParseInt(ts, 10, 64); parseErr == nil {
-				timeoutSecs = v
-			}
-		}
-	}
-
-	if timeoutSecs <= 0 {
+	timeout := sandboxIdleTimeout(sb, pool)
+	if timeout <= 0 {
 		return ""
 	}
+	return sb.ClaimedAt.Add(timeout).UTC().Format(time.RFC3339)
+}
 
-	endAt := sb.ClaimedAt.Add(time.Duration(timeoutSecs) * time.Second)
-	return endAt.UTC().Format(time.RFC3339)
+// sandboxIdleTimeout is the idle timeout in force for this sandbox.
+//
+// The sandbox's own resolved value wins over the pool default, mirroring the
+// precedence the create path already applies when it decides what to enforce
+// (request value > pool default). Reporting the pool default instead contradicts
+// the timeout actually being enforced.
+//
+// This used to read the per-pod idle-timeout annotation key off the *pool* object.
+// Pools never carry that key — their default lives in spec.defaultIdleTimeout — so
+// the lookup always missed and every sandbox reported the fallback lifetime
+// regardless of the timeout it was created with, making `create(timeout=...)` and
+// `setTimeout` look like they had been ignored.
+func sandboxIdleTimeout(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) time.Duration {
+	if sb.IdleTimeoutSeconds != nil && *sb.IdleTimeoutSeconds > 0 {
+		return time.Duration(*sb.IdleTimeoutSeconds) * time.Second
+	}
+	if pool != nil && pool.Spec.DefaultIdleTimeout != nil && pool.Spec.DefaultIdleTimeout.Duration > 0 {
+		return pool.Spec.DefaultIdleTimeout.Duration
+	}
+	return 0
 }
 
 // ExtractCPUFromQuantity converts a resource.Quantity to an int32 CPU count.

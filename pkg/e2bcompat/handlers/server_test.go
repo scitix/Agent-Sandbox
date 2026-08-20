@@ -452,3 +452,67 @@ func TestPostSandboxesSandboxIDConnect_NoTimeoutLeavesDeadlineAlone(t *testing.T
 		t.Errorf("SetTimeout called %d time(s) without a positive timeout", svc.timeoutHit)
 	}
 }
+
+// A killed sandbox stays queryable on the native API and is merged into the native
+// listing from the history store. The E2B state enum is running|paused with nothing
+// for "finished", so a terminated record must be dropped from the E2B listing rather
+// than reported as running — otherwise a reclaimed sandbox is advertised as usable
+// forever while GET/connect on the same ID correctly 404s, and callers cannot tell
+// which sandboxes are actually alive.
+func TestGetSandboxes_TerminatedRecordsAreNotListedAsRunning(t *testing.T) {
+	terminated := time.Now().Add(-10 * time.Minute)
+
+	withStatus := func(id string, status gen.SandboxStatus) gen.Sandbox {
+		sb := mkSandbox(id, nil)
+		sb.Status = status
+		return sb
+	}
+	// A release that has already happened but whose status field still lags.
+	staleRunning := mkSandbox("stale-running", nil)
+	staleRunning.TerminatedAt = &terminated
+
+	mock := &mockSandboxService{listItems: []gen.Sandbox{
+		withStatus("live-running", gen.SandboxStatusRunning),
+		withStatus("live-starting", gen.SandboxStatusStarting),
+		withStatus("dead-completed", gen.SandboxStatusCompleted),
+		withStatus("dead-failed", gen.SandboxStatusFailed),
+		withStatus("dead-canceled", gen.SandboxStatusCanceled),
+		withStatus("dead-released", gen.SandboxStatusReleased),
+		staleRunning,
+	}}
+	srv := &Server{sandbox: mock}
+
+	wantLive := map[string]bool{"live-running": true, "live-starting": true}
+
+	// v1 listing
+	gc, _ := ginCtxWithAuth()
+	resp, err := srv.GetSandboxes(gc, e2bgen.GetSandboxesRequestObject{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	v1 := resp.(e2bgen.GetSandboxes200JSONResponse)
+	if len(v1) != len(wantLive) {
+		t.Errorf("v1 listed %d sandboxes, want %d", len(v1), len(wantLive))
+	}
+	for _, sb := range v1 {
+		if !wantLive[sb.SandboxID] {
+			t.Errorf("v1 listed terminated sandbox %q as %q", sb.SandboxID, sb.State)
+		}
+	}
+
+	// v2 listing — the paginated surface the current SDKs use, so it has to agree.
+	gc2, _ := ginCtxWithAuth()
+	resp2, err := srv.GetV2Sandboxes(gc2, e2bgen.GetV2SandboxesRequestObject{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	v2 := resp2.(e2bgen.GetV2Sandboxes200JSONResponse)
+	if len(v2) != len(wantLive) {
+		t.Errorf("v2 listed %d sandboxes, want %d", len(v2), len(wantLive))
+	}
+	for _, sb := range v2 {
+		if !wantLive[sb.SandboxID] {
+			t.Errorf("v2 listed terminated sandbox %q as %q", sb.SandboxID, sb.State)
+		}
+	}
+}
