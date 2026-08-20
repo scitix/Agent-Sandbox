@@ -82,6 +82,15 @@ func SandboxBaseFromPod(pod *corev1.Pod) gen.Sandbox {
 			sb.StartedAt = &t
 		}
 	}
+	// The idle timeout actually in force for this sandbox. The pod annotation is the
+	// only place the resolved per-sandbox value exists: the create path writes it
+	// after choosing between the request value and the pool default, and SetTimeout
+	// rewrites it. A reader that instead consults the pool sees the default and
+	// silently reports the wrong deadline for every caller that passed its own
+	// timeout, so anything deriving a deadline must read it from here.
+	if secs := parseDurationSecondsAnnotation(pod, agentsv1alpha1.SandboxIdleTimeoutAnnotationKey); secs > 0 {
+		sb.IdleTimeoutSeconds = ptr.To(int64(secs.Seconds()))
+	}
 	if len(containerImages) > 0 {
 		sb.ContainerImages = &containerImages
 	}

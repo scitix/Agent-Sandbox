@@ -82,6 +82,10 @@ class Sandbox:
             duration_seconds (int | Unset): Wall-clock duration of the sandbox in seconds. Set for Running (startedAt to
                 query time), Completed, Failed, and Released states (startedAt to terminatedAt). Omitted for Starting and
                 Canceled states.
+            idle_timeout_seconds (int | Unset): Idle timeout in effect for THIS sandbox, in seconds, as resolved at claim
+                time (request value overriding the pool default) and updated by SetTimeout. Omitted when the sandbox has no idle
+                timeout. This is the per-sandbox value, not the pool default in SandboxPool.spec.defaultIdleTimeout — a caller
+                that passed its own timeout sees the value it passed.
             failure_reason (str | Unset): Machine-readable reason code when status is Failed.
             exit_code (int | Unset): Exit code of the main container when the sandbox terminated.
             failure_message (str | Unset): Human-readable message describing the failure cause.
@@ -109,6 +113,7 @@ class Sandbox:
     terminated_at: datetime.datetime | Unset = UNSET
     recycled_at: datetime.datetime | Unset = UNSET
     duration_seconds: int | Unset = UNSET
+    idle_timeout_seconds: int | Unset = UNSET
     failure_reason: str | Unset = UNSET
     exit_code: int | Unset = UNSET
     failure_message: str | Unset = UNSET
@@ -172,6 +177,8 @@ class Sandbox:
 
         duration_seconds = self.duration_seconds
 
+        idle_timeout_seconds = self.idle_timeout_seconds
+
         failure_reason = self.failure_reason
 
         exit_code = self.exit_code
@@ -221,6 +228,8 @@ class Sandbox:
             field_dict["recycledAt"] = recycled_at
         if duration_seconds is not UNSET:
             field_dict["durationSeconds"] = duration_seconds
+        if idle_timeout_seconds is not UNSET:
+            field_dict["idleTimeoutSeconds"] = idle_timeout_seconds
         if failure_reason is not UNSET:
             field_dict["failureReason"] = failure_reason
         if exit_code is not UNSET:
@@ -335,6 +344,8 @@ class Sandbox:
 
         duration_seconds = d.pop("durationSeconds", UNSET)
 
+        idle_timeout_seconds = d.pop("idleTimeoutSeconds", UNSET)
+
         failure_reason = d.pop("failureReason", UNSET)
 
         exit_code = d.pop("exitCode", UNSET)
@@ -376,6 +387,7 @@ class Sandbox:
             terminated_at=terminated_at,
             recycled_at=recycled_at,
             duration_seconds=duration_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
             failure_reason=failure_reason,
             exit_code=exit_code,
             failure_message=failure_message,

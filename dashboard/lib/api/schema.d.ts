@@ -800,6 +800,11 @@ export interface components {
              * @description Wall-clock duration of the sandbox in seconds. Set for Running (startedAt to query time), Completed, Failed, and Released states (startedAt to terminatedAt). Omitted for Starting and Canceled states.
              */
             durationSeconds?: number;
+            /**
+             * Format: int64
+             * @description Idle timeout in effect for THIS sandbox, in seconds, as resolved at claim time (request value overriding the pool default) and updated by SetTimeout. Omitted when the sandbox has no idle timeout. This is the per-sandbox value, not the pool default in SandboxPool.spec.defaultIdleTimeout — a caller that passed its own timeout sees the value it passed.
+             */
+            idleTimeoutSeconds?: number;
             /** @description Machine-readable reason code when status is Failed. */
             failureReason?: string;
             /**

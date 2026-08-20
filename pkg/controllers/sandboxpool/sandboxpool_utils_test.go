@@ -172,3 +172,63 @@ func TestResolveStartupTimeout_InvalidAnnotationFallsBackToPool(t *testing.T) {
 		t.Fatalf("expected 2m (pool fallback), got %v", got)
 	}
 }
+
+// ── SandboxBaseFromPod: idle timeout ─────────────────────────────────────────
+
+// The pod annotation is the only record of the idle timeout resolved for a given
+// sandbox (request value overriding the pool default, then rewritten by SetTimeout),
+// so it has to reach the API model. Without it every reader that needs a deadline
+// falls back to the pool default and reports a timeout the sandbox is not running
+// under.
+func TestSandboxBaseFromPod_IdleTimeoutSeconds(t *testing.T) {
+	newPod := func(annotations map[string]string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name:        "p-1",
+			Namespace:   "ns",
+			Annotations: annotations,
+		}}
+	}
+
+	tests := []struct {
+		name string
+		anns map[string]string
+		want *int64
+	}{
+		{
+			name: "resolved timeout is carried through",
+			anns: map[string]string{agentsv1alpha1.SandboxIdleTimeoutAnnotationKey: "3600"},
+			want: ptrInt64(3600),
+		},
+		{
+			name: "absent annotation means no timeout",
+			anns: nil,
+			want: nil,
+		},
+		{
+			name: "explicit zero means no timeout",
+			anns: map[string]string{agentsv1alpha1.SandboxIdleTimeoutAnnotationKey: "0"},
+			want: nil,
+		},
+		{
+			name: "unparseable value is not reported as a timeout",
+			anns: map[string]string{agentsv1alpha1.SandboxIdleTimeoutAnnotationKey: "not-a-number"},
+			want: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SandboxBaseFromPod(newPod(tc.anns)).IdleTimeoutSeconds
+			switch {
+			case tc.want == nil && got != nil:
+				t.Fatalf("idleTimeoutSeconds = %d, want nil", *got)
+			case tc.want != nil && got == nil:
+				t.Fatalf("idleTimeoutSeconds = nil, want %d", *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Fatalf("idleTimeoutSeconds = %d, want %d", *got, *tc.want)
+			}
+		})
+	}
+}
+
+func ptrInt64(v int64) *int64 { return &v }
