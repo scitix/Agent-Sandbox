@@ -57,13 +57,14 @@ func ctxWithAuth(ns string) context.Context {
 }
 
 // ginCtxWithAuth builds a *gin.Context (which doubles as a context.Context under
-// oapi-codegen's strict server) backed by a recorder so tests can assert both the
-// handler result and any response headers it sets (e.g. x-next-token).
-func ginCtxWithAuth() (*gin.Context, *httptest.ResponseRecorder) {
+// oapi-codegen's strict server) backed by a recorder. Pagination headers are
+// asserted on the typed response struct instead, so the recorder itself is not
+// returned.
+func ginCtxWithAuth() *gin.Context {
 	rec := httptest.NewRecorder()
 	gc, _ := gin.CreateTestContext(rec)
 	gc.Set("auth", apidomain.AuthInfo{Namespace: "test-ns"})
-	return gc, rec
+	return gc
 }
 
 func mkSandbox(id string, metadata map[string]string) gen.Sandbox {
@@ -90,7 +91,7 @@ func TestGetV2Sandboxes_MetadataFilter(t *testing.T) {
 	srv := &Server{sandbox: mock}
 
 	filter := "app=prod"
-	gc, _ := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 	resp, err := srv.GetV2Sandboxes(gc, e2bgen.GetV2SandboxesRequestObject{
 		Params: e2bgen.GetV2SandboxesParams{Metadata: &filter},
 	})
@@ -101,10 +102,10 @@ func TestGetV2Sandboxes_MetadataFilter(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected response type %T", resp)
 	}
-	if len(page) != 2 {
-		t.Fatalf("want 2 sandboxes matching app=prod, got %d", len(page))
+	if len(page.Body) != 2 {
+		t.Fatalf("want 2 sandboxes matching app=prod, got %d", len(page.Body))
 	}
-	for _, sb := range page {
+	for _, sb := range page.Body {
 		if sb.SandboxID != "a" && sb.SandboxID != "c" {
 			t.Errorf("unexpected sandbox %q in filtered result", sb.SandboxID)
 		}
@@ -120,24 +121,24 @@ func TestGetV2Sandboxes_StateFilter(t *testing.T) {
 
 	// All sandboxes report "running"; filtering to paused yields none.
 	paused := []e2bgen.SandboxState{e2bgen.Paused}
-	gc, _ := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 	resp, err := srv.GetV2Sandboxes(gc, e2bgen.GetV2SandboxesRequestObject{
 		Params: e2bgen.GetV2SandboxesParams{State: &paused},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if page := resp.(e2bgen.GetV2Sandboxes200JSONResponse); len(page) != 0 {
-		t.Fatalf("want 0 paused sandboxes, got %d", len(page))
+	if page := resp.(e2bgen.GetV2Sandboxes200JSONResponse); len(page.Body) != 0 {
+		t.Fatalf("want 0 paused sandboxes, got %d", len(page.Body))
 	}
 
 	running := []e2bgen.SandboxState{e2bgen.Running}
-	gc2, _ := ginCtxWithAuth()
+	gc2 := ginCtxWithAuth()
 	resp2, _ := srv.GetV2Sandboxes(gc2, e2bgen.GetV2SandboxesRequestObject{
 		Params: e2bgen.GetV2SandboxesParams{State: &running},
 	})
-	if page := resp2.(e2bgen.GetV2Sandboxes200JSONResponse); len(page) != 2 {
-		t.Fatalf("want 2 running sandboxes, got %d", len(page))
+	if page := resp2.(e2bgen.GetV2Sandboxes200JSONResponse); len(page.Body) != 2 {
+		t.Fatalf("want 2 running sandboxes, got %d", len(page.Body))
 	}
 }
 
@@ -152,7 +153,7 @@ func TestGetV2Sandboxes_Pagination(t *testing.T) {
 	limit := int32(2)
 
 	// First page: 2 items + a next-token header pointing at the third item.
-	gc, rec := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 	resp, err := srv.GetV2Sandboxes(gc, e2bgen.GetV2SandboxesRequestObject{
 		Params: e2bgen.GetV2SandboxesParams{Limit: &limit},
 	})
@@ -160,36 +161,36 @@ func TestGetV2Sandboxes_Pagination(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	page := resp.(e2bgen.GetV2Sandboxes200JSONResponse)
-	if len(page) != 2 || page[0].SandboxID != "a" || page[1].SandboxID != "b" {
+	if len(page.Body) != 2 || page.Body[0].SandboxID != "a" || page.Body[1].SandboxID != "b" {
 		t.Fatalf("page 1 unexpected: %+v", page)
 	}
-	token := rec.Header().Get("x-next-token")
+	token := page.Headers.XNextToken
 	if token == "" {
 		t.Fatal("expected x-next-token header on non-final page")
 	}
 
 	// Second page: next 2 items.
-	gc2, _ := ginCtxWithAuth()
+	gc2 := ginCtxWithAuth()
 	resp2, _ := srv.GetV2Sandboxes(gc2, e2bgen.GetV2SandboxesRequestObject{
 		Params: e2bgen.GetV2SandboxesParams{Limit: &limit, NextToken: &token},
 	})
 	page2 := resp2.(e2bgen.GetV2Sandboxes200JSONResponse)
-	if len(page2) != 2 || page2[0].SandboxID != "c" || page2[1].SandboxID != "d" {
+	if len(page2.Body) != 2 || page2.Body[0].SandboxID != "c" || page2.Body[1].SandboxID != "d" {
 		t.Fatalf("page 2 unexpected: %+v", page2)
 	}
 
 	// Final page: 1 item, no next-token header.
 	token2 := decodeNextToken(&token)
 	nextTok := encodeNextToken(token2 + 2)
-	gc3, rec3 := ginCtxWithAuth()
+	gc3 := ginCtxWithAuth()
 	resp3, _ := srv.GetV2Sandboxes(gc3, e2bgen.GetV2SandboxesRequestObject{
 		Params: e2bgen.GetV2SandboxesParams{Limit: &limit, NextToken: &nextTok},
 	})
 	page3 := resp3.(e2bgen.GetV2Sandboxes200JSONResponse)
-	if len(page3) != 1 || page3[0].SandboxID != "e" {
+	if len(page3.Body) != 1 || page3.Body[0].SandboxID != "e" {
 		t.Fatalf("page 3 unexpected: %+v", page3)
 	}
-	if rec3.Header().Get("x-next-token") != "" {
+	if page3.Headers.XNextToken != "" {
 		t.Fatal("did not expect x-next-token header on final page")
 	}
 }
@@ -347,7 +348,7 @@ func TestPostSandboxesSandboxIDConnect_ReturnsSandboxAndAppliesTimeout(t *testin
 	sb := mkSandbox("sbx-1", nil)
 	svc := &mockConnectService{sandbox: &sb}
 	s := &Server{sandbox: svc}
-	gc, _ := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 
 	resp, err := s.PostSandboxesSandboxIDConnect(gc, e2bgen.PostSandboxesSandboxIDConnectRequestObject{
 		SandboxID: "sbx-1",
@@ -383,7 +384,7 @@ func TestPostSandboxesSandboxIDConnect_HistoricalRecordIsNotAttachable(t *testin
 		liveErr: apidomain.NewNotFound("sandbox \"sbx-done\" not found"),
 	}
 	s := &Server{sandbox: svc}
-	gc, _ := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 
 	resp, err := s.PostSandboxesSandboxIDConnect(gc, e2bgen.PostSandboxesSandboxIDConnectRequestObject{
 		SandboxID: "sbx-done",
@@ -409,7 +410,7 @@ func TestPostSandboxesSandboxIDConnect_MissingSandboxIs404(t *testing.T) {
 		liveErr: apidomain.NewNotFound("sandbox \"sbx-gone\" not found"),
 	}
 	s := &Server{sandbox: svc}
-	gc, _ := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 
 	resp, err := s.PostSandboxesSandboxIDConnect(gc, e2bgen.PostSandboxesSandboxIDConnectRequestObject{
 		SandboxID: "sbx-gone",
@@ -431,7 +432,7 @@ func TestPostSandboxesSandboxIDConnect_NoTimeoutLeavesDeadlineAlone(t *testing.T
 	sb := mkSandbox("sbx-2", nil)
 	svc := &mockConnectService{sandbox: &sb}
 	s := &Server{sandbox: svc}
-	gc, _ := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 
 	for _, body := range []*e2bgen.PostSandboxesSandboxIDConnectJSONRequestBody{
 		nil,
@@ -485,7 +486,7 @@ func TestGetSandboxes_TerminatedRecordsAreNotListedAsRunning(t *testing.T) {
 	wantLive := map[string]bool{"live-running": true, "live-starting": true}
 
 	// v1 listing
-	gc, _ := ginCtxWithAuth()
+	gc := ginCtxWithAuth()
 	resp, err := srv.GetSandboxes(gc, e2bgen.GetSandboxesRequestObject{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -501,16 +502,16 @@ func TestGetSandboxes_TerminatedRecordsAreNotListedAsRunning(t *testing.T) {
 	}
 
 	// v2 listing — the paginated surface the current SDKs use, so it has to agree.
-	gc2, _ := ginCtxWithAuth()
+	gc2 := ginCtxWithAuth()
 	resp2, err := srv.GetV2Sandboxes(gc2, e2bgen.GetV2SandboxesRequestObject{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	v2 := resp2.(e2bgen.GetV2Sandboxes200JSONResponse)
-	if len(v2) != len(wantLive) {
-		t.Errorf("v2 listed %d sandboxes, want %d", len(v2), len(wantLive))
+	if len(v2.Body) != len(wantLive) {
+		t.Errorf("v2 listed %d sandboxes, want %d", len(v2.Body), len(wantLive))
 	}
-	for _, sb := range v2 {
+	for _, sb := range v2.Body {
 		if !wantLive[sb.SandboxID] {
 			t.Errorf("v2 listed terminated sandbox %q as %q", sb.SandboxID, sb.State)
 		}

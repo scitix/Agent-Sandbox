@@ -25,8 +25,6 @@ const (
 	ApiKeyAuthScopes             = "ApiKeyAuth.Scopes"
 	AuthProviderBearerAuthScopes = "AuthProviderBearerAuth.Scopes"
 	AuthProviderTeamAuthScopes   = "AuthProviderTeamAuth.Scopes"
-	Supabase1TokenAuthScopes     = "Supabase1TokenAuth.Scopes"
-	Supabase2TeamAuthScopes      = "Supabase2TeamAuth.Scopes"
 )
 
 // Defines values for AWSRegistryType.
@@ -161,6 +159,24 @@ func (e NodeStatus) Valid() bool {
 	}
 }
 
+// Defines values for OrderDirection.
+const (
+	Asc  OrderDirection = "asc"
+	Desc OrderDirection = "desc"
+)
+
+// Valid indicates whether the value is a known member of the OrderDirection enum.
+func (e OrderDirection) Valid() bool {
+	switch e {
+	case Asc:
+		return true
+	case Desc:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SandboxOnTimeout.
 const (
 	Kill  SandboxOnTimeout = "kill"
@@ -275,6 +291,11 @@ type AdminSandboxKillResult struct {
 	KilledCount int `json:"killedCount"`
 }
 
+// AdminTeamRunningSandboxCounts Cached live sandbox index count keyed by team ID. Counts may briefly
+// include sandboxes transitioning out of running; teams without indexed
+// sandboxes are omitted.
+type AdminTeamRunningSandboxCounts map[string]int64
+
 // AssignTemplateTagsRequest defines model for AssignTemplateTagsRequest.
 type AssignTemplateTagsRequest struct {
 	// Tags Tags to assign to the template
@@ -325,6 +346,9 @@ type CPUCount = int32
 
 // ConnectSandbox defines model for ConnectSandbox.
 type ConnectSandbox struct {
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	Memory *bool `json:"memory,omitempty"`
+
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
 	Timeout int32 `json:"timeout"`
 }
@@ -405,6 +429,9 @@ type EnvdVersion = string
 type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
+
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed, internal_server_error.
+	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
 	Message string `json:"message"`
@@ -553,9 +580,15 @@ type NewSandbox struct {
 	// AutoPause Automatically pauses the sandbox after the timeout
 	AutoPause *bool `json:"autoPause,omitempty"`
 
+	// AutoPauseMemory Controls the snapshot kind taken when the sandbox auto-pauses on timeout (only relevant when autoPause is true). When false, the auto-pause drops the in-memory state and persists only the filesystem (a filesystem-only snapshot); resuming it cold-boots (reboots) the sandbox from disk. Such a snapshot cannot be auto-resumed by traffic and must be resumed explicitly, so it cannot be combined with autoResume. Defaults to true (full memory snapshot).
+	AutoPauseMemory *bool `json:"autoPauseMemory,omitempty"`
+
 	// AutoResume Auto-resume configuration for paused sandboxes.
 	AutoResume *SandboxAutoResumeConfig `json:"autoResume,omitempty"`
 	EnvVars    *EnvVars                 `json:"envVars,omitempty"`
+
+	// Iam Sandbox workload identity configuration. A non-empty, valid tokens map enables workload identity for the sandbox.
+	Iam *SandboxIam `json:"iam,omitempty"`
 
 	// Mcp MCP configuration for the sandbox
 	Mcp      *Mcp                  `json:"mcp,omitempty"`
@@ -571,6 +604,18 @@ type NewSandbox struct {
 	// Timeout Time to live for the sandbox in seconds.
 	Timeout      *int32                `json:"timeout,omitempty"`
 	VolumeMounts *[]SandboxVolumeMount `json:"volumeMounts,omitempty"`
+}
+
+// NewSecret defines model for NewSecret.
+type NewSecret struct {
+	// Metadata Customer metadata of the secret. Always present, empty when unset. At most 32 entries; keys are limited to 128 bytes, values to 1024 bytes, and a secret's metadata to 8192 bytes in total.
+	Metadata *SecretMetadata `json:"metadata,omitempty"`
+
+	// Name Name of the secret, unique within the project. Names are lower-cased before storage and returned in that canonical form; the sec_ prefix is reserved for secret identifiers.
+	Name string `json:"name"`
+
+	// Value Runtime marker stored as the secret's first version. The runtime resolves it to a value at sandbox egress.
+	Value string `json:"value"`
 }
 
 // NewTeamAPIKey defines model for NewTeamAPIKey.
@@ -620,15 +665,15 @@ type Node struct {
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 
+	// StatusChangedAt Time when the node status was last changed
+	StatusChangedAt time.Time `json:"statusChangedAt"`
+
 	// Version Version of the orchestrator
 	Version string `json:"version"`
 }
 
 // NodeDetail defines model for NodeDetail.
 type NodeDetail struct {
-	// CachedBuilds List of cached builds id on the node
-	CachedBuilds []string `json:"cachedBuilds"`
-
 	// ClusterID Identifier of the cluster
 	ClusterID string `json:"clusterID"`
 
@@ -659,6 +704,9 @@ type NodeDetail struct {
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 
+	// StatusChangedAt Time when the node status was last changed
+	StatusChangedAt time.Time `json:"statusChangedAt"`
+
 	// Version Version of the orchestrator
 	Version string `json:"version"`
 }
@@ -679,6 +727,18 @@ type NodeMetrics struct {
 
 	// Disks Detailed metrics for each disk/mount point
 	Disks []DiskMetrics `json:"disks"`
+
+	// HugePageSizeBytes Size of a single hugepage in bytes
+	HugePageSizeBytes uint64 `json:"hugePageSizeBytes"`
+
+	// HugePagesReserved Number of reserved hugepages (committed but not yet faulted)
+	HugePagesReserved uint64 `json:"hugePagesReserved"`
+
+	// HugePagesTotal Total number of preallocated hugepages on the node
+	HugePagesTotal uint64 `json:"hugePagesTotal"`
+
+	// HugePagesUsed Number of hugepages in use (total - free)
+	HugePagesUsed uint64 `json:"hugePagesUsed"`
 
 	// MemoryTotalBytes Total node memory in bytes
 	MemoryTotalBytes uint64 `json:"memoryTotalBytes"`
@@ -703,11 +763,17 @@ type NodeStatusChange struct {
 	Status NodeStatus `json:"status"`
 }
 
+// OrderDirection Sort direction
+type OrderDirection string
+
 // ResumedSandbox defines model for ResumedSandbox.
 type ResumedSandbox struct {
 	// AutoPause Automatically pauses the sandbox after the timeout
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AutoPause *bool `json:"autoPause,omitempty"`
+
+	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Time to live for the sandbox in seconds.
 	Timeout *int32 `json:"timeout,omitempty"`
@@ -813,6 +879,39 @@ type SandboxEgressProxyConfig struct {
 	// Username Optional SOCKS5 username (RFC 1929), max 255 bytes.
 	Username *string `json:"username,omitempty"`
 }
+
+// SandboxForkRequest defines model for SandboxForkRequest.
+type SandboxForkRequest struct {
+	// Count Number of forked sandboxes to create. All forks boot from the same snapshot, so the snapshot is captured once regardless of count. Each fork succeeds or fails independently; the outcome of each is reported in its entry of the response list.
+	Count *int32 `json:"count,omitempty"`
+
+	// Timeout Time to live for the new forked sandboxes in seconds.
+	Timeout *int32 `json:"timeout,omitempty"`
+}
+
+// SandboxForkResult Result of one requested fork. Exactly one of sandbox or error is set: sandbox when the fork started successfully, error when it failed to start.
+type SandboxForkResult struct {
+	Error   *Error   `json:"error,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+}
+
+// SandboxIam Sandbox workload identity configuration. A non-empty, valid tokens map enables workload identity for the sandbox.
+type SandboxIam struct {
+	// Tokens Named workload-token definitions, keyed by a caller-chosen token name.
+	Tokens *SandboxIamTokens `json:"tokens,omitempty"`
+}
+
+// SandboxIamToken defines model for SandboxIamToken.
+type SandboxIamToken struct {
+	// Audience Audience of the workload token, stored exactly as provided.
+	Audience string `json:"audience"`
+
+	// TokenType Workload token type.
+	TokenType string `json:"tokenType"`
+}
+
+// SandboxIamTokens Named workload-token definitions, keyed by a caller-chosen token name.
+type SandboxIamTokens map[string]SandboxIamToken
 
 // SandboxLifecycle Sandbox lifecycle policy returned by sandbox info.
 type SandboxLifecycle struct {
@@ -949,6 +1048,12 @@ type SandboxNetworkUpdateConfig struct {
 // SandboxOnTimeout Action taken when the sandbox times out.
 type SandboxOnTimeout string
 
+// SandboxPauseRequest defines model for SandboxPauseRequest.
+type SandboxPauseRequest struct {
+	// Memory Whether to capture a full memory snapshot. When false, only the filesystem is persisted and resuming the sandbox cold-boots (reboots) it from disk, losing in-memory state, running processes, and open connections. Resume it with an explicit request (connect or resume); auto-resume, which can be triggered by arbitrary traffic, refuses such a sandbox. Defaults to true.
+	Memory *bool `json:"memory,omitempty"`
+}
+
 // SandboxRefreshRequest defines model for SandboxRefreshRequest.
 type SandboxRefreshRequest struct {
 	// Duration Duration for which the sandbox should be kept alive in seconds
@@ -982,6 +1087,39 @@ type SandboxVolumeMount struct {
 // SandboxesWithMetrics defines model for SandboxesWithMetrics.
 type SandboxesWithMetrics struct {
 	Sandboxes map[string]SandboxMetric `json:"sandboxes"`
+}
+
+// Secret Metadata of a secret. It never carries the secret value.
+type Secret struct {
+	// CreatedAt Time when the secret was created
+	CreatedAt time.Time `json:"createdAt"`
+
+	// CurrentVersion Version served to readers that do not name one
+	CurrentVersion int64 `json:"currentVersion"`
+
+	// Metadata Customer metadata of the secret. Always present, empty when unset. At most 32 entries; keys are limited to 128 bytes, values to 1024 bytes, and a secret's metadata to 8192 bytes in total.
+	Metadata SecretMetadata `json:"metadata"`
+
+	// Name Name of the secret, unique within the project
+	Name string `json:"name"`
+
+	// SecretID Identifier of the secret
+	SecretID string `json:"secretID"`
+
+	// UpdatedAt Time when the secret was last updated
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// SecretMetadata Customer metadata of the secret. Always present, empty when unset. At most 32 entries; keys are limited to 128 bytes, values to 1024 bytes, and a secret's metadata to 8192 bytes in total.
+type SecretMetadata map[string]string
+
+// SecretUpdate defines model for SecretUpdate.
+type SecretUpdate struct {
+	// Metadata Customer metadata of the secret. Always present, empty when unset. At most 32 entries; keys are limited to 128 bytes, values to 1024 bytes, and a secret's metadata to 8192 bytes in total.
+	Metadata *SecretMetadata `json:"metadata,omitempty"`
+
+	// Value Runtime marker stored as the secret's new version. The runtime resolves it to a value at sandbox egress.
+	Value string `json:"value"`
 }
 
 // SnapshotInfo defines model for SnapshotInfo.
@@ -1414,6 +1552,12 @@ type Volume struct {
 
 // VolumeAndToken defines model for VolumeAndToken.
 type VolumeAndToken struct {
+	// Domain Domain to use as the destination for volume content requests,
+	// replacing the default `api.<E2B_DOMAIN>`. Only returned when the
+	// team is connected to a custom (BYOC) cluster; absent otherwise, in
+	// which case the default domain is used.
+	Domain *string `json:"domain,omitempty"`
+
 	// Name Name of the volume
 	Name string `json:"name"`
 
@@ -1445,6 +1589,9 @@ type PaginationNextToken = string
 // SandboxID defines model for sandboxID.
 type SandboxID = string
 
+// SecretID Identifier of the secret (sec_ prefixed), or its canonical lower-case name
+type SecretID = string
+
 // TeamID defines model for teamID.
 type TeamID = string
 
@@ -1469,8 +1616,23 @@ type N404 = Error
 // N409 defines model for 409.
 type N409 = Error
 
+// N410 defines model for 410.
+type N410 = Error
+
+// N429 defines model for 429.
+type N429 = Error
+
 // N500 defines model for 500.
 type N500 = Error
+
+// N502 defines model for 502.
+type N502 = Error
+
+// N503 defines model for 503.
+type N503 = Error
+
+// N504 defines model for 504.
+type N504 = Error
 
 // GetNodesParams defines parameters for GetNodes.
 type GetNodesParams struct {
@@ -1512,9 +1674,21 @@ type GetSandboxesSandboxIDMetricsParams struct {
 	End   *int64 `form:"end,omitempty" json:"end,omitempty"`
 }
 
+// GetSecretsParams defines parameters for GetSecrets.
+type GetSecretsParams struct {
+	// NextToken Cursor to start the list from
+	NextToken *PaginationNextToken `form:"nextToken,omitempty" json:"nextToken,omitempty"`
+
+	// Limit Maximum number of items to return per page
+	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // GetSnapshotsParams defines parameters for GetSnapshots.
 type GetSnapshotsParams struct {
 	SandboxID *string `form:"sandboxID,omitempty" json:"sandboxID,omitempty"`
+
+	// Name Filter snapshots by name or ID, optionally tag-qualified (e.g. "my-snapshot", "my-team/my-snapshot" or "my-snapshot:v1").
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
 
 	// Limit Maximum number of items to return per page
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
@@ -1589,6 +1763,15 @@ type GetV2SandboxesParams struct {
 	// State Filter sandboxes by one or more states
 	State *[]SandboxState `form:"state,omitempty" json:"state,omitempty"`
 
+	// Order Sort direction by sandbox start time. Defaults to desc (newest first).
+	Order *OrderDirection `form:"order,omitempty" json:"order,omitempty"`
+
+	// StartedAfter Return sandboxes started at or after this timestamp.
+	StartedAfter *time.Time `form:"startedAfter,omitempty" json:"startedAfter,omitempty"`
+
+	// Template Filter sandboxes by a template ID or alias.
+	Template *string `form:"template,omitempty" json:"template,omitempty"`
+
 	// NextToken Cursor to start the list from
 	NextToken *PaginationNextToken `form:"nextToken,omitempty" json:"nextToken,omitempty"`
 
@@ -1614,6 +1797,17 @@ type GetV2SandboxesSandboxIDLogsParams struct {
 	Search *string `form:"search,omitempty" json:"search,omitempty"`
 }
 
+// GetV2TemplatesParams defines parameters for GetV2Templates.
+type GetV2TemplatesParams struct {
+	TeamID *string `form:"teamID,omitempty" json:"teamID,omitempty"`
+
+	// NextToken Cursor to start the list from
+	NextToken *PaginationNextToken `form:"nextToken,omitempty" json:"nextToken,omitempty"`
+
+	// Limit Maximum number of items to return per page
+	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // PostAccessTokensJSONRequestBody defines body for PostAccessTokens for application/json ContentType.
 type PostAccessTokensJSONRequestBody = NewAccessToken
 
@@ -1635,8 +1829,14 @@ type PostSandboxesJSONRequestBody = NewSandbox
 // PostSandboxesSandboxIDConnectJSONRequestBody defines body for PostSandboxesSandboxIDConnect for application/json ContentType.
 type PostSandboxesSandboxIDConnectJSONRequestBody = ConnectSandbox
 
+// PostSandboxesSandboxIDForkJSONRequestBody defines body for PostSandboxesSandboxIDFork for application/json ContentType.
+type PostSandboxesSandboxIDForkJSONRequestBody = SandboxForkRequest
+
 // PutSandboxesSandboxIDNetworkJSONRequestBody defines body for PutSandboxesSandboxIDNetwork for application/json ContentType.
 type PutSandboxesSandboxIDNetworkJSONRequestBody = SandboxNetworkUpdateConfig
+
+// PostSandboxesSandboxIDPauseJSONRequestBody defines body for PostSandboxesSandboxIDPause for application/json ContentType.
+type PostSandboxesSandboxIDPauseJSONRequestBody = SandboxPauseRequest
 
 // PostSandboxesSandboxIDRefreshesJSONRequestBody defines body for PostSandboxesSandboxIDRefreshes for application/json ContentType.
 type PostSandboxesSandboxIDRefreshesJSONRequestBody = SandboxRefreshRequest
@@ -1649,6 +1849,12 @@ type PostSandboxesSandboxIDSnapshotsJSONRequestBody = SandboxSnapshotRequest
 
 // PostSandboxesSandboxIDTimeoutJSONRequestBody defines body for PostSandboxesSandboxIDTimeout for application/json ContentType.
 type PostSandboxesSandboxIDTimeoutJSONRequestBody = SandboxTimeoutRequest
+
+// PostSecretsJSONRequestBody defines body for PostSecrets for application/json ContentType.
+type PostSecretsJSONRequestBody = NewSecret
+
+// PostSecretsSecretIDJSONRequestBody defines body for PostSecretsSecretID for application/json ContentType.
+type PostSecretsSecretIDJSONRequestBody = SecretUpdate
 
 // PostTemplatesJSONRequestBody defines body for PostTemplates for application/json ContentType.
 type PostTemplatesJSONRequestBody = TemplateBuildRequest
@@ -1801,12 +2007,15 @@ func (t *FromImageRegistry) UnmarshalJSON(b []byte) error {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-
+	// Create access token
 	// (POST /access-tokens)
 	PostAccessTokens(c *gin.Context)
-
+	// Delete access token
 	// (DELETE /access-tokens/{accessTokenID})
 	DeleteAccessTokensAccessTokenID(c *gin.Context, accessTokenID AccessTokenID)
+	// Count running sandboxes by team
+	// (GET /admin/sandboxes/running-counts)
+	GetAdminSandboxesRunningCounts(c *gin.Context)
 	// Create team API key as admin
 	// (POST /admin/teams/{teamID}/api-keys)
 	PostAdminTeamsTeamIDApiKeys(c *gin.Context, teamID openapi_types.UUID)
@@ -1819,154 +2028,175 @@ type ServerInterface interface {
 	// Kill all sandboxes for a team
 	// (POST /admin/teams/{teamID}/sandboxes/kill)
 	PostAdminTeamsTeamIDSandboxesKill(c *gin.Context, teamID openapi_types.UUID)
-
+	// List team API keys
 	// (GET /api-keys)
 	GetApiKeys(c *gin.Context)
-
+	// Create team API key
 	// (POST /api-keys)
 	PostApiKeys(c *gin.Context)
-
+	// Delete team API key
 	// (DELETE /api-keys/{apiKeyID})
 	DeleteApiKeysApiKeyID(c *gin.Context, apiKeyID ApiKeyID)
-
+	// Update team API key
 	// (PATCH /api-keys/{apiKeyID})
 	PatchApiKeysApiKeyID(c *gin.Context, apiKeyID ApiKeyID)
-
+	// Health check
 	// (GET /health)
 	GetHealth(c *gin.Context)
-
+	// List nodes
 	// (GET /nodes)
 	GetNodes(c *gin.Context, params GetNodesParams)
-
+	// Node info
 	// (GET /nodes/{nodeID})
 	GetNodesNodeID(c *gin.Context, nodeID NodeID, params GetNodesNodeIDParams)
-
+	// Change node status
 	// (POST /nodes/{nodeID})
 	PostNodesNodeID(c *gin.Context, nodeID NodeID)
-
+	// List running sandboxes
 	// (GET /sandboxes)
 	GetSandboxes(c *gin.Context, params GetSandboxesParams)
-
+	// Create sandbox
 	// (POST /sandboxes)
 	PostSandboxes(c *gin.Context)
-
+	// List sandbox metrics
 	// (GET /sandboxes/metrics)
 	GetSandboxesMetrics(c *gin.Context, params GetSandboxesMetricsParams)
-
+	// Kill sandbox
 	// (DELETE /sandboxes/{sandboxID})
 	DeleteSandboxesSandboxID(c *gin.Context, sandboxID SandboxID)
-
+	// Sandbox
 	// (GET /sandboxes/{sandboxID})
 	GetSandboxesSandboxID(c *gin.Context, sandboxID SandboxID)
-
+	// Connect sandbox
 	// (POST /sandboxes/{sandboxID}/connect)
 	PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID SandboxID)
-
+	// Fork sandbox
+	// (POST /sandboxes/{sandboxID}/fork)
+	PostSandboxesSandboxIDFork(c *gin.Context, sandboxID SandboxID)
+	// Sandbox logs
 	// (GET /sandboxes/{sandboxID}/logs)
 	GetSandboxesSandboxIDLogs(c *gin.Context, sandboxID SandboxID, params GetSandboxesSandboxIDLogsParams)
-
+	// Sandbox metrics
 	// (GET /sandboxes/{sandboxID}/metrics)
 	GetSandboxesSandboxIDMetrics(c *gin.Context, sandboxID SandboxID, params GetSandboxesSandboxIDMetricsParams)
-
+	// Update sandbox network
 	// (PUT /sandboxes/{sandboxID}/network)
 	PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID SandboxID)
-
+	// Pause sandbox
 	// (POST /sandboxes/{sandboxID}/pause)
 	PostSandboxesSandboxIDPause(c *gin.Context, sandboxID SandboxID)
-
+	// Refresh sandbox
 	// (POST /sandboxes/{sandboxID}/refreshes)
 	PostSandboxesSandboxIDRefreshes(c *gin.Context, sandboxID SandboxID)
-
+	// Resume sandbox
 	// (POST /sandboxes/{sandboxID}/resume)
 	PostSandboxesSandboxIDResume(c *gin.Context, sandboxID SandboxID)
-
+	// Create snapshot
 	// (POST /sandboxes/{sandboxID}/snapshots)
 	PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID SandboxID)
-
+	// Set sandbox timeout
 	// (POST /sandboxes/{sandboxID}/timeout)
 	PostSandboxesSandboxIDTimeout(c *gin.Context, sandboxID SandboxID)
-
+	// List project secrets
+	// (GET /secrets)
+	GetSecrets(c *gin.Context, params GetSecretsParams)
+	// Create a secret
+	// (POST /secrets)
+	PostSecrets(c *gin.Context)
+	// Delete a secret
+	// (DELETE /secrets/{secretID})
+	DeleteSecretsSecretID(c *gin.Context, secretID SecretID)
+	// Get a secret
+	// (GET /secrets/{secretID})
+	GetSecretsSecretID(c *gin.Context, secretID SecretID)
+	// Update a secret
+	// (POST /secrets/{secretID})
+	PostSecretsSecretID(c *gin.Context, secretID SecretID)
+	// List snapshots
 	// (GET /snapshots)
 	GetSnapshots(c *gin.Context, params GetSnapshotsParams)
-
+	// List teams
 	// (GET /teams)
 	GetTeams(c *gin.Context)
-
+	// Team metrics
 	// (GET /teams/{teamID}/metrics)
 	GetTeamsTeamIDMetrics(c *gin.Context, teamID TeamID, params GetTeamsTeamIDMetricsParams)
-
+	// Maximum team metrics
 	// (GET /teams/{teamID}/metrics/max)
 	GetTeamsTeamIDMetricsMax(c *gin.Context, teamID TeamID, params GetTeamsTeamIDMetricsMaxParams)
-
+	// List templates
 	// (GET /templates)
 	GetTemplates(c *gin.Context, params GetTemplatesParams)
-
+	// Create template
 	// (POST /templates)
 	PostTemplates(c *gin.Context)
-
+	// Check template alias
 	// (GET /templates/aliases/{alias})
 	GetTemplatesAliasesAlias(c *gin.Context, alias string)
-
+	// Delete template tags
 	// (DELETE /templates/tags)
 	DeleteTemplatesTags(c *gin.Context)
-
+	// Assign template tags
 	// (POST /templates/tags)
 	PostTemplatesTags(c *gin.Context)
-
+	// Delete template
 	// (DELETE /templates/{templateID})
 	DeleteTemplatesTemplateID(c *gin.Context, templateID TemplateID)
-
+	// List template builds
 	// (GET /templates/{templateID})
 	GetTemplatesTemplateID(c *gin.Context, templateID TemplateID, params GetTemplatesTemplateIDParams)
-
+	// Update template
 	// (PATCH /templates/{templateID})
 	PatchTemplatesTemplateID(c *gin.Context, templateID TemplateID)
-
+	// Rebuild template
 	// (POST /templates/{templateID})
 	PostTemplatesTemplateID(c *gin.Context, templateID TemplateID)
-
+	// Start template build
 	// (POST /templates/{templateID}/builds/{buildID})
 	PostTemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID TemplateID, buildID BuildID)
-
+	// Template build logs
 	// (GET /templates/{templateID}/builds/{buildID}/logs)
 	GetTemplatesTemplateIDBuildsBuildIDLogs(c *gin.Context, templateID TemplateID, buildID BuildID, params GetTemplatesTemplateIDBuildsBuildIDLogsParams)
-
+	// Template build status
 	// (GET /templates/{templateID}/builds/{buildID}/status)
 	GetTemplatesTemplateIDBuildsBuildIDStatus(c *gin.Context, templateID TemplateID, buildID BuildID, params GetTemplatesTemplateIDBuildsBuildIDStatusParams)
-
+	// Template build file upload URL
 	// (GET /templates/{templateID}/files/{hash})
 	GetTemplatesTemplateIDFilesHash(c *gin.Context, templateID TemplateID, hash string)
-
+	// List template tags
 	// (GET /templates/{templateID}/tags)
 	GetTemplatesTemplateIDTags(c *gin.Context, templateID TemplateID)
-
+	// List sandboxes (v2)
 	// (GET /v2/sandboxes)
 	GetV2Sandboxes(c *gin.Context, params GetV2SandboxesParams)
-
+	// Sandbox logs (v2)
 	// (GET /v2/sandboxes/{sandboxID}/logs)
 	GetV2SandboxesSandboxIDLogs(c *gin.Context, sandboxID SandboxID, params GetV2SandboxesSandboxIDLogsParams)
-
+	// List templates (v2)
+	// (GET /v2/templates)
+	GetV2Templates(c *gin.Context, params GetV2TemplatesParams)
+	// Create template (v2)
 	// (POST /v2/templates)
 	PostV2Templates(c *gin.Context)
-
+	// Update template (v2)
 	// (PATCH /v2/templates/{templateID})
 	PatchV2TemplatesTemplateID(c *gin.Context, templateID TemplateID)
-
+	// Start template build (v2)
 	// (POST /v2/templates/{templateID}/builds/{buildID})
 	PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID TemplateID, buildID BuildID)
-
+	// Create template (v3)
 	// (POST /v3/templates)
 	PostV3Templates(c *gin.Context)
-
+	// List team volumes
 	// (GET /volumes)
 	GetVolumes(c *gin.Context)
-
+	// Create team volume
 	// (POST /volumes)
 	PostVolumes(c *gin.Context)
-
+	// Delete team volume
 	// (DELETE /volumes/{volumeID})
 	DeleteVolumesVolumeID(c *gin.Context, volumeID VolumeID)
-
+	// Team volume
 	// (GET /volumes/{volumeID})
 	GetVolumesVolumeID(c *gin.Context, volumeID VolumeID)
 }
@@ -1982,8 +2212,6 @@ type MiddlewareFunc func(c *gin.Context)
 
 // PostAccessTokens operation middleware
 func (siw *ServerInterfaceWrapper) PostAccessTokens(c *gin.Context) {
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2011,8 +2239,6 @@ func (siw *ServerInterfaceWrapper) DeleteAccessTokensAccessTokenID(c *gin.Contex
 		return
 	}
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2023,6 +2249,21 @@ func (siw *ServerInterfaceWrapper) DeleteAccessTokensAccessTokenID(c *gin.Contex
 	}
 
 	siw.Handler.DeleteAccessTokensAccessTokenID(c, accessTokenID)
+}
+
+// GetAdminSandboxesRunningCounts operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminSandboxesRunningCounts(c *gin.Context) {
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetAdminSandboxesRunningCounts(c)
 }
 
 // PostAdminTeamsTeamIDApiKeys operation middleware
@@ -2141,10 +2382,6 @@ func (siw *ServerInterfaceWrapper) PostAdminTeamsTeamIDSandboxesKill(c *gin.Cont
 // GetApiKeys operation middleware
 func (siw *ServerInterfaceWrapper) GetApiKeys(c *gin.Context) {
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2165,10 +2402,6 @@ func (siw *ServerInterfaceWrapper) GetApiKeys(c *gin.Context) {
 
 // PostApiKeys operation middleware
 func (siw *ServerInterfaceWrapper) PostApiKeys(c *gin.Context) {
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2197,10 +2430,6 @@ func (siw *ServerInterfaceWrapper) DeleteApiKeysApiKeyID(c *gin.Context) {
 		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter apiKeyID: %w", err), http.StatusBadRequest)
 		return
 	}
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2233,10 +2462,6 @@ func (siw *ServerInterfaceWrapper) PatchApiKeysApiKeyID(c *gin.Context) {
 		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter apiKeyID: %w", err), http.StatusBadRequest)
 		return
 	}
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2367,10 +2592,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxes(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2405,10 +2626,6 @@ func (siw *ServerInterfaceWrapper) PostSandboxes(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2433,10 +2650,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxesMetrics(c *gin.Context) {
 	var err error
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2490,10 +2703,6 @@ func (siw *ServerInterfaceWrapper) DeleteSandboxesSandboxID(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2527,10 +2736,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxID(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2566,10 +2771,6 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDConnect(c *gin.Context)
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2588,6 +2789,40 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDConnect(c *gin.Context)
 	siw.Handler.PostSandboxesSandboxIDConnect(c, sandboxID)
 }
 
+// PostSandboxesSandboxIDFork operation middleware
+func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDFork(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostSandboxesSandboxIDFork(c, sandboxID)
+}
+
 // GetSandboxesSandboxIDLogs operation middleware
 func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDLogs(c *gin.Context) {
 
@@ -2603,10 +2838,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDLogs(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2661,10 +2892,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDMetrics(c *gin.Context) 
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2718,10 +2945,6 @@ func (siw *ServerInterfaceWrapper) PutSandboxesSandboxIDNetwork(c *gin.Context) 
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2755,10 +2978,6 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDPause(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2794,10 +3013,6 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDRefreshes(c *gin.Contex
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2831,10 +3046,6 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDResume(c *gin.Context) 
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2870,10 +3081,6 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDSnapshots(c *gin.Contex
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2908,10 +3115,6 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDTimeout(c *gin.Context)
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -2930,16 +3133,181 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDTimeout(c *gin.Context)
 	siw.Handler.PostSandboxesSandboxIDTimeout(c, sandboxID)
 }
 
+// GetSecrets operation middleware
+func (siw *ServerInterfaceWrapper) GetSecrets(c *gin.Context) {
+
+	var err error
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSecretsParams
+
+	// ------------- Optional query parameter "nextToken" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "nextToken", c.Request.URL.Query(), &params.NextToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter nextToken: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetSecrets(c, params)
+}
+
+// PostSecrets operation middleware
+func (siw *ServerInterfaceWrapper) PostSecrets(c *gin.Context) {
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostSecrets(c)
+}
+
+// DeleteSecretsSecretID operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSecretsSecretID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "secretID" -------------
+	var secretID SecretID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "secretID", c.Param("secretID"), &secretID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter secretID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteSecretsSecretID(c, secretID)
+}
+
+// GetSecretsSecretID operation middleware
+func (siw *ServerInterfaceWrapper) GetSecretsSecretID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "secretID" -------------
+	var secretID SecretID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "secretID", c.Param("secretID"), &secretID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter secretID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetSecretsSecretID(c, secretID)
+}
+
+// PostSecretsSecretID operation middleware
+func (siw *ServerInterfaceWrapper) PostSecretsSecretID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "secretID" -------------
+	var secretID SecretID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "secretID", c.Param("secretID"), &secretID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter secretID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostSecretsSecretID(c, secretID)
+}
+
 // GetSnapshots operation middleware
 func (siw *ServerInterfaceWrapper) GetSnapshots(c *gin.Context) {
 
 	var err error
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -2957,6 +3325,14 @@ func (siw *ServerInterfaceWrapper) GetSnapshots(c *gin.Context) {
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "sandboxID", c.Request.URL.Query(), &params.SandboxID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "name", c.Request.URL.Query(), &params.Name, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter name: %w", err), http.StatusBadRequest)
 		return
 	}
 
@@ -2991,8 +3367,6 @@ func (siw *ServerInterfaceWrapper) GetTeams(c *gin.Context) {
 
 	c.Set(AccessTokenAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3020,10 +3394,6 @@ func (siw *ServerInterfaceWrapper) GetTeamsTeamIDMetrics(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3077,10 +3447,6 @@ func (siw *ServerInterfaceWrapper) GetTeamsTeamIDMetricsMax(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3143,10 +3509,6 @@ func (siw *ServerInterfaceWrapper) GetTemplates(c *gin.Context) {
 
 	c.Set(AccessTokenAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3181,10 +3543,6 @@ func (siw *ServerInterfaceWrapper) PostTemplates(c *gin.Context) {
 
 	c.Set(AccessTokenAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3215,10 +3573,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesAliasesAlias(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3242,10 +3596,6 @@ func (siw *ServerInterfaceWrapper) DeleteTemplatesTags(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3268,10 +3618,6 @@ func (siw *ServerInterfaceWrapper) DeleteTemplatesTags(c *gin.Context) {
 func (siw *ServerInterfaceWrapper) PostTemplatesTags(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3309,10 +3655,6 @@ func (siw *ServerInterfaceWrapper) DeleteTemplatesTemplateID(c *gin.Context) {
 
 	c.Set(AccessTokenAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3346,10 +3688,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateID(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3406,10 +3744,6 @@ func (siw *ServerInterfaceWrapper) PatchTemplatesTemplateID(c *gin.Context) {
 
 	c.Set(AccessTokenAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3443,10 +3777,6 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTemplateID(c *gin.Context) {
 	}
 
 	c.Set(AccessTokenAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3486,10 +3816,6 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTemplateIDBuildsBuildID(c *gin.C
 	}
 
 	c.Set(AccessTokenAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3531,10 +3857,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDLogs(c *gi
 	c.Set(AccessTokenAuthScopes, []string{})
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3624,10 +3946,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDStatus(c *
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3700,10 +4018,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDFilesHash(c *gin.Contex
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3738,10 +4052,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDTags(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3767,10 +4077,6 @@ func (siw *ServerInterfaceWrapper) GetV2Sandboxes(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3795,6 +4101,30 @@ func (siw *ServerInterfaceWrapper) GetV2Sandboxes(c *gin.Context) {
 	err = runtime.BindQueryParameterWithOptions("form", false, false, "state", c.Request.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter state: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "order" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "order", c.Request.URL.Query(), &params.Order, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter order: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "startedAfter" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "startedAfter", c.Request.URL.Query(), &params.StartedAfter, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter startedAfter: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "template" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "template", c.Request.URL.Query(), &params.Template, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter template: %w", err), http.StatusBadRequest)
 		return
 	}
 
@@ -3839,10 +4169,6 @@ func (siw *ServerInterfaceWrapper) GetV2SandboxesSandboxIDLogs(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3905,14 +4231,64 @@ func (siw *ServerInterfaceWrapper) GetV2SandboxesSandboxIDLogs(c *gin.Context) {
 	siw.Handler.GetV2SandboxesSandboxIDLogs(c, sandboxID, params)
 }
 
+// GetV2Templates operation middleware
+func (siw *ServerInterfaceWrapper) GetV2Templates(c *gin.Context) {
+
+	var err error
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AccessTokenAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetV2TemplatesParams
+
+	// ------------- Optional query parameter "teamID" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "teamID", c.Request.URL.Query(), &params.TeamID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "nextToken" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "nextToken", c.Request.URL.Query(), &params.NextToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter nextToken: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetV2Templates(c, params)
+}
+
 // PostV2Templates operation middleware
 func (siw *ServerInterfaceWrapper) PostV2Templates(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3949,10 +4325,6 @@ func (siw *ServerInterfaceWrapper) PatchV2TemplatesTemplateID(c *gin.Context) {
 	c.Set(ApiKeyAuthScopes, []string{})
 
 	c.Set(AccessTokenAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3997,10 +4369,6 @@ func (siw *ServerInterfaceWrapper) PostV2TemplatesTemplateIDBuildsBuildID(c *gin
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -4023,10 +4391,6 @@ func (siw *ServerInterfaceWrapper) PostV2TemplatesTemplateIDBuildsBuildID(c *gin
 func (siw *ServerInterfaceWrapper) PostV3Templates(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -4051,10 +4415,6 @@ func (siw *ServerInterfaceWrapper) GetVolumes(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -4077,10 +4437,6 @@ func (siw *ServerInterfaceWrapper) GetVolumes(c *gin.Context) {
 func (siw *ServerInterfaceWrapper) PostVolumes(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -4116,10 +4472,6 @@ func (siw *ServerInterfaceWrapper) DeleteVolumesVolumeID(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -4153,10 +4505,6 @@ func (siw *ServerInterfaceWrapper) GetVolumesVolumeID(c *gin.Context) {
 	}
 
 	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(Supabase1TokenAuthScopes, []string{})
-
-	c.Set(Supabase2TeamAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -4205,6 +4553,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.POST(options.BaseURL+"/access-tokens", wrapper.PostAccessTokens)
 	router.DELETE(options.BaseURL+"/access-tokens/:accessTokenID", wrapper.DeleteAccessTokensAccessTokenID)
+	router.GET(options.BaseURL+"/admin/sandboxes/running-counts", wrapper.GetAdminSandboxesRunningCounts)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/api-keys", wrapper.PostAdminTeamsTeamIDApiKeys)
 	router.DELETE(options.BaseURL+"/admin/teams/:teamID/api-keys/:apiKeyID", wrapper.DeleteAdminTeamsTeamIDApiKeysApiKeyID)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/builds/cancel", wrapper.PostAdminTeamsTeamIDBuildsCancel)
@@ -4223,6 +4572,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.DELETE(options.BaseURL+"/sandboxes/:sandboxID", wrapper.DeleteSandboxesSandboxID)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID", wrapper.GetSandboxesSandboxID)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/connect", wrapper.PostSandboxesSandboxIDConnect)
+	router.POST(options.BaseURL+"/sandboxes/:sandboxID/fork", wrapper.PostSandboxesSandboxIDFork)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID/logs", wrapper.GetSandboxesSandboxIDLogs)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID/metrics", wrapper.GetSandboxesSandboxIDMetrics)
 	router.PUT(options.BaseURL+"/sandboxes/:sandboxID/network", wrapper.PutSandboxesSandboxIDNetwork)
@@ -4231,6 +4581,11 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/resume", wrapper.PostSandboxesSandboxIDResume)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/snapshots", wrapper.PostSandboxesSandboxIDSnapshots)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/timeout", wrapper.PostSandboxesSandboxIDTimeout)
+	router.GET(options.BaseURL+"/secrets", wrapper.GetSecrets)
+	router.POST(options.BaseURL+"/secrets", wrapper.PostSecrets)
+	router.DELETE(options.BaseURL+"/secrets/:secretID", wrapper.DeleteSecretsSecretID)
+	router.GET(options.BaseURL+"/secrets/:secretID", wrapper.GetSecretsSecretID)
+	router.POST(options.BaseURL+"/secrets/:secretID", wrapper.PostSecretsSecretID)
 	router.GET(options.BaseURL+"/snapshots", wrapper.GetSnapshots)
 	router.GET(options.BaseURL+"/teams", wrapper.GetTeams)
 	router.GET(options.BaseURL+"/teams/:teamID/metrics", wrapper.GetTeamsTeamIDMetrics)
@@ -4251,6 +4606,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/templates/:templateID/tags", wrapper.GetTemplatesTemplateIDTags)
 	router.GET(options.BaseURL+"/v2/sandboxes", wrapper.GetV2Sandboxes)
 	router.GET(options.BaseURL+"/v2/sandboxes/:sandboxID/logs", wrapper.GetV2SandboxesSandboxIDLogs)
+	router.GET(options.BaseURL+"/v2/templates", wrapper.GetV2Templates)
 	router.POST(options.BaseURL+"/v2/templates", wrapper.PostV2Templates)
 	router.PATCH(options.BaseURL+"/v2/templates/:templateID", wrapper.PatchV2TemplatesTemplateID)
 	router.POST(options.BaseURL+"/v2/templates/:templateID/builds/:buildID", wrapper.PostV2TemplatesTemplateIDBuildsBuildID)
@@ -4271,7 +4627,17 @@ type N404JSONResponse Error
 
 type N409JSONResponse Error
 
+type N410JSONResponse Error
+
+type N429JSONResponse Error
+
 type N500JSONResponse Error
+
+type N502JSONResponse Error
+
+type N503JSONResponse Error
+
+type N504JSONResponse Error
 
 type PostAccessTokensRequestObject struct {
 	Body *PostAccessTokensJSONRequestBody
@@ -4295,6 +4661,15 @@ type PostAccessTokens401JSONResponse struct{ N401JSONResponse }
 func (response PostAccessTokens401JSONResponse) VisitPostAccessTokensResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAccessTokens410JSONResponse struct{ N410JSONResponse }
+
+func (response PostAccessTokens410JSONResponse) VisitPostAccessTokensResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -4345,6 +4720,40 @@ func (response DeleteAccessTokensAccessTokenID404JSONResponse) VisitDeleteAccess
 type DeleteAccessTokensAccessTokenID500JSONResponse struct{ N500JSONResponse }
 
 func (response DeleteAccessTokensAccessTokenID500JSONResponse) VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetAdminSandboxesRunningCountsRequestObject struct {
+}
+
+type GetAdminSandboxesRunningCountsResponseObject interface {
+	VisitGetAdminSandboxesRunningCountsResponse(w http.ResponseWriter) error
+}
+
+type GetAdminSandboxesRunningCounts200JSONResponse AdminTeamRunningSandboxCounts
+
+func (response GetAdminSandboxesRunningCounts200JSONResponse) VisitGetAdminSandboxesRunningCountsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetAdminSandboxesRunningCounts401JSONResponse struct{ N401JSONResponse }
+
+func (response GetAdminSandboxesRunningCounts401JSONResponse) VisitGetAdminSandboxesRunningCountsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetAdminSandboxesRunningCounts500JSONResponse struct{ N500JSONResponse }
+
+func (response GetAdminSandboxesRunningCounts500JSONResponse) VisitGetAdminSandboxesRunningCountsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -4850,6 +5259,15 @@ func (response PostNodesNodeID404JSONResponse) VisitPostNodesNodeIDResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostNodesNodeID409JSONResponse struct{ N409JSONResponse }
+
+func (response PostNodesNodeID409JSONResponse) VisitPostNodesNodeIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostNodesNodeID500JSONResponse struct{ N500JSONResponse }
 
 func (response PostNodesNodeID500JSONResponse) VisitPostNodesNodeIDResponse(w http.ResponseWriter) error {
@@ -4943,6 +5361,24 @@ type PostSandboxes500JSONResponse struct{ N500JSONResponse }
 func (response PostSandboxes500JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxes503JSONResponse struct{ N503JSONResponse }
+
+func (response PostSandboxes503JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxes504JSONResponse struct{ N504JSONResponse }
+
+func (response PostSandboxes504JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -5132,11 +5568,101 @@ func (response PostSandboxesSandboxIDConnect404JSONResponse) VisitPostSandboxesS
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostSandboxesSandboxIDConnect409JSONResponse struct{ N409JSONResponse }
+
+func (response PostSandboxesSandboxIDConnect409JSONResponse) VisitPostSandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostSandboxesSandboxIDConnect500JSONResponse struct{ N500JSONResponse }
 
 func (response PostSandboxesSandboxIDConnect500JSONResponse) VisitPostSandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDConnect503JSONResponse struct{ N503JSONResponse }
+
+func (response PostSandboxesSandboxIDConnect503JSONResponse) VisitPostSandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDConnect504JSONResponse struct{ N504JSONResponse }
+
+func (response PostSandboxesSandboxIDConnect504JSONResponse) VisitPostSandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDForkRequestObject struct {
+	SandboxID SandboxID `json:"sandboxID"`
+	Body      *PostSandboxesSandboxIDForkJSONRequestBody
+}
+
+type PostSandboxesSandboxIDForkResponseObject interface {
+	VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error
+}
+
+type PostSandboxesSandboxIDFork201JSONResponse []SandboxForkResult
+
+func (response PostSandboxesSandboxIDFork201JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDFork401JSONResponse struct{ N401JSONResponse }
+
+func (response PostSandboxesSandboxIDFork401JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDFork404JSONResponse struct{ N404JSONResponse }
+
+func (response PostSandboxesSandboxIDFork404JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDFork409JSONResponse struct{ N409JSONResponse }
+
+func (response PostSandboxesSandboxIDFork409JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDFork500JSONResponse struct{ N500JSONResponse }
+
+func (response PostSandboxesSandboxIDFork500JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDFork503JSONResponse struct{ N503JSONResponse }
+
+func (response PostSandboxesSandboxIDFork503JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -5295,6 +5821,7 @@ func (response PutSandboxesSandboxIDNetwork500JSONResponse) VisitPutSandboxesSan
 
 type PostSandboxesSandboxIDPauseRequestObject struct {
 	SandboxID SandboxID `json:"sandboxID"`
+	Body      *PostSandboxesSandboxIDPauseJSONRequestBody
 }
 
 type PostSandboxesSandboxIDPauseResponseObject interface {
@@ -5398,6 +5925,15 @@ func (response PostSandboxesSandboxIDResume201JSONResponse) VisitPostSandboxesSa
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostSandboxesSandboxIDResume400JSONResponse struct{ N400JSONResponse }
+
+func (response PostSandboxesSandboxIDResume400JSONResponse) VisitPostSandboxesSandboxIDResumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostSandboxesSandboxIDResume401JSONResponse struct{ N401JSONResponse }
 
 func (response PostSandboxesSandboxIDResume401JSONResponse) VisitPostSandboxesSandboxIDResumeResponse(w http.ResponseWriter) error {
@@ -5430,6 +5966,24 @@ type PostSandboxesSandboxIDResume500JSONResponse struct{ N500JSONResponse }
 func (response PostSandboxesSandboxIDResume500JSONResponse) VisitPostSandboxesSandboxIDResumeResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDResume503JSONResponse struct{ N503JSONResponse }
+
+func (response PostSandboxesSandboxIDResume503JSONResponse) VisitPostSandboxesSandboxIDResumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDResume504JSONResponse struct{ N504JSONResponse }
+
+func (response PostSandboxesSandboxIDResume504JSONResponse) VisitPostSandboxesSandboxIDResumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -5532,6 +6086,504 @@ func (response PostSandboxesSandboxIDTimeout500JSONResponse) VisitPostSandboxesS
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetSecretsRequestObject struct {
+	Params GetSecretsParams
+}
+
+type GetSecretsResponseObject interface {
+	VisitGetSecretsResponse(w http.ResponseWriter) error
+}
+
+type GetSecrets200ResponseHeaders struct {
+	XNextToken string
+}
+
+type GetSecrets200JSONResponse struct {
+	Body    []Secret
+	Headers GetSecrets200ResponseHeaders
+}
+
+func (response GetSecrets200JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Next-Token", fmt.Sprint(response.Headers.XNextToken))
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetSecrets400JSONResponse struct{ N400JSONResponse }
+
+func (response GetSecrets400JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets401JSONResponse struct{ N401JSONResponse }
+
+func (response GetSecrets401JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets403JSONResponse struct{ N403JSONResponse }
+
+func (response GetSecrets403JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets404JSONResponse struct{ N404JSONResponse }
+
+func (response GetSecrets404JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets409JSONResponse struct{ N409JSONResponse }
+
+func (response GetSecrets409JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSecrets429JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets500JSONResponse struct{ N500JSONResponse }
+
+func (response GetSecrets500JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets502JSONResponse struct{ N502JSONResponse }
+
+func (response GetSecrets502JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecrets504JSONResponse struct{ N504JSONResponse }
+
+func (response GetSecrets504JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsRequestObject struct {
+	Body *PostSecretsJSONRequestBody
+}
+
+type PostSecretsResponseObject interface {
+	VisitPostSecretsResponse(w http.ResponseWriter) error
+}
+
+type PostSecrets201JSONResponse Secret
+
+func (response PostSecrets201JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets400JSONResponse struct{ N400JSONResponse }
+
+func (response PostSecrets400JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets401JSONResponse struct{ N401JSONResponse }
+
+func (response PostSecrets401JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets403JSONResponse struct{ N403JSONResponse }
+
+func (response PostSecrets403JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets404JSONResponse struct{ N404JSONResponse }
+
+func (response PostSecrets404JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets409JSONResponse struct{ N409JSONResponse }
+
+func (response PostSecrets409JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSecrets429JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets500JSONResponse struct{ N500JSONResponse }
+
+func (response PostSecrets500JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets502JSONResponse struct{ N502JSONResponse }
+
+func (response PostSecrets502JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecrets504JSONResponse struct{ N504JSONResponse }
+
+func (response PostSecrets504JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretIDRequestObject struct {
+	SecretID SecretID `json:"secretID"`
+}
+
+type DeleteSecretsSecretIDResponseObject interface {
+	VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error
+}
+
+type DeleteSecretsSecretID204Response struct {
+}
+
+func (response DeleteSecretsSecretID204Response) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteSecretsSecretID400JSONResponse struct{ N400JSONResponse }
+
+func (response DeleteSecretsSecretID400JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID401JSONResponse struct{ N401JSONResponse }
+
+func (response DeleteSecretsSecretID401JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID403JSONResponse struct{ N403JSONResponse }
+
+func (response DeleteSecretsSecretID403JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID404JSONResponse struct{ N404JSONResponse }
+
+func (response DeleteSecretsSecretID404JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID409JSONResponse struct{ N409JSONResponse }
+
+func (response DeleteSecretsSecretID409JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteSecretsSecretID429JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID500JSONResponse struct{ N500JSONResponse }
+
+func (response DeleteSecretsSecretID500JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID502JSONResponse struct{ N502JSONResponse }
+
+func (response DeleteSecretsSecretID502JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSecretsSecretID504JSONResponse struct{ N504JSONResponse }
+
+func (response DeleteSecretsSecretID504JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretIDRequestObject struct {
+	SecretID SecretID `json:"secretID"`
+}
+
+type GetSecretsSecretIDResponseObject interface {
+	VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error
+}
+
+type GetSecretsSecretID200JSONResponse Secret
+
+func (response GetSecretsSecretID200JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID400JSONResponse struct{ N400JSONResponse }
+
+func (response GetSecretsSecretID400JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID401JSONResponse struct{ N401JSONResponse }
+
+func (response GetSecretsSecretID401JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID403JSONResponse struct{ N403JSONResponse }
+
+func (response GetSecretsSecretID403JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID404JSONResponse struct{ N404JSONResponse }
+
+func (response GetSecretsSecretID404JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID409JSONResponse struct{ N409JSONResponse }
+
+func (response GetSecretsSecretID409JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSecretsSecretID429JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID500JSONResponse struct{ N500JSONResponse }
+
+func (response GetSecretsSecretID500JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID502JSONResponse struct{ N502JSONResponse }
+
+func (response GetSecretsSecretID502JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSecretsSecretID504JSONResponse struct{ N504JSONResponse }
+
+func (response GetSecretsSecretID504JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretIDRequestObject struct {
+	SecretID SecretID `json:"secretID"`
+	Body     *PostSecretsSecretIDJSONRequestBody
+}
+
+type PostSecretsSecretIDResponseObject interface {
+	VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error
+}
+
+type PostSecretsSecretID200JSONResponse Secret
+
+func (response PostSecretsSecretID200JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID400JSONResponse struct{ N400JSONResponse }
+
+func (response PostSecretsSecretID400JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID401JSONResponse struct{ N401JSONResponse }
+
+func (response PostSecretsSecretID401JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID403JSONResponse struct{ N403JSONResponse }
+
+func (response PostSecretsSecretID403JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID404JSONResponse struct{ N404JSONResponse }
+
+func (response PostSecretsSecretID404JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID409JSONResponse struct{ N409JSONResponse }
+
+func (response PostSecretsSecretID409JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSecretsSecretID429JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID500JSONResponse struct{ N500JSONResponse }
+
+func (response PostSecretsSecretID500JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID502JSONResponse struct{ N502JSONResponse }
+
+func (response PostSecretsSecretID502JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSecretsSecretID504JSONResponse struct{ N504JSONResponse }
+
+func (response PostSecretsSecretID504JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetSnapshotsRequestObject struct {
 	Params GetSnapshotsParams
 }
@@ -5540,13 +6592,21 @@ type GetSnapshotsResponseObject interface {
 	VisitGetSnapshotsResponse(w http.ResponseWriter) error
 }
 
-type GetSnapshots200JSONResponse []SnapshotInfo
+type GetSnapshots200ResponseHeaders struct {
+	XNextToken string
+}
+
+type GetSnapshots200JSONResponse struct {
+	Body    []SnapshotInfo
+	Headers GetSnapshots200ResponseHeaders
+}
 
 func (response GetSnapshots200JSONResponse) VisitGetSnapshotsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Next-Token", fmt.Sprint(response.Headers.XNextToken))
 	w.WriteHeader(200)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetSnapshots401JSONResponse struct{ N401JSONResponse }
@@ -5989,13 +7049,21 @@ type GetTemplatesTemplateIDResponseObject interface {
 	VisitGetTemplatesTemplateIDResponse(w http.ResponseWriter) error
 }
 
-type GetTemplatesTemplateID200JSONResponse TemplateWithBuilds
+type GetTemplatesTemplateID200ResponseHeaders struct {
+	XNextToken string
+}
+
+type GetTemplatesTemplateID200JSONResponse struct {
+	Body    TemplateWithBuilds
+	Headers GetTemplatesTemplateID200ResponseHeaders
+}
 
 func (response GetTemplatesTemplateID200JSONResponse) VisitGetTemplatesTemplateIDResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Next-Token", fmt.Sprint(response.Headers.XNextToken))
 	w.WriteHeader(200)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetTemplatesTemplateID401JSONResponse struct{ N401JSONResponse }
@@ -6338,13 +7406,23 @@ type GetV2SandboxesResponseObject interface {
 	VisitGetV2SandboxesResponse(w http.ResponseWriter) error
 }
 
-type GetV2Sandboxes200JSONResponse []ListedSandbox
+type GetV2Sandboxes200ResponseHeaders struct {
+	XNextToken    string
+	XTotalRunning int32
+}
+
+type GetV2Sandboxes200JSONResponse struct {
+	Body    []ListedSandbox
+	Headers GetV2Sandboxes200ResponseHeaders
+}
 
 func (response GetV2Sandboxes200JSONResponse) VisitGetV2SandboxesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Next-Token", fmt.Sprint(response.Headers.XNextToken))
+	w.Header().Set("X-Total-Running", fmt.Sprint(response.Headers.XTotalRunning))
 	w.WriteHeader(200)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetV2Sandboxes400JSONResponse struct{ N400JSONResponse }
@@ -6413,6 +7491,67 @@ func (response GetV2SandboxesSandboxIDLogs404JSONResponse) VisitGetV2SandboxesSa
 type GetV2SandboxesSandboxIDLogs500JSONResponse struct{ N500JSONResponse }
 
 func (response GetV2SandboxesSandboxIDLogs500JSONResponse) VisitGetV2SandboxesSandboxIDLogsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetV2TemplatesRequestObject struct {
+	Params GetV2TemplatesParams
+}
+
+type GetV2TemplatesResponseObject interface {
+	VisitGetV2TemplatesResponse(w http.ResponseWriter) error
+}
+
+type GetV2Templates200ResponseHeaders struct {
+	XNextToken string
+}
+
+type GetV2Templates200JSONResponse struct {
+	Body    []Template
+	Headers GetV2Templates200ResponseHeaders
+}
+
+func (response GetV2Templates200JSONResponse) VisitGetV2TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Next-Token", fmt.Sprint(response.Headers.XNextToken))
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetV2Templates400JSONResponse struct{ N400JSONResponse }
+
+func (response GetV2Templates400JSONResponse) VisitGetV2TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetV2Templates401JSONResponse struct{ N401JSONResponse }
+
+func (response GetV2Templates401JSONResponse) VisitGetV2TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetV2Templates403JSONResponse struct{ N403JSONResponse }
+
+func (response GetV2Templates403JSONResponse) VisitGetV2TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetV2Templates500JSONResponse struct{ N500JSONResponse }
+
+func (response GetV2Templates500JSONResponse) VisitGetV2TemplatesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -6764,12 +7903,15 @@ func (response GetVolumesVolumeID500JSONResponse) VisitGetVolumesVolumeIDRespons
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-
+	// Create access token
 	// (POST /access-tokens)
 	PostAccessTokens(ctx context.Context, request PostAccessTokensRequestObject) (PostAccessTokensResponseObject, error)
-
+	// Delete access token
 	// (DELETE /access-tokens/{accessTokenID})
 	DeleteAccessTokensAccessTokenID(ctx context.Context, request DeleteAccessTokensAccessTokenIDRequestObject) (DeleteAccessTokensAccessTokenIDResponseObject, error)
+	// Count running sandboxes by team
+	// (GET /admin/sandboxes/running-counts)
+	GetAdminSandboxesRunningCounts(ctx context.Context, request GetAdminSandboxesRunningCountsRequestObject) (GetAdminSandboxesRunningCountsResponseObject, error)
 	// Create team API key as admin
 	// (POST /admin/teams/{teamID}/api-keys)
 	PostAdminTeamsTeamIDApiKeys(ctx context.Context, request PostAdminTeamsTeamIDApiKeysRequestObject) (PostAdminTeamsTeamIDApiKeysResponseObject, error)
@@ -6782,154 +7924,175 @@ type StrictServerInterface interface {
 	// Kill all sandboxes for a team
 	// (POST /admin/teams/{teamID}/sandboxes/kill)
 	PostAdminTeamsTeamIDSandboxesKill(ctx context.Context, request PostAdminTeamsTeamIDSandboxesKillRequestObject) (PostAdminTeamsTeamIDSandboxesKillResponseObject, error)
-
+	// List team API keys
 	// (GET /api-keys)
 	GetApiKeys(ctx context.Context, request GetApiKeysRequestObject) (GetApiKeysResponseObject, error)
-
+	// Create team API key
 	// (POST /api-keys)
 	PostApiKeys(ctx context.Context, request PostApiKeysRequestObject) (PostApiKeysResponseObject, error)
-
+	// Delete team API key
 	// (DELETE /api-keys/{apiKeyID})
 	DeleteApiKeysApiKeyID(ctx context.Context, request DeleteApiKeysApiKeyIDRequestObject) (DeleteApiKeysApiKeyIDResponseObject, error)
-
+	// Update team API key
 	// (PATCH /api-keys/{apiKeyID})
 	PatchApiKeysApiKeyID(ctx context.Context, request PatchApiKeysApiKeyIDRequestObject) (PatchApiKeysApiKeyIDResponseObject, error)
-
+	// Health check
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
-
+	// List nodes
 	// (GET /nodes)
 	GetNodes(ctx context.Context, request GetNodesRequestObject) (GetNodesResponseObject, error)
-
+	// Node info
 	// (GET /nodes/{nodeID})
 	GetNodesNodeID(ctx context.Context, request GetNodesNodeIDRequestObject) (GetNodesNodeIDResponseObject, error)
-
+	// Change node status
 	// (POST /nodes/{nodeID})
 	PostNodesNodeID(ctx context.Context, request PostNodesNodeIDRequestObject) (PostNodesNodeIDResponseObject, error)
-
+	// List running sandboxes
 	// (GET /sandboxes)
 	GetSandboxes(ctx context.Context, request GetSandboxesRequestObject) (GetSandboxesResponseObject, error)
-
+	// Create sandbox
 	// (POST /sandboxes)
 	PostSandboxes(ctx context.Context, request PostSandboxesRequestObject) (PostSandboxesResponseObject, error)
-
+	// List sandbox metrics
 	// (GET /sandboxes/metrics)
 	GetSandboxesMetrics(ctx context.Context, request GetSandboxesMetricsRequestObject) (GetSandboxesMetricsResponseObject, error)
-
+	// Kill sandbox
 	// (DELETE /sandboxes/{sandboxID})
 	DeleteSandboxesSandboxID(ctx context.Context, request DeleteSandboxesSandboxIDRequestObject) (DeleteSandboxesSandboxIDResponseObject, error)
-
+	// Sandbox
 	// (GET /sandboxes/{sandboxID})
 	GetSandboxesSandboxID(ctx context.Context, request GetSandboxesSandboxIDRequestObject) (GetSandboxesSandboxIDResponseObject, error)
-
+	// Connect sandbox
 	// (POST /sandboxes/{sandboxID}/connect)
 	PostSandboxesSandboxIDConnect(ctx context.Context, request PostSandboxesSandboxIDConnectRequestObject) (PostSandboxesSandboxIDConnectResponseObject, error)
-
+	// Fork sandbox
+	// (POST /sandboxes/{sandboxID}/fork)
+	PostSandboxesSandboxIDFork(ctx context.Context, request PostSandboxesSandboxIDForkRequestObject) (PostSandboxesSandboxIDForkResponseObject, error)
+	// Sandbox logs
 	// (GET /sandboxes/{sandboxID}/logs)
 	GetSandboxesSandboxIDLogs(ctx context.Context, request GetSandboxesSandboxIDLogsRequestObject) (GetSandboxesSandboxIDLogsResponseObject, error)
-
+	// Sandbox metrics
 	// (GET /sandboxes/{sandboxID}/metrics)
 	GetSandboxesSandboxIDMetrics(ctx context.Context, request GetSandboxesSandboxIDMetricsRequestObject) (GetSandboxesSandboxIDMetricsResponseObject, error)
-
+	// Update sandbox network
 	// (PUT /sandboxes/{sandboxID}/network)
 	PutSandboxesSandboxIDNetwork(ctx context.Context, request PutSandboxesSandboxIDNetworkRequestObject) (PutSandboxesSandboxIDNetworkResponseObject, error)
-
+	// Pause sandbox
 	// (POST /sandboxes/{sandboxID}/pause)
 	PostSandboxesSandboxIDPause(ctx context.Context, request PostSandboxesSandboxIDPauseRequestObject) (PostSandboxesSandboxIDPauseResponseObject, error)
-
+	// Refresh sandbox
 	// (POST /sandboxes/{sandboxID}/refreshes)
 	PostSandboxesSandboxIDRefreshes(ctx context.Context, request PostSandboxesSandboxIDRefreshesRequestObject) (PostSandboxesSandboxIDRefreshesResponseObject, error)
-
+	// Resume sandbox
 	// (POST /sandboxes/{sandboxID}/resume)
 	PostSandboxesSandboxIDResume(ctx context.Context, request PostSandboxesSandboxIDResumeRequestObject) (PostSandboxesSandboxIDResumeResponseObject, error)
-
+	// Create snapshot
 	// (POST /sandboxes/{sandboxID}/snapshots)
 	PostSandboxesSandboxIDSnapshots(ctx context.Context, request PostSandboxesSandboxIDSnapshotsRequestObject) (PostSandboxesSandboxIDSnapshotsResponseObject, error)
-
+	// Set sandbox timeout
 	// (POST /sandboxes/{sandboxID}/timeout)
 	PostSandboxesSandboxIDTimeout(ctx context.Context, request PostSandboxesSandboxIDTimeoutRequestObject) (PostSandboxesSandboxIDTimeoutResponseObject, error)
-
+	// List project secrets
+	// (GET /secrets)
+	GetSecrets(ctx context.Context, request GetSecretsRequestObject) (GetSecretsResponseObject, error)
+	// Create a secret
+	// (POST /secrets)
+	PostSecrets(ctx context.Context, request PostSecretsRequestObject) (PostSecretsResponseObject, error)
+	// Delete a secret
+	// (DELETE /secrets/{secretID})
+	DeleteSecretsSecretID(ctx context.Context, request DeleteSecretsSecretIDRequestObject) (DeleteSecretsSecretIDResponseObject, error)
+	// Get a secret
+	// (GET /secrets/{secretID})
+	GetSecretsSecretID(ctx context.Context, request GetSecretsSecretIDRequestObject) (GetSecretsSecretIDResponseObject, error)
+	// Update a secret
+	// (POST /secrets/{secretID})
+	PostSecretsSecretID(ctx context.Context, request PostSecretsSecretIDRequestObject) (PostSecretsSecretIDResponseObject, error)
+	// List snapshots
 	// (GET /snapshots)
 	GetSnapshots(ctx context.Context, request GetSnapshotsRequestObject) (GetSnapshotsResponseObject, error)
-
+	// List teams
 	// (GET /teams)
 	GetTeams(ctx context.Context, request GetTeamsRequestObject) (GetTeamsResponseObject, error)
-
+	// Team metrics
 	// (GET /teams/{teamID}/metrics)
 	GetTeamsTeamIDMetrics(ctx context.Context, request GetTeamsTeamIDMetricsRequestObject) (GetTeamsTeamIDMetricsResponseObject, error)
-
+	// Maximum team metrics
 	// (GET /teams/{teamID}/metrics/max)
 	GetTeamsTeamIDMetricsMax(ctx context.Context, request GetTeamsTeamIDMetricsMaxRequestObject) (GetTeamsTeamIDMetricsMaxResponseObject, error)
-
+	// List templates
 	// (GET /templates)
 	GetTemplates(ctx context.Context, request GetTemplatesRequestObject) (GetTemplatesResponseObject, error)
-
+	// Create template
 	// (POST /templates)
 	PostTemplates(ctx context.Context, request PostTemplatesRequestObject) (PostTemplatesResponseObject, error)
-
+	// Check template alias
 	// (GET /templates/aliases/{alias})
 	GetTemplatesAliasesAlias(ctx context.Context, request GetTemplatesAliasesAliasRequestObject) (GetTemplatesAliasesAliasResponseObject, error)
-
+	// Delete template tags
 	// (DELETE /templates/tags)
 	DeleteTemplatesTags(ctx context.Context, request DeleteTemplatesTagsRequestObject) (DeleteTemplatesTagsResponseObject, error)
-
+	// Assign template tags
 	// (POST /templates/tags)
 	PostTemplatesTags(ctx context.Context, request PostTemplatesTagsRequestObject) (PostTemplatesTagsResponseObject, error)
-
+	// Delete template
 	// (DELETE /templates/{templateID})
 	DeleteTemplatesTemplateID(ctx context.Context, request DeleteTemplatesTemplateIDRequestObject) (DeleteTemplatesTemplateIDResponseObject, error)
-
+	// List template builds
 	// (GET /templates/{templateID})
 	GetTemplatesTemplateID(ctx context.Context, request GetTemplatesTemplateIDRequestObject) (GetTemplatesTemplateIDResponseObject, error)
-
+	// Update template
 	// (PATCH /templates/{templateID})
 	PatchTemplatesTemplateID(ctx context.Context, request PatchTemplatesTemplateIDRequestObject) (PatchTemplatesTemplateIDResponseObject, error)
-
+	// Rebuild template
 	// (POST /templates/{templateID})
 	PostTemplatesTemplateID(ctx context.Context, request PostTemplatesTemplateIDRequestObject) (PostTemplatesTemplateIDResponseObject, error)
-
+	// Start template build
 	// (POST /templates/{templateID}/builds/{buildID})
 	PostTemplatesTemplateIDBuildsBuildID(ctx context.Context, request PostTemplatesTemplateIDBuildsBuildIDRequestObject) (PostTemplatesTemplateIDBuildsBuildIDResponseObject, error)
-
+	// Template build logs
 	// (GET /templates/{templateID}/builds/{buildID}/logs)
 	GetTemplatesTemplateIDBuildsBuildIDLogs(ctx context.Context, request GetTemplatesTemplateIDBuildsBuildIDLogsRequestObject) (GetTemplatesTemplateIDBuildsBuildIDLogsResponseObject, error)
-
+	// Template build status
 	// (GET /templates/{templateID}/builds/{buildID}/status)
 	GetTemplatesTemplateIDBuildsBuildIDStatus(ctx context.Context, request GetTemplatesTemplateIDBuildsBuildIDStatusRequestObject) (GetTemplatesTemplateIDBuildsBuildIDStatusResponseObject, error)
-
+	// Template build file upload URL
 	// (GET /templates/{templateID}/files/{hash})
 	GetTemplatesTemplateIDFilesHash(ctx context.Context, request GetTemplatesTemplateIDFilesHashRequestObject) (GetTemplatesTemplateIDFilesHashResponseObject, error)
-
+	// List template tags
 	// (GET /templates/{templateID}/tags)
 	GetTemplatesTemplateIDTags(ctx context.Context, request GetTemplatesTemplateIDTagsRequestObject) (GetTemplatesTemplateIDTagsResponseObject, error)
-
+	// List sandboxes (v2)
 	// (GET /v2/sandboxes)
 	GetV2Sandboxes(ctx context.Context, request GetV2SandboxesRequestObject) (GetV2SandboxesResponseObject, error)
-
+	// Sandbox logs (v2)
 	// (GET /v2/sandboxes/{sandboxID}/logs)
 	GetV2SandboxesSandboxIDLogs(ctx context.Context, request GetV2SandboxesSandboxIDLogsRequestObject) (GetV2SandboxesSandboxIDLogsResponseObject, error)
-
+	// List templates (v2)
+	// (GET /v2/templates)
+	GetV2Templates(ctx context.Context, request GetV2TemplatesRequestObject) (GetV2TemplatesResponseObject, error)
+	// Create template (v2)
 	// (POST /v2/templates)
 	PostV2Templates(ctx context.Context, request PostV2TemplatesRequestObject) (PostV2TemplatesResponseObject, error)
-
+	// Update template (v2)
 	// (PATCH /v2/templates/{templateID})
 	PatchV2TemplatesTemplateID(ctx context.Context, request PatchV2TemplatesTemplateIDRequestObject) (PatchV2TemplatesTemplateIDResponseObject, error)
-
+	// Start template build (v2)
 	// (POST /v2/templates/{templateID}/builds/{buildID})
 	PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, request PostV2TemplatesTemplateIDBuildsBuildIDRequestObject) (PostV2TemplatesTemplateIDBuildsBuildIDResponseObject, error)
-
+	// Create template (v3)
 	// (POST /v3/templates)
 	PostV3Templates(ctx context.Context, request PostV3TemplatesRequestObject) (PostV3TemplatesResponseObject, error)
-
+	// List team volumes
 	// (GET /volumes)
 	GetVolumes(ctx context.Context, request GetVolumesRequestObject) (GetVolumesResponseObject, error)
-
+	// Create team volume
 	// (POST /volumes)
 	PostVolumes(ctx context.Context, request PostVolumesRequestObject) (PostVolumesResponseObject, error)
-
+	// Delete team volume
 	// (DELETE /volumes/{volumeID})
 	DeleteVolumesVolumeID(ctx context.Context, request DeleteVolumesVolumeIDRequestObject) (DeleteVolumesVolumeIDResponseObject, error)
-
+	// Team volume
 	// (GET /volumes/{volumeID})
 	GetVolumesVolumeID(ctx context.Context, request GetVolumesVolumeIDRequestObject) (GetVolumesVolumeIDResponseObject, error)
 }
@@ -6999,6 +8162,31 @@ func (sh *strictHandler) DeleteAccessTokensAccessTokenID(ctx *gin.Context, acces
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(DeleteAccessTokensAccessTokenIDResponseObject); ok {
 		if err := validResponse.VisitDeleteAccessTokensAccessTokenIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAdminSandboxesRunningCounts operation middleware
+func (sh *strictHandler) GetAdminSandboxesRunningCounts(ctx *gin.Context) {
+	var request GetAdminSandboxesRunningCountsRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAdminSandboxesRunningCounts(ctx, request.(GetAdminSandboxesRunningCountsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAdminSandboxesRunningCounts")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetAdminSandboxesRunningCountsResponseObject); ok {
+		if err := validResponse.VisitGetAdminSandboxesRunningCountsResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {
@@ -7537,6 +8725,44 @@ func (sh *strictHandler) PostSandboxesSandboxIDConnect(ctx *gin.Context, sandbox
 	}
 }
 
+// PostSandboxesSandboxIDFork operation middleware
+func (sh *strictHandler) PostSandboxesSandboxIDFork(ctx *gin.Context, sandboxID SandboxID) {
+	var request PostSandboxesSandboxIDForkRequestObject
+
+	request.SandboxID = sandboxID
+
+	var body PostSandboxesSandboxIDForkJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			ctx.Status(http.StatusBadRequest)
+			ctx.Error(err)
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PostSandboxesSandboxIDFork(ctx, request.(PostSandboxesSandboxIDForkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostSandboxesSandboxIDFork")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PostSandboxesSandboxIDForkResponseObject); ok {
+		if err := validResponse.VisitPostSandboxesSandboxIDForkResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetSandboxesSandboxIDLogs operation middleware
 func (sh *strictHandler) GetSandboxesSandboxIDLogs(ctx *gin.Context, sandboxID SandboxID, params GetSandboxesSandboxIDLogsParams) {
 	var request GetSandboxesSandboxIDLogsRequestObject
@@ -7634,6 +8860,17 @@ func (sh *strictHandler) PostSandboxesSandboxIDPause(ctx *gin.Context, sandboxID
 
 	request.SandboxID = sandboxID
 
+	var body PostSandboxesSandboxIDPauseJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			ctx.Status(http.StatusBadRequest)
+			ctx.Error(err)
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
 	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
 		return sh.ssi.PostSandboxesSandboxIDPause(ctx, request.(PostSandboxesSandboxIDPauseRequestObject))
 	}
@@ -7701,11 +8938,14 @@ func (sh *strictHandler) PostSandboxesSandboxIDResume(ctx *gin.Context, sandboxI
 
 	var body PostSandboxesSandboxIDResumeJSONRequestBody
 	if err := ctx.ShouldBindJSON(&body); err != nil {
-		ctx.Status(http.StatusBadRequest)
-		ctx.Error(err)
-		return
+		if !errors.Is(err, io.EOF) {
+			ctx.Status(http.StatusBadRequest)
+			ctx.Error(err)
+			return
+		}
+	} else {
+		request.Body = &body
 	}
-	request.Body = &body
 
 	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
 		return sh.ssi.PostSandboxesSandboxIDResume(ctx, request.(PostSandboxesSandboxIDResumeRequestObject))
@@ -7794,6 +9034,155 @@ func (sh *strictHandler) PostSandboxesSandboxIDTimeout(ctx *gin.Context, sandbox
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(PostSandboxesSandboxIDTimeoutResponseObject); ok {
 		if err := validResponse.VisitPostSandboxesSandboxIDTimeoutResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSecrets operation middleware
+func (sh *strictHandler) GetSecrets(ctx *gin.Context, params GetSecretsParams) {
+	var request GetSecretsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSecrets(ctx, request.(GetSecretsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSecrets")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetSecretsResponseObject); ok {
+		if err := validResponse.VisitGetSecretsResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostSecrets operation middleware
+func (sh *strictHandler) PostSecrets(ctx *gin.Context) {
+	var request PostSecretsRequestObject
+
+	var body PostSecretsJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PostSecrets(ctx, request.(PostSecretsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostSecrets")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PostSecretsResponseObject); ok {
+		if err := validResponse.VisitPostSecretsResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteSecretsSecretID operation middleware
+func (sh *strictHandler) DeleteSecretsSecretID(ctx *gin.Context, secretID SecretID) {
+	var request DeleteSecretsSecretIDRequestObject
+
+	request.SecretID = secretID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteSecretsSecretID(ctx, request.(DeleteSecretsSecretIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteSecretsSecretID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(DeleteSecretsSecretIDResponseObject); ok {
+		if err := validResponse.VisitDeleteSecretsSecretIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSecretsSecretID operation middleware
+func (sh *strictHandler) GetSecretsSecretID(ctx *gin.Context, secretID SecretID) {
+	var request GetSecretsSecretIDRequestObject
+
+	request.SecretID = secretID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSecretsSecretID(ctx, request.(GetSecretsSecretIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSecretsSecretID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetSecretsSecretIDResponseObject); ok {
+		if err := validResponse.VisitGetSecretsSecretIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostSecretsSecretID operation middleware
+func (sh *strictHandler) PostSecretsSecretID(ctx *gin.Context, secretID SecretID) {
+	var request PostSecretsSecretIDRequestObject
+
+	request.SecretID = secretID
+
+	var body PostSecretsSecretIDJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PostSecretsSecretID(ctx, request.(PostSecretsSecretIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostSecretsSecretID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PostSecretsSecretIDResponseObject); ok {
+		if err := validResponse.VisitPostSecretsSecretIDResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {
@@ -8376,6 +9765,33 @@ func (sh *strictHandler) GetV2SandboxesSandboxIDLogs(ctx *gin.Context, sandboxID
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(GetV2SandboxesSandboxIDLogsResponseObject); ok {
 		if err := validResponse.VisitGetV2SandboxesSandboxIDLogsResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetV2Templates operation middleware
+func (sh *strictHandler) GetV2Templates(ctx *gin.Context, params GetV2TemplatesParams) {
+	var request GetV2TemplatesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetV2Templates(ctx, request.(GetV2TemplatesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetV2Templates")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetV2TemplatesResponseObject); ok {
+		if err := validResponse.VisitGetV2TemplatesResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {
