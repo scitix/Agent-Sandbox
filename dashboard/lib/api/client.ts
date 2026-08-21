@@ -382,17 +382,41 @@ export async function getClusters(): Promise<ClusterListResponse> {
 }
 
 export async function login(input: LoginInput): Promise<AuthState> {
-  const res = await fetch(`${basePath}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  })
-  const json = (await res.json()) as Record<string, string>
-  if (!res.ok) {
-    throw new Error((json.error as string) || `Login failed (${res.status})`)
+  // One retry on 5xx/network error: login is the single gate to a session and
+  // BFF connections are occasionally reset by intervening proxies (VPN/TUN
+  // routes); data reads are already retried by react-query, this path is not.
+  for (let attempt = 0; ; attempt++) {
+    let res: Response
+    try {
+      res = await fetch(`${basePath}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      })
+    } catch (e) {
+      if (attempt < 1) continue
+      throw e
+    }
+    const json = (await res.json().catch(() => ({}))) as Record<string, string>
+    if (!res.ok) {
+      // 401/403 is a definitive verdict on the key — never retry those.
+      if (res.status >= 500 && attempt < 1) continue
+      throw new Error((json.error as string) || `Login failed (${res.status})`)
+    }
+    const { token, role, user, team, clusterID, clusterName, authMethod } = json
+    return {
+      token,
+      role: role as AuthState["role"],
+      user,
+      team,
+      clusterID,
+      clusterName,
+      // The route answers without an authMethod today; the caller knows which
+      // form was submitted, so default rather than persisting an undefined that
+      // every authMethod-aware consumer would have to treat specially.
+      authMethod: (authMethod as AuthState["authMethod"]) ?? "apikey",
+    }
   }
-  const { token, role, user, team, clusterID, clusterName } = json
-  return { token, role: role as AuthState["role"], user, team, clusterID, clusterName }
 }
 
 export async function iamLogin(input: IamLoginInput): Promise<AuthState> {

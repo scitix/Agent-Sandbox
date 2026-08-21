@@ -29,23 +29,16 @@ import { requireAuth } from "@/lib/server/bff-auth"
  *
  * Flow:
  *  1. Verify the current JWT.
- *  2. Only allow Mock/OIDC users (authMethod === "mock" | "oidc") — API-key users must re-login.
- *  3. Re-sign JWT preserving user/team/role (no namespace or clusterID in JWT).
- *  4. Return the new AuthState with clusterID in the response body (for frontend atom).
+ *  2. Re-sign JWT preserving identity fields (no namespace or clusterID in JWT).
+ *    For API-key sessions the embedded apiKey claim is carried over — the BFF
+ *    per-cluster proxy needs it to authenticate against the target cluster.
+ *  3. Return the new AuthState with clusterID in the response body (for frontend atom).
  */
 export async function POST(request: Request) {
   // Verify current JWT
   const authResult = await requireAuth(request.headers.get("Authorization"))
   if ("error" in authResult) return authResult.error
   const currentPayload = authResult.payload
-
-  // Only Mock/OIDC users can switch clusters seamlessly
-  if (currentPayload.authMethod !== "mock" && currentPayload.authMethod !== "oidc") {
-    return NextResponse.json(
-      { error: "Only SSO users can switch clusters without re-authentication" },
-      { status: 403 },
-    )
-  }
 
   let body: { clusterID?: string }
   try {
@@ -77,6 +70,7 @@ export async function POST(request: Request) {
     team,
     name: currentPayload.name,
     email: currentPayload.email,
+    ...(currentPayload.apiKey ? { apiKey: currentPayload.apiKey } : {}),
   })
 
   return NextResponse.json({
@@ -86,7 +80,7 @@ export async function POST(request: Request) {
     team,
     clusterID,
     clusterName,
-    authMethod: currentPayload.authMethod,
+    authMethod: currentPayload.authMethod ?? "apikey",
     name: currentPayload.name,
     email: currentPayload.email,
   })
