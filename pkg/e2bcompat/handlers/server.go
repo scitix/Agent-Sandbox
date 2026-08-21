@@ -442,6 +442,38 @@ func (s *Server) PostSandboxesSandboxIDSnapshots(_ context.Context, _ e2bgen.Pos
 	return e2bgen.PostSandboxesSandboxIDSnapshots500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
 }
 
+func (s *Server) PostSandboxesSandboxIDFork(_ context.Context, _ e2bgen.PostSandboxesSandboxIDForkRequestObject) (e2bgen.PostSandboxesSandboxIDForkResponseObject, error) {
+	return e2bgen.PostSandboxesSandboxIDFork500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) GetAdminSandboxesRunningCounts(_ context.Context, _ e2bgen.GetAdminSandboxesRunningCountsRequestObject) (e2bgen.GetAdminSandboxesRunningCountsResponseObject, error) {
+	return e2bgen.GetAdminSandboxesRunningCounts500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) GetV2Templates(_ context.Context, _ e2bgen.GetV2TemplatesRequestObject) (e2bgen.GetV2TemplatesResponseObject, error) {
+	return e2bgen.GetV2Templates500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) GetSecrets(_ context.Context, _ e2bgen.GetSecretsRequestObject) (e2bgen.GetSecretsResponseObject, error) {
+	return e2bgen.GetSecrets500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) GetSecretsSecretID(_ context.Context, _ e2bgen.GetSecretsSecretIDRequestObject) (e2bgen.GetSecretsSecretIDResponseObject, error) {
+	return e2bgen.GetSecretsSecretID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) PostSecrets(_ context.Context, _ e2bgen.PostSecretsRequestObject) (e2bgen.PostSecretsResponseObject, error) {
+	return e2bgen.PostSecrets500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) PostSecretsSecretID(_ context.Context, _ e2bgen.PostSecretsSecretIDRequestObject) (e2bgen.PostSecretsSecretIDResponseObject, error) {
+	return e2bgen.PostSecretsSecretID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
+func (s *Server) DeleteSecretsSecretID(_ context.Context, _ e2bgen.DeleteSecretsSecretIDRequestObject) (e2bgen.DeleteSecretsSecretIDResponseObject, error) {
+	return e2bgen.DeleteSecretsSecretID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+}
+
 // PostSandboxesSandboxIDConnect re-attaches to a sandbox by ID, returning the
 // same shape create does so an SDK can rebuild its handle from an ID alone.
 //
@@ -536,7 +568,8 @@ func (s *Server) GetTemplatesTemplateID(ctx context.Context, req e2bgen.GetTempl
 		return e2bgen.GetTemplatesTemplateID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespServer(ctx, err, err.Error()))}, nil
 	}
 
-	// GetTemplatesTemplateID200JSONResponse is TemplateWithBuilds (not a wrapper)
+	// GetTemplatesTemplateID200JSONResponse carries the body plus an optional
+	// X-Next-Token pagination header; there is no next page for a single template.
 	// TemplateWithBuilds has its own fields, not a Template subfield
 	tmpl := poolToE2BTemplate(pool)
 	result := e2bgen.TemplateWithBuilds{
@@ -549,7 +582,7 @@ func (s *Server) GetTemplatesTemplateID(ctx context.Context, req e2bgen.GetTempl
 		UpdatedAt:  tmpl.UpdatedAt,
 		Builds:     []e2bgen.TemplateBuild{},
 	}
-	return e2bgen.GetTemplatesTemplateID200JSONResponse(result), nil
+	return e2bgen.GetTemplatesTemplateID200JSONResponse{Body: result}, nil
 }
 
 // poolToE2BTemplate converts an AgentBox SandboxPool to an E2B Template.
@@ -775,19 +808,32 @@ func (s *Server) GetV2Sandboxes(ctx context.Context, req e2bgen.GetV2SandboxesRe
 		items = append(items, listed)
 	}
 
+	// X-Total-Running counts sandboxes matching the filters before pagination.
+	running := 0
+	for i := range items {
+		if items[i].State == e2bgen.Running {
+			running++
+		}
+	}
+
 	offset := min(decodeNextToken(req.Params.NextToken), len(items))
 	end := len(items)
 	if req.Params.Limit != nil && *req.Params.Limit > 0 {
 		end = min(offset+int(*req.Params.Limit), end)
 	}
 
+	nextToken := ""
 	if end < len(items) {
-		if gc := httpctx.GinFromCtx(ctx); gc != nil {
-			gc.Header("x-next-token", encodeNextToken(end))
-		}
+		nextToken = encodeNextToken(end)
 	}
 
-	return e2bgen.GetV2Sandboxes200JSONResponse(items[offset:end]), nil
+	return e2bgen.GetV2Sandboxes200JSONResponse{
+		Body: items[offset:end],
+		Headers: e2bgen.GetV2Sandboxes200ResponseHeaders{
+			XNextToken:    nextToken,
+			XTotalRunning: int32(running),
+		},
+	}, nil
 }
 
 // parseMetadataFilter decodes the E2B "metadata" query param — a URL-encoded
