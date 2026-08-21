@@ -16,7 +16,7 @@
 
 "use client"
 
-import { useState, useMemo, Suspense } from "react"
+import { useState, useMemo, useEffect, useRef, Suspense } from "react"
 import { useRouter } from "next/navigation"
 import { useQueryState, parseAsString } from "nuqs"
 import { useAtomValue, useSetAtom } from "jotai"
@@ -147,6 +147,19 @@ function LoginForm() {
       setApiKeyError(msg)
     }
   }
+
+  // Dev-only auto-login: when NEXT_PUBLIC_DEV_API_KEY is baked in (local dev
+  // against a remote BFF, headless browser checks), submit it once on mount so
+  // the developer lands on the dashboard without pasting the key. Fires a
+  // single attempt — an invalid key shows the normal error, no retry loop.
+  const devAutoLoginDone = useRef(false)
+  const devApiKey = process.env.NEXT_PUBLIC_DEV_API_KEY
+  useEffect(() => {
+    if (!devApiKey || devAutoLoginDone.current) return
+    devAutoLoginDone.current = true
+    void onApiKeySubmit({ apiKey: devApiKey })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devApiKey])
 
   const onMockSubmit = async (data: MockLoginForm) => {
     setSsoError(null)

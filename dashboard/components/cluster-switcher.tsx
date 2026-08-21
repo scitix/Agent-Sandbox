@@ -57,13 +57,16 @@ export function ClusterSwitcher({ compact = false }: { compact?: boolean }) {
     // Compute the destination path for the new cluster, preserving the current page and locale
     const destination = switchClusterPath(pathname, clusterId)
 
-    if (auth?.authMethod === "mock" || auth?.authMethod === "oidc") {
-      // IAM/OIDC users: switch clusters seamlessly by re-resolving namespace/team,
-      // then navigate to the equivalent page on the new cluster.
+    if (auth?.token) {
+      // Every session type spans all clusters, so switching needs no
+      // re-login: mock/oidc identities are re-resolved by the BFF on each
+      // request, and an API key authenticates against every cluster. A
+      // missing authMethod is a pre-fix API-key session — same treatment.
+      // Full reload so all cluster-scoped state is cleared.
       setClusterID(clusterId)
-      window.location.href = process.env.NEXT_PUBLIC_BASE_PATH + destination // full reload to ensure all state is cleared
+      window.location.href = process.env.NEXT_PUBLIC_BASE_PATH + destination
     } else {
-      // Fallback: redirect to login with the new cluster pre-selected.
+      // Not logged in: go through login with the new cluster pre-selected.
       router.push(
         `${loginPath(locale)}?cluster=${encodeURIComponent(clusterId)}&next=${encodeURIComponent(destination)}`,
       )
