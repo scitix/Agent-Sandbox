@@ -54,9 +54,13 @@ func TestValidateVolumeMounts_Accepts(t *testing.T) {
 		{"claim name with dots is a valid PVC name", []EnvVolumeMount{
 			{ClaimName: "team.project.data", MountPath: "/volume/d"},
 		}},
-		{"same claim, two modes, sibling paths", []EnvVolumeMount{
-			{ClaimName: "data", MountPath: "/volume/shared", ReadOnly: ptr.To(true)},
-			{ClaimName: "data", MountPath: "/volume/me", ReadOnly: ptr.To(false)},
+		{"same claim, same mode, several paths", []EnvVolumeMount{
+			{ClaimName: "data", MountPath: "/volume/shared", SubPath: "shared", ReadOnly: ptr.To(true)},
+			{ClaimName: "data", MountPath: "/volume/me", SubPath: "me", ReadOnly: ptr.To(true)},
+		}},
+		{"two different claims in different modes", []EnvVolumeMount{
+			{ClaimName: "dataset", MountPath: "/volume/dataset", ReadOnly: ptr.To(true)},
+			{ClaimName: "scratch", MountPath: "/volume/scratch", ReadOnly: ptr.To(false)},
 		}},
 		{"sibling of a template mount", []EnvVolumeMount{
 			{ClaimName: "data", MountPath: "/mnt/data"},
@@ -135,6 +139,16 @@ func TestValidateVolumeMounts_Rejects(t *testing.T) {
 				{ClaimName: "a", MountPath: "/volume/7"}, {ClaimName: "a", MountPath: "/volume/8"},
 				{ClaimName: "a", MountPath: "/volume/9"},
 			}, "at most 8 volume mounts"},
+		{"same claim in both modes",
+			[]EnvVolumeMount{
+				{ClaimName: "data", MountPath: "/volume/ro", ReadOnly: ptr.To(true)},
+				{ClaimName: "data", MountPath: "/volume/rw", ReadOnly: ptr.To(false)},
+			}, "declared both read-only and read-write"},
+		{"same claim in both modes, one mode implicit",
+			[]EnvVolumeMount{
+				{ClaimName: "data", MountPath: "/volume/ro"},
+				{ClaimName: "data", MountPath: "/volume/rw", ReadOnly: ptr.To(false)},
+			}, "declared both read-only and read-write"},
 		{"too many distinct sources",
 			[]EnvVolumeMount{
 				{ClaimName: "a", MountPath: "/volume/a"},
@@ -157,20 +171,59 @@ func TestValidateVolumeMounts_Rejects(t *testing.T) {
 	}
 }
 
-// TestValidateVolumeMounts_RoRwCountsAsTwoSources: the source cap counts
-// (claim, mode) pairs, because each pair is a separate corev1.Volume and so a
-// separate mount operation at Pod creation.
-func TestValidateVolumeMounts_RoRwCountsAsTwoSources(t *testing.T) {
-	vols := []EnvVolumeMount{
-		{ClaimName: "a", MountPath: "/volume/a1", ReadOnly: ptr.To(true)},
-		{ClaimName: "a", MountPath: "/volume/a2", ReadOnly: ptr.To(false)},
-		{ClaimName: "b", MountPath: "/volume/b1", ReadOnly: ptr.To(true)},
-		{ClaimName: "b", MountPath: "/volume/b2", ReadOnly: ptr.To(false)},
-		{ClaimName: "c", MountPath: "/volume/c1", ReadOnly: ptr.To(true)},
+// TestValidateVolumeMounts_SourceCapCountsDistinctClaims: each claim is one
+// corev1.Volume and therefore one mount operation at Pod creation, which is
+// what the cap bounds. Several mount paths off one claim share its volume and
+// so count once.
+func TestValidateVolumeMounts_SourceCapCountsDistinctClaims(t *testing.T) {
+	t.Run("five claims exceed the cap", func(t *testing.T) {
+		vols := []EnvVolumeMount{
+			{ClaimName: "a", MountPath: "/volume/a"},
+			{ClaimName: "b", MountPath: "/volume/b"},
+			{ClaimName: "c", MountPath: "/volume/c"},
+			{ClaimName: "d", MountPath: "/volume/d"},
+			{ClaimName: "e", MountPath: "/volume/e"},
+		}
+		err := ValidateVolumeMounts(vols, sandboxPodSpec())
+		if err == nil || !strings.Contains(err.Error(), "at most 4 distinct volume sources") {
+			t.Fatalf("want the source cap to reject 5 claims, got %v", err)
+		}
+	})
+
+	t.Run("many paths off few claims stay under the cap", func(t *testing.T) {
+		vols := []EnvVolumeMount{
+			{ClaimName: "a", MountPath: "/volume/a1", SubPath: "1"},
+			{ClaimName: "a", MountPath: "/volume/a2", SubPath: "2"},
+			{ClaimName: "a", MountPath: "/volume/a3", SubPath: "3"},
+			{ClaimName: "b", MountPath: "/volume/b1", SubPath: "1"},
+			{ClaimName: "b", MountPath: "/volume/b2", SubPath: "2"},
+		}
+		if err := ValidateVolumeMounts(vols, sandboxPodSpec()); err != nil {
+			t.Fatalf("two claims across five paths is within the cap, got %v", err)
+		}
+	})
+}
+
+// TestValidateVolumeMounts_SameClaimBothModesRejected pins the constraint a real
+// cluster taught us: kubelet cannot mount one PersistentVolumeClaim twice in a
+// Pod. Two modes need two corev1.Volume entries for the same claim, the volume
+// manager keys by the underlying volume, and the Pod hangs in
+// ContainerCreating until its mount deadline with no useful event. Serving both
+// modes off one volume would instead require making the source read-write and
+// leaving the read-only mount enforced only by the mount flag — the weaker
+// spelling this feature exists to avoid.
+func TestValidateVolumeMounts_SameClaimBothModesRejected(t *testing.T) {
+	err := ValidateVolumeMounts([]EnvVolumeMount{
+		{ClaimName: "shared", MountPath: "/volume/read", ReadOnly: ptr.To(true)},
+		{ClaimName: "shared", MountPath: "/volume/write", ReadOnly: ptr.To(false)},
+	}, sandboxPodSpec())
+	if err == nil {
+		t.Fatal("a claim in both modes must be refused: the Pod would never start")
 	}
-	err := ValidateVolumeMounts(vols, sandboxPodSpec())
-	if err == nil || !strings.Contains(err.Error(), "at most 4 distinct volume sources") {
-		t.Fatalf("want the source cap to count ro+rw separately, got %v", err)
+	for _, want := range []string{"read-only and read-write", "subPath"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q so the user knows the way out; got %q", want, err)
+		}
 	}
 }
 
