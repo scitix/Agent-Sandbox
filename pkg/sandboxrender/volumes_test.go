@@ -82,20 +82,25 @@ func TestOptionsEmpty_TrulyEmpty(t *testing.T) {
 	}
 }
 
-// TestApplyVolumes_GroupsBySource is the core of the read-only design: because
-// readOnly lives on the volume SOURCE, the same claim mounted read-only at one
-// path and read-write at another must become two corev1.Volume entries.
+// TestApplyVolumes_GroupsBySource is the core of the read-only design: readOnly
+// lives on the volume SOURCE, so claims in different modes are different
+// volumes, each carrying its own readOnly.
+//
+// Note the modes here belong to DIFFERENT claims. One claim in two modes is
+// refused by ValidateVolumeMounts, because kubelet cannot mount a single
+// PersistentVolumeClaim twice in a Pod — it would hang in ContainerCreating.
+// The grouping key stays (claimName, readOnly) as defence in depth for a
+// hand-edited CR that bypassed validation; it is not a reachable shape.
 func TestApplyVolumes_GroupsBySource(t *testing.T) {
 	emb := embWithContainers()
 	err := Apply(emb, Options{Volumes: []agentsv1alpha1.EnvVolumeMount{
-		{ClaimName: "data", MountPath: "/volume/shared", ReadOnly: ptr.To(true)},
-		{ClaimName: "data", MountPath: "/volume/me", ReadOnly: ptr.To(false)},
+		{ClaimName: "dataset", MountPath: "/volume/dataset", ReadOnly: ptr.To(true)},
+		{ClaimName: "scratch", MountPath: "/volume/scratch", ReadOnly: ptr.To(false)},
 	}})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	// shared-bin (from the template) + one ro + one rw volume for "data".
 	var pvcVols []corev1.Volume
 	for _, v := range emb.Template.Spec.Volumes {
 		if v.PersistentVolumeClaim != nil {
@@ -103,22 +108,17 @@ func TestApplyVolumes_GroupsBySource(t *testing.T) {
 		}
 	}
 	if len(pvcVols) != 2 {
-		t.Fatalf("want 2 PVC volumes for one claim in two modes, got %d", len(pvcVols))
+		t.Fatalf("want 2 PVC volumes for 2 claims, got %d", len(pvcVols))
 	}
-	if pvcVols[0].Name == pvcVols[1].Name {
-		t.Fatal("ro and rw forms of the same claim must have distinct volume names")
-	}
-	roCount := 0
+	byClaim := map[string]bool{}
 	for _, v := range pvcVols {
-		if v.PersistentVolumeClaim.ClaimName != "data" {
-			t.Errorf("unexpected claimName %q", v.PersistentVolumeClaim.ClaimName)
-		}
-		if v.PersistentVolumeClaim.ReadOnly {
-			roCount++
-		}
+		byClaim[v.PersistentVolumeClaim.ClaimName] = v.PersistentVolumeClaim.ReadOnly
 	}
-	if roCount != 1 {
-		t.Errorf("want exactly 1 read-only volume source, got %d", roCount)
+	if !byClaim["dataset"] {
+		t.Error("the read-only claim must render a read-only volume source")
+	}
+	if byClaim["scratch"] {
+		t.Error("the read-write claim must not render a read-only volume source")
 	}
 }
 
@@ -246,7 +246,7 @@ func TestApplyVolumes_Deterministic(t *testing.T) {
 		{ClaimName: "zeta", MountPath: "/volume/z"},
 		{ClaimName: "alpha", MountPath: "/volume/a", ReadOnly: ptr.To(false)},
 		{ClaimName: "mid", MountPath: "/volume/m"},
-		{ClaimName: "alpha", MountPath: "/volume/a2", ReadOnly: ptr.To(true)},
+		{ClaimName: "alpha", MountPath: "/volume/a2", ReadOnly: ptr.To(false)},
 	}
 	first := embWithContainers()
 	if err := Apply(first, Options{Volumes: vols}); err != nil {

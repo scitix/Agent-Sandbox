@@ -86,6 +86,9 @@ func ValidateVolumeMounts(vols []EnvVolumeMount, tmplSpec *corev1.PodSpec) error
 
 	seenPaths := make([]string, 0, len(vols))
 	sources := make(map[string]struct{}, len(vols))
+	// modeByClaim detects a claim declared both read-only and read-write. See
+	// the rejection below for why that cannot be served.
+	modeByClaim := make(map[string]bool, len(vols))
 
 	for i, v := range vols {
 		where := fmt.Sprintf("volumes[%d]", i)
@@ -124,6 +127,31 @@ func ValidateVolumeMounts(vols []EnvVolumeMount, tmplSpec *corev1.PodSpec) error
 				return err
 			}
 		}
+
+		// A claim may appear at several mount paths, but only in one mode.
+		//
+		// readOnly lives on the volume source, so two modes would need two
+		// corev1.Volume entries pointing at the same claim — and kubelet cannot
+		// mount one PersistentVolumeClaim twice in a single Pod: the volume
+		// manager keys by the underlying volume, so the second reference
+		// collides and the Pod hangs in ContainerCreating until its mount
+		// deadline, with no useful event.
+		//
+		// The alternative — one volume carrying the weaker mode plus per-mount
+		// readOnly for the rest — is worse than refusing: kubelet computes
+		// ReadOnly as (mount.ReadOnly || sourceReadOnly), so a mixed claim would
+		// have to make the SOURCE read-write, leaving the read-only mount
+		// enforced only by the mount flag. That is exactly the weaker spelling a
+		// container can be given read-write access under, which is the thing
+		// this feature exists to avoid.
+		if prev, seen := modeByClaim[v.ClaimName]; seen && prev != v.IsReadOnly() {
+			return fmt.Errorf("%s: claim %q is declared both read-only and read-write; "+
+				"Kubernetes cannot mount one PersistentVolumeClaim twice in a Pod, and "+
+				"serving both modes would require weakening the read-only mount. Mount it "+
+				"in one mode, and use subPath to expose different subtrees",
+				where, v.ClaimName)
+		}
+		modeByClaim[v.ClaimName] = v.IsReadOnly()
 
 		mode := "rw"
 		if v.IsReadOnly() {
