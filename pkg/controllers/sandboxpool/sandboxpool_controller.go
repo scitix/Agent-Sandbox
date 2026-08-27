@@ -161,7 +161,11 @@ type SandboxPoolReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;delete;patch;update
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=list;watch
+// get is needed alongside list: a point Get on a Namespace served by an
+// uncached reader is authorised for real, and a 403 there surfaces as a wrong
+// answer rather than an error (resolveNamespaceFromK8s treats any failure as
+// "namespace absent" and falls back to the default namespace).
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

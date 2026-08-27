@@ -119,9 +119,15 @@ def sync_detailed(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable Env shell fields. Omitted
-            fields are left unchanged. Members are managed through `/envs/{name}/sandboxpools/*` and
-            autoscaling through `/envs/{name}/autoscaling/*`.
+        body (UpdateSandboxEnvRequest): Patch the editable Env shell. Members are managed through
+            `/envs/{name}/sandboxpools/*` and autoscaling through
+            `/envs/{name}/autoscaling/*`.
+
+            The `overrides` object is REPLACED WHOLESALE when supplied — callers must
+            echo back every field they want to preserve. Omitting `overrides`
+            entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
+            credential values need not be echoed: their references round-trip through
+            GET, so re-sending what GET returned preserves the stored material.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,9 +162,15 @@ def sync(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable Env shell fields. Omitted
-            fields are left unchanged. Members are managed through `/envs/{name}/sandboxpools/*` and
-            autoscaling through `/envs/{name}/autoscaling/*`.
+        body (UpdateSandboxEnvRequest): Patch the editable Env shell. Members are managed through
+            `/envs/{name}/sandboxpools/*` and autoscaling through
+            `/envs/{name}/autoscaling/*`.
+
+            The `overrides` object is REPLACED WHOLESALE when supplied — callers must
+            echo back every field they want to preserve. Omitting `overrides`
+            entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
+            credential values need not be echoed: their references round-trip through
+            GET, so re-sending what GET returned preserves the stored material.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -188,9 +200,15 @@ async def asyncio_detailed(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable Env shell fields. Omitted
-            fields are left unchanged. Members are managed through `/envs/{name}/sandboxpools/*` and
-            autoscaling through `/envs/{name}/autoscaling/*`.
+        body (UpdateSandboxEnvRequest): Patch the editable Env shell. Members are managed through
+            `/envs/{name}/sandboxpools/*` and autoscaling through
+            `/envs/{name}/autoscaling/*`.
+
+            The `overrides` object is REPLACED WHOLESALE when supplied — callers must
+            echo back every field they want to preserve. Omitting `overrides`
+            entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
+            credential values need not be echoed: their references round-trip through
+            GET, so re-sending what GET returned preserves the stored material.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -225,9 +243,15 @@ async def asyncio(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Patch one or more editable Env shell fields. Omitted
-            fields are left unchanged. Members are managed through `/envs/{name}/sandboxpools/*` and
-            autoscaling through `/envs/{name}/autoscaling/*`.
+        body (UpdateSandboxEnvRequest): Patch the editable Env shell. Members are managed through
+            `/envs/{name}/sandboxpools/*` and autoscaling through
+            `/envs/{name}/autoscaling/*`.
+
+            The `overrides` object is REPLACED WHOLESALE when supplied — callers must
+            echo back every field they want to preserve. Omitting `overrides`
+            entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
+            credential values need not be echoed: their references round-trip through
+            GET, so re-sending what GET returned preserves the stored material.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

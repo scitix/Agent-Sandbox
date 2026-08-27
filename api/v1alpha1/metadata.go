@@ -14,6 +14,14 @@
 
 package v1alpha1
 
+import (
+	"strconv"
+	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
+)
+
 type SandboxStopReason string
 
 const (
@@ -152,6 +160,38 @@ const (
 	// Deprecated: ignored by the server; use SandboxTemplateDocsAnnotationKey instead.
 	SandboxTemplatePoolDocsAnnotationKey = "agentbox.navix.sh/pool-docs"
 
+	// RegistryRewriteAnnotationKey opts a SandboxTemplate into having its own
+	// images (idleImage, containers, initContainers) rewritten to the registry
+	// of whichever cluster the Pool is rendered for.
+	//
+	// Written by: the Template author (a human).
+	// Read by: poolrender.RenderSandboxPool.
+	// Format: a boolean literal parsable by strconv.ParseBool ("true", "1").
+	// Absent: no rewriting of Template-owned images — the pre-existing
+	// behaviour, where a Template authored against one region's registry keeps
+	// that registry in every cluster it is broadcast to.
+	// Unparseable: treated as false, logged at V(2), never an error.
+	//
+	// Opt-in rather than always-on because the rewrite is a bare host swap:
+	// only the Template author knows whether the same repository path exists in
+	// every region's mirror.
+	RegistryRewriteAnnotationKey = "agentbox.navix.sh/registry-rewrite"
+
+	// AllowUnenforceableReadOnlyVolumesAnnotationKey opts a SandboxTemplate out
+	// of the check that refuses read-only Env volume mounts on a pod spec that
+	// can defeat them (privileged, SYS_ADMIN, Bidirectional propagation,
+	// hostPath, unmasked procMount).
+	//
+	// Written by: a cluster administrator. SandboxTemplate writes are
+	// admin-scoped, which is the point: the person who chose `privileged: true`
+	// is the person who may accept its consequence, not the user mounting the
+	// dataset.
+	// Read by: v1alpha1.ValidateReadOnlyEnforceable via its callers.
+	// Format: a boolean literal parsable by strconv.ParseBool.
+	// Absent: read-only mounts are refused on such pod specs.
+	// Unparseable: treated as false (the safe direction).
+	AllowUnenforceableReadOnlyVolumesAnnotationKey = "agentbox.navix.sh/allow-unenforceable-readonly-volumes"
+
 	// SandboxPoolTemplateNameAnnotationKey records the source SandboxTemplate name.
 	SandboxPoolTemplateNameAnnotationKey = "agentbox.navix.sh/template-name"
 	// SandboxPoolTemplateVersionAnnotationKey records the source SandboxTemplate version at creation time.
@@ -237,4 +277,28 @@ const EnvSecretInjectionNamePrefix = "eis-"
 // API, mirroring how imagePullSecret works.
 func EnvSecretInjectionName(envName string) string {
 	return EnvSecretInjectionNamePrefix + envName
+}
+
+// BoolAnnotation reads a boolean opt-in annotation off an object.
+//
+// It is deliberately fail-open in the "false" direction: a missing object, a
+// missing key, or a value strconv.ParseBool rejects all yield false, and none
+// of them is an error. Opt-in annotations in this repo gate behaviour that is
+// safe to skip, so a typo must degrade to the pre-existing behaviour rather
+// than fail a request.
+func BoolAnnotation(obj metav1.Object, key string) bool {
+	if obj == nil {
+		return false
+	}
+	raw, ok := obj.GetAnnotations()[key]
+	if !ok {
+		return false
+	}
+	v, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		klog.V(2).InfoS("ignoring unparseable boolean annotation",
+			"key", key, "value", raw, "object", obj.GetName())
+		return false
+	}
+	return v
 }

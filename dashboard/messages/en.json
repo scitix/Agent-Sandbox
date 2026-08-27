@@ -1550,5 +1550,22 @@
   "managedAgents.preview.toolCall": "Tool",
   "managedAgents.preview.attachedAs": "Attached as {{path}}",
   "managedAgents.preview.attachFailed": "Upload failed",
-  "managedAgents.preview.refreshWorkspace": "Refresh"
+  "managedAgents.preview.refreshWorkspace": "Refresh",
+  "envs.form.section.volumes": "Volumes",
+  "envs.form.volumes.add": "Add volume",
+  "envs.form.volumes.hint": "Mount an existing PersistentVolumeClaim from your namespace into the sandbox. The claim must already exist and be Bound — the platform never creates or deletes one. Mounts are fixed when a sandbox Pod is created, so editing this list rebuilds idle Pods; running sandboxes keep their current mounts until they are returned.",
+  "envs.form.volumes.empty": "No volumes mounted",
+  "envs.form.volumes.claim": "Volume",
+  "envs.form.volumes.claimPlaceholder": "select a volume",
+  "envs.form.volumes.mountPath": "Mount path",
+  "envs.form.volumes.subPath": "Sub-path (optional)",
+  "envs.form.volumes.subPathHint": "Mount only this subtree. A path that does not exist is created empty rather than reported as an error.",
+  "envs.form.volumes.readOnly": "Read-only",
+  "envs.form.volumes.writableWarning": "Writable: sandbox code runs as root and can delete anything under this path.",
+  "envs.form.volumes.remove": "Remove volume",
+  "envs.form.volumes.noClaims": "No Bound volumes in your namespace",
+  "envs.form.volumes.badgeWritable": "{{count}} ({{writable}} writable)",
+  "envs.form.errors.volumeClaimRequired": "Select a volume",
+  "envs.form.errors.volumeMountPathRequired": "Mount path is required",
+  "envs.form.errors.volumeMountPathAbsolute": "Mount path must be absolute (start with /)"
 }

@@ -69,7 +69,7 @@ func newEnvService(t *testing.T, envs ...*agentsv1alpha1.SandboxEnv) SandboxEnvS
 	for _, e := range envs {
 		cb = cb.WithObjects(e)
 	}
-	return NewSandboxEnvService(cb.Build(), nil, nil, nil)
+	return NewSandboxEnvService(cb.Build(), nil, nil, nil, nil, nil, VolumeConfig{Enabled: true})
 }
 
 func TestSandboxEnvService_List_FiltersByTeamAndUser(t *testing.T) {

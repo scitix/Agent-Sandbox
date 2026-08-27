@@ -28,6 +28,7 @@ from typing import cast
 
 if TYPE_CHECKING:
   from ..models.env_update_strategy import EnvUpdateStrategy
+  from ..models.env_volume_mount import EnvVolumeMount
   from ..models.image_pull_secret_input import ImagePullSecretInput
   from ..models.sandbox_network_policy import SandboxNetworkPolicy
 
@@ -62,6 +63,14 @@ class EnvOverrides:
             update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
                 Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
                 idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
+            volumes (list[EnvVolumeMount] | Unset): Mount existing PersistentVolumeClaims from this Env's namespace into the
+                sandbox container. The claim must already exist and be Bound; the server
+                never creates or deletes a PVC. Discover mountable claims with GET /volumes.
+
+                Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes
+                on a live Pod — so editing this list rolls the member Pools' idle Pods.
+                Sandboxes already running keep their previous mounts until they are
+                returned. In-place image upgrades never touch volumes.
      """
 
     image: str | Unset = UNSET
@@ -72,6 +81,7 @@ class EnvOverrides:
     image_pull_secret_configured: bool | Unset = UNSET
     network_policy: SandboxNetworkPolicy | Unset = UNSET
     update_strategy: EnvUpdateStrategy | Unset = UNSET
+    volumes: list[EnvVolumeMount] | Unset = UNSET
 
 
 
@@ -79,6 +89,7 @@ class EnvOverrides:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.env_update_strategy import EnvUpdateStrategy
+        from ..models.env_volume_mount import EnvVolumeMount
         from ..models.image_pull_secret_input import ImagePullSecretInput
         from ..models.sandbox_network_policy import SandboxNetworkPolicy
         image = self.image
@@ -106,6 +117,15 @@ class EnvOverrides:
         if not isinstance(self.update_strategy, Unset):
             update_strategy = self.update_strategy.to_dict()
 
+        volumes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.volumes, Unset):
+            volumes = []
+            for volumes_item_data in self.volumes:
+                volumes_item = volumes_item_data.to_dict()
+                volumes.append(volumes_item)
+
+
+
 
         field_dict: dict[str, Any] = {}
 
@@ -127,6 +147,8 @@ class EnvOverrides:
             field_dict["networkPolicy"] = network_policy
         if update_strategy is not UNSET:
             field_dict["updateStrategy"] = update_strategy
+        if volumes is not UNSET:
+            field_dict["volumes"] = volumes
 
         return field_dict
 
@@ -135,6 +157,7 @@ class EnvOverrides:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.env_update_strategy import EnvUpdateStrategy
+        from ..models.env_volume_mount import EnvVolumeMount
         from ..models.image_pull_secret_input import ImagePullSecretInput
         from ..models.sandbox_network_policy import SandboxNetworkPolicy
         d = dict(src_dict)
@@ -186,6 +209,18 @@ class EnvOverrides:
 
 
 
+        _volumes = d.pop("volumes", UNSET)
+        volumes: list[EnvVolumeMount] | Unset = UNSET
+        if _volumes is not UNSET:
+            volumes = []
+            for volumes_item_data in _volumes:
+                volumes_item = EnvVolumeMount.from_dict(volumes_item_data)
+
+
+
+                volumes.append(volumes_item)
+
+
         env_overrides = cls(
             image=image,
             pod_creation_image_policy=pod_creation_image_policy,
@@ -195,6 +230,7 @@ class EnvOverrides:
             image_pull_secret_configured=image_pull_secret_configured,
             network_policy=network_policy,
             update_strategy=update_strategy,
+            volumes=volumes,
         )
 
         return env_overrides

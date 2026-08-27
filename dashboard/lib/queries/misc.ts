@@ -74,6 +74,25 @@ export const oidcConfigQueryOptions = () =>
  * items array, but consumers should branch on the gate to avoid rendering
  * empty UI.
  */
+/**
+ * PersistentVolumeClaims the caller may mount into a sandbox.
+ *
+ * Scoped to the caller's own namespace by the server — the operation takes no
+ * namespace parameter, and that derivation is the authorisation boundary, not a
+ * filter. Uses the worker client (never the hub): claims are a per-cluster,
+ * per-namespace fact.
+ *
+ * Use only when `useFeatureGates().volumes` is true; while the feature is off
+ * the endpoint returns 200 with an empty list.
+ */
+export const volumesQueryOptions = (options?: { enabled?: boolean }) =>
+  currentApiClient().queryOptions("get", "/volumes", undefined, {
+    enabled: options?.enabled ?? true,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    select: (data) => data.items ?? [],
+  })
+
 export const instanceTypesQueryOptions = (options?: { enabled?: boolean }) =>
   currentApiClient().queryOptions("get", "/instancetypes", undefined, {
     enabled: options?.enabled ?? true,

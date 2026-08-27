@@ -91,6 +91,19 @@ function isCIDRorIP(s: string): boolean {
 }
 
 /** Field shapes without the cross-field refinement, so `.partial()` works. */
+// A single PersistentVolumeClaim mount. readOnly defaults to true everywhere:
+// the sandbox runs as root with passwordless sudo, so a writable mount means the
+// agent can delete anything under it.
+const volumeRowSchema = z.object({
+  claimName: z.string().min(1, "envs.form.errors.volumeClaimRequired"),
+  mountPath: z
+    .string()
+    .min(1, "envs.form.errors.volumeMountPathRequired")
+    .startsWith("/", "envs.form.errors.volumeMountPathAbsolute"),
+  subPath: z.preprocess(emptyToUndef, z.string().optional()),
+  readOnly: z.boolean(),
+})
+
 export const baseSchema = z.object({
   name: z
     .string()
@@ -117,6 +130,9 @@ export const baseSchema = z.object({
   // on the pool sheet). maxUnavailable is a free-form int-or-percent string.
   autoUpdate: z.boolean(),
   maxUnavailable: z.preprocess(emptyToUndef, z.string().optional()),
+  // Existing PersistentVolumeClaims mounted into the sandbox. Only claims in
+  // the caller's own namespace are mountable, which is enforced server-side.
+  volumeRows: z.array(volumeRowSchema),
 })
 
 export const formSchema = baseSchema.superRefine((v, ctx) => {
@@ -316,6 +332,7 @@ export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
       injectionRuleRows: [],
       autoUpdate: true,
       maxUnavailable: undefined,
+      volumeRows: [],
     }
   }
   const overrides = env.spec.overrides
@@ -360,6 +377,15 @@ export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
     ),
     autoUpdate: overrides?.updateStrategy?.autoUpdate ?? true,
     maxUnavailable: overrides?.updateStrategy?.maxUnavailable,
+    // readOnly is always returned explicitly by the server, but default to the
+    // safe value anyway so a response from an older server cannot silently
+    // present a dataset as writable.
+    volumeRows: (overrides?.volumes ?? []).map((v) => ({
+      claimName: v.claimName,
+      mountPath: v.mountPath,
+      subPath: v.subPath,
+      readOnly: v.readOnly ?? true,
+    })),
   }
 }
 
@@ -394,7 +420,20 @@ function buildOverrides(v: FormValues) {
   if (np) o.networkPolicy = np
   const us = buildUpdateStrategy(v)
   if (us) o.updateStrategy = us
-  return Object.keys(o).length ? o : undefined
+  // Always emit volumes, including as an empty array. PATCH replaces the whole
+  // overrides block, so an omitted key clears the field — which is how the user
+  // removes their last mount.
+  o.volumes = v.volumeRows.map((r) => ({
+    claimName: r.claimName,
+    mountPath: r.mountPath,
+    ...(r.subPath ? { subPath: r.subPath } : {}),
+    readOnly: r.readOnly,
+  }))
+  // Always return the object, never undefined. `undefined` makes
+  // formValuesToUpdateBody send `{}`, which the server reads as "overrides not
+  // supplied" and leaves untouched — so clearing every override used to be a
+  // silent no-op. An explicit `overrides: {}` is what actually clears it.
+  return o
 }
 
 // buildUpdateStrategy emits the rollout override only when it deviates from the

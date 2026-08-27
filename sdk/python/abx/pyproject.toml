@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentbox-sdk"
-version = "0.3.0"
+version = "0.0.0"
 description = "AgentBox Python SDK — manage Sandboxes, Pools, and Templates via async/await"
 readme = "README.md"
 license = { text = "Apache-2.0" }

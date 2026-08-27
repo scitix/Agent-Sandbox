@@ -1550,5 +1550,22 @@
   "managedAgents.preview.toolCall": "工具调用",
   "managedAgents.preview.attachedAs": "已作为 {{path}} 上传",
   "managedAgents.preview.attachFailed": "上传失败",
-  "managedAgents.preview.refreshWorkspace": "刷新"
+  "managedAgents.preview.refreshWorkspace": "刷新",
+  "envs.form.section.volumes": "存储卷",
+  "envs.form.volumes.add": "添加卷",
+  "envs.form.volumes.hint": "把你命名空间里已存在的 PersistentVolumeClaim 挂载到沙箱。卷必须已存在且处于 Bound 状态 —— 平台不会创建或删除卷。挂载在沙箱 Pod 创建时固定，所以修改这个列表会重建空闲 Pod；正在运行的沙箱会保持当前挂载直到归还。",
+  "envs.form.volumes.empty": "未挂载任何卷",
+  "envs.form.volumes.claim": "卷",
+  "envs.form.volumes.claimPlaceholder": "选择一个卷",
+  "envs.form.volumes.mountPath": "挂载路径",
+  "envs.form.volumes.subPath": "子路径（可选）",
+  "envs.form.volumes.subPathHint": "只挂载这个子目录。填写不存在的路径会得到一个空目录，而不是报错。",
+  "envs.form.volumes.readOnly": "只读",
+  "envs.form.volumes.writableWarning": "可写：沙箱内的代码以 root 运行，可以删除此路径下的任何内容。",
+  "envs.form.volumes.remove": "移除卷",
+  "envs.form.volumes.noClaims": "你的命名空间里没有 Bound 状态的卷",
+  "envs.form.volumes.badgeWritable": "{{count}}（{{writable}} 个可写）",
+  "envs.form.errors.volumeClaimRequired": "请选择一个卷",
+  "envs.form.errors.volumeMountPathRequired": "挂载路径不能为空",
+  "envs.form.errors.volumeMountPathAbsolute": "挂载路径必须是绝对路径（以 / 开头）"
 }

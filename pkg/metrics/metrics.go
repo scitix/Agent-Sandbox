@@ -118,6 +118,24 @@ var (
 	// transitioned out of Idle (e.g. deleted during scale-down).
 	ScheduleReadyQueueEvictedTotal *prometheus.CounterVec
 
+	// ImageRewriteTotal counts per-cluster container-image registry rewrites,
+	// labelled by outcome. The "no_local_registry" result is the one worth
+	// alerting on: the image belongs to a peer cluster's registry and this
+	// cluster declares no counterpart, so the image is left pointing at another
+	// region and surfaces minutes later as ImagePullBackOff.
+	ImageRewriteTotal *prometheus.CounterVec
+
+	// EnvVolumeMounts reports how many PersistentVolumeClaim mounts each Env
+	// declares. A gauge rather than a counter: it tracks a declared shape, not
+	// an event rate.
+	EnvVolumeMounts *prometheus.GaugeVec
+
+	// EnvVolumeReadOnlyUnenforceableTotal counts renders that accepted a
+	// read-only volume mount on a pod spec that cannot enforce it, i.e. where a
+	// template carried the admin opt-out annotation. Every increment is a
+	// knowingly downgraded guarantee, so it must never be silent.
+	EnvVolumeReadOnlyUnenforceableTotal *prometheus.CounterVec
+
 	// EgressMissingSidecarTotal counts idle pods the dispatcher refused because
 	// the claim requires egress enforcement but the pod carries no filter
 	// sidecar (it was materialised before the Pool gained its networkPolicy).
@@ -268,6 +286,21 @@ func init() {
 		Help: "Idle pods refused at dispatch because the claim requires egress enforcement but the pod has no filter sidecar (created before the pool's networkPolicy). Non-zero means a pool rollout is incomplete.",
 	}, scheduleLabels)
 
+	ImageRewriteTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_image_rewrite_total",
+		Help: "Container-image registry rewrites while rendering a member Pool, by result. result=applied the image was rewritten to this cluster's registry; not_applicable a public image, an image already local, or rewriting disabled; no_local_registry the image belongs to a peer cluster's registry and this cluster declares no counterpart, so it was left unchanged and will be pulled cross-region if at all.",
+	}, []string{"cluster", "result"})
+
+	EnvVolumeMounts = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "agentbox_env_volume_mounts",
+		Help: "Number of PersistentVolumeClaim mounts declared by a SandboxEnv.",
+	}, []string{"namespace", "env"})
+
+	EnvVolumeReadOnlyUnenforceableTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_env_volume_readonly_unenforceable_total",
+		Help: "Renders that accepted a read-only volume mount on a pod spec that cannot enforce it, permitted only by the template's admin opt-out annotation. Each increment is a deliberately downgraded guarantee.",
+	}, []string{"namespace", "env", "reason"})
+
 	ctrlmetrics.Registry.MustRegister(
 		PoolReplicasDesired,
 		PoolReplicasIdle,
@@ -294,5 +327,8 @@ func init() {
 		ScheduleSkippedScaleDownProtectedTotal,
 		ScheduleReadyQueueEvictedTotal,
 		EgressMissingSidecarTotal,
+		ImageRewriteTotal,
+		EnvVolumeMounts,
+		EnvVolumeReadOnlyUnenforceableTotal,
 	)
 }

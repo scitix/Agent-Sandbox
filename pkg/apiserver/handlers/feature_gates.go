@@ -33,5 +33,6 @@ func (s *Server) GetFeatureGates(_ context.Context, _ gen.GetFeatureGatesRequest
 	return gen.GetFeatureGates200JSONResponse{
 		Quota:        s.quotaProvider.Enabled(),
 		InstanceType: s.instanceTypeProvider.Enabled(),
+		Volumes:      &s.volumesEnabled,
 	}, nil
 }

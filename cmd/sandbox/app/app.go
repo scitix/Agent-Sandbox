@@ -49,6 +49,7 @@ import (
 	pluginquota "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/framework/providerset"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/lastcreate"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -106,6 +107,9 @@ func Run(opts Options) {
 		clustersConfigMapName                            string
 		egressProxyImage                                 string
 		egressLegacySidecar                              string
+		envVolumes                                       string
+		volumeDisplayNameLabels                          string
+		volumeAllowedRuntimeClasses                      string
 		tlsOpts                                          []func(*tls.Config)
 	)
 
@@ -173,6 +177,28 @@ func Run(opts Options) {
 			"Init forever; check with `kubectl explain pod.spec.initContainers.restartPolicy`. Costs the "+
 			"start-ordering guarantee (early traffic is refused, never leaked) — leave off on 1.29+. "+
 			"Accepts true/false/1/0/yes/no; empty means false.")
+	// Deliberately a string for the same reason as --egress-legacy-sidecar: the
+	// release platform substitutes the value, and an unset variable must read as
+	// "off" rather than CrashLoop the operator.
+	flag.StringVar(&envVolumes, "env-volumes",
+		os.Getenv("AGENTBOX_ENV_VOLUMES"),
+		"Allow a SandboxEnv to mount existing PersistentVolumeClaims from its namespace into "+
+			"sandboxes (overrides.volumes, GET /volumes). This is a kill switch, not a UI hint: "+
+			"while off, a non-empty overrides.volumes is rejected with 400. The operator never "+
+			"creates or deletes a claim. Accepts true/false/1/0/yes/no; empty means false.")
+	flag.StringVar(&volumeDisplayNameLabels, "volume-display-name-labels",
+		os.Getenv("AGENTBOX_VOLUME_DISPLAY_NAME_LABELS"),
+		"Comma-separated, ordered list of PersistentVolumeClaim label keys consulted to derive a "+
+			"human-readable volume name for GET /volumes; the first non-empty value wins. Empty "+
+			"means fall back to the claim name. Configurable because the label vocabulary belongs "+
+			"to the storage platform, not to AgentBox.")
+	flag.StringVar(&volumeAllowedRuntimeClasses, "volume-allowed-runtime-classes",
+		os.Getenv("AGENTBOX_VOLUME_ALLOWED_RUNTIME_CLASSES"),
+		"Comma-separated runtimeClassName values whose CSI filesystem passthrough has been "+
+			"verified. Empty (default) permits only the cluster default runtime, i.e. templates "+
+			"that leave runtimeClassName unset. A VM-isolated runtime reaches the backing "+
+			"filesystem by a different path; an unverified one yields an empty directory or a Pod "+
+			"that never starts, so declaring volumes on such a template is refused.")
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -210,6 +236,25 @@ func Run(opts Options) {
 	if legacySidecarEnabled {
 		setupLog.Info("egress: injecting the filter proxy as an ordinary container " +
 			"(--egress-legacy-sidecar); native sidecars are used on API servers that support them")
+	}
+
+	// Same fail-safe reasoning as above, but the safe direction is the opposite:
+	// an unparseable value leaves the feature OFF, because the failure mode it
+	// guards is an agent with write access to a user's dataset.
+	envVolumesEnabled, volParseErr := parseOptionalBool(envVolumes)
+	if volParseErr != nil {
+		setupLog.Error(volParseErr, "Ignoring --env-volumes and keeping Env volume mounts disabled; "+
+			"set the value to true or false", "value", envVolumes)
+	}
+	volumeCfg := service.VolumeConfig{
+		Enabled:               envVolumesEnabled,
+		AllowedRuntimeClasses: splitAndTrim(volumeAllowedRuntimeClasses),
+		DisplayNameLabels:     splitAndTrim(volumeDisplayNameLabels),
+	}
+	if volumeCfg.Enabled {
+		setupLog.Info("env volumes enabled: SandboxEnvs may mount existing PersistentVolumeClaims",
+			"allowedRuntimeClasses", volumeCfg.AllowedRuntimeClasses,
+			"displayNameLabels", volumeCfg.DisplayNameLabels)
 	}
 
 	// ---- extension config ----------------------------------------------------
@@ -345,6 +390,19 @@ func Run(opts Options) {
 		}
 	}
 	ccForwarder := service.NewCrossClusterForwarder(clusterStore, localClusterID)
+
+	// One RegistryRewrite shared by the API service (which freezes a member's
+	// Pool spec) and the SandboxEnv Reconciler (which re-renders it on every
+	// pass). They must agree: a difference would flip the revision hash on
+	// every reconcile and roll idle Pods forever. nil when this operator does
+	// not know its own cluster, which disables rewriting.
+	var imageRegistry *sandboxrender.RegistryRewrite
+	if clusterStore != nil && localClusterID != "" {
+		imageRegistry = &sandboxrender.RegistryRewrite{
+			LocalClusterID: localClusterID,
+			Store:          clusterStore,
+		}
+	}
 
 	var clusterConfigSink service.ClusterConfigSink
 	if secret != "" && localClusterID != "" {
@@ -500,6 +558,7 @@ func Run(opts Options) {
 		Scheme:         mgr.GetScheme(),
 		LocalClusterID: localClusterID,
 		PluginManager:  pluginManager,
+		ImageRegistry:  imageRegistry,
 	}
 	if envRouter != nil {
 		envReconciler.EnvRouterSync = envRouter
@@ -548,6 +607,9 @@ func Run(opts Options) {
 		ServerVersion:        version.Version,
 		FederationRegistry:   fedRegistry,
 		FederationSource:     fedSource,
+		ImageRegistry:        imageRegistry,
+		APIReader:            mgr.GetAPIReader(),
+		VolumeConfig:         volumeCfg,
 	}, mgr.GetClient(), clientset, sandboxStore, pluginManager, envoyGatewayBaseURL, sandboxSvc)
 
 	numProcesses := 2
@@ -742,6 +804,19 @@ func buildScheme(extras []func(*runtime.Scheme) error) *runtime.Scheme {
 // A bool flag rejects both outright, so this reads empty as false and reports
 // anything else it cannot parse — leaving the caller to decide between failing
 // and continuing with the default.
+// splitAndTrim parses a comma-separated flag value into a slice, dropping empty
+// entries. An empty or whitespace-only value yields nil, which every consumer
+// reads as "unset".
+func splitAndTrim(v string) []string {
+	var out []string
+	for part := range strings.SplitSeq(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func parseOptionalBool(v string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "false", "0", "no", "off":

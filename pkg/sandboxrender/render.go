@@ -48,11 +48,35 @@ type Options struct {
 	// calling Apply, so this field stays the single resource-sizing knob
 	// the renderer consumes.
 	InlineResources *corev1.ResourceRequirements
+	// Volumes are the Env-level PVC mounts. Grouped into corev1.Volume entries
+	// by volume source (claimName + readOnly) and appended to
+	// containers[0].volumeMounts only — never to init containers, and never to
+	// an injected sidecar, which may hold brokered credentials.
+	Volumes []agentsv1alpha1.EnvVolumeMount
+	// ImageRegistry, when non-nil, enables per-cluster registry rewriting. On
+	// its own it rewrites only the caller-supplied Image override above —
+	// the same class of input as the claim-time image, which is already
+	// rewritten unconditionally.
+	ImageRegistry *RegistryRewrite
+	// RewriteTemplateImages extends ImageRegistry to the images the Template
+	// itself owns (IdleImage, containers, initContainers). Set it only when the
+	// Template opts in: the rewrite is a bare registry-host swap, so only the
+	// Template author knows whether the same repository path exists in every
+	// region's mirror. Ignored when ImageRegistry is nil.
+	RewriteTemplateImages bool
 }
 
 // Empty returns true when Options carries no observable effect; callers
 // can use this to skip rendering when no overrides apply.
-func (o Options) Empty() bool { return o.Image == "" && o.InlineResources == nil }
+//
+// Every field must be represented here. Forgetting one means an Env whose only
+// override is that field renders to nothing and the feature silently no-ops.
+func (o Options) Empty() bool {
+	return o.Image == "" &&
+		o.InlineResources == nil &&
+		len(o.Volumes) == 0 &&
+		o.ImageRegistry == nil
+}
 
 // Apply mutates emb in place by applying opts.
 //
@@ -70,7 +94,9 @@ func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 		if len(emb.Template.Spec.Containers) == 0 {
 			return fmt.Errorf("image override requires at least one container in the template")
 		}
-		emb.Template.Spec.Containers[0].Image = opts.Image
+		// A caller-supplied image is rewritten unconditionally: it is the same
+		// class of input as the claim-time image, which is already rewritten.
+		emb.Template.Spec.Containers[0].Image = opts.ImageRegistry.Rewrite(opts.Image)
 	}
 	if opts.InlineResources != nil {
 		if len(emb.Template.Spec.Containers) == 0 {
@@ -78,7 +104,29 @@ func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 		}
 		emb.Template.Spec.Containers[0].Resources = *opts.InlineResources.DeepCopy()
 	}
+	if opts.ImageRegistry != nil && opts.RewriteTemplateImages {
+		rewriteTemplateImages(emb, opts.ImageRegistry)
+	}
+	if len(opts.Volumes) > 0 {
+		if err := applyVolumes(emb, opts.Volumes); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// rewriteTemplateImages rewrites the images the Template itself owns. The
+// caller-supplied override in Options.Image is handled separately, before this
+// runs, so a rewritten override is not rewritten twice (the operation is
+// idempotent, but the ordering keeps the intent legible).
+func rewriteTemplateImages(emb *agentsv1alpha1.EmbeddedSandboxTemplate, r *RegistryRewrite) {
+	emb.IdleImage = r.Rewrite(emb.IdleImage)
+	for i := range emb.Template.Spec.Containers {
+		emb.Template.Spec.Containers[i].Image = r.Rewrite(emb.Template.Spec.Containers[i].Image)
+	}
+	for i := range emb.Template.Spec.InitContainers {
+		emb.Template.Spec.InitContainers[i].Image = r.Rewrite(emb.Template.Spec.InitContainers[i].Image)
+	}
 }
 
 // ValidateContainerImage checks that image is a syntactically valid Docker/OCI

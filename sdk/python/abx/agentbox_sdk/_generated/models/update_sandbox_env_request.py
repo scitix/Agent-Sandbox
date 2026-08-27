@@ -38,8 +38,15 @@ T = TypeVar("T", bound="UpdateSandboxEnvRequest")
 
 @_attrs_define
 class UpdateSandboxEnvRequest:
-    """ Patch one or more editable Env shell fields. Omitted fields are left unchanged. Members are managed through
-    `/envs/{name}/sandboxpools/*` and autoscaling through `/envs/{name}/autoscaling/*`.
+    """ Patch the editable Env shell. Members are managed through
+    `/envs/{name}/sandboxpools/*` and autoscaling through
+    `/envs/{name}/autoscaling/*`.
+
+    The `overrides` object is REPLACED WHOLESALE when supplied — callers must
+    echo back every field they want to preserve. Omitting `overrides`
+    entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
+    credential values need not be echoed: their references round-trip through
+    GET, so re-sending what GET returned preserves the stored material.
 
         Attributes:
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The

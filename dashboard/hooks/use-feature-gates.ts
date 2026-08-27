@@ -39,5 +39,12 @@ export function useFeatureGates() {
     quota: data?.quota ?? false,
     /** True when a non-noop InstanceType catalog provider is active (Env upsert sheet, /instancetypes endpoint). */
     instanceType: data?.instanceType ?? false,
+    /**
+     * True when a SandboxEnv may mount existing PersistentVolumeClaims
+     * (Env upsert sheet volumes panel, /volumes endpoint). While false the
+     * server also rejects a non-empty overrides.volumes, so this gate hides UI
+     * that would otherwise produce a 400.
+     */
+    volumes: data?.volumes ?? false,
   }
 }

@@ -63,6 +63,7 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
 
 const (
@@ -125,6 +126,15 @@ type SandboxEnvReconciler struct {
 	// status.clusters[isLocal=false], making the federated decision input
 	// visible via kubectl. nil in single-cluster mode.
 	Federation FederationReader
+
+	// ImageRegistry, when non-nil, rewrites container images to this cluster's
+	// registry while re-rendering auto-update members.
+	//
+	// It MUST be the same value the API service's envmember.WithImageRegistry
+	// holds. The API freezes a member's Pool spec and this Reconciler
+	// re-renders it on every pass; if the two disagree, the revision hash
+	// differs every time and idle Pods roll forever.
+	ImageRegistry *sandboxrender.RegistryRewrite
 }
 
 // FederationReader is the read side of the cross-cluster capacity registry the

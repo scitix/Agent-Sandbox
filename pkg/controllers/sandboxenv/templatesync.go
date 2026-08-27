@@ -112,6 +112,7 @@ func (r *SandboxEnvReconciler) refreshAutoUpdateMembers(ctx context.Context, env
 			Template:              tmpl,
 			Member:                m,
 			ImagePullSecretExists: ipsExists,
+			ImageRegistry:         r.ImageRegistry,
 		})
 		if rerr != nil {
 			klog.FromContext(ctx).Error(rerr, "refreshAutoUpdateMembers: render failed", "member", m.Name)

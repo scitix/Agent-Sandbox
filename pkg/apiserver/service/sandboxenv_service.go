@@ -36,6 +36,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
 
 // EnvShellService is the env-only CRUD slice of SandboxEnvService. Lives as
@@ -136,6 +137,9 @@ type UpdateSandboxEnvInput struct {
 // autoscaler methods come from the embedded sub-services.
 type k8sSandboxEnvService struct {
 	client client.Client
+	// apiReader is an uncached reader. May be nil; see volumeReader.
+	apiReader client.Reader
+	volumeCfg VolumeConfig
 
 	// Embedded sub-services — their methods promote to satisfy the
 	// composed SandboxEnvService interface.
@@ -148,10 +152,25 @@ type k8sSandboxEnvService struct {
 // MemberPoolService; the autoscaler sub-service currently needs only the
 // k8s client. A nil *plugins.PluginManager is treated as "no plugins";
 // nil providers are normalised to their Noop forms inside envmember.New.
-func NewSandboxEnvService(c client.Client, pm *plugins.PluginManager, instProv instancetypeplugin.Provider, quotaProv quotaplugin.Provider) SandboxEnvService {
+// imageRegistry may be nil (rewriting disabled); when set it must be the same
+// value the SandboxEnv Reconciler holds. apiReader may be nil, in which case
+// PersistentVolumeClaim reads fall back to the cached client — acceptable for
+// tests, but see preflightVolumeClaims for why production wants the uncached
+// reader.
+func NewSandboxEnvService(
+	c client.Client,
+	pm *plugins.PluginManager,
+	instProv instancetypeplugin.Provider,
+	quotaProv quotaplugin.Provider,
+	imageRegistry *sandboxrender.RegistryRewrite,
+	apiReader client.Reader,
+	volumeCfg VolumeConfig,
+) SandboxEnvService {
 	return &k8sSandboxEnvService{
 		client:            c,
-		MemberPoolService: envmember.New(c, pm, instProv, quotaProv),
+		apiReader:         apiReader,
+		volumeCfg:         volumeCfg,
+		MemberPoolService: envmember.New(c, pm, instProv, quotaProv, envmember.WithImageRegistry(imageRegistry)),
 		AutoscalerService: envautoscaler.New(c),
 	}
 }
@@ -278,6 +297,9 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 	if err := validateEnvOverrides(input.Overrides); err != nil {
 		return nil, err
 	}
+	if err := s.validateEnvVolumes(ctx, input.Namespace, input.TemplateRef.Name, input.Overrides); err != nil {
+		return nil, err
+	}
 	// Refuse before writing anything if a credential could not be materialised,
 	// rather than creating the Env and rolling it back below.
 	if err := s.preflightInjectedCredentials(ctx, input.Namespace, input.Name, input.Overrides, input.InjectedCredentialValues); err != nil {
@@ -355,6 +377,23 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 	}
 	if err := validateEnvOverrides(input.Overrides); err != nil {
 		return nil, err
+	}
+	// Volume checks need the Env's Template, so resolve the Env first. This read
+	// is outside the retry loop below: it only supplies templateRef.Name, which
+	// is immutable after create.
+	if input.Overrides != nil && len(input.Overrides.Volumes) > 0 {
+		existing := &agentsv1alpha1.SandboxEnv{}
+		key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
+		if err := s.client.Get(ctx, key, existing); err != nil {
+			if k8serrors.IsNotFound(err) {
+				return nil, domain.NewNotFound(fmt.Sprintf("env %q not found", input.Name))
+			}
+			return nil, domain.NewInternal(err.Error(), err)
+		}
+		if err := s.validateEnvVolumes(
+			ctx, input.Namespace, existing.Spec.TemplateRef.Name, input.Overrides); err != nil {
+			return nil, err
+		}
 	}
 	// Check the credentials before the Env is patched. An edit that does not
 	// re-type a credential sends no value (the field is write-only), so without
@@ -566,7 +605,33 @@ func envOverridesToGen(o *agentsv1alpha1.EnvOverridesSpec) *gen.EnvOverrides {
 	}
 	out.NetworkPolicy = networkPolicyToGen(o.NetworkPolicy)
 	out.UpdateStrategy = updateStrategyToGen(o.UpdateStrategy)
+	out.Volumes = envVolumesToGen(o.Volumes)
 	return out
+}
+
+// envVolumesToGen maps the CRD volume mounts onto the wire shape (GET).
+//
+// ReadOnly is always emitted explicitly, never omitted. PATCH replaces the
+// whole overrides block, so a client's read-modify-write cycle has to be able to
+// echo back exactly what it read; an omitted readOnly would be ambiguous at the
+// point where getting it wrong hands an agent write access to a dataset.
+func envVolumesToGen(vols []agentsv1alpha1.EnvVolumeMount) *[]gen.EnvVolumeMount {
+	if vols == nil {
+		return nil
+	}
+	out := make([]gen.EnvVolumeMount, 0, len(vols))
+	for _, v := range vols {
+		item := gen.EnvVolumeMount{
+			ClaimName: v.ClaimName,
+			MountPath: v.MountPath,
+			ReadOnly:  ptr.To(v.IsReadOnly()),
+		}
+		if v.SubPath != "" {
+			item.SubPath = ptr.To(v.SubPath)
+		}
+		out = append(out, item)
+	}
+	return &out
 }
 
 // updateStrategyToGen maps the CRD rollout policy onto the wire shape (GET).
@@ -919,6 +984,13 @@ func validateEnvOverrides(o *agentsv1alpha1.EnvOverridesSpec) *domain.AppError {
 	}
 	if err := agentsv1alpha1.ValidateSecretInjection(o.NetworkPolicy); err != nil {
 		return domain.NewBadRequest(fmt.Sprintf("invalid overrides.networkPolicy: %v", err))
+	}
+	// Shape-only checks here; the Template-aware checks (mount-path collisions
+	// with what the Template already mounts, and whether read-only can actually
+	// be enforced on that pod spec) need the resolved Template and run in
+	// validateEnvVolumesAgainstTemplate.
+	if err := agentsv1alpha1.ValidateVolumeMounts(o.Volumes, nil); err != nil {
+		return domain.NewBadRequest(fmt.Sprintf("invalid overrides.volumes: %v", err))
 	}
 	return nil
 }

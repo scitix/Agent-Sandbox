@@ -52,10 +52,13 @@ import (
 // admission (e.g. quota reservation) a chance to gate the create before
 // the Reconciler ever sees the request.
 //
-// Template upgrades do NOT auto-propagate through this path: a Template
-// change to env.Spec.TemplateRef will not rewrite any existing
-// Member.Spec. The (Phase 2) RefreshMember API is the explicit way to
-// re-align an existing member with a newer Template revision.
+// This function does not itself re-render a member from its Template: it
+// materialises whatever snapshot Member.Spec already holds. Keeping that
+// snapshot current is refreshAutoUpdateMembers' job (templatesync.go), which
+// runs earlier in the same Reconcile and rewrites Member.Spec when the
+// Template or the Env's overrides change. Members with
+// updateStrategy.autoUpdate=false are skipped there, so for those this path
+// really does stamp a frozen snapshot.
 func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1alpha1.SandboxEnv) error {
 	if env == nil || env.DeletionTimestamp != nil {
 		return nil
@@ -71,7 +74,8 @@ func (r *SandboxEnvReconciler) reconcilePools(ctx context.Context, env *agentsv1
 	// Compute the IPS bit once — the Secret lookup is cheap and identical
 	// for every member of an Env. We re-stamp the resulting reference on
 	// every materialise so a Secret created/deleted after AddMember
-	// propagates onto the Pool without waiting for RefreshMember.
+	// propagates onto the Pool even for a member that opted out of
+	// auto-update and therefore never gets re-rendered.
 	ipsExists, err := poolrender.ImagePullSecretExists(ctx, r.Client, env.Namespace, agentsv1alpha1.EnvImagePullSecretName(env.Name))
 	if err != nil {
 		// Stale state is preferable to refusing to reconcile — log and
