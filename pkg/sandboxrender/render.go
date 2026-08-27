@@ -53,17 +53,21 @@ type Options struct {
 	// containers[0].volumeMounts only — never to init containers, and never to
 	// an injected sidecar, which may hold brokered credentials.
 	Volumes []agentsv1alpha1.EnvVolumeMount
-	// ImageRegistry, when non-nil, enables per-cluster registry rewriting. On
-	// its own it rewrites only the caller-supplied Image override above —
-	// the same class of input as the claim-time image, which is already
-	// rewritten unconditionally.
+	// ImageRegistry, when non-nil, supplies per-cluster registry rewriting.
+	// Whether it is applied is decided by RewriteImages.
 	ImageRegistry *RegistryRewrite
-	// RewriteTemplateImages extends ImageRegistry to the images the Template
-	// itself owns (IdleImage, containers, initContainers). Set it only when the
-	// Template opts in: the rewrite is a bare registry-host swap, so only the
-	// Template author knows whether the same repository path exists in every
-	// region's mirror. Ignored when ImageRegistry is nil.
-	RewriteTemplateImages bool
+	// RewriteImages turns rewriting on for every image this render produces:
+	// the Template's own (IdleImage, containers, initContainers) and the
+	// caller-supplied Image override. Ignored when ImageRegistry is nil.
+	//
+	// Opt-in, and deliberately covering the override too. The rewrite is a bare
+	// registry-host swap, so only the Template author knows whether the same
+	// repository path exists in every region's mirror — and an Env that
+	// deliberately points its override at another region's registry (because
+	// that is where the image lives) must not have it silently redirected to a
+	// mirror that may not carry it. The failure would surface minutes later as
+	// ImagePullBackOff on the next claim, not as an error on write.
+	RewriteImages bool
 }
 
 // Empty returns true when Options carries no observable effect; callers
@@ -94,9 +98,11 @@ func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 		if len(emb.Template.Spec.Containers) == 0 {
 			return fmt.Errorf("image override requires at least one container in the template")
 		}
-		// A caller-supplied image is rewritten unconditionally: it is the same
-		// class of input as the claim-time image, which is already rewritten.
-		emb.Template.Spec.Containers[0].Image = opts.ImageRegistry.Rewrite(opts.Image)
+		img := opts.Image
+		if opts.RewriteImages {
+			img = opts.ImageRegistry.Rewrite(img)
+		}
+		emb.Template.Spec.Containers[0].Image = img
 	}
 	if opts.InlineResources != nil {
 		if len(emb.Template.Spec.Containers) == 0 {
@@ -104,7 +110,7 @@ func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 		}
 		emb.Template.Spec.Containers[0].Resources = *opts.InlineResources.DeepCopy()
 	}
-	if opts.ImageRegistry != nil && opts.RewriteTemplateImages {
+	if opts.ImageRegistry != nil && opts.RewriteImages {
 		rewriteTemplateImages(emb, opts.ImageRegistry)
 	}
 	if len(opts.Volumes) > 0 {

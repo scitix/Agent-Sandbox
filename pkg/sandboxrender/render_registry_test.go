@@ -42,18 +42,18 @@ func fooToBar() *RegistryRewrite {
 	}
 }
 
-// TestApply_RewriteTemplateImages_OptIn covers the whole point of Part A: with
+// TestApply_RewriteImages_OptIn covers the whole point of Part A: with
 // the Template opted in, every image the Template owns lands on the local
 // registry, and the repository path plus tag survive verbatim.
-func TestApply_RewriteTemplateImages_OptIn(t *testing.T) {
+func TestApply_RewriteImages_OptIn(t *testing.T) {
 	emb := embWithContainers()
 	emb.IdleImage = remoteIdleImage
 	emb.Template.Spec.Containers[0].Image = remoteBaseImage
 	emb.Template.Spec.InitContainers[0].Image = remoteEnvdImage
 
 	if err := Apply(emb, Options{
-		ImageRegistry:         fooToBar(),
-		RewriteTemplateImages: true,
+		ImageRegistry: fooToBar(),
+		RewriteImages: true,
 	}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -75,10 +75,10 @@ func TestApply_RewriteTemplateImages_OptIn(t *testing.T) {
 	}
 }
 
-// TestApply_RewriteTemplateImages_NotOptedIn is the zero-regression guarantee:
+// TestApply_RewriteImages_NotOptedIn is the zero-regression guarantee:
 // without the annotation the Template's images are untouched even though the
 // rewriter is wired up.
-func TestApply_RewriteTemplateImages_NotOptedIn(t *testing.T) {
+func TestApply_RewriteImages_NotOptedIn(t *testing.T) {
 	emb := embWithContainers()
 	emb.IdleImage = remoteIdleImage
 	emb.Template.Spec.Containers[0].Image = remoteBaseImage
@@ -87,8 +87,8 @@ func TestApply_RewriteTemplateImages_NotOptedIn(t *testing.T) {
 	before := emb.DeepCopy()
 
 	if err := Apply(emb, Options{
-		ImageRegistry:         fooToBar(),
-		RewriteTemplateImages: false,
+		ImageRegistry: fooToBar(),
+		RewriteImages: false,
 	}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -104,15 +104,36 @@ func TestApply_RewriteTemplateImages_NotOptedIn(t *testing.T) {
 	}
 }
 
-// TestApply_OverrideImageRewrittenWithoutOptIn: a caller-supplied image is the
-// same class of input as the claim-time image, which is already rewritten
-// unconditionally. It must not require the Template annotation.
-func TestApply_OverrideImageRewrittenWithoutOptIn(t *testing.T) {
+// TestApply_OverrideImageNotRewrittenWithoutOptIn: the Env's own image override
+// is left alone unless the Template opts in.
+//
+// An Env may point its override at another region's registry precisely because
+// that is where the image lives; silently redirecting it to a local mirror that
+// may not carry it fails minutes later as ImagePullBackOff on the next claim,
+// not as an error on write. A live production Env was doing exactly this when
+// the unconditional version of this code was written.
+func TestApply_OverrideImageNotRewrittenWithoutOptIn(t *testing.T) {
+	const override = "registry-a.example.com/agentbox/custom:v9"
 	emb := embWithContainers()
 	if err := Apply(emb, Options{
-		Image:                 "registry-a.example.com/agentbox/custom:v9",
-		ImageRegistry:         fooToBar(),
-		RewriteTemplateImages: false,
+		Image:         override,
+		ImageRegistry: fooToBar(),
+		RewriteImages: false,
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got := emb.Template.Spec.Containers[0].Image; got != override {
+		t.Errorf("override image = %q, want it untouched (%q)", got, override)
+	}
+}
+
+// With the opt-in, the override is rewritten along with the Template's images.
+func TestApply_OverrideImageRewrittenWithOptIn(t *testing.T) {
+	emb := embWithContainers()
+	if err := Apply(emb, Options{
+		Image:         "registry-a.example.com/agentbox/custom:v9",
+		ImageRegistry: fooToBar(),
+		RewriteImages: true,
 	}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -131,7 +152,7 @@ func TestApply_RewriteIsIdempotent(t *testing.T) {
 	emb.IdleImage = remoteIdleImage
 	emb.Template.Spec.Containers[0].Image = remoteBaseImage
 
-	opts := Options{ImageRegistry: fooToBar(), RewriteTemplateImages: true}
+	opts := Options{ImageRegistry: fooToBar(), RewriteImages: true}
 	if err := Apply(emb, opts); err != nil {
 		t.Fatalf("first Apply: %v", err)
 	}
@@ -161,8 +182,8 @@ func TestApply_RewriteLeavesPublicImagesAlone(t *testing.T) {
 	emb.Template.Spec.InitContainers[0].Image = "docker.io/library/busybox:1.36"
 
 	if err := Apply(emb, Options{
-		ImageRegistry:         fooToBar(),
-		RewriteTemplateImages: true,
+		ImageRegistry: fooToBar(),
+		RewriteImages: true,
 	}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -187,11 +208,11 @@ func TestApply_NilRewriterIsSafe(t *testing.T) {
 
 	emb := embWithContainers()
 	before := emb.DeepCopy()
-	if err := Apply(emb, Options{RewriteTemplateImages: true}); err != nil {
+	if err := Apply(emb, Options{RewriteImages: true}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if emb.IdleImage != before.IdleImage {
-		t.Error("RewriteTemplateImages without a rewriter must be a no-op")
+		t.Error("RewriteImages without a rewriter must be a no-op")
 	}
 }
 

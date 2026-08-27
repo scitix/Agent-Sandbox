@@ -106,6 +106,41 @@ func TestRenderSandboxPool_RegistryRewrite_AnnotationDriven(t *testing.T) {
 	}
 }
 
+// TestRenderSandboxPool_OverrideImageNeedsOptIn pins a production case: an Env
+// whose overrides.image points at ANOTHER cluster's registry — because that is
+// where the image lives — must not have it silently redirected to the local
+// mirror, which may not carry it. Without the Template's opt-in the override is
+// passed through untouched.
+func TestRenderSandboxPool_OverrideImageNeedsOptIn(t *testing.T) {
+	const peerImage = "reg-foo.example.com/team/analysis:v0.1.0"
+
+	for _, tc := range []struct {
+		name  string
+		optIn bool
+		want  string
+	}{
+		{"no opt-in leaves it alone", false, peerImage},
+		{"opt-in rewrites it", true, "reg-bar.example.com/team/analysis:v0.1.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestEnv()
+			env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{Image: peerImage}
+			pool, err := poolrender.RenderSandboxPool(poolrender.Inputs{
+				Env:           env,
+				Template:      templateWithRemoteImages(tc.optIn),
+				Member:        agentsv1alpha1.EnvClusterMember{Name: "m1"},
+				ImageRegistry: cetusRewriter(),
+			})
+			if err != nil {
+				t.Fatalf("RenderSandboxPool: %v", err)
+			}
+			if got := pool.Spec.Template.Spec.Containers[0].Image; got != tc.want {
+				t.Errorf("containers[0].image = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRenderSandboxPool_RegistryRewrite_NilRewriterNoOp: an operator without
 // --local-cluster-id must behave exactly as before, even for an opted-in
 // Template.

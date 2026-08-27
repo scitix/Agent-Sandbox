@@ -110,12 +110,11 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 		opts.Volumes = envOv.Volumes
 	}
 	// Registry rewriting is available whenever the operator knows its own
-	// cluster, but it only reaches the Template's own images when the Template
-	// opts in. The Env's caller-supplied image override is rewritten whenever
-	// the capability is present — it is the same class of input as the
-	// claim-time image, which is already rewritten unconditionally.
+	// cluster, but nothing is rewritten unless the Template opts in — including
+	// the Env's own image override, because an Env may point it at another
+	// region's registry precisely because that is where the image lives.
 	opts.ImageRegistry = in.ImageRegistry
-	opts.RewriteTemplateImages = agentsv1alpha1.BoolAnnotation(
+	opts.RewriteImages = agentsv1alpha1.BoolAnnotation(
 		in.Template, agentsv1alpha1.RegistryRewriteAnnotationKey)
 	// InlineResources is the renderer's source of truth for per-Pool
 	// resource sizing in Phase 1. The API service stamps the InstanceType
