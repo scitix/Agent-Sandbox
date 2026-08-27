@@ -92,6 +92,40 @@ controller:
   # an empty value as false rather than refusing to start.
   egressLegacySidecar: false
 
+  # envVolumes allows a SandboxEnv to mount existing PersistentVolumeClaims from
+  # its own namespace into sandboxes (overrides.volumes, GET /volumes). The
+  # operator never creates or deletes a claim; it only references claims that
+  # already exist and are Bound.
+  #
+  # This is a kill switch rather than a UI hint: while off, a non-empty
+  # overrides.volumes is rejected with 400. Default off — the feature hands a
+  # sandbox direct access to a user's data, and sandbox code runs as root, so it
+  # should be turned on deliberately.
+  #
+  # Rendered as `--env-volumes=<value>` unconditionally so a release platform can
+  # substitute the value; the flag reads an empty value as false.
+  envVolumes: false
+
+  # volumeDisplayNameLabels is an ordered list of PersistentVolumeClaim label
+  # keys consulted to derive a human-readable volume name for GET /volumes; the
+  # first non-empty value wins, and the claim name is the fallback.
+  #
+  # Configurable rather than built in because the label vocabulary belongs to
+  # whichever storage platform is deployed. Example:
+  #   volumeDisplayNameLabels: ["storage.example.com/volume-name"]
+  volumeDisplayNameLabels: []
+
+  # volumeAllowedRuntimeClasses lists runtimeClassName values whose CSI
+  # filesystem passthrough has been verified in this deployment. Empty (the
+  # default) permits only the cluster default runtime, i.e. templates that leave
+  # runtimeClassName unset.
+  #
+  # A VM-isolated runtime (kata and friends) reaches the backing filesystem by a
+  # different path than a plain container does; an unverified one yields a
+  # silently empty directory or a Pod that never starts. Declaring volumes on
+  # such a template is refused until its runtime class is listed here.
+  volumeAllowedRuntimeClasses: []
+
   # appName is the value placed in app.kubernetes.io/name for the controller
   # Deployment + its Services + ServiceMonitor. Empty means "use the chart
   # name" (current behavior). Override when migrating from a non-Helm install

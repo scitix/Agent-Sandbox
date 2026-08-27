@@ -91,7 +91,16 @@ func (r *Reconciler) renderDefaults() RenderDefaults {
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=managedagents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=managedagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// Claims are intentionally read-only in the generated ClusterRole. This
+// controller is compiled into cmd/wsproxy and runs in the hub, not in the
+// worker, and the create verb applyPVC needs comes from the hand-written hub
+// Role (installer/helm/agent-sandbox-hub/templates/rbac.yaml). controller-gen
+// aggregates every marker under paths=./... into the one worker ClusterRole, so
+// leaving write verbs here would grant the worker cluster-wide PVC mutation
+// that nothing in it exercises — and a stray delete on a Retain claim strands
+// its PersistentVolume in Released, needing manual claimRef surgery to rebind.
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 

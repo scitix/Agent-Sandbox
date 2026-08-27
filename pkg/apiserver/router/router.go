@@ -60,6 +60,11 @@ type Services struct {
 	// matching `instanceType` flag on /v1/feature-gates. Nil is accepted and
 	// treated as Noop downstream.
 	InstanceTypeProvider instancetypeplugin.Provider
+	// VolumesEnabled reports whether Env-level PersistentVolumeClaim mounts are
+	// permitted on this deployment; surfaced through /v1/feature-gates.
+	VolumesEnabled bool
+	// Volume serves GET /v1/volumes.
+	Volume service.VolumeService
 	// ServerVersion is stamped onto every response via X-AgentBox-Server-Version.
 	// Comes from pkg/version.Version (injected at build time via -ldflags).
 	ServerVersion string
@@ -83,6 +88,8 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 		Cluster:              svcs.Cluster,
 		QuotaProvider:        svcs.QuotaProvider,
 		InstanceTypeProvider: svcs.InstanceTypeProvider,
+		VolumesEnabled:       svcs.VolumesEnabled,
+		Volume:               svcs.Volume,
 	})
 
 	strictHandler := gen.NewStrictHandler(srv, nil)

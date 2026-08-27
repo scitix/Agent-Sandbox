@@ -56,6 +56,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
@@ -115,6 +116,7 @@ func New(
 	pm *plugins.PluginManager,
 	instProv instancetypeplugin.Provider,
 	quotaProv quotaplugin.Provider,
+	opts ...Option,
 ) MemberPoolService {
 	if instProv == nil {
 		instProv = instancetypeplugin.NewNoop()
@@ -122,7 +124,25 @@ func New(
 	if quotaProv == nil {
 		quotaProv = quotaplugin.NewNoop()
 	}
-	return &k8sService{client: c, pm: pm, instProv: instProv, quotaProv: quotaProv}
+	s := &k8sService{client: c, pm: pm, instProv: instProv, quotaProv: quotaProv}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// Option configures the optional dependencies of the default Service.
+type Option func(*k8sService)
+
+// WithImageRegistry enables per-cluster container-image registry rewriting when
+// freezing a member's Pool spec.
+//
+// The value must be the same one the SandboxEnv Reconciler holds: the Pool
+// frozen here at API time and the one the Reconciler re-renders on every
+// reconcile have to be byte-equal, or the revision hash flips and idle Pods roll
+// forever. Passing nil (or omitting the option) disables rewriting.
+func WithImageRegistry(r *sandboxrender.RegistryRewrite) Option {
+	return func(s *k8sService) { s.imageRegistry = r }
 }
 
 type k8sService struct {
@@ -130,6 +150,8 @@ type k8sService struct {
 	pm        *plugins.PluginManager
 	instProv  instancetypeplugin.Provider
 	quotaProv quotaplugin.Provider
+	// imageRegistry may be nil; see WithImageRegistry.
+	imageRegistry *sandboxrender.RegistryRewrite
 }
 
 // QuotaURLLabel is the label key carrying the quota identifier on a
@@ -536,6 +558,7 @@ func (s *k8sService) renderCandidate(ctx context.Context, env *agentsv1alpha1.Sa
 		Template:              tmpl,
 		Member:                member,
 		ImagePullSecretExists: ipsExists,
+		ImageRegistry:         s.imageRegistry,
 	})
 	if err != nil {
 		return nil, domain.NewBadRequest(err.Error())

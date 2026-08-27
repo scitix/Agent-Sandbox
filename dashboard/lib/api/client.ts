@@ -86,6 +86,7 @@ export type QuotaItem = components["schemas"]["Quota"]
 
 // InstanceType catalog
 export type AgentInstanceTypeItem = components["schemas"]["InstanceTypeItem"]
+export type AgentVolumeItem = components["schemas"]["VolumeItem"]
 
 // FeatureGates — which optional providers (quota) are wired into the
 // currently selected cluster. Drives feature toggles in the UI so the same

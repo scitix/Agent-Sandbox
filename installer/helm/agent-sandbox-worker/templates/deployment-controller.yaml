@@ -38,6 +38,13 @@ spec:
             - --egress-proxy-image={{ .Values.controller.egressProxyImage }}
             {{- end }}
             - --egress-legacy-sidecar={{ .Values.controller.egressLegacySidecar }}
+            - --env-volumes={{ .Values.controller.envVolumes }}
+            {{- with .Values.controller.volumeDisplayNameLabels }}
+            - --volume-display-name-labels={{ join "," . }}
+            {{- end }}
+            {{- with .Values.controller.volumeAllowedRuntimeClasses }}
+            - --volume-allowed-runtime-classes={{ join "," . }}
+            {{- end }}
             {{- if .Values.extensionsConfig.create }}
             - --extension-config=/etc/agentbox/extensions.yaml
             {{- end }}

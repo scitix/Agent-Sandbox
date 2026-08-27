@@ -22,6 +22,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 
 
 
@@ -43,10 +44,14 @@ class FeatureGates:
             instance_type (bool): True when a non-noop InstanceType catalog provider is active (catalog-driven member sizing
                 in the Env upsert sheet, `/instancetypes` listing endpoint). False on deployments with no InstanceType backend
                 wired in. Example: True.
+            volumes (bool | Unset): True when mounting existing PersistentVolumeClaims into sandboxes is enabled (the
+                volumes panel in the Env upsert sheet, `/volumes` listing endpoint). When false the server also rejects a non-
+                empty `overrides.volumes`, so this is a kill switch and not only a UI hint.
      """
 
     quota: bool
     instance_type: bool
+    volumes: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -58,6 +63,8 @@ class FeatureGates:
 
         instance_type = self.instance_type
 
+        volumes = self.volumes
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -65,6 +72,8 @@ class FeatureGates:
             "quota": quota,
             "instanceType": instance_type,
         })
+        if volumes is not UNSET:
+            field_dict["volumes"] = volumes
 
         return field_dict
 
@@ -77,9 +86,12 @@ class FeatureGates:
 
         instance_type = d.pop("instanceType")
 
+        volumes = d.pop("volumes", UNSET)
+
         feature_gates = cls(
             quota=quota,
             instance_type=instance_type,
+            volumes=volumes,
         )
 
 

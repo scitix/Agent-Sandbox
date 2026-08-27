@@ -1614,6 +1614,90 @@ spec:
                           (member \u2192 env \u2192 default \"20%\")."
                         x-kubernetes-int-or-string: true
                     type: object
+                  volumes:
+                    description: "Volumes mounts already-existing PersistentVolumeClaims\
+                      \ from this Env's\nnamespace into the sandbox container. The\
+                      \ claim must exist and be Bound;\nthis is checked when the Env\
+                      \ is written, not at render time (silently\ndropping a declared\
+                      \ mount would make a data path vanish without a word).\nThe\
+                      \ operator never creates or deletes a PVC.\n\nMounts are fixed\
+                      \ at Pod creation \u2014 Kubernetes forbids mutating\nspec.volumes\
+                      \ on a live Pod \u2014 so editing this list flips the revision\
+                      \ hash\nand rolls idle Pods; sandboxes already claimed keep\
+                      \ their old mounts until\nthey are returned. In-place image\
+                      \ upgrades never touch volumes.\n\nRead-only is enforced on\
+                      \ the VOLUME SOURCE rather than the mount, which\nmakes it un-overridable\
+                      \ by a container asking for read-write. It is still\nonly a\
+                      \ container bind-mount flag, so a pod spec with host mount-namespace\n\
+                      reach (privileged, SYS_ADMIN, Bidirectional propagation, hostPath)\
+                      \ can\nremount it read-write; such combinations are rejected\
+                      \ on write unless the\nTemplate carries the admin-only opt-out\
+                      \ annotation. See\nValidateReadOnlyEnforceable."
+                    items:
+                      description: 'EnvVolumeMount mounts one existing PersistentVolumeClaim,
+                        or one subtree of
+
+                        it, into the sandbox container.
+
+
+                        It is deliberately not corev1.VolumeMount: the Kubernetes
+                        volume name is
+
+                        derived rather than user-supplied (see sandboxrender.VolumeNameFor),
+                        and
+
+                        ReadOnly here lands on the volume source instead of the mount.'
+                      properties:
+                        claimName:
+                          description: 'ClaimName is an existing, Bound PersistentVolumeClaim
+                            in this Env''s
+
+                            namespace. Cross-namespace mounts are impossible in Kubernetes,
+                            which is
+
+                            exactly the authorisation boundary this feature relies
+                            on: the sandbox Pod
+
+                            runs in the Env''s namespace, so a caller can only ever
+                            reach claims their
+
+                            own identity resolved to.'
+                          type: string
+                        mountPath:
+                          description: MountPath is the absolute path inside the sandbox
+                            container.
+                          type: string
+                        readOnly:
+                          default: true
+                          description: "ReadOnly defaults to true. Read it only through\
+                            \ IsReadOnly() \u2014 a nil\npointer must never be treated\
+                            \ as read-write."
+                          type: boolean
+                        subPath:
+                          description: 'SubPath mounts a subtree of the volume instead
+                            of its root. Relative, no
+
+                            ".." segments. Recommended whenever the backing PersistentVolume
+                            is
+
+                            exposed at its filesystem root.
+
+
+                            Note kubelet creates a missing subPath directory, and
+                            the backing
+
+                            filesystem is mounted read-write on the host regardless
+                            of ReadOnly, so a
+
+                            mistyped SubPath yields a silently-empty mount rather
+                            than an error.'
+                          type: string
+                      required:
+                      - claimName
+                      - mountPath
+                      type: object
+                    maxItems: 8
+                    type: array
                 type: object
               templateRef:
                 description: 'TemplateRef binds this Env to exactly one SandboxTemplate

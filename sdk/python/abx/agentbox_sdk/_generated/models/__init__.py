@@ -55,6 +55,7 @@ from .env_overrides import EnvOverrides
 from .env_overrides_pod_creation_image_policy import EnvOverridesPodCreationImagePolicy
 from .env_scaling_group_status import EnvScalingGroupStatus
 from .env_update_strategy import EnvUpdateStrategy
+from .env_volume_mount import EnvVolumeMount
 from .error_response import ErrorResponse
 from .exec_command_request import ExecCommandRequest
 from .exec_command_result import ExecCommandResult
@@ -76,6 +77,7 @@ from .list_sandbox_envs_result import ListSandboxEnvsResult
 from .list_sandbox_pools_result import ListSandboxPoolsResult
 from .list_sandbox_templates_result import ListSandboxTemplatesResult
 from .list_sandboxes_result import ListSandboxesResult
+from .list_volumes_result import ListVolumesResult
 from .namespaces_result import NamespacesResult
 from .pool_auto_scaling_status import PoolAutoScalingStatus
 from .pool_auto_scaling_status_last_scale_up_attempt_result import PoolAutoScalingStatusLastScaleUpAttemptResult
@@ -154,6 +156,8 @@ from .user_sandbox_statistics_envelope import UserSandboxStatisticsEnvelope
 from .users_result import UsersResult
 from .visibility_config import VisibilityConfig
 from .visibility_rule import VisibilityRule
+from .volume_item import VolumeItem
+from .volume_item_labels import VolumeItemLabels
 from .who_am_i_result import WhoAmIResult
 
 __all__ = (
@@ -198,6 +202,7 @@ __all__ = (
     "EnvOverridesPodCreationImagePolicy",
     "EnvScalingGroupStatus",
     "EnvUpdateStrategy",
+    "EnvVolumeMount",
     "ErrorResponse",
     "ExecCommandRequest",
     "ExecCommandResult",
@@ -219,6 +224,7 @@ __all__ = (
     "ListSandboxesResult",
     "ListSandboxPoolsResult",
     "ListSandboxTemplatesResult",
+    "ListVolumesResult",
     "NamespacesResult",
     "PoolAutoScalingStatus",
     "PoolAutoScalingStatusLastScaleUpAttemptResult",
@@ -297,5 +303,7 @@ __all__ = (
     "UsersResult",
     "VisibilityConfig",
     "VisibilityRule",
+    "VolumeItem",
+    "VolumeItemLabels",
     "WhoAmIResult",
 )

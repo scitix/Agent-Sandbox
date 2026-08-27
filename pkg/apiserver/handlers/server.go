@@ -78,6 +78,11 @@ type Services struct {
 	// matching `instanceType` boolean on /v1/feature-gates. Nil is treated as
 	// Noop (catalog reported disabled, list returns empty).
 	InstanceTypeProvider instancetypeplugin.Provider
+	// VolumesEnabled reports whether Env-level PersistentVolumeClaim mounts are
+	// permitted on this deployment; surfaced through /v1/feature-gates.
+	VolumesEnabled bool
+	// Volume serves GET /v1/volumes. Nil reports an empty catalog.
+	Volume service.VolumeService
 }
 
 // Server implements gen.StrictServerInterface.
@@ -101,6 +106,12 @@ type Server struct {
 	// `instanceType` boolean on /v1/feature-gates. Never nil — NewServer
 	// defaults it to Noop when the caller omits it.
 	instanceTypeProvider instancetypeplugin.Provider
+	// volume serves the /v1/volumes listing. May be nil.
+	volume service.VolumeService
+	// volumesEnabled backs the volumes entry of the /v1/feature-gates report.
+	// Unlike the provider-backed gates this is a plain flag: the feature has no
+	// pluggable backend, it either is or is not permitted on this deployment.
+	volumesEnabled bool
 }
 
 // NewServer creates a new handler Server.
@@ -125,6 +136,8 @@ func NewServer(svcs Services) *Server {
 		cluster:              svcs.Cluster,
 		quotaProvider:        qp,
 		instanceTypeProvider: itp,
+		volumesEnabled:       svcs.VolumesEnabled,
+		volume:               svcs.Volume,
 	}
 }
 
@@ -650,7 +663,36 @@ func envOverridesFromGen(o *gen.EnvOverrides) (*agentsv1alpha1.EnvOverridesSpec,
 	}
 	out.NetworkPolicy = networkPolicyFromGen(o.NetworkPolicy)
 	out.UpdateStrategy = updateStrategyFromGen(o.UpdateStrategy)
+	out.Volumes = envVolumesFromGen(o.Volumes)
 	return out, nil
+}
+
+// envVolumesFromGen maps the wire volume mounts onto the CRD spec.
+//
+// An absent readOnly is normalised to an explicit true rather than left nil.
+// The CRD carries +kubebuilder:default=true, but that only fires on the API
+// server's write path — validation here runs first, and an Env stored by an
+// older CRD revision would keep a nil. Normalising once, at the edge, means
+// nothing downstream has to remember which direction nil leans.
+func envVolumesFromGen(vols *[]gen.EnvVolumeMount) []agentsv1alpha1.EnvVolumeMount {
+	if vols == nil {
+		return nil
+	}
+	// A present-but-empty list is meaningful: it clears the mounts. Returning a
+	// non-nil empty slice keeps that distinguishable from "absent".
+	out := make([]agentsv1alpha1.EnvVolumeMount, 0, len(*vols))
+	for _, v := range *vols {
+		item := agentsv1alpha1.EnvVolumeMount{
+			ClaimName: v.ClaimName,
+			MountPath: v.MountPath,
+			ReadOnly:  ptr.To(v.ReadOnly == nil || *v.ReadOnly),
+		}
+		if v.SubPath != nil {
+			item.SubPath = *v.SubPath
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // updateStrategyFromGen maps the wire rollout policy onto the CRD spec.

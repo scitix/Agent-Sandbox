@@ -31,6 +31,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Combobox,
   ComboboxContent,
@@ -54,9 +55,20 @@ import { Switch } from "@/components/ui/switch"
 import { CopyEnvDialog } from "@/components/envs/copy-env-dialog"
 import { FormCloneActions } from "@/components/custom/form-clone-actions"
 import { NetworkPolicyFields } from "@/components/custom/network-policy-fields"
-import type { AgentSandboxEnv, AgentSandboxTemplateSummary } from "@/lib/api/client"
+import type {
+  AgentSandboxEnv,
+  AgentSandboxTemplateSummary,
+  AgentVolumeItem,
+} from "@/lib/api/client"
 import { useEnvNameAcrossClusters } from "@/hooks/use-env-name-across-clusters"
-import { envQueryOptions, templatesQueryOptions, useCreateEnv, useUpdateEnv } from "@/lib/queries"
+import { useFeatureGates } from "@/hooks/use-feature-gates"
+import {
+  envQueryOptions,
+  templatesQueryOptions,
+  useCreateEnv,
+  useUpdateEnv,
+  volumesQueryOptions,
+} from "@/lib/queries"
 import { envClone } from "@/lib/utils/env-clone"
 import {
   envFormDefaults,
@@ -138,6 +150,7 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
     reset,
     trigger,
     getValues,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -146,6 +159,14 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
 
   const createMutation = useCreateEnv()
   const updateMutation = useUpdateEnv()
+  const gates = useFeatureGates()
+
+  // Surfaced on the collapsed volumes header: the writable count is the number
+  // worth seeing at a glance, since a writable mount is what lets an agent
+  // delete a dataset.
+  const volumeRows = useWatch({ control, name: "volumeRows" })
+  const volumeCount = volumeRows?.length ?? 0
+  const writableVolumeCount = (volumeRows ?? []).filter((r) => r?.readOnly === false).length
 
   // ── Name availability (create only) ────────────────────────────────────────
   //
@@ -440,6 +461,43 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                     <UpdateStrategySection control={control} register={register} />
                   </AccordionContent>
                 </AccordionItem>
+
+                {gates.volumes && (
+                  <AccordionItem value="volumes">
+                    {/* The badge is a SIBLING of the trigger: the trigger is a
+                        <button>, so nesting interactive-looking content inside
+                        it would be invalid markup. */}
+                    <div className="flex items-center pr-3">
+                      <AccordionTrigger className="text-muted-foreground flex-1 px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
+                        {t("envs.form.section.volumes")}
+                      </AccordionTrigger>
+                      {volumeCount > 0 && (
+                        <span
+                          className={`rounded border px-1 font-mono text-[10px] ${
+                            writableVolumeCount > 0
+                              ? "border-destructive/50 text-destructive"
+                              : "border-border bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {writableVolumeCount > 0
+                            ? t("envs.form.volumes.badgeWritable", {
+                                count: String(volumeCount),
+                                writable: String(writableVolumeCount),
+                              })
+                            : String(volumeCount)}
+                        </span>
+                      )}
+                    </div>
+                    <AccordionContent className="px-3">
+                      <VolumeSection
+                        control={control}
+                        register={register}
+                        setValue={setValue}
+                        errors={errors}
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
               </Accordion>
             </div>
           </fieldset>
@@ -577,6 +635,203 @@ function SelectedTemplateInfo({
         </p>
       )}
     </div>
+  )
+}
+
+// ─── Volumes section ────────────────────────────────────────────────────────
+
+interface VolumeSectionProps {
+  control: ReturnType<typeof useForm<FormValues>>["control"]
+  register: ReturnType<typeof useForm<FormValues>>["register"]
+  setValue: ReturnType<typeof useForm<FormValues>>["setValue"]
+  errors: ReturnType<typeof useForm<FormValues>>["formState"]["errors"]
+}
+
+/**
+ * Mount existing PersistentVolumeClaims into the sandbox.
+ *
+ * Read-only is the default and is enforced on the Kubernetes volume source, so
+ * no container can ask for read-write on the same claim. Unchecking it is a real
+ * decision — sandbox code runs as root with passwordless sudo — so a writable row
+ * is tinted and carries an inline warning rather than a modal nobody reads.
+ */
+function VolumeSection({ control, register, setValue, errors }: VolumeSectionProps) {
+  const { t } = useTranslation()
+  const gates = useFeatureGates()
+  const { fields, append, remove } = useFieldArray({ control, name: "volumeRows" })
+  const { data: claims = [] } = useQuery(volumesQueryOptions({ enabled: gates.volumes }))
+  const rows = useWatch({ control, name: "volumeRows" })
+
+  // Suggest /volume/<displayName>, de-duplicated. That is the platform-wide
+  // convention for user data; /mnt is deliberately avoided because the sandbox
+  // already mounts its injected tooling at /mnt/agentbox and the server rejects
+  // anything that would shadow it.
+  const suggestPath = (claimName: string, displayName?: string) => {
+    const base = `/volume/${displayName || claimName}`
+    const taken = new Set((rows ?? []).map((r) => r?.mountPath).filter(Boolean))
+    if (!taken.has(base)) return base
+    for (let i = 2; i < 50; i++) {
+      if (!taken.has(`${base}-${i}`)) return `${base}-${i}`
+    }
+    return base
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
+          {t("envs.form.section.volumes")}
+        </h3>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            append({ claimName: "", mountPath: "", subPath: undefined, readOnly: true })
+          }
+          className="h-7 gap-1 font-mono text-[11px]"
+        >
+          <Plus className="h-3 w-3" />
+          {t("envs.form.volumes.add")}
+        </Button>
+      </div>
+      <p className="text-muted-foreground text-xs">{t("envs.form.volumes.hint")}</p>
+      {fields.length === 0 && (
+        <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-center text-xs">
+          {t("envs.form.volumes.empty")}
+        </p>
+      )}
+      <div className="space-y-2">
+        {fields.map((field, index) => {
+          const writable = rows?.[index]?.readOnly === false
+          const claimErr = errors.volumeRows?.[index]?.claimName?.message
+          const pathErr = errors.volumeRows?.[index]?.mountPath?.message
+          return (
+            <div
+              key={field.id}
+              className={`bg-muted/30 space-y-2 rounded-md border p-2.5 ${
+                writable ? "border-destructive/50" : ""
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <div className="grid flex-1 grid-cols-2 gap-2">
+                  <Field>
+                    <FieldLabel className="text-[11px]">{t("envs.form.volumes.claim")}</FieldLabel>
+                    <Controller
+                      control={control}
+                      name={`volumeRows.${index}.claimName`}
+                      render={({ field: f, fieldState }) => (
+                        <Combobox
+                          items={claims}
+                          itemToStringLabel={(item: AgentVolumeItem) =>
+                            item.displayName || item.claimName
+                          }
+                          value={claims.find((c) => c.claimName === f.value) ?? null}
+                          onValueChange={(v: AgentVolumeItem | null) => {
+                            f.onChange(v?.claimName ?? "")
+                            // Only fill an empty path, so one the user already
+                            // edited is never clobbered.
+                            if (v && !rows?.[index]?.mountPath) {
+                              setValue(
+                                `volumeRows.${index}.mountPath`,
+                                suggestPath(v.claimName, v.displayName),
+                                { shouldValidate: true },
+                              )
+                            }
+                          }}
+                        >
+                          <ComboboxInput
+                            aria-invalid={fieldState.invalid}
+                            placeholder={t("envs.form.volumes.claimPlaceholder")}
+                          />
+                          <ComboboxContent>
+                            <ComboboxList>
+                              {(item: AgentVolumeItem) => (
+                                <ComboboxItem key={item.claimName} value={item}>
+                                  <div className="flex w-full min-w-0 flex-col gap-0.5">
+                                    <span className="font-mono text-xs">
+                                      {item.displayName || item.claimName}
+                                    </span>
+                                    <span className="text-muted-foreground truncate text-[10px]">
+                                      {[
+                                        item.claimName,
+                                        item.capacity,
+                                        (item.accessModes ?? []).join("/"),
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" · ")}
+                                    </span>
+                                  </div>
+                                </ComboboxItem>
+                              )}
+                            </ComboboxList>
+                            <ComboboxEmpty />
+                          </ComboboxContent>
+                        </Combobox>
+                      )}
+                    />
+                    <FieldError>{claimErr ? t(claimErr as never) : undefined}</FieldError>
+                  </Field>
+                  <Field>
+                    <FieldLabel className="text-[11px]">
+                      {t("envs.form.volumes.mountPath")}
+                    </FieldLabel>
+                    <Input
+                      {...register(`volumeRows.${index}.mountPath`)}
+                      placeholder="/volume/data"
+                      className="font-mono text-xs"
+                    />
+                    <FieldError>{pathErr ? t(pathErr as never) : undefined}</FieldError>
+                  </Field>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => remove(index)}
+                  aria-label={t("envs.form.volumes.remove")}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 items-start gap-2">
+                <Field>
+                  <FieldLabel className="text-[11px]">{t("envs.form.volumes.subPath")}</FieldLabel>
+                  <Input
+                    {...register(`volumeRows.${index}.subPath`)}
+                    placeholder="models/qwen2.5-7b"
+                    className="font-mono text-xs"
+                  />
+                  <FieldDescription className="text-[10px]">
+                    {t("envs.form.volumes.subPathHint")}
+                  </FieldDescription>
+                </Field>
+                <div className="flex flex-col gap-1 pt-5">
+                  <Controller
+                    control={control}
+                    name={`volumeRows.${index}.readOnly`}
+                    render={({ field: f }) => (
+                      <label className="flex items-center gap-2 text-xs">
+                        <Checkbox
+                          checked={f.value}
+                          onCheckedChange={(v) => f.onChange(v === true)}
+                        />
+                        {t("envs.form.volumes.readOnly")}
+                      </label>
+                    )}
+                  />
+                  {writable && (
+                    <p className="text-destructive text-[10px]">
+                      {t("envs.form.volumes.writableWarning")}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 

@@ -17,6 +17,8 @@ package sandboxpool
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
@@ -134,6 +136,7 @@ func (r *SandboxPoolReconciler) calculatePodStatus(poolKey string, pods []corev1
 		desiredReplicas, currentReplicas,
 		idle, running, starting, stopping, failed,
 		unavailableIdle,
+		poolMountedClaims(sandboxPool),
 	)
 
 	// Revision tracking: UpdateRevision is the Pool template's target hash;
@@ -340,6 +343,7 @@ func buildPoolConditions(
 	desired, current int32,
 	idle, running, starting, stopping, failed int32,
 	unavailableIdle int32,
+	mountedClaims []string,
 ) []metav1.Condition {
 	conditions := make([]metav1.Condition, len(existing))
 	copy(conditions, existing)
@@ -395,11 +399,13 @@ func buildPoolConditions(
 	case unavailableIdle > 0 && failed > 0:
 		degradedCond.Status = metav1.ConditionTrue
 		degradedCond.Reason = agentsv1alpha1.SandboxPoolReasonUnhealthyAndFailed
-		degradedCond.Message = fmt.Sprintf("%d unavailable idle pod(s) (NotReady), %d failed pod(s)", unavailableIdle, failed)
+		degradedCond.Message = fmt.Sprintf("%d unavailable idle pod(s) (NotReady), %d failed pod(s)%s",
+			unavailableIdle, failed, mountedClaimsHint(mountedClaims))
 	case unavailableIdle > 0:
 		degradedCond.Status = metav1.ConditionTrue
 		degradedCond.Reason = agentsv1alpha1.SandboxPoolReasonUnhealthyIdlePods
-		degradedCond.Message = fmt.Sprintf("%d/%d idle pod(s) are unavailable (NotReady)", unavailableIdle, idle)
+		degradedCond.Message = fmt.Sprintf("%d/%d idle pod(s) are unavailable (NotReady)%s",
+			unavailableIdle, idle, mountedClaimsHint(mountedClaims))
 	case failed > 0:
 		degradedCond.Status = metav1.ConditionTrue
 		degradedCond.Reason = agentsv1alpha1.SandboxPoolReasonFailedPodsPresent
@@ -412,6 +418,49 @@ func buildPoolConditions(
 	apimeta.SetStatusCondition(&conditions, degradedCond)
 
 	return conditions
+}
+
+// mountedClaimsHint names the PersistentVolumeClaims this Pool mounts, so a
+// Degraded Pool points at the most common cause instead of leaving the reader to
+// guess. A deleted or unbound claim leaves every warm Pod Pending, and nothing
+// recycles them — rollStaleIdlePods only takes Pods whose revision is stale — so
+// the Pool can sit at zero serving capacity indefinitely while claims park until
+// their startup timeout.
+//
+// Deliberately no live probe of the claims: every claim read has to go through
+// an uncached reader (a cached one would start a cluster-wide claim informer),
+// and a read per Pool per reconcile is not worth restating what the Pod's own
+// FailedMount event already says.
+func mountedClaimsHint(claims []string) string {
+	if len(claims) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; this pool mounts PersistentVolumeClaim(s) [%s] — check "+
+		"`kubectl describe pod` for FailedMount", strings.Join(claims, ", "))
+}
+
+// poolMountedClaims lists the distinct claim names a Pool's pod template mounts,
+// sorted for a stable message.
+func poolMountedClaims(pool *agentsv1alpha1.SandboxPool) []string {
+	if pool == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	for _, v := range pool.Spec.Template.Spec.Volumes {
+		if v.PersistentVolumeClaim == nil {
+			continue
+		}
+		seen[v.PersistentVolumeClaim.ClaimName] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // buildPhaseSelectors returns pre-computed label selector strings for each pod phase.

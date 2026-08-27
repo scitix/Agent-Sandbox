@@ -15,7 +15,9 @@ rules:
   - ''
   resources:
   - configmaps
+  - namespaces
   - nodes
+  - persistentvolumeclaims
   verbs:
   - get
   - list
@@ -23,14 +25,6 @@ rules:
 - apiGroups:
   - ''
   resources:
-  - namespaces
-  verbs:
-  - list
-  - watch
-- apiGroups:
-  - ''
-  resources:
-  - persistentvolumeclaims
   - pods
   - secrets
   - services

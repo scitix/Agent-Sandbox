@@ -36,6 +36,7 @@ import (
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/metrics"
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
@@ -95,6 +96,19 @@ type Config struct {
 	// (federation rides the same ws-proxy sync connection).
 	FederationRegistry *federation.Registry
 	FederationSource   federation.CapacitySource
+	// ImageRegistry, when non-nil, rewrites container images to the local
+	// cluster's registry while freezing a member Pool's spec. It must be the
+	// same value the SandboxEnv Reconciler holds — see
+	// envmember.WithImageRegistry. nil disables rewriting.
+	ImageRegistry *sandboxrender.RegistryRewrite
+	// APIReader is an uncached client.Reader, used where a cached read would
+	// start an informer over an object kind the operator has no business
+	// caching cluster-wide (PersistentVolumeClaims). nil falls back to the
+	// cached client with a warning.
+	APIReader client.Reader
+	// VolumeConfig gates Env-level PersistentVolumeClaim mounts and carries the
+	// deployment-specific bits of that feature.
+	VolumeConfig service.VolumeConfig
 }
 
 // Server is the HTTP API server.
@@ -159,9 +173,24 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		instanceTypeProv = instancetypeplugin.NewNoop()
 	}
 
+	// PersistentVolumeClaim reads must not go through the cached client: the
+	// manager's delegating client starts an informer lazily per object kind on
+	// first access, so a single cached Get or List would begin mirroring every
+	// claim in the cluster into this process for its whole lifetime. Falling
+	// back keeps tests and embedders working, but it is not a supported
+	// production configuration, hence the warning.
+	volumeReader := cfg.APIReader
+	if volumeReader == nil {
+		volumeReader = k8sClient
+		if cfg.VolumeConfig.Enabled {
+			log.Info("WARNING: no APIReader supplied; PersistentVolumeClaim reads will use the " +
+				"cached client and start a cluster-wide claim informer. Pass mgr.GetAPIReader().")
+		}
+	}
+
 	svcs := router.Services{
 		Sandbox:              sandboxSvc,
-		SandboxEnv:           service.NewSandboxEnvService(k8sClient, pluginManager, instanceTypeProv, quotaProv),
+		SandboxEnv:           service.NewSandboxEnvService(k8sClient, pluginManager, instanceTypeProv, quotaProv, cfg.ImageRegistry, cfg.APIReader, cfg.VolumeConfig),
 		SandboxTemplate:      service.NewSandboxTemplateService(k8sClient),
 		APIKey:               service.NewAPIKeyServiceWithSync(cfg.KeyStore, syncSvc),
 		Quota:                service.NewQuotaServiceFromProvider(quotaProv),
@@ -175,6 +204,8 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		Cluster:              service.NewClusterService(cfg.ClusterStore, cfg.LocalClusterID),
 		QuotaProvider:        quotaProv,
 		InstanceTypeProvider: instanceTypeProv,
+		VolumesEnabled:       cfg.VolumeConfig.Enabled,
+		Volume:               service.NewVolumeService(volumeReader, cfg.VolumeConfig),
 		ServerVersion:        cfg.ServerVersion,
 	}
 

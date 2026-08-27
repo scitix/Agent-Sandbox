@@ -149,8 +149,16 @@ rules:
     resources: [deployments]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [""]
-    resources: [services, persistentvolumeclaims]
+    resources: [services]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Claims are Get-then-Create only (applyPVC): a Bound claim's spec is
+  # immutable apart from a size increase, so re-applying it would fail every
+  # reconcile, and cleanup rides the OwnerReference — the garbage collector
+  # deletes it under its own credentials, not ours. Granting delete here would
+  # only add the ability to strand a Retain volume in Released.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, create]
   # ConfigMaps are read for prompts and for change detection. Secrets are also
   # written: the platform collects an agent's API keys and materialises them,
   # and it generates the harness runtime config that pins the model provider.

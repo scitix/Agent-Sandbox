@@ -37,6 +37,7 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
+	"github.com/scitix/agent-sandbox/pkg/metrics"
 	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
 
@@ -60,6 +61,13 @@ type Inputs struct {
 	// when false an existing reference (if any) is removed so deletion of
 	// the Env-managed Secret propagates cleanly.
 	ImagePullSecretExists bool
+	// ImageRegistry, when non-nil, enables per-cluster registry rewriting.
+	// Whether the Template's own images are actually rewritten additionally
+	// depends on the Template carrying the registry-rewrite annotation; the
+	// Env's caller-supplied image override is rewritten whenever this is set.
+	// Nil disables rewriting entirely (no --local-cluster-id, or no cluster
+	// config).
+	ImageRegistry *sandboxrender.RegistryRewrite
 }
 
 // RenderSandboxPool produces the complete SandboxPool CR a member should
@@ -99,7 +107,16 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 	opts := sandboxrender.Options{}
 	if envOv != nil {
 		opts.Image = envOv.Image
+		opts.Volumes = envOv.Volumes
 	}
+	// Registry rewriting is available whenever the operator knows its own
+	// cluster, but it only reaches the Template's own images when the Template
+	// opts in. The Env's caller-supplied image override is rewritten whenever
+	// the capability is present — it is the same class of input as the
+	// claim-time image, which is already rewritten unconditionally.
+	opts.ImageRegistry = in.ImageRegistry
+	opts.RewriteTemplateImages = agentsv1alpha1.BoolAnnotation(
+		in.Template, agentsv1alpha1.RegistryRewriteAnnotationKey)
 	// InlineResources is the renderer's source of truth for per-Pool
 	// resource sizing in Phase 1. The API service stamps the InstanceType
 	// catalog's resolved resources into Config.InlineResources before
@@ -108,6 +125,30 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 	if in.Member.Config.InlineResources != nil {
 		opts.InlineResources = in.Member.Config.InlineResources
 	}
+	// Volume checks that need the resolved Template. Both the API-time freeze
+	// and the reconcile-time refresh come through here, so a hand-edited CR is
+	// held to the same rules as an API write.
+	if len(opts.Volumes) > 0 {
+		if err := agentsv1alpha1.ValidateVolumeMounts(opts.Volumes, &emb.Template.Spec); err != nil {
+			return nil, fmt.Errorf("overrides.volumes: %w", err)
+		}
+		allowUnenforceable := agentsv1alpha1.BoolAnnotation(
+			in.Template, agentsv1alpha1.AllowUnenforceableReadOnlyVolumesAnnotationKey)
+		if err := agentsv1alpha1.ValidateReadOnlyEnforceable(
+			opts.Volumes, &emb.Template.Spec, allowUnenforceable); err != nil {
+			return nil, fmt.Errorf("overrides.volumes: %w", err)
+		}
+		// A template that opted out is knowingly serving a read-only mount it
+		// cannot enforce. Never let that be silent.
+		if allowUnenforceable {
+			if defeats := agentsv1alpha1.ReadOnlyDefeatingFeatures(&emb.Template.Spec); len(defeats) > 0 {
+				metrics.EnvVolumeReadOnlyUnenforceableTotal.
+					WithLabelValues(in.Env.Namespace, in.Env.Name, defeats[0]).Inc()
+			}
+		}
+	}
+	metrics.EnvVolumeMounts.
+		WithLabelValues(in.Env.Namespace, in.Env.Name).Set(float64(len(opts.Volumes)))
 	if err := sandboxrender.Apply(&emb, opts); err != nil {
 		return nil, fmt.Errorf("apply overrides: %w", err)
 	}

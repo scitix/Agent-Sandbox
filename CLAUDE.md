@@ -95,9 +95,20 @@ e2bcompat/domain/convert.go      ← 5. (Optional) map into the E2B compatibilit
 | 4 | `pkg/apiserver/service/sandbox_service.go` | Make sure live (Create/Get/List) and historical (store) paths populate the field | unit test + API test |
 | 5 | `pkg/e2bcompat/domain/convert.go` | If E2B needed, read from the `gen.Sandbox` argument and map into the E2B shape | E2B API test |
 
-> **SandboxPool / SandboxTemplate fields follow the same pattern**: edit `poolToGen()` /
-> `templateFromCRD()` in `pkg/apiserver/service/` (they are the only place the projection
-> happens; the handler simply forwards the gen value).
+> **SandboxPool / SandboxTemplate / SandboxEnv follow the same pattern** — the projection
+> function is the only place it happens; the handler forwards the gen value untouched:
+>
+> | Object | Function | Location |
+> |---|---|---|
+> | Sandbox | `SandboxBaseFromPod()` | `pkg/controllers/sandboxpool/sandbox_pod.go:43` |
+> | SandboxPool | `envcommon.PoolToGen()` | `pkg/apiserver/service/envcommon/projection.go:120` |
+> | SandboxTemplate | `templateFromCRD()` | `pkg/apiserver/service/sandboxtemplate_service.go:339` |
+> | SandboxEnv (read) | `envToGen()` → `envSpecToGen()` → `envOverridesToGen()` | `pkg/apiserver/service/sandboxenv_service.go:427/507/549` |
+> | SandboxEnv (write) | `envOverridesFromGen()` | `pkg/apiserver/handlers/server.go:626` |
+>
+> Note SandboxEnv is the only one with a **separate write-path function**: changing only
+> `envOverridesToGen` yields "stores fine, reads back empty", and only `envOverridesFromGen`
+> yields the reverse.
 
 ### Where types live
 
@@ -303,7 +314,8 @@ Idle → Starting → Running → Stopping → Idle
 - `SandboxEnv` (namespace-scoped, short: `sbe`) — fans a Template out to one or more member `SandboxPool`s. Each member is an `EnvClusterMember` with three buckets:
   - `metadata` + `spec` — frozen post-`PreCreatePool` snapshot of the materialised Pool (ObjectMeta sans server fields + full `SandboxPoolSpec`). Server-internal; not exposed via REST. Reconciler stamps verbatim onto the live Pool without re-running plugin admission, so plugin side-effects (Reservation submit, scheduling labels, NodeAffinity, …) survive Pool recreate / Env re-apply.
   - `config` — user-declared intent (sizing, scaling-group, routing priorities, user-supplied labels/annotations). Only bucket exposed via REST. Plugins do NOT mutate this — it stays equal to the caller's input.
-  - Template upgrades do NOT auto-propagate into `Member.Spec`. The (Phase 2) `RefreshMember` API is the explicit way to re-align with a newer Template revision; without it, Reconciler holds the frozen snapshot.
+  - Template upgrades **DO** auto-propagate, by default. `refreshAutoUpdateMembers` (`pkg/controllers/sandboxenv/templatesync.go:82`) runs on every reconcile before `reconcilePools`, re-renders each member against the current Template **and** current `Env.Spec.Overrides`, compares revision hashes, and rewrites `Member.Spec` when they differ. Gated per member by `ResolveAutoUpdate` (member → env → **default `true`**, `api/v1alpha1/sandboxenv_types.go:426`). The pod-spec body is replaced **wholesale** (so Template/override field *deletions* take effect), while pod-template ObjectMeta is merged and `Member.Metadata` + `PreCreatePool` are never re-run (so reservation identity survives and no duplicate reservation is submitted).
+    There is **no `RefreshMember` API** — it is referenced only by stale comments (`api/v1alpha1/sandboxenv_types.go:227,335`, `pkg/controllers/sandboxenv/poolsync.go:57`). Set `updateStrategy.autoUpdate: false` to get the frozen-snapshot behaviour those comments describe.
 
 **Plugin contract** (`pkg/framework/plugins/`): every hook returns `(updated bool, err *domain.AppError)`. Callers MUST snapshot the input before invoking, then apply the mutation only when `updated && !equality.Semantic.DeepEqual(before, after)`. See `pkg/controllers/sandboxpool/sandboxpool_controller.go:267-281` for the canonical pattern. `PreCreatePool` is the single side-effect ingress for new Pool admission — invoked once at API time inside `AddMember`, never re-run by the Reconciler.
 

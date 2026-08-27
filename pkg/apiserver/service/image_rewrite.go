@@ -15,101 +15,27 @@
 package service
 
 import (
-	"strings"
-
-	"github.com/distribution/reference"
-	"k8s.io/klog/v2"
-
+	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 )
 
-// RegistryStore is the subset of cluster.Store used by RewriteImageForCluster.
-// Extracted as an interface so tests can inject a lightweight fake without
-// depending on the full Store implementation.
-type RegistryStore interface {
-	LookupRegistry(host string) (clusterID, typ string, ok bool)
-	RegistryForType(clusterID, typ string) (host string, ok bool)
-}
-
-// RewriteImageForCluster rewrites the registry host of image when the image
-// belongs to a private registry owned by a different cluster.
+// The registry-rewrite implementation lives in pkg/sandboxrender so the Pool
+// renderer can rewrite template-owned images (idleImage, containers,
+// initContainers) as well as the caller-supplied ones rewritten here at claim
+// time. It cannot live in this package: pkg/controllers/.../poolrender calls the
+// renderer, and this package depends on poolrender through envmember, so the
+// reverse edge would be an import cycle.
 //
-// Rewrite rules:
-//  1. Parse the image reference to extract its registry host.
-//  2. Look up the host in the store. If not found → public registry, return as-is.
-//  3. If the owning cluster equals currentClusterID → already local, return as-is.
-//  4. Find a registry of the same Type in currentClusterID. If none found → warn
-//     and return as-is (never block the request).
-//  5. Replace the registry host prefix and return the rewritten image.
+// These aliases keep the claim-time call sites in sandbox_service.go unchanged.
+type RegistryStore = sandboxrender.RegistryStore
+
+// RewriteImageForCluster rewrites the registry host of image to the registry
+// owned by currentClusterID. See sandboxrender.RewriteImageForCluster.
 func RewriteImageForCluster(image, currentClusterID string, store RegistryStore) string {
-	if image == "" || currentClusterID == "" || store == nil {
-		return image
-	}
-
-	host := registryHost(image)
-	if host == "" {
-		return image
-	}
-
-	ownerClusterID, typ, ok := store.LookupRegistry(host)
-	if !ok {
-		// Not a known private registry — leave unchanged.
-		return image
-	}
-	if ownerClusterID == currentClusterID {
-		// Already belongs to this cluster.
-		return image
-	}
-
-	targetHost, ok := store.RegistryForType(currentClusterID, typ)
-	if !ok {
-		klog.V(2).InfoS("RewriteImageForCluster: no local registry for type, keeping original image",
-			"image", image, "ownerCluster", ownerClusterID, "currentCluster", currentClusterID, "type", typ)
-		return image
-	}
-
-	rewritten := replaceRegistryHost(image, host, targetHost)
-	klog.V(2).InfoS("RewriteImageForCluster: rewrote image registry",
-		"original", image, "rewritten", rewritten,
-		"from", ownerClusterID, "to", currentClusterID)
-	return rewritten
+	return sandboxrender.RewriteImageForCluster(image, currentClusterID, store)
 }
 
-// registryHost extracts the registry hostname (and optional port) from an OCI
-// image reference string. Returns "" when the image cannot be parsed or when
-// Docker Hub short names are used (no explicit host).
-//
-// We parse only to extract the host; we intentionally do not normalise the
-// image string (e.g. adding "docker.io/" prefixes) so that the rewrite
-// operation is a clean string substitution with no unintended side-effects.
-func registryHost(image string) string {
-	ref, err := reference.ParseNormalizedNamed(image)
-	if err != nil {
-		return ""
-	}
-	host := reference.Domain(ref)
-	// reference.ParseNormalizedNamed normalises docker.io short names by
-	// prepending "docker.io". If the caller did not supply a host at all
-	// (e.g. "ubuntu:22.04") we would incorrectly return "docker.io" and
-	// attempt to rewrite public images. Guard against this by comparing the
-	// normalised host against the raw image string: if the raw string does not
-	// start with the extracted host, the host was implicit and should be
-	// treated as absent.
-	if !strings.HasPrefix(image, host) {
-		return ""
-	}
-	return host
-}
-
-// replaceRegistryHost replaces oldHost with newHost at the start of image.
-// It performs a single prefix replacement and preserves the rest of the
-// reference (repository path, tag, digest) verbatim.
-func replaceRegistryHost(image, oldHost, newHost string) string {
-	if !strings.HasPrefix(image, oldHost) {
-		return image
-	}
-	return newHost + image[len(oldHost):]
-}
-
-// ensure cluster.Store satisfies RegistryStore at compile time.
+// ensure cluster.Store satisfies RegistryStore at compile time. The assertion
+// stays in this package so pkg/sandboxrender does not need to import
+// pkg/utils/cluster.
 var _ RegistryStore = (*cluster.Store)(nil)

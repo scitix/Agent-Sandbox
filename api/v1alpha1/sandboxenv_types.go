@@ -136,7 +136,76 @@ type EnvOverridesSpec struct {
 	// / ResolveMaxUnavailable for the resolution order.
 	// +optional
 	UpdateStrategy *EnvUpdateStrategy `json:"updateStrategy,omitempty"`
+
+	// Volumes mounts already-existing PersistentVolumeClaims from this Env's
+	// namespace into the sandbox container. The claim must exist and be Bound;
+	// this is checked when the Env is written, not at render time (silently
+	// dropping a declared mount would make a data path vanish without a word).
+	// The operator never creates or deletes a PVC.
+	//
+	// Mounts are fixed at Pod creation — Kubernetes forbids mutating
+	// spec.volumes on a live Pod — so editing this list flips the revision hash
+	// and rolls idle Pods; sandboxes already claimed keep their old mounts until
+	// they are returned. In-place image upgrades never touch volumes.
+	//
+	// Read-only is enforced on the VOLUME SOURCE rather than the mount, which
+	// makes it un-overridable by a container asking for read-write. It is still
+	// only a container bind-mount flag, so a pod spec with host mount-namespace
+	// reach (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) can
+	// remount it read-write; such combinations are rejected on write unless the
+	// Template carries the admin-only opt-out annotation. See
+	// ValidateReadOnlyEnforceable.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	Volumes []EnvVolumeMount `json:"volumes,omitempty"`
 }
+
+// EnvVolumeMount mounts one existing PersistentVolumeClaim, or one subtree of
+// it, into the sandbox container.
+//
+// It is deliberately not corev1.VolumeMount: the Kubernetes volume name is
+// derived rather than user-supplied (see sandboxrender.VolumeNameFor), and
+// ReadOnly here lands on the volume source instead of the mount.
+type EnvVolumeMount struct {
+	// ClaimName is an existing, Bound PersistentVolumeClaim in this Env's
+	// namespace. Cross-namespace mounts are impossible in Kubernetes, which is
+	// exactly the authorisation boundary this feature relies on: the sandbox Pod
+	// runs in the Env's namespace, so a caller can only ever reach claims their
+	// own identity resolved to.
+	// +required
+	ClaimName string `json:"claimName"`
+
+	// MountPath is the absolute path inside the sandbox container.
+	// +required
+	MountPath string `json:"mountPath"`
+
+	// SubPath mounts a subtree of the volume instead of its root. Relative, no
+	// ".." segments. Recommended whenever the backing PersistentVolume is
+	// exposed at its filesystem root.
+	//
+	// Note kubelet creates a missing subPath directory, and the backing
+	// filesystem is mounted read-write on the host regardless of ReadOnly, so a
+	// mistyped SubPath yields a silently-empty mount rather than an error.
+	// +optional
+	SubPath string `json:"subPath,omitempty"`
+
+	// ReadOnly defaults to true. Read it only through IsReadOnly() — a nil
+	// pointer must never be treated as read-write.
+	// +optional
+	// +kubebuilder:default=true
+	ReadOnly *bool `json:"readOnly,omitempty"`
+}
+
+// IsReadOnly is the only sanctioned way to read EnvVolumeMount.ReadOnly.
+//
+// nil means read-only: an omitted field must never widen access to a user's
+// dataset. The CRD default (+kubebuilder:default=true) covers objects written
+// through the API server, but it does not fire for objects constructed in Go
+// (the API service builds the spec before validation runs) nor for Envs stored
+// by an older CRD revision — so the nil case has to be safe on its own.
+//
+// Never dereference ReadOnly directly.
+func (v EnvVolumeMount) IsReadOnly() bool { return v.ReadOnly == nil || *v.ReadOnly }
 
 // EnvUpdateStrategy controls automatic rollout of member Pools when their
 // rendered idle-Pod identity (revision hash) changes. The only rollout mode is
@@ -224,9 +293,14 @@ type EnvClusterSpec struct {
 //     plugin admission, so plugin side-effects (Reservation submit, scheduling
 //     labels, NodeAffinity, …) survive Pool recreate / Env re-apply without
 //     redoing the side-effect. **Not exposed through the REST API.** Template
-//     upgrades do NOT auto-propagate into Spec; an explicit RefreshMember API
-//     (Phase 2 TODO) is the way to align an existing member with a newer
-//     Template revision.
+//     and override changes DO auto-propagate into Spec by default:
+//     refreshAutoUpdateMembers re-renders the member on every reconcile,
+//     compares revision hashes, and rewrites Spec when they differ. The pod-spec
+//     body is replaced wholesale (so field deletions take effect) while the
+//     pod-template ObjectMeta is merged, and neither Metadata nor PreCreatePool
+//     is re-run — so plugin identity survives and no side-effect is replayed.
+//     Set updateStrategy.autoUpdate=false to hold a frozen snapshot instead
+//     (see ResolveAutoUpdate, which defaults to true).
 //   - Config: user-declared intent (sizing, scaling-group bookkeeping, routing
 //     priorities). This is the only bucket exposed through the REST API.
 //     Plugins do not mutate Config — it stays equal to whatever the caller
@@ -330,10 +404,10 @@ type EnvClusterMemberConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	Multiplier int32 `json:"multiplier,omitempty"`
 
-	// InlineResources is the Phase 1 migration escape hatch (legacy Pools
-	// without an InstanceType label) AND the source of truth used by a
-	// future RefreshMember API to keep resource sizing stable when the
-	// underlying Template is upgraded. New Envs created via the Dashboard
+	// InlineResources is the migration escape hatch for legacy Pools without
+	// an InstanceType label, and the source of truth that keeps resource sizing
+	// stable across a Template upgrade: the auto-update re-render reads it from
+	// Config, which plugins never mutate. New Envs created via the Dashboard
 	// should leave this empty and use InstanceType+Multiplier instead.
 	// +optional
 	InlineResources *corev1.ResourceRequirements `json:"inlineResources,omitempty"`

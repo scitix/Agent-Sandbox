@@ -74,6 +74,16 @@ tags:
       (name, multiplier) into Pod resources happens server-side. The
       `instanceType` flag on `/feature-gates` reports whether the catalog
       backend is wired in.
+  - name: volumes
+    x-displayName: Volumes
+    description: >
+      Discovery of the PersistentVolumeClaims a caller may mount into a sandbox
+      through `SandboxEnv.overrides.volumes`. Scoped to the caller's own
+      namespace — the operation takes no namespace parameter, and that
+      derivation is the authorisation boundary rather than a filter, since
+      Kubernetes cannot mount a claim across namespaces. The `volumes` flag on
+      `/feature-gates` reports whether the feature is enabled; while it is off
+      the listing is empty and a non-empty `overrides.volumes` is rejected.
   - name: clusters
     x-displayName: Clusters
     description: >
@@ -1279,6 +1289,43 @@ components:
         updateStrategy:
           $ref: "#/components/schemas/EnvUpdateStrategy"
           description: "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy."
+        volumes:
+          type: array
+          maxItems: 8
+          description: |
+            Mount existing PersistentVolumeClaims from this Env's namespace into the
+            sandbox container. The claim must already exist and be Bound; the server
+            never creates or deletes a PVC. Discover mountable claims with GET /volumes.
+
+            Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes
+            on a live Pod — so editing this list rolls the member Pools' idle Pods.
+            Sandboxes already running keep their previous mounts until they are
+            returned. In-place image upgrades never touch volumes.
+          items:
+            $ref: "#/components/schemas/EnvVolumeMount"
+      additionalProperties: false
+
+    EnvVolumeMount:
+      type: object
+      description: "One PersistentVolumeClaim, or one subtree of it, mounted into the sandbox container."
+      required: [claimName, mountPath]
+      properties:
+        claimName:
+          type: string
+          description: "Name of an existing, Bound PersistentVolumeClaim in this Env's namespace. Cross-namespace mounts are not possible in Kubernetes, which is the authorisation boundary: a caller only ever reaches claims in the namespace their identity resolved to."
+        mountPath:
+          type: string
+          description: "Absolute path inside the sandbox container. Must not be '/' or '/mnt', must not sit inside a reserved path (/proc, /sys, /dev, /etc, /var/run, /var/lib/kubelet), and must not collide with or nest against a path the Template already mounts."
+        subPath:
+          type: string
+          description: "Mount a subtree of the volume instead of its root. Relative, no '..' segments. Recommended when the backing PersistentVolume is exposed at its filesystem root. Note kubelet creates a missing subPath directory, so a mistyped value mounts an empty directory rather than failing."
+        # NOTE: a property *named* readOnly, not the JSON-Schema `readOnly`
+        # keyword (which is used on imagePullSecretConfigured above to mean
+        # response-only). Do not lift this to the schema level.
+        readOnly:
+          type: boolean
+          default: true
+          description: "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out."
       additionalProperties: false
 
     SandboxNetworkPolicy:
@@ -1751,7 +1798,16 @@ components:
 
     UpdateSandboxEnvRequest:
       type: object
-      description: "Patch one or more editable Env shell fields. Omitted fields are left unchanged. Members are managed through `/envs/{name}/sandboxpools/*` and autoscaling through `/envs/{name}/autoscaling/*`."
+      description: |
+        Patch the editable Env shell. Members are managed through
+        `/envs/{name}/sandboxpools/*` and autoscaling through
+        `/envs/{name}/autoscaling/*`.
+
+        The `overrides` object is REPLACED WHOLESALE when supplied — callers must
+        echo back every field they want to preserve. Omitting `overrides`
+        entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
+        credential values need not be echoed: their references round-trip through
+        GET, so re-sending what GET returned preserves the stored material.
       properties:
         overrides:
           $ref: "#/components/schemas/EnvOverrides"
@@ -2339,6 +2395,14 @@ components:
             `/instancetypes` listing endpoint). False on deployments with no
             InstanceType backend wired in.
           example: true
+        volumes:
+          type: boolean
+          description: >-
+            True when mounting existing PersistentVolumeClaims into sandboxes is
+            enabled (the volumes panel in the Env upsert sheet, `/volumes`
+            listing endpoint). When false the server also rejects a non-empty
+            `overrides.volumes`, so this is a kill switch and not only a UI hint.
+          example: false
 
     # =========================================================
     # InstanceType catalog
@@ -2431,6 +2495,57 @@ components:
         total:
           type: integer
           description: "Total number of namespaces."
+
+    ListVolumesResult:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/VolumeItem"
+        total:
+          type: integer
+          description: "Number of mountable claims returned."
+
+    VolumeItem:
+      type: object
+      required: [claimName, phase]
+      description: "One PersistentVolumeClaim in the caller's namespace that a SandboxEnv may mount."
+      properties:
+        claimName:
+          type: string
+          description: "The claim's name — the value to put in `overrides.volumes[].claimName`."
+        displayName:
+          type: string
+          description: >-
+            Human-readable name, resolved from the first non-empty label listed in
+            the deployment's `--volume-display-name-labels`. Falls back to
+            claimName when no label matches or none is configured, so this is
+            always safe to render directly.
+        capacity:
+          type: string
+          description: "Requested capacity, e.g. '5Ti'. Absent when the claim reports none."
+        accessModes:
+          type: array
+          description: "The claim's access modes, e.g. ['ReadWriteMany']."
+          items:
+            type: string
+        storageClass:
+          type: string
+          description: "The claim's storageClassName, when set."
+        phase:
+          type: string
+          description: "Claim phase. Only Bound claims are returned, so this is always 'Bound' today; present so a future filter relaxation stays legible."
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            The claim's labels, verbatim. Returned so a caller can apply its own
+            presentation rules without this API having to know the storage
+            platform's label vocabulary.
+      additionalProperties: false
 
     # =========================================================
     # Statistics
@@ -3919,6 +4034,54 @@ paths:
   # =========================================================
   # InstanceTypes
   # =========================================================
+  /volumes:
+    get:
+      operationId: ListVolumes
+      x-since: "0.0.0"
+      summary: List mountable PersistentVolumeClaims
+      description: >-
+        Returns the Bound PersistentVolumeClaims in the caller's namespace, which
+        are exactly the claims a SandboxEnv may mount through
+        `overrides.volumes`. There is deliberately no namespace parameter: the
+        namespace is derived from the caller's identity, and that derivation is
+        the authorisation boundary. Empty when the feature is disabled (see
+        `volumes` on `/feature-gates`).
+      tags: [volumes]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListVolumesResult"
+              example:
+                total: 2
+                items:
+                  - claimName: "team-user-41"
+                    displayName: "zystore"
+                    capacity: "5Ti"
+                    accessModes: ["ReadWriteMany"]
+                    storageClass: "example-shared-fs"
+                    phase: "Bound"
+                  - claimName: "shared-models"
+                    displayName: "shared-models"
+                    capacity: "200Ti"
+                    accessModes: ["ReadWriteMany"]
+                    storageClass: "example-shared-fs"
+                    phase: "Bound"
+        "401":
+          description: Unauthorized — API key missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error — the claims could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /instancetypes:
     get:
       operationId: ListInstanceTypes
