@@ -22,12 +22,16 @@
 
 import { NextResponse, type NextRequest } from "next/server"
 import { getClusterConfig, listClusters } from "@/lib/cluster-config"
+import { withAccessLog } from "@/lib/server/access-log"
+import type { AccessLogContext } from "@/lib/server/access-log"
 
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ clusterID: string }> },
-) {
-  const { clusterID } = await params
+export function GET(request: NextRequest, ctx: { params: Promise<{ clusterID: string }> }) {
+  return withAccessLog(request, "ping", (log) => doPing(ctx, log))
+}
+
+async function doPing(ctx: { params: Promise<{ clusterID: string }> }, log: AccessLogContext) {
+  const { clusterID } = await ctx.params
+  log.cluster = clusterID
 
   let targetBaseUrl: string
   let extraHeaders: Record<string, string> = {}
@@ -39,10 +43,16 @@ export async function GET(
     extraHeaders = first.headers ?? {}
   } else {
     const cluster = getClusterConfig(clusterID)
-    if (!cluster) return NextResponse.json({ error: "Cluster not found" }, { status: 404 })
+    if (!cluster) {
+      log.note = "cluster not found in clusters.yaml"
+      return NextResponse.json({ error: "Cluster not found" }, { status: 404 })
+    }
     targetBaseUrl = cluster.url
     extraHeaders = cluster.headers ?? {}
   }
+
+  log.upstream = `${targetBaseUrl}/ping`
+  if (extraHeaders.Host) log.upstreamHost = extraHeaders.Host
 
   try {
     const res = await fetch(`${targetBaseUrl}/ping`, {
@@ -53,7 +63,8 @@ export async function GET(
     })
     const serverVersion = res.headers.get("X-AgentBox-Server-Version") ?? "unknown"
     return NextResponse.json({ serverVersion })
-  } catch {
+  } catch (e) {
+    log.note = `ping failed: ${e instanceof Error ? e.message : String(e)}`
     return NextResponse.json({ serverVersion: "unknown" })
   }
 }

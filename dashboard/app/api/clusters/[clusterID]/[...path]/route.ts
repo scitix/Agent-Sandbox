@@ -28,6 +28,8 @@ import { listClusters, getClusterConfig } from "@/lib/cluster-config"
 import { initAudit, writeAuditEvent } from "@/lib/audit"
 import type { AuditAction } from "@/lib/audit"
 import { requireAuth } from "@/lib/server/bff-auth"
+import { impersonationFromHeaders, withAccessLog } from "@/lib/server/access-log"
+import type { AccessLogContext } from "@/lib/server/access-log"
 
 /**
  * Returns true when the request targets POST /v1/sandboxes (sandbox creation).
@@ -37,11 +39,29 @@ function isSandboxCreatePath(method: string, path: string[]): boolean {
   return method === "POST" && path.length === 2 && path[0] === "v1" && path[1] === "sandboxes"
 }
 
-async function proxyRequest(request: NextRequest, clusterID: string, path: string[]) {
+function proxyRequest(request: NextRequest, clusterID: string, path: string[]) {
+  return withAccessLog(request, "cluster", (log) => doProxy(request, clusterID, path, log))
+}
+
+async function doProxy(
+  request: NextRequest,
+  clusterID: string,
+  path: string[],
+  log: AccessLogContext,
+) {
+  log.cluster = clusterID
+
   // Verify JWT from Authorization header
   const authResult = await requireAuth(request.headers.get("Authorization"))
   if ("error" in authResult) return authResult.error
   const { payload } = authResult
+  log.actor = {
+    user: payload.user,
+    team: payload.team,
+    role: payload.role,
+    authMethod: payload.authMethod,
+    ...impersonationFromHeaders(request),
+  }
   const apiKey = payload.apiKey
   const authMethod = payload.authMethod
   const token = request.headers.get("Authorization")!.slice(7)
@@ -58,7 +78,10 @@ async function proxyRequest(request: NextRequest, clusterID: string, path: strin
     extraHeaders = first.headers ?? {}
   } else {
     const cluster = getClusterConfig(clusterID)
-    if (!cluster) return NextResponse.json({ error: "Cluster not found" }, { status: 404 })
+    if (!cluster) {
+      log.note = "cluster not found in clusters.yaml"
+      return NextResponse.json({ error: "Cluster not found" }, { status: 404 })
+    }
     targetBaseUrl = cluster.url
     extraHeaders = cluster.headers ?? {}
   }
@@ -67,6 +90,7 @@ async function proxyRequest(request: NextRequest, clusterID: string, path: strin
   const targetPath = "/" + path.join("/")
   const searchParams = new URL(request.url).searchParams.toString()
   const targetUrl = `${targetBaseUrl}${targetPath}${searchParams ? `?${searchParams}` : ""}`
+  log.upstream = targetUrl
 
   // Forward the request to the backend.
   // - OIDC / Mock users: forward the raw JWT as Authorization: Bearer <token>
@@ -85,6 +109,8 @@ async function proxyRequest(request: NextRequest, clusterID: string, path: strin
   for (const [key, value] of Object.entries(extraHeaders)) {
     headers.set(key, value)
   }
+  const hostOverride = headers.get("Host")
+  if (hostOverride) log.upstreamHost = hostOverride
 
   const contentType = request.headers.get("Content-Type")
   if (contentType) {
