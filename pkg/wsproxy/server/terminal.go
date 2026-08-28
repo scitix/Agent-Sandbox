@@ -31,6 +31,7 @@ import (
 
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/config"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/wsdial"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -101,7 +102,7 @@ func terminalProxyHandler(store *cluster.Store) http.HandlerFunc {
 		for k, v := range entry.Headers {
 			upstreamHeader.Set(k, v)
 		}
-		upstreamConn, _, err := wsDialer.Dial(upstream.String(), upstreamHeader)
+		upstreamConn, err := wsdial.Dial(&wsDialer, upstream.String(), upstreamHeader)
 		if err != nil {
 			log.Printf("wsproxy: dial %s failed: %v", upstream, err)
 			http.Error(w, "upstream connection failed", http.StatusBadGateway)
