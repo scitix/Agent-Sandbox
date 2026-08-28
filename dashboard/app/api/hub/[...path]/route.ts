@@ -23,20 +23,34 @@
 
 import { NextResponse, type NextRequest } from "next/server"
 import { requireAuth } from "@/lib/server/bff-auth"
+import { impersonationFromHeaders, withAccessLog } from "@/lib/server/access-log"
+import type { AccessLogContext } from "@/lib/server/access-log"
 import { initAudit, writeAuditEvent } from "@/lib/audit"
 import type { AuditAction } from "@/lib/audit"
 
 const WSPROXY_INTERNAL_URL = process.env.WSPROXY_INTERNAL_URL ?? "http://localhost:9004"
 
-async function proxyRequest(request: NextRequest, path: string[]) {
+function proxyRequest(request: NextRequest, path: string[]) {
+  return withAccessLog(request, "hub", (log) => doProxy(request, path, log))
+}
+
+async function doProxy(request: NextRequest, path: string[], log: AccessLogContext) {
   const authResult = await requireAuth(request.headers.get("Authorization"))
   if ("error" in authResult) return authResult.error
   const { payload } = authResult
+  log.actor = {
+    user: payload.user,
+    team: payload.team,
+    role: payload.role,
+    authMethod: payload.authMethod,
+    ...impersonationFromHeaders(request),
+  }
 
   const authHeader = request.headers.get("Authorization")
   const targetPath = "/" + path.join("/")
   const searchParams = new URL(request.url).searchParams.toString()
   const targetUrl = `${WSPROXY_INTERNAL_URL}${targetPath}${searchParams ? `?${searchParams}` : ""}`
+  log.upstream = targetUrl
 
   const headers: Record<string, string> = {}
   if (authHeader) headers["Authorization"] = authHeader
@@ -64,6 +78,7 @@ async function proxyRequest(request: NextRequest, path: string[]) {
     })
   } catch (e) {
     console.error("[hub proxy] wsproxy unavailable:", e)
+    log.note = "wsproxy unavailable"
     return NextResponse.json({ error: "Hub unavailable" }, { status: 503 })
   }
 

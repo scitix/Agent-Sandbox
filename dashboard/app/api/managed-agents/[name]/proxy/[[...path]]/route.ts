@@ -33,6 +33,8 @@
 
 import { NextResponse, type NextRequest } from "next/server"
 import { requireAuth } from "@/lib/server/bff-auth"
+import { impersonationFromHeaders, withAccessLog } from "@/lib/server/access-log"
+import type { AccessLogContext } from "@/lib/server/access-log"
 
 const WSPROXY_INTERNAL_URL = process.env.WSPROXY_INTERNAL_URL ?? "http://localhost:9004"
 
@@ -46,17 +48,30 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const fetchCache = "force-no-store"
 
-async function proxy(request: NextRequest, ctx: RouteContext) {
+function proxy(request: NextRequest, ctx: RouteContext) {
+  return withAccessLog(request, "agent-proxy", (log) => doProxy(request, ctx, log))
+}
+
+async function doProxy(request: NextRequest, ctx: RouteContext, log: AccessLogContext) {
   const { name, path } = await ctx.params
 
   const authResult = await requireAuth(request.headers.get("Authorization"))
   if ("error" in authResult) return authResult.error
+  const { payload } = authResult
+  log.actor = {
+    user: payload.user,
+    team: payload.team,
+    role: payload.role,
+    authMethod: payload.authMethod,
+    ...impersonationFromHeaders(request),
+  }
 
   const suffix = (path ?? []).map(encodeURIComponent).join("/")
   const search = new URL(request.url).searchParams.toString()
   const target =
     `${WSPROXY_INTERNAL_URL}/internal/managedagents/${encodeURIComponent(name)}/proxy` +
     `${suffix ? `/${suffix}` : ""}${search ? `?${search}` : ""}`
+  log.upstream = target
 
   const headers = new Headers()
   const auth = request.headers.get("Authorization")
@@ -84,6 +99,7 @@ async function proxy(request: NextRequest, ctx: RouteContext) {
     // logging as one, and there is nobody left to answer.
     if (request.signal.aborted) return new NextResponse(null, { status: 499 })
     console.error("[agent proxy] hub unavailable:", e)
+    log.note = "hub unavailable"
     return NextResponse.json({ error: "Hub unavailable" }, { status: 503 })
   }
 

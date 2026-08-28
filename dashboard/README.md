@@ -83,6 +83,27 @@ and `DEX_REDIRECT_URI` must also be set.
 | `IMAGES_CATALOG_PATH`  | `/etc/agentbox/images-catalog.json` | Curated image catalog surfaced in create dialogs.                            |
 | `AUDIT_LOG_PATH`       | `""` (disabled)                     | If set, audit events are appended to this file.                              |
 
+### Access log (BFF proxy routes)
+
+Every proxy route (`/api/clusters/*`, `/api/clusters/*/e2b/*`, `/api/hub/*`,
+`/api/managed-agents/*`) writes one line per request to stdout — status, latency,
+client IP, method, route, and **the upstream URL that was actually dialled**
+(plus the `Host` override, when cluster config supplies one) and the caller:
+
+```
+[BFF] 404 |     12.5ms | 10.1.2.3        | GET    /api/clusters/cluster-a/v1/envs -> cluster-a http://10.0.0.1:30080/v1/envs (Host: agentbox.example.internal) | user=alice team=k8s role=admin auth=oidc | scope=cluster
+```
+
+This is distinct from `AUDIT_LOG_PATH`: the audit log records *mutations* for
+compliance and skips GETs; the access log records every proxied request so a
+misrouted upstream is visible without reproducing it. Query values named
+`token` / `apiKey` / `secret` / `password` / `signature` are masked; the
+`Authorization` header and API keys are never logged.
+
+| Variable         | Default | Purpose                                                              |
+| ---------------- | ------- | -------------------------------------------------------------------- |
+| `BFF_ACCESS_LOG` | `text`  | `text` (human line), `json` (one JSON object per line), `off` (mute). |
+
 ### Next.js build / public (exposed to browser)
 
 | Variable                  | Purpose                                                                                                                |

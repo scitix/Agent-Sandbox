@@ -39,6 +39,8 @@ import { getClusterConfig, listClusters, resolveHostAlias } from "@/lib/cluster-
 import { initAudit, writeAuditEvent } from "@/lib/audit"
 import type { AuditAction } from "@/lib/audit"
 import { requireAuth } from "@/lib/server/bff-auth"
+import { impersonationFromHeaders, withAccessLog } from "@/lib/server/access-log"
+import type { AccessLogContext } from "@/lib/server/access-log"
 
 /** E2B's create route is `POST /sandboxes` — no `/v1` prefix, unlike native. */
 function isSandboxCreatePath(method: string, path: string[]): boolean {
@@ -61,10 +63,28 @@ function normaliseE2BError(raw: string): string {
   return raw
 }
 
-async function proxyRequest(request: NextRequest, clusterID: string, path: string[]) {
+function proxyRequest(request: NextRequest, clusterID: string, path: string[]) {
+  return withAccessLog(request, "e2b", (log) => doProxy(request, clusterID, path, log))
+}
+
+async function doProxy(
+  request: NextRequest,
+  clusterID: string,
+  path: string[],
+  log: AccessLogContext,
+) {
+  log.cluster = clusterID
+
   const authResult = await requireAuth(request.headers.get("Authorization"))
   if ("error" in authResult) return authResult.error
   const { payload } = authResult
+  log.actor = {
+    user: payload.user,
+    team: payload.team,
+    role: payload.role,
+    authMethod: payload.authMethod,
+    ...impersonationFromHeaders(request),
+  }
 
   // The caller supplies the API key the sandbox should be created with. It is
   // read explicitly rather than by forwarding client headers wholesale, and it
@@ -79,6 +99,7 @@ async function proxyRequest(request: NextRequest, clusterID: string, path: strin
 
   const cluster = clusterID === "default" ? listClusters()[0] : getClusterConfig(clusterID)
   if (!cluster) {
+    log.note = "cluster not found in clusters.yaml"
     return NextResponse.json({ error: "Cluster not found" }, { status: 404 })
   }
 
@@ -96,6 +117,7 @@ async function proxyRequest(request: NextRequest, clusterID: string, path: strin
   const searchParams = new URL(request.url).searchParams.toString()
   const { url: dialBase, hostHeader } = resolveHostAlias(e2bBase)
   const targetUrl = `${dialBase.replace(/\/$/, "")}${targetPath}${searchParams ? `?${searchParams}` : ""}`
+  log.upstream = targetUrl
 
   const headers: Record<string, string> = { "X-API-Key": apiKey }
   // Cluster-level headers first, then the alias-derived Host so it wins: the
@@ -104,6 +126,7 @@ async function proxyRequest(request: NextRequest, clusterID: string, path: strin
     headers[key] = value
   }
   if (hostHeader) headers["Host"] = hostHeader
+  if (headers["Host"]) log.upstreamHost = headers["Host"]
 
   const contentType = request.headers.get("Content-Type")
   if (contentType) headers["Content-Type"] = contentType
