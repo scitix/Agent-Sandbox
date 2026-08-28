@@ -37,6 +37,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/wsmux"
+	"github.com/scitix/agent-sandbox/pkg/wsproxy/wsdial"
 )
 
 // ── WebSocket keep-alive constants ───────────────────────────────────────────
@@ -203,7 +204,7 @@ func (m *SyncManager) dialCluster(entry cluster.ClusterEntry) {
 		hdr.Set(k, v)
 	}
 
-	conn, _, err := wsDialer.Dial(u.String(), hdr)
+	conn, err := wsdial.Dial(&wsDialer, u.String(), hdr)
 	if err != nil {
 		log.Printf("syncManager: dial cluster %s (%s) failed: %v (will retry in 30s)", entry.ID, u, err)
 		return
