@@ -30,10 +30,13 @@ const PlaceholderPrefix = "agbx_ph_"
 const MinPlaceholderLen = 16
 
 var (
-	credNameRe  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`)
-	envNameRe   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	hostnameRe  = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
-	templateRe  = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}`)
+	credNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`)
+	envNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	hostnameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
+	// templateRe matches a credential reference in a header value. The syntax is
+	// the E2B one — ${e2b.secrets.<name>} — so a rule written against the E2B
+	// SDK (Secret.fill) is stored verbatim, with no rewriting at the API edge.
+	templateRe  = regexp.MustCompile(`\$\{e2b\.secrets\.([a-zA-Z0-9_-]+)\}`)
 	headerNamRe = regexp.MustCompile(`^[A-Za-z0-9!#$%&'*+\-.^_` + "`" + `|~]+$`)
 )
 
@@ -199,8 +202,9 @@ func validateRuleHeaders(r *InjectionRule, creds map[string]*InjectedCredential,
 		}
 		names := templateRe.FindAllStringSubmatch(h.Value, -1)
 		if len(names) == 0 {
-			return fmt.Errorf("rule %q header %q: value references no credential; "+
-				"a literal value here would be a plaintext secret in the CRD", r.Host, h.Name)
+			return fmt.Errorf("rule %q header %q: value references no credential — use "+
+				"${e2b.secrets.<name>}; a literal value here would be a plaintext secret in the CRD",
+				r.Host, h.Name)
 		}
 		for _, m := range names {
 			if _, ok := creds[m[1]]; !ok {

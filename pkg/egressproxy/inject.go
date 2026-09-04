@@ -30,8 +30,8 @@ import (
 // annotation, an env var, or a log line.
 //
 // Header values arrive already resolved: the operator expands the CRD's
-// "{{ cred }}" templates before pushing, so credential *names* never reach the
-// sidecar and the data plane needs no template engine.
+// ${e2b.secrets.NAME} templates before pushing, so credential *names* never
+// reach the sidecar and the data plane needs no template engine.
 type Secrets struct {
 	// SandboxID records which sandbox this config was pushed for. Informational.
 	SandboxID string `json:"sandboxId,omitempty"`

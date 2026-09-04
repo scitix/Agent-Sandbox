@@ -20,14 +20,26 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/handlers"
+	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
 // Services bundles all service dependencies for E2B router handlers.
 type Services struct {
 	Sandbox service.SandboxService
 	APIKey  service.APIKeyService
+	Vault   service.VaultService
+	// Federation exposes other clusters' Env capacity to the template listing.
+	Federation *federation.Registry
+	// LocalClusterID identifies this cluster in federation records.
+	LocalClusterID string
+	// Metrics queries the cluster's metrics backend; nil disables the metrics
+	// endpoints.
+	Metrics *promclient.Client
+	// MetricsSelector returns the PromQL label matcher for this cluster.
+	MetricsSelector func() string
 	// Forwarder enables cross-cluster forwarding via E2B API.
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	Forwarder *service.CrossClusterForwarder
@@ -38,9 +50,14 @@ type Services struct {
 // path for compatibility with private path mode.
 func Setup(r *gin.Engine, svcs Services, k8sClient client.Client, authMw gin.HandlerFunc, gatewayDomain string) {
 	srv := handlers.NewServer(handlers.Services{
-		Sandbox:   svcs.Sandbox,
-		APIKey:    svcs.APIKey,
-		Forwarder: svcs.Forwarder,
+		Sandbox:         svcs.Sandbox,
+		APIKey:          svcs.APIKey,
+		Vault:           svcs.Vault,
+		Federation:      svcs.Federation,
+		LocalClusterID:  svcs.LocalClusterID,
+		Metrics:         svcs.Metrics,
+		MetricsSelector: svcs.MetricsSelector,
+		Forwarder:       svcs.Forwarder,
 	}, k8sClient, gatewayDomain)
 
 	strictHandler := e2bgen.NewStrictHandler(srv, nil)

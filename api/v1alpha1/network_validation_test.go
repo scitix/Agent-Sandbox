@@ -29,7 +29,7 @@ func validPolicy() *SandboxNetworkPolicy {
 			}},
 			Rules: []InjectionRule{{
 				Host:    "api.openai.com",
-				Headers: []HeaderInjection{{Name: "Authorization", Value: "Bearer {{ openai }}"}},
+				Headers: []HeaderInjection{{Name: "Authorization", Value: "Bearer ${e2b.secrets.openai}"}},
 			}},
 		},
 	}
@@ -63,8 +63,10 @@ func TestValidateSecretInjection_Rejects(t *testing.T) {
 			wantSub: "wildcards are not allowed",
 		},
 		{
-			name:    "undeclared credential in template",
-			mutate:  func(p *SandboxNetworkPolicy) { p.SecretInjection.Rules[0].Headers[0].Value = "Bearer {{ nope }}" },
+			name: "undeclared credential in template",
+			mutate: func(p *SandboxNetworkPolicy) {
+				p.SecretInjection.Rules[0].Headers[0].Value = "Bearer ${e2b.secrets.nope}"
+			},
 			wantSub: "undeclared credential",
 		},
 		{

@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -35,18 +36,36 @@ import (
 	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 	e2bdomain "github.com/scitix/agent-sandbox/pkg/e2bcompat/domain"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
+	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
 // Services bundles service dependencies for E2B handlers.
 type Services struct {
 	Sandbox service.SandboxService
 	APIKey  service.APIKeyService
+	// Vault serves the /secrets endpoints. Nil leaves them answering 501, so a
+	// deployment without a vault behaves as it did before rather than
+	// pretending to have an empty one.
+	Vault service.VaultService
+	// Federation exposes other clusters' Env capacity for the template listing.
+	// Nil lists only this cluster's Envs.
+	Federation *federation.Registry
+	// LocalClusterID identifies this cluster in federation records.
+	LocalClusterID string
+	// Metrics queries the cluster's metrics backend. Nil disables the metrics
+	// endpoints.
+	Metrics *promclient.Client
+	// MetricsSelector returns the PromQL label matcher for this cluster. Nil
+	// means no cluster scoping, which is only correct for a backend that serves
+	// a single cluster.
+	MetricsSelector func() string
 	// Forwarder enables cross-cluster forwarding via E2B API.
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	// When Forwarder is nil, cross-cluster requests will be rejected.
@@ -58,23 +77,44 @@ type Services struct {
 //
 //	GET /templates, GET /templates/:id, GET/POST/DELETE /api-keys, GET /health
 //
-// All other methods return 501 Not Implemented.
+// Every other operation answers 501 with a message naming the alternative;
+// see unsupported.go.
 type Server struct {
-	sandbox       service.SandboxService
-	apikey        service.APIKeyService
-	k8sClient     client.Client
-	gatewayDomain string
-	forwarder     *service.CrossClusterForwarder
+	sandbox service.SandboxService
+	apikey  service.APIKeyService
+	vault   service.VaultService
+	// federation carries every cluster's per-Env capacity, already streamed in
+	// by the sync layer. It is what lets the template listing include other
+	// clusters' Envs without a fan-out query. May be nil.
+	federation     *federation.Registry
+	localClusterID string
+	// metrics queries the cluster's metrics backend for per-sandbox usage. Nil
+	// or unconfigured leaves the metrics endpoints answering 501 rather than
+	// an empty series, which would read as "this sandbox is idle".
+	metrics *promclient.Client
+	// metricsSelector returns the PromQL label matcher identifying this cluster
+	// in a shared backend, e.g. `cluster="foo"`. It is a function rather than a
+	// string because the value arrives on the cluster-config stream and can
+	// change while the process runs.
+	metricsSelector func() string
+	k8sClient       client.Client
+	gatewayDomain   string
+	forwarder       *service.CrossClusterForwarder
 }
 
 // NewServer creates a new E2B handler Server.
 func NewServer(svcs Services, k8sClient client.Client, gatewayDomain string) *Server {
 	return &Server{
-		sandbox:       svcs.Sandbox,
-		apikey:        svcs.APIKey,
-		k8sClient:     k8sClient,
-		gatewayDomain: gatewayDomain,
-		forwarder:     svcs.Forwarder,
+		sandbox:         svcs.Sandbox,
+		apikey:          svcs.APIKey,
+		vault:           svcs.Vault,
+		federation:      svcs.Federation,
+		localClusterID:  svcs.LocalClusterID,
+		metrics:         svcs.Metrics,
+		metricsSelector: svcs.MetricsSelector,
+		k8sClient:       k8sClient,
+		gatewayDomain:   gatewayDomain,
+		forwarder:       svcs.Forwarder,
 	}
 }
 
@@ -112,10 +152,6 @@ func errRespServer(ctx context.Context, cause error, msg string) e2bgen.Error {
 
 func errRespCode(code int32, msg string) e2bgen.Error {
 	return e2bgen.Error{Code: code, Message: msg}
-}
-
-func notImplemented() e2bgen.Error {
-	return e2bgen.Error{Code: 501, Message: "not supported in AgentBox"}
 }
 
 // jsonBody marshals v to JSON and returns it as an io.Reader.
@@ -211,11 +247,17 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 		return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(errRespCode(400, "templateID is required"))}, nil
 	}
 
+	// Refuse what we would otherwise silently drop, before anything is claimed.
+	if e := rejectUnsupportedCreateFields(req.Body); e != nil {
+		return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(*e)}, nil
+	}
+
 	auth := authFrom(ctx)
 	input := service.CreateSandboxInput{
 		ClusterID: parsed.ClusterID,
 		PoolName:  parsed.PoolName,
 		Namespace: auth.Namespace,
+		User:      auth.User,
 		Image:     parsed.ImageOverride, // Option B: image embedded via "poolName//image" syntax
 	}
 	if req.Body.Metadata != nil {
@@ -261,11 +303,16 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	// proxy, per-domain transform rules) are rejected rather than silently
 	// dropped — matching E2B's own feature gating. The service layer rejects a
 	// policy targeting a pool without egress filtering enabled.
-	np, npErr := parseE2BNetworkPolicy(req.Body)
+	np, vaultRules, npErr := parseE2BNetworkPolicy(req.Body)
 	if npErr != nil {
 		return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(*npErr)}, nil
 	}
 	input.NetworkPolicy = np
+	// Carried as a separate input rather than folded into NetworkPolicy: the
+	// service still refuses a request that hands it a ready-made SecretInjection,
+	// and these rules only become one after their references have been checked
+	// against the caller's own vault.
+	input.VaultRules = vaultRules
 	// Inject team/user from auth into labels so they are recorded on the pod
 	// and metrics (agentbox_sandbox_create_total) carry the correct dimensions.
 	input.Labels = make(map[string]string)
@@ -389,7 +436,10 @@ func (s *Server) DeleteSandboxesSandboxID(ctx context.Context, req e2bgen.Delete
 
 func (s *Server) PostSandboxesSandboxIDTimeout(ctx context.Context, req e2bgen.PostSandboxesSandboxIDTimeoutRequestObject) (e2bgen.PostSandboxesSandboxIDTimeoutResponseObject, error) {
 	if req.Body == nil || req.Body.Timeout <= 0 {
-		return e2bgen.PostSandboxesSandboxIDTimeout401JSONResponse{N401JSONResponse: e2bgen.N401JSONResponse(errRespCode(400, "timeout must be a positive integer (seconds)"))}, nil
+		// The spec declares no 400 here, but a bad argument must not surface as
+		// an authentication failure — the caller would go and check its key.
+		return statusJSON{status: http.StatusBadRequest,
+			msg: "timeout must be a positive integer number of seconds"}, nil
 	}
 
 	auth := authFrom(ctx)
@@ -431,47 +481,27 @@ func (s *Server) PostSandboxesSandboxIDRefreshes(ctx context.Context, req e2bgen
 // Not supported operations — return 501
 
 func (s *Server) PostSandboxesSandboxIDPause(_ context.Context, _ e2bgen.PostSandboxesSandboxIDPauseRequestObject) (e2bgen.PostSandboxesSandboxIDPauseResponseObject, error) {
-	return e2bgen.PostSandboxesSandboxIDPause500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostSandboxesSandboxIDPause", catArchitectural, msgPauseResume), nil
 }
 
 func (s *Server) PostSandboxesSandboxIDResume(_ context.Context, _ e2bgen.PostSandboxesSandboxIDResumeRequestObject) (e2bgen.PostSandboxesSandboxIDResumeResponseObject, error) {
-	return e2bgen.PostSandboxesSandboxIDResume500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostSandboxesSandboxIDResume", catArchitectural, msgPauseResume), nil
 }
 
 func (s *Server) PostSandboxesSandboxIDSnapshots(_ context.Context, _ e2bgen.PostSandboxesSandboxIDSnapshotsRequestObject) (e2bgen.PostSandboxesSandboxIDSnapshotsResponseObject, error) {
-	return e2bgen.PostSandboxesSandboxIDSnapshots500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostSandboxesSandboxIDSnapshots", catArchitectural, msgSnapshots), nil
 }
 
 func (s *Server) PostSandboxesSandboxIDFork(_ context.Context, _ e2bgen.PostSandboxesSandboxIDForkRequestObject) (e2bgen.PostSandboxesSandboxIDForkResponseObject, error) {
-	return e2bgen.PostSandboxesSandboxIDFork500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostSandboxesSandboxIDFork", catArchitectural, msgFork), nil
 }
 
 func (s *Server) GetAdminSandboxesRunningCounts(_ context.Context, _ e2bgen.GetAdminSandboxesRunningCountsRequestObject) (e2bgen.GetAdminSandboxesRunningCountsResponseObject, error) {
-	return e2bgen.GetAdminSandboxesRunningCounts500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetAdminSandboxesRunningCounts", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) GetV2Templates(_ context.Context, _ e2bgen.GetV2TemplatesRequestObject) (e2bgen.GetV2TemplatesResponseObject, error) {
-	return e2bgen.GetV2Templates500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
-func (s *Server) GetSecrets(_ context.Context, _ e2bgen.GetSecretsRequestObject) (e2bgen.GetSecretsResponseObject, error) {
-	return e2bgen.GetSecrets500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
-func (s *Server) GetSecretsSecretID(_ context.Context, _ e2bgen.GetSecretsSecretIDRequestObject) (e2bgen.GetSecretsSecretIDResponseObject, error) {
-	return e2bgen.GetSecretsSecretID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
-func (s *Server) PostSecrets(_ context.Context, _ e2bgen.PostSecretsRequestObject) (e2bgen.PostSecretsResponseObject, error) {
-	return e2bgen.PostSecrets500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
-func (s *Server) PostSecretsSecretID(_ context.Context, _ e2bgen.PostSecretsSecretIDRequestObject) (e2bgen.PostSecretsSecretIDResponseObject, error) {
-	return e2bgen.PostSecretsSecretID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
-func (s *Server) DeleteSecretsSecretID(_ context.Context, _ e2bgen.DeleteSecretsSecretIDRequestObject) (e2bgen.DeleteSecretsSecretIDResponseObject, error) {
-	return e2bgen.DeleteSecretsSecretID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetV2Templates", catUnimplemented, msgTemplateListV2), nil
 }
 
 // PostSandboxesSandboxIDConnect re-attaches to a sandbox by ID, returning the
@@ -520,18 +550,6 @@ func (s *Server) PostSandboxesSandboxIDConnect(ctx context.Context, req e2bgen.P
 	return e2bgen.PostSandboxesSandboxIDConnect200JSONResponse(s.domainSandboxToE2BSandbox(ctx, result, auth.Namespace)), nil
 }
 
-func (s *Server) GetSandboxesMetrics(_ context.Context, _ e2bgen.GetSandboxesMetricsRequestObject) (e2bgen.GetSandboxesMetricsResponseObject, error) {
-	return e2bgen.GetSandboxesMetrics500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
-func (s *Server) GetSandboxesSandboxIDLogs(_ context.Context, _ e2bgen.GetSandboxesSandboxIDLogsRequestObject) (e2bgen.GetSandboxesSandboxIDLogsResponseObject, error) {
-	return e2bgen.GetSandboxesSandboxIDLogs500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
-func (s *Server) GetSandboxesSandboxIDMetrics(_ context.Context, _ e2bgen.GetSandboxesSandboxIDMetricsRequestObject) (e2bgen.GetSandboxesSandboxIDMetricsResponseObject, error) {
-	return e2bgen.GetSandboxesSandboxIDMetrics500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
 // ---------------------------------------------------------------------------
 // Templates (SandboxPools)
 // ---------------------------------------------------------------------------
@@ -542,15 +560,19 @@ func (s *Server) GetTemplates(ctx context.Context, _ e2bgen.GetTemplatesRequestO
 	}
 
 	auth := authFrom(ctx)
-	poolList := &agentsv1alpha1.SandboxPoolList{}
-	if err := s.k8sClient.List(ctx, poolList, client.InNamespace(auth.Namespace)); err != nil {
+	local, err := s.listLocalTemplates(ctx, auth.Namespace)
+	if err != nil {
 		return e2bgen.GetTemplates500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespServer(ctx, err, err.Error()))}, nil
 	}
 
-	templates := make(e2bgen.GetTemplates200JSONResponse, 0, len(poolList.Items))
-	for i := range poolList.Items {
-		templates = append(templates, poolToE2BTemplate(&poolList.Items[i]))
+	known := make(map[string]struct{}, len(local))
+	for i := range local {
+		known[local[i].TemplateID] = struct{}{}
 	}
+
+	templates := make(e2bgen.GetTemplates200JSONResponse, 0, len(local))
+	templates = append(templates, local...)
+	templates = append(templates, s.listForeignTemplates(auth.Namespace, known)...)
 	return templates, nil
 }
 
@@ -560,10 +582,33 @@ func (s *Server) GetTemplatesTemplateID(ctx context.Context, req e2bgen.GetTempl
 	}
 
 	auth := authFrom(ctx)
+
+	// An Env first, because that is what the create endpoint resolves a bare
+	// name to. Falling back to a Pool keeps callers that still address a pool
+	// by name working.
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: auth.Namespace, Name: req.TemplateID}, env); err == nil {
+		tmpl := templateFromEnv(env, memberPoolNames(env))
+		return e2bgen.GetTemplatesTemplateID200JSONResponse{Body: e2bgen.TemplateWithBuilds{
+			TemplateID: tmpl.TemplateID,
+			Public:     tmpl.Public,
+			SpawnCount: tmpl.SpawnCount,
+			Aliases:    tmpl.Aliases,
+			Names:      tmpl.Names,
+			CreatedAt:  tmpl.CreatedAt,
+			UpdatedAt:  tmpl.UpdatedAt,
+			Builds:     []e2bgen.TemplateBuild{},
+		}}, nil
+	}
+
 	pool := &agentsv1alpha1.SandboxPool{}
 	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: auth.Namespace, Name: req.TemplateID}, pool); err != nil {
 		if errors.IsNotFound(err) {
-			return e2bgen.GetTemplatesTemplateID401JSONResponse{N401JSONResponse: e2bgen.N401JSONResponse(errRespCode(404, "template not found"))}, nil
+			// Answering a missing template through the 401 response type made
+			// the SDK raise an authentication error, sending callers off to
+			// rotate a perfectly good API key.
+			return statusJSON{status: http.StatusNotFound,
+				msg: "template not found: pass a SandboxEnv name (GET /templates lists them)"}, nil
 		}
 		return e2bgen.GetTemplatesTemplateID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespServer(ctx, err, err.Error()))}, nil
 	}
@@ -618,7 +663,7 @@ func (s *Server) GetApiKeys(ctx context.Context, _ e2bgen.GetApiKeysRequestObjec
 
 func (s *Server) PostApiKeys(ctx context.Context, req e2bgen.PostApiKeysRequestObject) (e2bgen.PostApiKeysResponseObject, error) {
 	if req.Body == nil {
-		return e2bgen.PostApiKeys401JSONResponse{N401JSONResponse: e2bgen.N401JSONResponse(errRespCode(400, "request body required"))}, nil
+		return statusJSON{status: http.StatusBadRequest, msg: "request body required"}, nil
 	}
 
 	auth := authFrom(ctx)
@@ -656,7 +701,7 @@ func (s *Server) DeleteApiKeysApiKeyID(ctx context.Context, req e2bgen.DeleteApi
 }
 
 func (s *Server) PatchApiKeysApiKeyID(_ context.Context, _ e2bgen.PatchApiKeysApiKeyIDRequestObject) (e2bgen.PatchApiKeysApiKeyIDResponseObject, error) {
-	return e2bgen.PatchApiKeysApiKeyID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PatchApiKeysApiKeyID", catUnimplemented, msgAPIKeyRename), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -664,107 +709,107 @@ func (s *Server) PatchApiKeysApiKeyID(_ context.Context, _ e2bgen.PatchApiKeysAp
 // ---------------------------------------------------------------------------
 
 func (s *Server) PostAccessTokens(_ context.Context, _ e2bgen.PostAccessTokensRequestObject) (e2bgen.PostAccessTokensResponseObject, error) {
-	return e2bgen.PostAccessTokens500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostAccessTokens", catArchitectural, msgAccessTokens), nil
 }
 
 func (s *Server) DeleteAccessTokensAccessTokenID(_ context.Context, _ e2bgen.DeleteAccessTokensAccessTokenIDRequestObject) (e2bgen.DeleteAccessTokensAccessTokenIDResponseObject, error) {
-	return e2bgen.DeleteAccessTokensAccessTokenID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("DeleteAccessTokensAccessTokenID", catArchitectural, msgAccessTokens), nil
 }
 
 func (s *Server) PostAdminTeamsTeamIDBuildsCancel(_ context.Context, _ e2bgen.PostAdminTeamsTeamIDBuildsCancelRequestObject) (e2bgen.PostAdminTeamsTeamIDBuildsCancelResponseObject, error) {
-	return e2bgen.PostAdminTeamsTeamIDBuildsCancel500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostAdminTeamsTeamIDBuildsCancel", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) PostAdminTeamsTeamIDApiKeys(_ context.Context, _ e2bgen.PostAdminTeamsTeamIDApiKeysRequestObject) (e2bgen.PostAdminTeamsTeamIDApiKeysResponseObject, error) {
-	return e2bgen.PostAdminTeamsTeamIDApiKeys500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostAdminTeamsTeamIDApiKeys", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) DeleteAdminTeamsTeamIDApiKeysApiKeyID(_ context.Context, _ e2bgen.DeleteAdminTeamsTeamIDApiKeysApiKeyIDRequestObject) (e2bgen.DeleteAdminTeamsTeamIDApiKeysApiKeyIDResponseObject, error) {
-	return e2bgen.DeleteAdminTeamsTeamIDApiKeysApiKeyID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("DeleteAdminTeamsTeamIDApiKeysApiKeyID", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) PutSandboxesSandboxIDNetwork(_ context.Context, _ e2bgen.PutSandboxesSandboxIDNetworkRequestObject) (e2bgen.PutSandboxesSandboxIDNetworkResponseObject, error) {
-	return e2bgen.PutSandboxesSandboxIDNetwork500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PutSandboxesSandboxIDNetwork", catUnimplemented, msgLiveNetwork), nil
 }
 
 func (s *Server) PostAdminTeamsTeamIDSandboxesKill(_ context.Context, _ e2bgen.PostAdminTeamsTeamIDSandboxesKillRequestObject) (e2bgen.PostAdminTeamsTeamIDSandboxesKillResponseObject, error) {
-	return e2bgen.PostAdminTeamsTeamIDSandboxesKill500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostAdminTeamsTeamIDSandboxesKill", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) GetNodes(_ context.Context, _ e2bgen.GetNodesRequestObject) (e2bgen.GetNodesResponseObject, error) {
-	return e2bgen.GetNodes500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetNodes", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) GetNodesNodeID(_ context.Context, _ e2bgen.GetNodesNodeIDRequestObject) (e2bgen.GetNodesNodeIDResponseObject, error) {
-	return e2bgen.GetNodesNodeID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetNodesNodeID", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) PostNodesNodeID(_ context.Context, _ e2bgen.PostNodesNodeIDRequestObject) (e2bgen.PostNodesNodeIDResponseObject, error) {
-	return e2bgen.PostNodesNodeID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostNodesNodeID", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) GetSnapshots(_ context.Context, _ e2bgen.GetSnapshotsRequestObject) (e2bgen.GetSnapshotsResponseObject, error) {
-	return e2bgen.GetSnapshots500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetSnapshots", catArchitectural, msgSnapshots), nil
 }
 
 func (s *Server) GetTeams(_ context.Context, _ e2bgen.GetTeamsRequestObject) (e2bgen.GetTeamsResponseObject, error) {
-	return e2bgen.GetTeams500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTeams", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) GetTeamsTeamIDMetrics(_ context.Context, _ e2bgen.GetTeamsTeamIDMetricsRequestObject) (e2bgen.GetTeamsTeamIDMetricsResponseObject, error) {
-	return e2bgen.GetTeamsTeamIDMetrics500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTeamsTeamIDMetrics", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) GetTeamsTeamIDMetricsMax(_ context.Context, _ e2bgen.GetTeamsTeamIDMetricsMaxRequestObject) (e2bgen.GetTeamsTeamIDMetricsMaxResponseObject, error) {
-	return e2bgen.GetTeamsTeamIDMetricsMax500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTeamsTeamIDMetricsMax", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) PostTemplates(_ context.Context, _ e2bgen.PostTemplatesRequestObject) (e2bgen.PostTemplatesResponseObject, error) {
-	return e2bgen.PostTemplates500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostTemplates", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) GetTemplatesAliasesAlias(_ context.Context, _ e2bgen.GetTemplatesAliasesAliasRequestObject) (e2bgen.GetTemplatesAliasesAliasResponseObject, error) {
-	return e2bgen.GetTemplatesAliasesAlias500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTemplatesAliasesAlias", catUnimplemented, msgTemplateAlias), nil
 }
 
 func (s *Server) DeleteTemplatesTags(_ context.Context, _ e2bgen.DeleteTemplatesTagsRequestObject) (e2bgen.DeleteTemplatesTagsResponseObject, error) {
-	return e2bgen.DeleteTemplatesTags500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("DeleteTemplatesTags", catPlatform, msgTemplateTags), nil
 }
 
 func (s *Server) PostTemplatesTags(_ context.Context, _ e2bgen.PostTemplatesTagsRequestObject) (e2bgen.PostTemplatesTagsResponseObject, error) {
-	return e2bgen.PostTemplatesTags500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostTemplatesTags", catPlatform, msgTemplateTags), nil
 }
 
 func (s *Server) DeleteTemplatesTemplateID(_ context.Context, _ e2bgen.DeleteTemplatesTemplateIDRequestObject) (e2bgen.DeleteTemplatesTemplateIDResponseObject, error) {
-	return e2bgen.DeleteTemplatesTemplateID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("DeleteTemplatesTemplateID", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) PatchTemplatesTemplateID(_ context.Context, _ e2bgen.PatchTemplatesTemplateIDRequestObject) (e2bgen.PatchTemplatesTemplateIDResponseObject, error) {
-	return e2bgen.PatchTemplatesTemplateID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PatchTemplatesTemplateID", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) PostTemplatesTemplateID(_ context.Context, _ e2bgen.PostTemplatesTemplateIDRequestObject) (e2bgen.PostTemplatesTemplateIDResponseObject, error) {
-	return e2bgen.PostTemplatesTemplateID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostTemplatesTemplateID", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) PostTemplatesTemplateIDBuildsBuildID(_ context.Context, _ e2bgen.PostTemplatesTemplateIDBuildsBuildIDRequestObject) (e2bgen.PostTemplatesTemplateIDBuildsBuildIDResponseObject, error) {
-	return e2bgen.PostTemplatesTemplateIDBuildsBuildID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostTemplatesTemplateIDBuildsBuildID", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) GetTemplatesTemplateIDBuildsBuildIDLogs(_ context.Context, _ e2bgen.GetTemplatesTemplateIDBuildsBuildIDLogsRequestObject) (e2bgen.GetTemplatesTemplateIDBuildsBuildIDLogsResponseObject, error) {
-	return e2bgen.GetTemplatesTemplateIDBuildsBuildIDLogs500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTemplatesTemplateIDBuildsBuildIDLogs", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) GetTemplatesTemplateIDBuildsBuildIDStatus(_ context.Context, _ e2bgen.GetTemplatesTemplateIDBuildsBuildIDStatusRequestObject) (e2bgen.GetTemplatesTemplateIDBuildsBuildIDStatusResponseObject, error) {
-	return e2bgen.GetTemplatesTemplateIDBuildsBuildIDStatus500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTemplatesTemplateIDBuildsBuildIDStatus", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) GetTemplatesTemplateIDFilesHash(_ context.Context, _ e2bgen.GetTemplatesTemplateIDFilesHashRequestObject) (e2bgen.GetTemplatesTemplateIDFilesHashResponseObject, error) {
-	return e2bgen.GetTemplatesTemplateIDFilesHash500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTemplatesTemplateIDFilesHash", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) GetTemplatesTemplateIDTags(_ context.Context, _ e2bgen.GetTemplatesTemplateIDTagsRequestObject) (e2bgen.GetTemplatesTemplateIDTagsResponseObject, error) {
-	return e2bgen.GetTemplatesTemplateIDTags500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetTemplatesTemplateIDTags", catPlatform, msgTemplateTags), nil
 }
 
 // GetV2Sandboxes is the paginated list endpoint the current E2B SDK targets
@@ -915,38 +960,34 @@ func decodeNextToken(token *string) int {
 	return n
 }
 
-func (s *Server) GetV2SandboxesSandboxIDLogs(_ context.Context, _ e2bgen.GetV2SandboxesSandboxIDLogsRequestObject) (e2bgen.GetV2SandboxesSandboxIDLogsResponseObject, error) {
-	return e2bgen.GetV2SandboxesSandboxIDLogs500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
-}
-
 func (s *Server) PostV2Templates(_ context.Context, _ e2bgen.PostV2TemplatesRequestObject) (e2bgen.PostV2TemplatesResponseObject, error) {
-	return e2bgen.PostV2Templates500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostV2Templates", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) PatchV2TemplatesTemplateID(_ context.Context, _ e2bgen.PatchV2TemplatesTemplateIDRequestObject) (e2bgen.PatchV2TemplatesTemplateIDResponseObject, error) {
-	return e2bgen.PatchV2TemplatesTemplateID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PatchV2TemplatesTemplateID", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) PostV2TemplatesTemplateIDBuildsBuildID(_ context.Context, _ e2bgen.PostV2TemplatesTemplateIDBuildsBuildIDRequestObject) (e2bgen.PostV2TemplatesTemplateIDBuildsBuildIDResponseObject, error) {
-	return e2bgen.PostV2TemplatesTemplateIDBuildsBuildID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostV2TemplatesTemplateIDBuildsBuildID", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) PostV3Templates(_ context.Context, _ e2bgen.PostV3TemplatesRequestObject) (e2bgen.PostV3TemplatesResponseObject, error) {
-	return e2bgen.PostV3Templates500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostV3Templates", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) GetVolumes(_ context.Context, _ e2bgen.GetVolumesRequestObject) (e2bgen.GetVolumesResponseObject, error) {
-	return e2bgen.GetVolumes500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetVolumes", catArchitectural, msgVolumes), nil
 }
 
 func (s *Server) PostVolumes(_ context.Context, _ e2bgen.PostVolumesRequestObject) (e2bgen.PostVolumesResponseObject, error) {
-	return e2bgen.PostVolumes500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("PostVolumes", catArchitectural, msgVolumes), nil
 }
 
 func (s *Server) DeleteVolumesVolumeID(_ context.Context, _ e2bgen.DeleteVolumesVolumeIDRequestObject) (e2bgen.DeleteVolumesVolumeIDResponseObject, error) {
-	return e2bgen.DeleteVolumesVolumeID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("DeleteVolumesVolumeID", catArchitectural, msgVolumes), nil
 }
 
 func (s *Server) GetVolumesVolumeID(_ context.Context, _ e2bgen.GetVolumesVolumeIDRequestObject) (e2bgen.GetVolumesVolumeIDResponseObject, error) {
-	return e2bgen.GetVolumesVolumeID500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(notImplemented())}, nil
+	return unsupportedOp("GetVolumesVolumeID", catArchitectural, msgVolumes), nil
 }

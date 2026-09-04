@@ -33,10 +33,13 @@ func TestExpandCredentialTemplate(t *testing.T) {
 		in, want string
 		wantErr  bool
 	}{
-		{in: "Bearer {{ openai }}", want: "Bearer sk-real"},
-		{in: "Bearer {{openai}}", want: "Bearer sk-real"},
-		{in: "{{ openai }}:{{ tok }}", want: "sk-real:abc"},
-		{in: "Bearer {{ missing }}", wantErr: true},
+		{in: "Bearer ${e2b.secrets.openai}", want: "Bearer sk-real"},
+		{in: "${e2b.secrets.openai}:${e2b.secrets.tok}", want: "sk-real:abc"},
+		{in: "Bearer ${e2b.secrets.missing}", wantErr: true},
+		// The retired doubled-curly syntax is not a reference any more. It has
+		// to pass through untouched rather than half-expand — validation is
+		// what rejects it, and it does so before a value ever reaches here.
+		{in: "Bearer {{ openai }}", want: "Bearer {{ openai }}"},
 	} {
 		got, err := expandCredentialTemplate(tc.in, values)
 		if tc.wantErr {
@@ -79,7 +82,7 @@ func injectionAnnotation(t *testing.T) string {
 		}},
 		Rules: []agentsv1alpha1.InjectionRule{{
 			Host:       "api.openai.com",
-			Headers:    []agentsv1alpha1.HeaderInjection{{Name: "Authorization", Value: "Bearer {{ openai }}"}},
+			Headers:    []agentsv1alpha1.HeaderInjection{{Name: "Authorization", Value: "Bearer ${e2b.secrets.openai}"}},
 			Substitute: []string{"openai"},
 		}},
 	}

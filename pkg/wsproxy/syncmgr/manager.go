@@ -80,10 +80,11 @@ type clusterSyncConn struct {
 
 	// Per-resource broadcast channels. Buffered so a slow Worker stalls only
 	// its own stream — once full, new events are dropped (see broadcast*).
-	keyCh  chan *syncv1.KeyEvent
-	tmplCh chan *syncv1.TemplateEvent
-	cfgCh  chan *syncv1.ClusterConfigEvent
-	fedCh  chan *syncv1.FederationBroadcast
+	keyCh   chan *syncv1.KeyEvent
+	vaultCh chan *syncv1.VaultEvent
+	tmplCh  chan *syncv1.TemplateEvent
+	cfgCh   chan *syncv1.ClusterConfigEvent
+	fedCh   chan *syncv1.FederationBroadcast
 
 	done          chan struct{}
 	connectedAt   time.Time // immutable after creation
@@ -119,6 +120,10 @@ type SyncManager struct {
 
 	// fed holds the cross-cluster capacity soft state relayed between Workers.
 	fed *federationStore
+
+	// vault is the Hub-side source of truth for credential entries, fanned out
+	// to every Worker (see grpc_vault_server.go).
+	vault *vaultStore
 }
 
 // Deps bundles all optional dependencies injected into SyncManager.
@@ -143,6 +148,7 @@ type Deps struct {
 func New(clusters *cluster.Store, syncToken, managerToken string, deps Deps) *SyncManager {
 	return &SyncManager{
 		clusters:         clusters,
+		vault:            newVaultStore(),
 		deps:             deps,
 		syncToken:        syncToken,
 		managerToken:     managerToken,
@@ -214,6 +220,7 @@ func (m *SyncManager) dialCluster(entry cluster.ClusterEntry) {
 		clusterID:   entry.ID,
 		conn:        conn,
 		keyCh:       make(chan *syncv1.KeyEvent, broadcastBuffer),
+		vaultCh:     make(chan *syncv1.VaultEvent, broadcastBuffer),
 		tmplCh:      make(chan *syncv1.TemplateEvent, broadcastBuffer),
 		cfgCh:       make(chan *syncv1.ClusterConfigEvent, broadcastBuffer),
 		fedCh:       make(chan *syncv1.FederationBroadcast, broadcastBuffer),
@@ -223,6 +230,7 @@ func (m *SyncManager) dialCluster(entry cluster.ClusterEntry) {
 
 	grpcSrv, session, err := wsmux.ServeGRPC(conn, func(s *grpc.Server) {
 		syncv1.RegisterAPIKeyServiceServer(s, newAPIKeyServer(m, sc))
+		syncv1.RegisterVaultServiceServer(s, newVaultServer(m, sc))
 		syncv1.RegisterTemplateServiceServer(s, newTemplateServer(m, sc))
 		syncv1.RegisterClusterConfigServiceServer(s, newClusterConfigServer(m, sc))
 		syncv1.RegisterFederationServiceServer(s, newFederationServer(m, sc))
@@ -347,6 +355,36 @@ func (m *SyncManager) broadcastKeyDelete(secretName string) {
 		default:
 			WSSyncEventsDroppedTotal.WithLabelValues(sc.clusterID, "key_delete").Inc()
 			log.Printf("syncManager: dropped key_delete for cluster %s (buffer full)", sc.clusterID)
+		}
+	}
+}
+
+func (m *SyncManager) broadcastVaultUpsert(entry *syncv1.VaultEntry) {
+	ev := &syncv1.VaultEvent{Kind: &syncv1.VaultEvent_Upsert{Upsert: entry}}
+	for _, sc := range m.snapshotConns() {
+		select {
+		case sc.vaultCh <- ev:
+			WSSyncEventsTotal.WithLabelValues(sc.clusterID, "vault_upsert").Inc()
+		default:
+			// Dropping is safe only because the next Watch re-subscription
+			// starts with a full snapshot; the entry is not lost, just late.
+			WSSyncEventsDroppedTotal.WithLabelValues(sc.clusterID, "vault_upsert").Inc()
+			log.Printf("syncManager: dropped vault_upsert for cluster %s (buffer full)", sc.clusterID)
+		}
+	}
+}
+
+func (m *SyncManager) broadcastVaultDelete(namespace, user, name string) {
+	ev := &syncv1.VaultEvent{Kind: &syncv1.VaultEvent_Delete{Delete: &syncv1.VaultDelete{
+		Namespace: namespace, User: user, Name: name,
+	}}}
+	for _, sc := range m.snapshotConns() {
+		select {
+		case sc.vaultCh <- ev:
+			WSSyncEventsTotal.WithLabelValues(sc.clusterID, "vault_delete").Inc()
+		default:
+			WSSyncEventsDroppedTotal.WithLabelValues(sc.clusterID, "vault_delete").Inc()
+			log.Printf("syncManager: dropped vault_delete for cluster %s (buffer full)", sc.clusterID)
 		}
 	}
 }

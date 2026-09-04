@@ -29,7 +29,25 @@ import (
 
 // makePod builds a Pod with the given phase label, sandbox-id label, and IP.
 // Passing phase == "" leaves the phase label unset.
+//
+// A Running pod is built already armed, so these cases exercise the
+// phase/sandbox-id/PodIP decision table on its own. The arming dimension has
+// its own tests below.
+// testPodIP is the IP every fixture pod is given.
+const testPodIP = "10.1.1.1"
+
 func makePod(name, sandboxID, phase, podIP string) *corev1.Pod { //nolint:unparam
+	pod := makeUnarmedPod(name, sandboxID, phase, podIP)
+	if phase == string(agentsv1alpha1.SandboxPhaseRunning) && sandboxID != "" {
+		pod.Annotations = map[string]string{
+			agentsv1alpha1.SandboxArmedAnnotationKey: sandboxID,
+		}
+	}
+	return pod
+}
+
+// makeUnarmedPod builds the same Pod without the arming mark.
+func makeUnarmedPod(name, sandboxID, phase, podIP string) *corev1.Pod {
 	labels := map[string]string{}
 	if sandboxID != "" {
 		labels[agentsv1alpha1.SandboxIDLabelKey] = sandboxID
@@ -77,14 +95,14 @@ func TestRouter_CacheHit_Running_ReturnsRoute(t *testing.T) {
 	cache := NewRouteCache(time.Minute)
 	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
 
-	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseRunning), "10.1.1.1")
+	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseRunning), testPodIP)
 	r := newTestRouter(t, cache, true, pod)
 
 	route, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if route.PodIP != "10.1.1.1" || route.Port != 8080 {
+	if route.PodIP != testPodIP || route.Port != 8080 {
 		t.Fatalf("unexpected route: %+v", route)
 	}
 }
@@ -95,14 +113,14 @@ func TestRouter_CacheHit_Stopping_ReturnsRoute(t *testing.T) {
 	cache := NewRouteCache(time.Minute)
 	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
 
-	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseStopping), "10.1.1.1")
+	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseStopping), testPodIP)
 	r := newTestRouter(t, cache, true, pod)
 
 	route, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
 	if err != nil {
 		t.Fatalf("unexpected err (Stopping should still route): %v", err)
 	}
-	if route.PodIP != "10.1.1.1" {
+	if route.PodIP != testPodIP {
 		t.Fatalf("unexpected route: %+v", route)
 	}
 }
@@ -125,7 +143,7 @@ func TestRouter_CacheHit_LabelMismatch_ReturnsBadGateway(t *testing.T) {
 	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
 	// Pod is Running but the sandbox-id label no longer matches the querying
 	// caller's ID (Pod was released + reclaimed since the cache was populated).
-	pod := makePod("pod-1", "sb2", string(agentsv1alpha1.SandboxPhaseRunning), "10.1.1.1")
+	pod := makePod("pod-1", "sb2", string(agentsv1alpha1.SandboxPhaseRunning), testPodIP)
 	r := newTestRouter(t, cache, true, pod)
 
 	_, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
@@ -140,7 +158,7 @@ func TestRouter_CacheHit_LabelMismatch_ReturnsBadGateway(t *testing.T) {
 func TestRouter_CacheHit_Starting_ReturnsBadGateway(t *testing.T) {
 	cache := NewRouteCache(time.Minute)
 	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
-	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseStarting), "10.1.1.1")
+	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseStarting), testPodIP)
 	r := newTestRouter(t, cache, true, pod)
 
 	_, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
@@ -176,7 +194,7 @@ func TestRouter_CacheHit_StoppingNoIP_ReturnsBadGateway(t *testing.T) {
 func TestRouter_CacheHit_Idle_ReturnsBadGateway(t *testing.T) {
 	cache := NewRouteCache(time.Minute)
 	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
-	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseIdle), "10.1.1.1")
+	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseIdle), testPodIP)
 	r := newTestRouter(t, cache, true, pod)
 
 	_, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
@@ -188,7 +206,7 @@ func TestRouter_CacheHit_Idle_ReturnsBadGateway(t *testing.T) {
 func TestRouter_CacheHit_Failed_ReturnsBadGateway(t *testing.T) {
 	cache := NewRouteCache(time.Minute)
 	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
-	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseFailed), "10.1.1.1")
+	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseFailed), testPodIP)
 	r := newTestRouter(t, cache, true, pod)
 
 	_, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
@@ -200,7 +218,7 @@ func TestRouter_CacheHit_Failed_ReturnsBadGateway(t *testing.T) {
 func TestRouter_CacheHit_EmptyPhase_ReturnsBadGateway(t *testing.T) {
 	cache := NewRouteCache(time.Minute)
 	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
-	pod := makePod("pod-1", "sb1", "", "10.1.1.1") // no phase label
+	pod := makePod("pod-1", "sb1", "", testPodIP) // no phase label
 	r := newTestRouter(t, cache, true, pod)
 
 	_, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
@@ -214,7 +232,7 @@ func TestRouter_CacheHit_EmptyPhase_ReturnsBadGateway(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestRouter_CacheMiss_FallbackOff_ReturnsNotFound(t *testing.T) {
-	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseRunning), "10.1.1.1")
+	pod := makePod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseRunning), testPodIP)
 	r := newTestRouter(t, NewRouteCache(time.Minute), false, pod)
 
 	// Pod exists in informer under sb1, but fallback is off → we treat cache
@@ -319,5 +337,68 @@ func TestRouter_InvalidPort_ReturnsNotFound(t *testing.T) {
 	_, err = r.ResolveSandboxRoute(context.Background(), "sb1", 70000)
 	if !errors.Is(err, ErrSandboxRouteNotFound) {
 		t.Fatalf("expected NotFound for port=70000, got %v", err)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Arming gate
+//
+// A Running pod whose image is in place but whose sandbox has not finished
+// being set up must not be served: its env vars, injected CA, egress policy
+// and credentials are still being delivered. Stopping pods are exempt — they
+// were armed while Running and the release path strips the mark, so requiring
+// it would cut off in-flight teardown traffic.
+// --------------------------------------------------------------------------
+
+func TestRouter_Running_NotArmed_ReturnsBadGateway(t *testing.T) {
+	cache := NewRouteCache(time.Minute)
+	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
+
+	pod := makeUnarmedPod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseRunning), testPodIP)
+	r := newTestRouter(t, cache, false, pod)
+
+	if _, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080); !errors.Is(err, ErrSandboxRouteBadGateway) {
+		t.Fatalf("expected BadGateway for an unarmed Running pod, got %v", err)
+	}
+}
+
+func TestRouter_Running_ArmedForAnotherSandbox_ReturnsBadGateway(t *testing.T) {
+	cache := NewRouteCache(time.Minute)
+	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
+
+	// The pod was recycled: it now serves sb1 but still carries the previous
+	// claim's arming mark. Reading that as "armed" is exactly the bug the
+	// sandbox-ID-valued annotation exists to prevent.
+	pod := makeUnarmedPod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseRunning), testPodIP)
+	pod.Annotations = map[string]string{agentsv1alpha1.SandboxArmedAnnotationKey: "sb0"}
+	r := newTestRouter(t, cache, false, pod)
+
+	if _, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080); !errors.Is(err, ErrSandboxRouteBadGateway) {
+		t.Fatalf("expected BadGateway for a stale arming mark, got %v", err)
+	}
+}
+
+func TestRouter_Stopping_NotArmed_StillRoutes(t *testing.T) {
+	cache := NewRouteCache(time.Minute)
+	cache.Put("sb1", RouteEntry{Namespace: "default", PodName: "pod-1"})
+
+	pod := makeUnarmedPod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseStopping), testPodIP)
+	r := newTestRouter(t, cache, false, pod)
+
+	route, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080)
+	if err != nil {
+		t.Fatalf("expected a route for a Stopping pod without the mark, got %v", err)
+	}
+	if route.PodIP != testPodIP {
+		t.Fatalf("unexpected route: %+v", route)
+	}
+}
+
+func TestRouter_CacheMiss_FallbackOn_IndexerHitUnarmed_ReturnsBadGateway(t *testing.T) {
+	pod := makeUnarmedPod("pod-1", "sb1", string(agentsv1alpha1.SandboxPhaseRunning), testPodIP)
+	r := newTestRouter(t, NewRouteCache(time.Minute), true, pod)
+
+	if _, err := r.ResolveSandboxRoute(context.Background(), "sb1", 8080); !errors.Is(err, ErrSandboxRouteBadGateway) {
+		t.Fatalf("expected BadGateway via the indexer path too, got %v", err)
 	}
 }

@@ -27,11 +27,11 @@ INFRA_REPO="https://github.com/e2b-dev/infra"
 # (which are line-addressed) apply deterministically. e2b-infra's default
 # branch moves fast (date-based release tags), so an unpinned clone would
 # silently change the envd version and break patch application. This commit is
-# envd 0.6.13. Bump this together with regenerating the patches (see
+# envd 0.7.0. Bump this together with regenerating the patches (see
 # patches/README.md) when you intentionally move to a newer envd.
 # Full SHA is required: `git fetch --depth 1 origin <sha>` rejects abbreviated SHAs.
 # Keep this in lockstep with .github/workflows/build-envd.yml's infra_ref default.
-INFRA_REF=${INFRA_REF:-"03166a020f0ea2da25e3a73e45518ae156db824f"}
+INFRA_REF=${INFRA_REF:-"8a3f69da6f822c2de2b310dd1076d2c309eef919"}
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCHES_DIR="$CURRENT_DIR/patches"
 

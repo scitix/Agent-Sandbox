@@ -119,6 +119,25 @@ const (
 	// as a managed annotation key so release strips it.
 	SandboxEgressInjectAnnotationKey = "agentbox.navix.sh/egress-inject"
 
+	// SandboxArmedAnnotationKey marks a claimed sandbox as fully armed: its
+	// runtimes answered their readiness probes, the post-start hooks ran (env
+	// vars and, when injection is configured, the CA are in place), and the
+	// egress policy and credentials were pushed into the filter sidecar. The
+	// value is the sandbox ID, so a recycled Pod carrying a stale mark can never
+	// be mistaken for an armed one.
+	//
+	// It is the single readiness judgement for a sandbox: the create path waits
+	// for it before returning, and the data-plane router refuses to route to a
+	// sandbox that does not carry it. Registered as a managed annotation key so
+	// release strips it.
+	SandboxArmedAnnotationKey = "agentbox.navix.sh/sandbox-armed"
+
+	// SandboxArmErrorAnnotationKey records why arming failed, in place of
+	// SandboxArmedAnnotationKey (the two are mutually exclusive). The create path
+	// surfaces the reason to the caller instead of handing back a sandbox that
+	// looks usable but has no env vars, no CA or no credentials.
+	SandboxArmErrorAnnotationKey = "agentbox.navix.sh/sandbox-arm-error"
+
 	// SI Scheduler labels and annotations
 	LabelTeam = "scheduling.navix.sh/team"
 	LabelUser = "scheduling.navix.sh/user"

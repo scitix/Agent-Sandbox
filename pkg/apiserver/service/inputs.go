@@ -30,6 +30,17 @@ import (
 // EnvClusterMemberConfig.ScalingGroup.
 const MetaKeyScalingGroup = "agentbox.scitix.ai/scaling-group"
 
+// MetaKeyNoWait is the reserved create-metadata key that opts a single create
+// request out of waiting for the sandbox to be armed (runtimes answering, env
+// vars delivered, egress policy and credentials pushed). It is consumed by the
+// service and never stored on the pod.
+//
+// The default — waiting — is what makes "create returned" mean "the sandbox
+// works". Opting out hands back an ID whose first command may fail, whose env
+// vars may be missing, and whose egress rules may not be in force yet; that is
+// only ever the right trade for a caller that runs its own readiness gate.
+const MetaKeyNoWait = "agentbox.scitix.ai/no-wait"
+
 // CreateSandboxInput carries all parameters needed to create a new sandbox.
 // The shape is service-internal: it holds parsed timeouts (durations), the
 // cluster prefix already split out of the pool name, and post-start hooks
@@ -61,4 +72,16 @@ type CreateSandboxInput struct {
 	// for this sandbox only (E2B create body: network / allow_internet_access).
 	// Rejected when the target Pool has no networkPolicy (no filter sidecar).
 	NetworkPolicy *agentsv1alpha1.SandboxNetworkPolicy
+
+	// User is the authenticated caller. It scopes the credential vault: two
+	// users sharing a namespace (the `default` case) must not resolve each
+	// other's secrets.
+	User string
+
+	// VaultRules are per-sandbox credential-injection rules parsed from the
+	// create request, with header values still holding ${e2b.secrets.<name>}
+	// references. They are deliberately not part of NetworkPolicy: a request may
+	// not hand the service a ready-made SecretInjection, and these only become
+	// one after every reference has been resolved against the caller's own vault.
+	VaultRules []agentsv1alpha1.InjectionRule
 }

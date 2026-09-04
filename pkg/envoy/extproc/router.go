@@ -138,7 +138,8 @@ func (r *K8sSandboxRouter) ResolveSandboxRoute(ctx context.Context, sandboxID st
 // in one place guarantees the "one Pod read per request" contract.
 //
 // Decision table:
-//   - phase ∈ {Running, Stopping}, sandbox-id label matches, PodIP set → 200
+//   - phase ∈ {Running, Stopping}, sandbox-id label matches, PodIP set,
+//     and the sandbox is armed                                        → 200
 //     Stopping is still routable because the pod hasn't been recycled yet
 //     and its runtime may continue to serve in-flight client traffic.
 //   - phase ∈ {Running, Stopping}, sandbox-id label mismatches         → 502
@@ -146,6 +147,13 @@ func (r *K8sSandboxRouter) ResolveSandboxRoute(ctx context.Context, sandboxID st
 //     stranded in our cache. Caller should retry (and usually will hit a
 //     cache-miss / indexer-miss next, yielding the definitive 404).
 //   - phase ∈ {Running, Stopping}, PodIP empty                         → 502
+//   - phase = Running, not yet armed                                   → 502
+//     The image is in place but the sandbox is not set up: its env vars,
+//     injected CA, egress policy and credentials are still being delivered.
+//     Serving here is how a first command used to see an empty environment,
+//     or leave carrying a decoy credential. The create path waits for the
+//     mark, so this only fires for callers that got an ID another way
+//     (connect by ID, a console session, a retained handle).
 //   - any other phase (Starting, Idle, Failed, empty, unknown)         → 502
 //     Starting specifically must not route: the container is swapping
 //     images and answering there would leak into the previous sandbox's
@@ -161,8 +169,24 @@ func (r *K8sSandboxRouter) finalize(pod *corev1.Pod, sandboxID string, reqPort i
 		if pod.Status.PodIP == "" {
 			return nil, ErrSandboxRouteBadGateway
 		}
+		if !sandboxArmed(pod, sandboxID) {
+			return nil, ErrSandboxRouteBadGateway
+		}
 		return &SandboxRoute{PodIP: pod.Status.PodIP, Port: reqPort}, nil
 	default:
 		return nil, ErrSandboxRouteBadGateway
 	}
+}
+
+// sandboxArmed reports whether the pod carries the arming mark for this
+// sandbox.
+//
+// Stopping pods are exempt: they were armed while Running, and the release path
+// strips the mark, so requiring it would cut off in-flight traffic during
+// teardown — the one case where the old behaviour is the correct one.
+func sandboxArmed(pod *corev1.Pod, sandboxID string) bool {
+	if pod.Labels[agentsv1alpha1.SandboxPhaseLabelKey] != string(agentsv1alpha1.SandboxPhaseRunning) {
+		return true
+	}
+	return pod.Annotations[agentsv1alpha1.SandboxArmedAnnotationKey] == sandboxID
 }

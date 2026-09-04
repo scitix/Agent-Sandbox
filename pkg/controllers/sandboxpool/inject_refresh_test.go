@@ -31,7 +31,7 @@ func injectionWith(header, placeholder string) agentsv1alpha1.SecretInjection {
 		}},
 		Rules: []agentsv1alpha1.InjectionRule{{
 			Host:       "hub.example.com",
-			Headers:    []agentsv1alpha1.HeaderInjection{{Name: header, Value: "Bearer {{ tok }}"}},
+			Headers:    []agentsv1alpha1.HeaderInjection{{Name: header, Value: "Bearer ${e2b.secrets.tok}"}},
 			Substitute: []string{"tok"},
 		}},
 	}
