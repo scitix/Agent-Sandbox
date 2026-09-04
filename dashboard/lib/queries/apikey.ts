@@ -58,3 +58,23 @@ export function usePromoteApiKey() {
     onSuccess: () => delayedInvalidate(qc, ["get", "/admin/api-keys"]),
   })
 }
+
+// ─── Key selection ─────────────────────────────────────────────────────────────
+
+/**
+ * The key a browser-side caller should authenticate an E2B request with: the
+ * newest one whose plaintext the platform still holds.
+ *
+ * The E2B surface takes API keys only — never the session JWT — so anything the
+ * console drives through it has to pick a key on the user's behalf. Legacy keys
+ * are stored as a hash alone and cannot be sent upstream, so they are not
+ * candidates however recent they are.
+ */
+export function pickUsableApiKey<T extends { rawToken?: string; issuedAt?: string }>(
+  keys: T[] | undefined,
+): T | undefined {
+  return (keys ?? [])
+    .filter((k) => !!k.rawToken)
+    .sort((a, b) => (b.issuedAt ?? "").localeCompare(a.issuedAt ?? ""))
+    .at(0)
+}

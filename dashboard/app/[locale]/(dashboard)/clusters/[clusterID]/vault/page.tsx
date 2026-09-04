@@ -16,8 +16,8 @@
 
 "use client"
 
-import { useState } from "react"
-import { useAtomValue } from "jotai"
+import { useMemo, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { CheckCheck, Copy, Plus, RotateCw, Trash2, Vault } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -33,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ApiKeyRequiredNotice } from "@/components/custom/api-key-required-notice"
-import { apiKeyAtom } from "@/lib/atoms"
+import { globalApiKeysQueryOptions, pickUsableApiKey } from "@/lib/queries"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useTranslation } from "@/lib/i18n"
 import {
@@ -85,7 +85,14 @@ function PlaceholderBlock({ name }: { name: string }) {
 export default function VaultPage() {
   const { t } = useTranslation()
   const clusterID = useClusterID()
-  const apiKey = useAtomValue(apiKeyAtom)
+
+  // The vault is on the E2B surface, whose auth middleware takes API keys only
+  // — never the session JWT. So the console picks a key on the user's behalf,
+  // the same way creating a sandbox does. Reading it off the JWT would only
+  // work for callers whose token happens to carry one, which an OIDC session
+  // does not.
+  const { data: apiKeys, isLoading: keysLoading } = useQuery(globalApiKeysQueryOptions())
+  const apiKey = useMemo(() => pickUsableApiKey(apiKeys)?.rawToken ?? "", [apiKeys])
 
   const opts = { clusterID, apiKey }
   const { data: secrets, isLoading } = useSecrets(opts, true)
@@ -100,8 +107,11 @@ export default function VaultPage() {
   const [rotateValue, setRotateValue] = useState("")
   const [deleteTarget, setDeleteTarget] = useState<SecretInfo | null>(null)
 
-  // The vault is reached through the E2B surface, whose auth middleware takes
-  // API keys only. Without one there is nothing to show and nothing to do.
+  // Only claim a key is missing once the lookup has actually finished —
+  // otherwise every load flashes "no API key" before the list arrives.
+  if (keysLoading) {
+    return <p className="text-muted-foreground p-4 text-sm">{t("common.loading")}</p>
+  }
   if (!apiKey) {
     return <ApiKeyRequiredNotice description={t("vault.apiKeyRequired")} />
   }
