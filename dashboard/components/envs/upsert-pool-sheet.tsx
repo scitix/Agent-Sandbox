@@ -16,8 +16,8 @@
 
 "use client"
 
-import { Fragment, useMemo, useState } from "react"
-import { Controller, useForm, useWatch } from "react-hook-form"
+import { Fragment, useMemo, useState, type ReactNode } from "react"
+import { Controller, useForm, useWatch, type Control, type FieldPath } from "react-hook-form"
 import { useQuery } from "@tanstack/react-query"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -69,8 +69,21 @@ import {
   useUpdateEnvPool,
 } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
+import type { TranslationKey } from "@/messages/_schema"
 import { cn } from "@/lib/utils"
-import { formatCores, parseCpuToCore, parseMemoryToMiB } from "@/lib/resources"
+import {
+  cpuQuantity,
+  formatCores,
+  memoryQuantity,
+  parseCpuToCore,
+  parseMemoryToMiB,
+  splitCpu,
+  splitMemory,
+  toMiB,
+  toMilliCores,
+  type CpuUnit,
+  type MemoryUnit,
+} from "@/lib/resources"
 
 const QUOTA_URL_LABEL = "quota.scitix.ai/url"
 
@@ -89,6 +102,13 @@ interface Props {
 
 const resourceMode = z.enum(["instanceType", "manual"])
 
+// Resource amounts are entered as a whole number plus a unit, so a sandbox can
+// be sized in milli-cores / MiB as well as whole cores / GiB. Requiring whole
+// numbers in every unit keeps the generated Kubernetes Quantity canonical —
+// half a core is entered as 500 milli-cores, not 0.5 cores.
+const cpuUnit = z.enum(["core", "milli"]) satisfies z.ZodType<CpuUnit>
+const memoryUnit = z.enum(["Gi", "Mi"]) satisfies z.ZodType<MemoryUnit>
+
 const intGte0 = z.preprocess(
   (v) => (v === "" || v === null || v === undefined ? undefined : Number(v)),
   z.number().int().min(0).optional(),
@@ -101,7 +121,7 @@ const intGte1 = z.preprocess(
 // Resource fields are immutable post-create (server rejects them on PUT) so
 // the Edit form disables them — but disabled inputs still feed into RHF as
 // undefined when the source pool lacked the corresponding shape (e.g. a pool
-// created via instanceType has no inlineResources, leaving cpuCores/memoryGiB
+// created via instanceType has no inlineResources, leaving cpuValue/memoryValue
 // blank). Required-field validation would then fail on submit even though the
 // user can't fix the values, so we attach the resource-mode refinement only
 // in Create mode.
@@ -109,15 +129,19 @@ const baseObject = z.object({
   resourceMode,
   instanceType: z.string().optional(),
   multiplier: intGte1,
-  cpuCores: intGte1,
-  memoryGiB: intGte1,
+  cpuValue: intGte1,
+  cpuUnit,
+  memoryValue: intGte1,
+  memoryUnit,
   // Optional rounded-down request in instanceType mode. When set, the Pod
   // requests these (smaller) resources while the reservation still charges the
   // whole instanceType × multiplier envelope. Left blank → Pod uses the full
   // envelope. The fits-within (≤ envelope) check runs in the component since it
   // needs the fetched InstanceType catalog.
-  overrideCpuCores: intGte1,
-  overrideMemoryGiB: intGte1,
+  overrideCpuValue: intGte1,
+  overrideCpuUnit: cpuUnit,
+  overrideMemoryValue: intGte1,
+  overrideMemoryUnit: memoryUnit,
   quotaUrl: z.string().optional(),
   replicas: intGte0,
   minReplicas: intGte0,
@@ -159,28 +183,28 @@ const createSchema = baseObject.superRefine((m, ctx) => {
     }
     // Rounded-down override is all-or-nothing: a partial request would drop the
     // unspecified dimension on the server (inlineResources is used verbatim).
-    const hasCpu = m.overrideCpuCores !== undefined
-    const hasMem = m.overrideMemoryGiB !== undefined
+    const hasCpu = m.overrideCpuValue !== undefined
+    const hasMem = m.overrideMemoryValue !== undefined
     if (hasCpu !== hasMem) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "envs.poolForm.errors.overrideBothRequired",
-        path: [hasCpu ? "overrideMemoryGiB" : "overrideCpuCores"],
+        path: [hasCpu ? "overrideMemoryValue" : "overrideCpuValue"],
       })
     }
   } else {
-    if (m.cpuCores === undefined) {
+    if (m.cpuValue === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "envs.poolForm.errors.cpuRequired",
-        path: ["cpuCores"],
+        path: ["cpuValue"],
       })
     }
-    if (m.memoryGiB === undefined) {
+    if (m.memoryValue === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "envs.poolForm.errors.memoryRequired",
-        path: ["memoryGiB"],
+        path: ["memoryValue"],
       })
     }
   }
@@ -195,7 +219,9 @@ type FormValues = z.infer<typeof baseObject>
 // the export is named after the instance type when there is one.
 const poolClone = createFormClone<FormValues>({
   kind: "SandboxPoolFormExport",
-  version: 1,
+  // v2 carries resource amounts as value + unit; a v1 file's bare cpuCores /
+  // memoryGiB would import as a blank sizing, so it is refused outright.
+  version: 2,
   schema: baseObject.partial(),
   filePrefix: "sandbox-pool",
   nameOf: (v) => v.instanceType,
@@ -255,8 +281,10 @@ function UpsertPoolInner({
   const mode = useWatch({ control, name: "resourceMode" }) ?? "manual"
   const watchedInstance = useWatch({ control, name: "instanceType" })
   const watchedMultiplier = useWatch({ control, name: "multiplier" })
-  const watchedOverrideCpu = useWatch({ control, name: "overrideCpuCores" })
-  const watchedOverrideMem = useWatch({ control, name: "overrideMemoryGiB" })
+  const watchedOverrideCpu = useWatch({ control, name: "overrideCpuValue" })
+  const watchedOverrideCpuUnit = useWatch({ control, name: "overrideCpuUnit" }) ?? "core"
+  const watchedOverrideMem = useWatch({ control, name: "overrideMemoryValue" })
+  const watchedOverrideMemUnit = useWatch({ control, name: "overrideMemoryUnit" }) ?? "Gi"
   const selectedInstanceType = instanceTypes.find((it) => it.name === watchedInstance) ?? null
   const preview = computeInstanceTypePreview(selectedInstanceType, watchedMultiplier)
 
@@ -264,16 +292,18 @@ function UpsertPoolInner({
   // dimension. Computed here (not in the zod schema) because it needs the
   // fetched InstanceType catalog. Blocks submit and surfaces inline errors.
   const envelope = computeEnvelope(selectedInstanceType, watchedMultiplier)
+  const overrideCpuMilli = toMilliCores(watchedOverrideCpu, watchedOverrideCpuUnit)
+  const overrideMemMiB = toMiB(watchedOverrideMem, watchedOverrideMemUnit)
   const overrideCpuExceeds =
     envelope != null &&
-    watchedOverrideCpu !== undefined &&
-    envelope.cpuCores != null &&
-    Number(watchedOverrideCpu) > envelope.cpuCores
+    overrideCpuMilli !== undefined &&
+    envelope.cpuMilli != null &&
+    overrideCpuMilli > envelope.cpuMilli
   const overrideMemExceeds =
     envelope != null &&
-    watchedOverrideMem !== undefined &&
-    envelope.memGiB != null &&
-    Number(watchedOverrideMem) > envelope.memGiB
+    overrideMemMiB !== undefined &&
+    envelope.memMiB != null &&
+    overrideMemMiB > envelope.memMiB
   const overrideExceeds = !!(overrideCpuExceeds || overrideMemExceeds)
 
   // Member's scaling group only matters for the autoscaling-vs-replicas
@@ -450,55 +480,59 @@ function UpsertPoolInner({
                         <FieldDescription>
                           {t("envs.poolForm.advancedResourcesHint")}
                         </FieldDescription>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Field>
-                            <FieldLabel>{t("envs.poolForm.overrideCpuCores")}</FieldLabel>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={envelope?.cpuCores || undefined}
-                              placeholder={
-                                envelope?.cpuCores != null ? String(envelope.cpuCores) : "—"
-                              }
-                              disabled={isEdit}
-                              aria-invalid={overrideCpuExceeds || !!errors.overrideCpuCores}
-                              {...register("overrideCpuCores")}
-                            />
-                            {overrideCpuExceeds ? (
-                              <FieldError>
-                                {t("envs.poolForm.errors.overrideExceedsCpu")}
-                              </FieldError>
-                            ) : (
-                              errors.overrideCpuCores && (
-                                <FieldError>
-                                  {t(errors.overrideCpuCores.message as never)}
-                                </FieldError>
-                              )
+                        <div className="grid grid-cols-1 gap-2">
+                          <ResourceAmountField
+                            label={t("envs.poolForm.overrideCpu")}
+                            control={control}
+                            valueName="overrideCpuValue"
+                            unitName="overrideCpuUnit"
+                            units={cpuUnitOptions(t)}
+                            disabled={isEdit}
+                            invalid={overrideCpuExceeds || !!errors.overrideCpuValue}
+                            placeholder={envelopePlaceholder(
+                              envelope?.cpuMilli,
+                              watchedOverrideCpuUnit === "milli" ? 1 : 1000,
                             )}
-                          </Field>
-                          <Field>
-                            <FieldLabel>{t("envs.poolForm.overrideMemoryGiB")}</FieldLabel>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={envelope?.memGiB || undefined}
-                              placeholder={envelope?.memGiB != null ? String(envelope.memGiB) : "—"}
-                              disabled={isEdit}
-                              aria-invalid={overrideMemExceeds || !!errors.overrideMemoryGiB}
-                              {...register("overrideMemoryGiB")}
-                            />
-                            {overrideMemExceeds ? (
-                              <FieldError>
-                                {t("envs.poolForm.errors.overrideExceedsMemory")}
-                              </FieldError>
-                            ) : (
-                              errors.overrideMemoryGiB && (
+                            error={
+                              overrideCpuExceeds ? (
                                 <FieldError>
-                                  {t(errors.overrideMemoryGiB.message as never)}
+                                  {t("envs.poolForm.errors.overrideExceedsCpu")}
                                 </FieldError>
+                              ) : (
+                                errors.overrideCpuValue && (
+                                  <FieldError>
+                                    {t(errors.overrideCpuValue.message as never)}
+                                  </FieldError>
+                                )
                               )
+                            }
+                          />
+                          <ResourceAmountField
+                            label={t("envs.poolForm.overrideMemory")}
+                            control={control}
+                            valueName="overrideMemoryValue"
+                            unitName="overrideMemoryUnit"
+                            units={memoryUnitOptions(t)}
+                            disabled={isEdit}
+                            invalid={overrideMemExceeds || !!errors.overrideMemoryValue}
+                            placeholder={envelopePlaceholder(
+                              envelope?.memMiB,
+                              watchedOverrideMemUnit === "Mi" ? 1 : 1024,
                             )}
-                          </Field>
+                            error={
+                              overrideMemExceeds ? (
+                                <FieldError>
+                                  {t("envs.poolForm.errors.overrideExceedsMemory")}
+                                </FieldError>
+                              ) : (
+                                errors.overrideMemoryValue && (
+                                  <FieldError>
+                                    {t(errors.overrideMemoryValue.message as never)}
+                                  </FieldError>
+                                )
+                              )
+                            }
+                          />
                         </div>
                         {(watchedOverrideCpu !== undefined || watchedOverrideMem !== undefined) &&
                           !overrideExceeds && (
@@ -507,11 +541,7 @@ function UpsertPoolInner({
                                 {t("envs.poolForm.actualRequest")}
                               </span>
                               <span className="text-foreground">
-                                {formatActualRequest(
-                                  watchedOverrideCpu,
-                                  watchedOverrideMem,
-                                  envelope,
-                                )}
+                                {formatActualRequest(overrideCpuMilli, overrideMemMiB, envelope)}
                               </span>
                             </div>
                           )}
@@ -522,31 +552,35 @@ function UpsertPoolInner({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <Field>
-                <FieldLabel>{t("envs.poolForm.cpuCores")}</FieldLabel>
-                <Input
-                  type="number"
-                  min={1}
-                  placeholder="2"
-                  disabled={isEdit}
-                  {...register("cpuCores")}
-                />
-                {errors.cpuCores && <FieldError>{t(errors.cpuCores.message as never)}</FieldError>}
-              </Field>
-              <Field>
-                <FieldLabel>{t("envs.poolForm.memoryGiB")}</FieldLabel>
-                <Input
-                  type="number"
-                  min={1}
-                  placeholder="8"
-                  disabled={isEdit}
-                  {...register("memoryGiB")}
-                />
-                {errors.memoryGiB && (
-                  <FieldError>{t(errors.memoryGiB.message as never)}</FieldError>
-                )}
-              </Field>
+            <div className="grid grid-cols-1 gap-2">
+              <ResourceAmountField
+                label={t("envs.poolForm.cpu")}
+                control={control}
+                valueName="cpuValue"
+                unitName="cpuUnit"
+                units={cpuUnitOptions(t)}
+                disabled={isEdit}
+                invalid={!!errors.cpuValue}
+                placeholder="2"
+                error={
+                  errors.cpuValue && <FieldError>{t(errors.cpuValue.message as never)}</FieldError>
+                }
+              />
+              <ResourceAmountField
+                label={t("envs.poolForm.memory")}
+                control={control}
+                valueName="memoryValue"
+                unitName="memoryUnit"
+                units={memoryUnitOptions(t)}
+                disabled={isEdit}
+                invalid={!!errors.memoryValue}
+                placeholder="8"
+                error={
+                  errors.memoryValue && (
+                    <FieldError>{t(errors.memoryValue.message as never)}</FieldError>
+                  )
+                }
+              />
             </div>
           )}
 
@@ -646,6 +680,71 @@ function ModeToggle<T extends string>({
         </button>
       ))}
     </div>
+  )
+}
+
+// ResourceAmountField pairs a whole-number input with a unit toggle, so the same
+// field can express 2 cores or 20 milli-cores without a second control layout.
+// The unit lives in the form state (not component state) so it survives reset()
+// on Edit and rides along in the JSON export.
+function ResourceAmountField<U extends string>({
+  label,
+  control,
+  valueName,
+  unitName,
+  units,
+  disabled,
+  invalid,
+  placeholder,
+  max,
+  error,
+}: {
+  label: string
+  control: Control<FormValues>
+  valueName: FieldPath<FormValues>
+  unitName: FieldPath<FormValues>
+  units: Array<{ value: U; label: string }>
+  disabled?: boolean
+  invalid?: boolean
+  placeholder?: string
+  max?: number
+  error?: ReactNode
+}) {
+  return (
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <div className="flex items-center gap-2">
+        <Controller
+          control={control}
+          name={valueName}
+          render={({ field }) => (
+            <Input
+              type="number"
+              min={1}
+              max={max}
+              placeholder={placeholder}
+              disabled={disabled}
+              aria-invalid={invalid}
+              value={field.value == null ? "" : String(field.value)}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+            />
+          )}
+        />
+        <Controller
+          control={control}
+          name={unitName}
+          render={({ field }) => (
+            <ModeToggle
+              value={(field.value as U) ?? units[0].value}
+              onChange={(v) => !disabled && field.onChange(v)}
+              options={units}
+            />
+          )}
+        />
+      </div>
+      {error}
+    </Field>
   )
 }
 
@@ -856,12 +955,37 @@ function formatMemPreview(mib: number): string {
   return `${Math.round(mib)}Mi`
 }
 
-// computeEnvelope returns the instanceType × multiplier envelope in whole
-// cores / GiB — the upper bound a rounded-down request must fit within.
+// ─── Unit pickers ────────────────────────────────────────────────────────────
+
+type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string
+
+function cpuUnitOptions(t: Translate): Array<{ value: CpuUnit; label: string }> {
+  return [
+    { value: "core", label: t("envs.poolForm.unitCores") },
+    { value: "milli", label: t("envs.poolForm.unitMilliCores") },
+  ]
+}
+
+function memoryUnitOptions(t: Translate): Array<{ value: MemoryUnit; label: string }> {
+  return [
+    { value: "Gi", label: t("envs.poolForm.unitGiB") },
+    { value: "Mi", label: t("envs.poolForm.unitMiB") },
+  ]
+}
+
+// envelopePlaceholder shows the full envelope in the unit currently selected, so
+// leaving the field blank visibly means "use all of it".
+function envelopePlaceholder(base: number | null | undefined, perUnit: number): string {
+  if (base == null) return "—"
+  return String(Math.floor(base / perUnit))
+}
+
+// computeEnvelope returns the instanceType × multiplier envelope in milli-cores
+// / MiB — the upper bound a rounded-down request must fit within.
 function computeEnvelope(
   it: AgentInstanceTypeItem | null,
   multiplierRaw: number | string | undefined,
-): { cpuCores: number | null; memGiB: number | null } | null {
+): { cpuMilli: number | null; memMiB: number | null } | null {
   if (!it) return null
   const reqs = it.baseResources?.requests ?? it.baseResources?.limits
   if (!reqs) return null
@@ -870,23 +994,25 @@ function computeEnvelope(
   const baseCpu = parseCpuToCore(reqs["cpu"] as string | undefined)
   const baseMem = parseMemoryToMiB(reqs["memory"] as string | undefined)
   return {
-    cpuCores: baseCpu != null ? Math.floor(baseCpu * mult) : null,
-    memGiB: baseMem != null ? Math.floor((baseMem * mult) / 1024) : null,
+    cpuMilli: baseCpu != null ? Math.floor(baseCpu * mult * 1000) : null,
+    memMiB: baseMem != null ? Math.floor(baseMem * mult) : null,
   }
 }
 
 // formatActualRequest renders the Pod's effective request line, falling back to
 // the full envelope for any dimension the user left blank.
 function formatActualRequest(
-  cpu: number | string | undefined,
-  memGiB: number | string | undefined,
-  envelope: { cpuCores: number | null; memGiB: number | null } | null,
+  cpuMilli: number | undefined,
+  memMiB: number | undefined,
+  envelope: { cpuMilli: number | null; memMiB: number | null } | null,
 ): string {
-  const cpuVal = cpu !== undefined ? Number(cpu) : (envelope?.cpuCores ?? undefined)
-  const memVal = memGiB !== undefined ? Number(memGiB) : (envelope?.memGiB ?? undefined)
+  const cpu = cpuMilli ?? envelope?.cpuMilli ?? undefined
+  const mem = memMiB ?? envelope?.memMiB ?? undefined
   const parts: string[] = []
-  if (cpuVal != null && Number.isFinite(cpuVal)) parts.push(`${cpuVal}c`)
-  if (memVal != null && Number.isFinite(memVal)) parts.push(`${memVal}Gi`)
+  if (cpu != null) {
+    parts.push(cpu % 1000 === 0 ? `${formatCores(cpu / 1000)}c` : `${Math.round(cpu)}m`)
+  }
+  if (mem != null) parts.push(formatMemPreview(mem))
   return parts.join(" / ")
 }
 
@@ -903,10 +1029,14 @@ function buildDefaultValues(
       resourceMode: defaultMode,
       instanceType: undefined,
       multiplier: 1,
-      cpuCores: undefined,
-      memoryGiB: undefined,
-      overrideCpuCores: undefined,
-      overrideMemoryGiB: undefined,
+      cpuValue: undefined,
+      cpuUnit: "core",
+      memoryValue: undefined,
+      memoryUnit: "Gi",
+      overrideCpuValue: undefined,
+      overrideCpuUnit: "core",
+      overrideMemoryValue: undefined,
+      overrideMemoryUnit: "Gi",
       quotaUrl: undefined,
       replicas: 1,
       minReplicas: undefined,
@@ -922,21 +1052,27 @@ function buildDefaultValues(
   const inlineCpu = cfg?.inlineResources?.requests?.["cpu"] as string | undefined
   const inlineMem = cfg?.inlineResources?.requests?.["memory"] as string | undefined
   const mode: FormValues["resourceMode"] = hasInstanceType ? "instanceType" : "manual"
+  // Round-tripping through milli-cores / MiB is what lets a 20m / 128Mi Pool
+  // reopen at its real size instead of a rounded whole-unit approximation.
   const cpu = parseCpuToCore(inlineCpu)
   const mem = parseMemoryToMiB(inlineMem)
-  const cpuCores = cpu != null ? Math.max(1, Math.round(cpu)) : undefined
-  const memoryGiB = mem != null ? Math.max(1, Math.round(mem / 1024)) : undefined
+  const cpuAmount = cpu != null ? splitCpu(cpu) : undefined
+  const memAmount = mem != null ? splitMemory(mem) : undefined
   return {
     resourceMode: mode,
     instanceType: cfg?.instanceType,
     multiplier: cfg?.multiplier ?? 1,
-    cpuCores,
-    memoryGiB,
+    cpuValue: cpuAmount?.value,
+    cpuUnit: cpuAmount?.unit ?? "core",
+    memoryValue: memAmount?.value,
+    memoryUnit: memAmount?.unit ?? "Gi",
     // In instanceType mode the actual request lives on inlineResources; surface
     // it (read-only) in the advanced section so an already-downsized pool shows
     // its true request.
-    overrideCpuCores: hasInstanceType ? cpuCores : undefined,
-    overrideMemoryGiB: hasInstanceType ? memoryGiB : undefined,
+    overrideCpuValue: hasInstanceType ? cpuAmount?.value : undefined,
+    overrideCpuUnit: (hasInstanceType ? cpuAmount?.unit : undefined) ?? "core",
+    overrideMemoryValue: hasInstanceType ? memAmount?.value : undefined,
+    overrideMemoryUnit: (hasInstanceType ? memAmount?.unit : undefined) ?? "Gi",
     quotaUrl: cfg?.labels?.[QUOTA_URL_LABEL],
     replicas: pool.spec.replicas,
     minReplicas: cfg?.minReplicas,
@@ -968,17 +1104,19 @@ function formValuesToCreateBody(v: FormValues) {
     // Pod requests less than the reserved instance. Both dimensions are
     // required together (enforced by the schema) so inlineResources is always
     // complete; the reservation still charges the full envelope.
-    if (v.overrideCpuCores !== undefined && v.overrideMemoryGiB !== undefined) {
+    if (v.overrideCpuValue !== undefined && v.overrideMemoryValue !== undefined) {
       const requests = {
-        cpu: String(v.overrideCpuCores),
-        memory: `${v.overrideMemoryGiB}Gi`,
+        cpu: cpuQuantity(v.overrideCpuValue, v.overrideCpuUnit),
+        memory: memoryQuantity(v.overrideMemoryValue, v.overrideMemoryUnit),
       }
       body.inlineResources = { requests, limits: { ...requests } }
     }
   } else {
     const requests: Record<string, string> = {}
-    if (v.cpuCores !== undefined) requests.cpu = String(v.cpuCores)
-    if (v.memoryGiB !== undefined) requests.memory = `${v.memoryGiB}Gi`
+    if (v.cpuValue !== undefined) requests.cpu = cpuQuantity(v.cpuValue, v.cpuUnit)
+    if (v.memoryValue !== undefined) {
+      requests.memory = memoryQuantity(v.memoryValue, v.memoryUnit)
+    }
     body.inlineResources = { requests, limits: { ...requests } }
   }
   if (v.quotaUrl) {

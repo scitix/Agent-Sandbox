@@ -72,14 +72,28 @@ func TestNoop_DeriveScalingGroupName(t *testing.T) {
 			want: "4c16Gi",
 		},
 		{
-			// Quantity.Value() rounds up for sub-unit values (so 500m → 1).
-			// Documented behavior; we accept the conservative rounding.
-			name: "sub-core CPU rounds up",
+			name: "sub-core CPU keeps milli precision",
 			in: mkReq(corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("500m"),
 				corev1.ResourceMemory: resource.MustParse("2Gi"),
 			}),
-			want: "1c2Gi",
+			want: "500mc2Gi",
+		},
+		{
+			name: "sub-GiB memory keeps MiB precision",
+			in: mkReq(corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("20m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			}),
+			want: "20mc128Mi",
+		},
+		{
+			name: "non-whole GiB memory renders as MiB",
+			in: mkReq(corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("2"),
+				corev1.ResourceMemory: resource.MustParse("1536Mi"),
+			}),
+			want: "2c1536Mi",
 		},
 	}
 	p := Noop{}

@@ -161,6 +161,46 @@ func TestAdd_Downsize_FitsWithin(t *testing.T) {
 	}
 }
 
+// TestAdd_Downsize_SubUnitRequest verifies a milli-core / MiB request against a
+// whole-instance envelope: the Pod carries the tiny request verbatim, the
+// reservation still bills the whole instance, and the derived name keeps the
+// sub-unit precision instead of collapsing to a whole-core/GiB key.
+func TestAdd_Downsize_SubUnitRequest(t *testing.T) {
+	pl := &capturingPlugin{}
+	cli := newClient(t, newEnvForPoolOps(), newTestTemplate())
+	svc := envmember.New(cli, plugins.NewPluginManager(pl), newFakeInstProvider(), nil)
+
+	member := instanceMember(1, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("20m"),
+		corev1.ResourceMemory: resource.MustParse("128Mi"),
+	})
+	res, err := svc.AddMember(context.Background(), envTestNamespace, testEnvName, envLocalCluster, member)
+	if err != nil {
+		t.Fatalf("Add: %+v", err)
+	}
+	if pl.lastCreate == nil {
+		t.Fatalf("PreCreatePool never called")
+	}
+	cand := pl.lastCreate
+
+	got := cand.Spec.Template.Spec.Containers[0].Resources
+	if got.Requests.Cpu().Cmp(resource.MustParse("20m")) != 0 {
+		t.Errorf("Pod cpu = %v, want 20m", got.Requests.Cpu())
+	}
+	if got.Requests.Memory().Cmp(resource.MustParse("128Mi")) != 0 {
+		t.Errorf("Pod memory = %v, want 128Mi", got.Requests.Memory())
+	}
+
+	// The reservation still charges one whole instance.
+	if v := cand.Annotations[agentsv1alpha1.AnnotationReservationReplicaQuota]; v != `{"sci.c23-2":"1"}` {
+		t.Errorf("reservation-replica-quota = %q, want {\"sci.c23-2\":\"1\"}", v)
+	}
+
+	if res.Name != "env-x-20mc128mi" {
+		t.Errorf("pool name = %q, want env-x-20mc128mi", res.Name)
+	}
+}
+
 // TestAdd_Downsize_RejectsExceedingDimension verifies a request that exceeds
 // the envelope in any dimension is rejected (1c16Gi instance cannot run 2c4G).
 func TestAdd_Downsize_RejectsExceedingDimension(t *testing.T) {
