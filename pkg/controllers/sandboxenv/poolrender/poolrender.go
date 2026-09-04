@@ -186,7 +186,7 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 		pool.Spec.PodCreationImagePolicy = envOv.PodCreationImagePolicy
 		pool.Spec.DefaultStartupTimeout = envOv.DefaultStartupTimeout
 		pool.Spec.DefaultIdleTimeout = envOv.DefaultIdleTimeout
-		pool.Spec.NetworkPolicy = envOv.NetworkPolicy.DeepCopy()
+		pool.Spec.Gateway = envOv.Gateway.DeepCopy()
 	}
 	mu := agentsv1alpha1.ResolveMaxUnavailable(in.Env, in.Member)
 	pool.Spec.MaxUnavailable = &mu

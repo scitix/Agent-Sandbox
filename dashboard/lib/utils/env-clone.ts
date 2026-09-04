@@ -16,12 +16,10 @@
 
 // SandboxEnv form clone — the generic machinery lives in lib/utils/form-clone.ts.
 //
-// The Env form holds two pieces of real secret material, and both are blanked on
-// export: `injectionCredentialRows[].value` (the egress credential itself) and
-// `imagePullSecretRows[].password`. Neither is ever returned by the API either —
-// credentials live only in a K8s Secret, the operator's memory, and the sidecar's
-// tmpfs — so whoever imports has to re-type them, exactly as they would after a
-// cross-cluster copy.
+// The Env form holds one piece of real secret material, and it is blanked on
+// export: `imagePullSecretRows[].password`. The API never returns it either, so
+// whoever imports has to re-type it, exactly as they would after a cross-cluster
+// copy.
 
 import { createFormClone } from "@/lib/utils/form-clone"
 import { baseSchema, envFormDefaults } from "@/lib/utils/env-form"
@@ -41,10 +39,6 @@ export const ENV_CLONE_VERSION = 1
 export function stripEnvCloneSecrets(values: FormValues): FormValues {
   return {
     ...values,
-    injectionCredentialRows: (values.injectionCredentialRows ?? []).map((row) => ({
-      ...row,
-      value: "",
-    })),
     imagePullSecretRows: (values.imagePullSecretRows ?? []).map((row) => ({
       ...row,
       password: undefined,
@@ -59,9 +53,7 @@ export const envClone = createFormClone<FormValues>({
   filePrefix: "sandbox-env",
   nameOf: (v) => v.name,
   stripSecrets: stripEnvCloneSecrets,
-  countBlankedSecrets: (v) =>
-    v.injectionCredentialRows.filter((r) => !r.value).length +
-    v.imagePullSecretRows.filter((r) => !r.password).length,
+  countBlankedSecrets: (v) => v.imagePullSecretRows.filter((r) => !r.password).length,
 })
 
 export const toEnvClonePayload = envClone.toPayload

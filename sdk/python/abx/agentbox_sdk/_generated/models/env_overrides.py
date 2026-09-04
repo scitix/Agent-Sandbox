@@ -29,8 +29,8 @@ from typing import cast
 if TYPE_CHECKING:
   from ..models.env_update_strategy import EnvUpdateStrategy
   from ..models.env_volume_mount import EnvVolumeMount
+  from ..models.gateway_spec import GatewaySpec
   from ..models.image_pull_secret_input import ImagePullSecretInput
-  from ..models.sandbox_network_policy import SandboxNetworkPolicy
 
 
 
@@ -58,11 +58,12 @@ class EnvOverrides:
             image_pull_secret (ImagePullSecretInput | Unset):
             image_pull_secret_configured (bool | Unset): Server-set on GET: true when the ips-{envName} Secret exists in the
                 Env's namespace. Write attempts via PATCH are ignored.
-            network_policy (SandboxNetworkPolicy | Unset): Sandbox egress network policy, enforced by an in-Pod transparent
-                proxy sidecar (supports domain matching, which the cluster CNIs cannot). Allowlist / default-deny semantics.
+            gateway (GatewaySpec | Unset): Egress gateway switch. Enabling it adds a transparent proxy sidecar and an
+                iptables redirect to every sandbox Pod of the environment; the rules it
+                enforces are supplied per sandbox on the create call.
             update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
-                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
-                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
+                Pod identity (Template edit, image / gateway override) changes. Rollout mode is always Recreate: stale idle Pods
+                are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
             volumes (list[EnvVolumeMount] | Unset): Mount existing PersistentVolumeClaims from this Env's namespace into the
                 sandbox container. The claim must already exist and be Bound; the server
                 never creates or deletes a PVC. Discover mountable claims with GET /volumes.
@@ -79,7 +80,7 @@ class EnvOverrides:
     default_idle_timeout: str | Unset = UNSET
     image_pull_secret: ImagePullSecretInput | Unset = UNSET
     image_pull_secret_configured: bool | Unset = UNSET
-    network_policy: SandboxNetworkPolicy | Unset = UNSET
+    gateway: GatewaySpec | Unset = UNSET
     update_strategy: EnvUpdateStrategy | Unset = UNSET
     volumes: list[EnvVolumeMount] | Unset = UNSET
 
@@ -88,10 +89,10 @@ class EnvOverrides:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_update_strategy import EnvUpdateStrategy
-        from ..models.env_volume_mount import EnvVolumeMount
-        from ..models.image_pull_secret_input import ImagePullSecretInput
-        from ..models.sandbox_network_policy import SandboxNetworkPolicy
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
+        from ..models.env_volume_mount import EnvVolumeMount # noqa: PLC0415
+        from ..models.gateway_spec import GatewaySpec # noqa: PLC0415
+        from ..models.image_pull_secret_input import ImagePullSecretInput # noqa: PLC0415
         image = self.image
 
         pod_creation_image_policy: str | Unset = UNSET
@@ -109,9 +110,9 @@ class EnvOverrides:
 
         image_pull_secret_configured = self.image_pull_secret_configured
 
-        network_policy: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.network_policy, Unset):
-            network_policy = self.network_policy.to_dict()
+        gateway: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.gateway, Unset):
+            gateway = self.gateway.to_dict()
 
         update_strategy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.update_strategy, Unset):
@@ -143,8 +144,8 @@ class EnvOverrides:
             field_dict["imagePullSecret"] = image_pull_secret
         if image_pull_secret_configured is not UNSET:
             field_dict["imagePullSecretConfigured"] = image_pull_secret_configured
-        if network_policy is not UNSET:
-            field_dict["networkPolicy"] = network_policy
+        if gateway is not UNSET:
+            field_dict["gateway"] = gateway
         if update_strategy is not UNSET:
             field_dict["updateStrategy"] = update_strategy
         if volumes is not UNSET:
@@ -156,10 +157,10 @@ class EnvOverrides:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_update_strategy import EnvUpdateStrategy
-        from ..models.env_volume_mount import EnvVolumeMount
-        from ..models.image_pull_secret_input import ImagePullSecretInput
-        from ..models.sandbox_network_policy import SandboxNetworkPolicy
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
+        from ..models.env_volume_mount import EnvVolumeMount # noqa: PLC0415
+        from ..models.gateway_spec import GatewaySpec # noqa: PLC0415
+        from ..models.image_pull_secret_input import ImagePullSecretInput # noqa: PLC0415
         d = dict(src_dict)
         image = d.pop("image", UNSET)
 
@@ -189,12 +190,12 @@ class EnvOverrides:
 
         image_pull_secret_configured = d.pop("imagePullSecretConfigured", UNSET)
 
-        _network_policy = d.pop("networkPolicy", UNSET)
-        network_policy: SandboxNetworkPolicy | Unset
-        if isinstance(_network_policy,  Unset):
-            network_policy = UNSET
+        _gateway = d.pop("gateway", UNSET)
+        gateway: GatewaySpec | Unset
+        if isinstance(_gateway,  Unset):
+            gateway = UNSET
         else:
-            network_policy = SandboxNetworkPolicy.from_dict(_network_policy)
+            gateway = GatewaySpec.from_dict(_gateway)
 
 
 
@@ -228,7 +229,7 @@ class EnvOverrides:
             default_idle_timeout=default_idle_timeout,
             image_pull_secret=image_pull_secret,
             image_pull_secret_configured=image_pull_secret_configured,
-            network_policy=network_policy,
+            gateway=gateway,
             update_strategy=update_strategy,
             volumes=volumes,
         )

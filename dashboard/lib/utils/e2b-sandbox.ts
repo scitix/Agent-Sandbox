@@ -25,6 +25,7 @@ import { durationToSeconds } from "@/lib/utils/duration"
 /** Reserved metadata keys the E2B handler consumes rather than stores. */
 export const E2B_META_IMAGE = "agentbox.scitix.ai/image"
 export const E2B_META_STARTUP_TIMEOUT = "agentbox.scitix.ai/startup-timeout"
+export const E2B_META_ALLOW_PRIVATE_NETWORKS = "agentbox.scitix.ai/allow-private-networks"
 
 export interface KeyValueRow {
   key?: string
@@ -45,11 +46,29 @@ export interface E2BSandboxFormValues {
   allowedDomains?: string
   allowedCIDRs?: string
   deniedCIDRs?: string
+  allowPrivateNetworks?: boolean
+  injectionRuleRows?: InjectionRuleRow[]
+}
+
+/**
+ * One header the gateway sets on the way out to `host`, carrying the value of a
+ * vault entry the sandbox never sees.
+ *
+ * `secretName` is a vault entry name, not a value: the wire carries
+ * `${e2b.secrets.<name>}`, which is exactly what the E2B SDK's `Secret.fill()`
+ * produces. The server refuses a literal, so there is no shape of this form that
+ * can put a credential into a request body or an access log.
+ */
+export interface InjectionRuleRow {
+  host?: string
+  headerName?: string
+  secretName?: string
 }
 
 export interface E2BNetworkConfig {
   allowOut?: string[]
   denyOut?: string[]
+  rules?: Record<string, Array<{ transform: { headers: Record<string, string> } }>>
 }
 
 export interface E2BCreateBody {
@@ -103,28 +122,63 @@ export function buildE2BCreateBody(values: E2BSandboxFormValues): E2BCreateBody 
   if (values.autoPause) body.autoPause = true
   if (values.secure) body.secure = true
 
-  switch (values.networkPolicyMode) {
-    case "disable":
-      // E2B's sugar for "deny all egress"; the backend gives it precedence over
-      // any allow rules, so nothing else is worth sending alongside it.
-      body.allow_internet_access = false
-      break
-    case "allowlist": {
-      // Domains and CIDRs go out as one list — the backend's splitAllowOut()
-      // partitions them again by parsing each entry.
-      const allowOut = [...splitList(values.allowedDomains), ...splitList(values.allowedCIDRs)]
-      const denyOut = splitList(values.deniedCIDRs)
-      const network: E2BNetworkConfig = {}
-      if (allowOut.length > 0) network.allowOut = allowOut
-      if (denyOut.length > 0) network.denyOut = denyOut
-      if (Object.keys(network).length > 0) body.network = network
-      break
-    }
-    default:
-      // Unrestricted: send no network config at all. An empty object would still
-      // mean "policy declared", which switches on the anti-SSRF baseline.
-      break
+  const rules = buildInjectionRules(values.injectionRuleRows)
+
+  if (values.networkPolicyMode === "disable") {
+    // E2B's sugar for "deny all egress"; the backend gives it precedence over
+    // any allow rules, so nothing else is worth sending alongside it. Rules are
+    // refused server-side in this combination rather than silently dropped, and
+    // the form blocks it before that.
+    body.allow_internet_access = false
+    return body
+  }
+
+  const network: E2BNetworkConfig = {}
+  if (values.networkPolicyMode === "allowlist") {
+    // Domains and CIDRs go out as one list — the backend's splitAllowOut()
+    // partitions them again by parsing each entry.
+    const allowOut = [...splitList(values.allowedDomains), ...splitList(values.allowedCIDRs)]
+    const denyOut = splitList(values.deniedCIDRs)
+    if (allowOut.length > 0) network.allowOut = allowOut
+    if (denyOut.length > 0) network.denyOut = denyOut
+  }
+  if (rules) network.rules = rules
+  // Unrestricted with no rules sends no network config at all. An empty object
+  // would still mean "policy declared", which switches on the anti-SSRF baseline
+  // and would cut the sandbox off from everything that resolves inside the
+  // cluster.
+  if (Object.keys(network).length > 0) body.network = network
+
+  // Lifting the anti-SSRF baseline has no field in E2B's network config, so it
+  // travels as a reserved metadata key the server consumes. Only meaningful
+  // alongside a network config: with none there is no filter to relax.
+  if (values.allowPrivateNetworks && body.network) {
+    body.metadata = { ...(body.metadata ?? {}), [E2B_META_ALLOW_PRIVATE_NETWORKS]: "true" }
   }
 
   return body
+}
+
+/**
+ * Folds the rule rows into E2B's per-domain transform map. Several header rows
+ * on one host collapse into one entry, which is how the proxy evaluates them.
+ * Returns undefined when nothing complete was entered, so an empty editor never
+ * turns an unrestricted create into a filtered one.
+ */
+function buildInjectionRules(
+  rows: InjectionRuleRow[] | undefined,
+): E2BNetworkConfig["rules"] | undefined {
+  const byHost: Record<string, Record<string, string>> = {}
+  for (const row of rows ?? []) {
+    const host = row.host?.trim()
+    const header = row.headerName?.trim()
+    const secret = row.secretName?.trim()
+    if (!host || !header || !secret) continue
+    byHost[host] = { ...(byHost[host] ?? {}), [header]: `\${e2b.secrets.${secret}}` }
+  }
+  const hosts = Object.keys(byHost)
+  if (hosts.length === 0) return undefined
+  const out: NonNullable<E2BNetworkConfig["rules"]> = {}
+  for (const host of hosts) out[host] = [{ transform: { headers: byHost[host]! } }]
+  return out
 }

@@ -55,9 +55,8 @@ var caEnvVars = []string{
 }
 
 // injectTemplateRe matches a credential reference in a header value. It is the
-// E2B placeholder syntax, shared by Env-level rules and by rules a create
-// request carries, so there is exactly one thing to learn and nothing to
-// rewrite between the wire and the CRD.
+// E2B placeholder syntax that Secret.fill() produces, so a rule crosses the API
+// boundary unrewritten.
 var injectTemplateRe = regexp.MustCompile(`\$\{e2b\.secrets\.([a-zA-Z0-9_-]+)\}`)
 
 // injectionPlan is everything the operator resolved for one claimed sandbox.
@@ -68,15 +67,15 @@ type injectionPlan struct {
 	secrets egressproxy.Secrets
 	// caCertPEM is installed into the sandbox's trust store via envd.
 	caCertPEM string
-	// envVars are the sandbox-visible variables: the decoy values plus the CA
-	// path overrides. None of these is a credential.
+	// envVars are the sandbox-visible variables: the trust-store path overrides
+	// for the minted CA. None of these is a credential.
 	envVars map[string]string
 }
 
 // prepareInjection reads the egress-inject annotation, resolves each credential
 // from its Secret, mints a per-sandbox CA, and assembles both halves of the
-// delivery: what the sandbox learns (CA certificate + decoys) and what the
-// sidecar learns (CA key + real values + rules).
+// delivery: what the sandbox learns (the CA certificate) and what the sidecar
+// learns (CA key + real values + rules).
 //
 // Returns (nil, nil) when the pod has no injection configured.
 func (r *Runner) prepareInjection(ctx context.Context, pod *corev1.Pod) (*injectionPlan, error) {
@@ -96,8 +95,7 @@ func (r *Runner) prepareInjection(ctx context.Context, pod *corev1.Pod) (*inject
 	// Resolve every credential once. Secret reads are the only point where
 	// plaintext enters the operator, and it stays on the stack from here.
 	values := make(map[string]string, len(si.Credentials))
-	subs := make(map[string]string)
-	envVars := make(map[string]string, len(si.Credentials)+len(caEnvVars))
+	envVars := make(map[string]string, len(caEnvVars))
 	for i := range si.Credentials {
 		c := &si.Credentials[i]
 		secret, err := r.clientset.CoreV1().Secrets(pod.Namespace).Get(ctx, c.ValueFrom.Name, metav1.GetOptions{})
@@ -114,11 +112,6 @@ func (r *Runner) prepareInjection(ctx context.Context, pod *corev1.Pod) (*inject
 			return nil, fmt.Errorf("credential %q resolves to an empty value", c.Name)
 		}
 		values[c.Name] = string(v)
-
-		if c.ExposeAs != "" && c.Placeholder != "" {
-			envVars[c.ExposeAs] = c.Placeholder
-			subs[c.Placeholder] = string(v)
-		}
 	}
 
 	rules := make([]egressproxy.InjectRule, 0, len(si.Rules))
@@ -129,15 +122,6 @@ func (r *Runner) prepareInjection(ctx context.Context, pod *corev1.Pod) (*inject
 			Ports:        toIntSlice(src.Ports),
 			PathPrefixes: append([]string(nil), src.PathPrefixes...),
 			Methods:      append([]string(nil), src.Methods...),
-		}
-		for _, name := range src.Substitute {
-			// Map credential names to the decoys the sandbox actually carries;
-			// the data plane matches on the decoy, not on the name.
-			for j := range si.Credentials {
-				if si.Credentials[j].Name == name && si.Credentials[j].Placeholder != "" {
-					rule.SubstitutePlaceholders = append(rule.SubstitutePlaceholders, si.Credentials[j].Placeholder)
-				}
-			}
 		}
 		for j := range src.Headers {
 			h := &src.Headers[j]
@@ -174,11 +158,10 @@ func (r *Runner) prepareInjection(ctx context.Context, pod *corev1.Pod) (*inject
 
 	return &injectionPlan{
 		secrets: egressproxy.Secrets{
-			SandboxID:     sandboxID,
-			CACertPEM:     certPEM,
-			CAKeyPEM:      keyPEM,
-			Rules:         rules,
-			Substitutions: subs,
+			SandboxID: sandboxID,
+			CACertPEM: certPEM,
+			CAKeyPEM:  keyPEM,
+			Rules:     rules,
 		},
 		caCertPEM: certPEM,
 		envVars:   envVars,

@@ -56,8 +56,8 @@ func rejectUnsupportedCreateFields(body *e2bgen.NewSandbox) *e2bgen.Error {
 	if body.Iam != nil && body.Iam.Tokens != nil && len(*body.Iam.Tokens) > 0 {
 		e := errRespCode(400, "workload identity tokens (iam.tokens) are not supported. To give a sandbox "+
 			"a credential it cannot read, store the credential with POST /secrets and reference it from a "+
-			"network.rules header as ${e2b.secrets.<name>}; the egress proxy substitutes the real value "+
-			"per request.")
+			"network.rules header as ${e2b.secrets.<name>}; the egress proxy sets the real value "+
+			"on each matching request.")
 		return &e
 	}
 	if body.Mcp != nil {

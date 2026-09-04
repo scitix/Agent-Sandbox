@@ -32,21 +32,27 @@ func sandboxPod() *corev1.Pod {
 
 func poolWithPolicy() *agentsv1alpha1.SandboxPool {
 	return &agentsv1alpha1.SandboxPool{Spec: agentsv1alpha1.SandboxPoolSpec{
-		NetworkPolicy: &agentsv1alpha1.SandboxNetworkPolicy{
-			Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"pypi.org"}},
-		},
+		Gateway: &agentsv1alpha1.GatewaySpec{Enabled: true},
 	}}
 }
 
-func TestPreCreatePod_NoPolicyIsNoop(t *testing.T) {
+// Both "no gateway block" and "gateway present but off" have to leave the Pod
+// untouched — the second is what an Env looks like after the switch is turned
+// back off, and injecting there would roll every pool for nothing.
+func TestPreCreatePod_NoGatewayIsNoop(t *testing.T) {
 	p := New(Config{Image: "idle:1"})
-	pod := sandboxPod()
-	updated, err := p.PreCreatePod(context.Background(), pod, &agentsv1alpha1.SandboxPool{})
-	if err != nil || updated {
-		t.Fatalf("no policy => no-op; got updated=%v err=%v", updated, err)
-	}
-	if len(pod.Spec.InitContainers) != 0 || len(pod.Spec.Volumes) != 0 {
-		t.Errorf("no policy must not inject anything: %+v", pod.Spec)
+	for name, pool := range map[string]*agentsv1alpha1.SandboxPool{
+		"absent": {},
+		"off":    {Spec: agentsv1alpha1.SandboxPoolSpec{Gateway: &agentsv1alpha1.GatewaySpec{}}},
+	} {
+		pod := sandboxPod()
+		updated, err := p.PreCreatePod(context.Background(), pod, pool)
+		if err != nil || updated {
+			t.Fatalf("%s: no gateway => no-op; got updated=%v err=%v", name, updated, err)
+		}
+		if len(pod.Spec.InitContainers) != 0 || len(pod.Spec.Volumes) != 0 {
+			t.Errorf("%s: no gateway must not inject anything: %+v", name, pod.Spec)
+		}
 	}
 }
 

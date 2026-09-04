@@ -128,12 +128,13 @@ type SandboxPoolSpec struct {
 	// +kubebuilder:default=IdleImage
 	PodCreationImagePolicy PodCreationImagePolicy `json:"podCreationImagePolicy,omitempty"`
 
-	// NetworkPolicy, when set, enables sandbox egress filtering for Pods in this
-	// Pool: the operator injects a transparent filter sidecar. For Env-owned
-	// Pools this is projected from the Env's overrides.networkPolicy and serves
-	// as the default ruleset; per-sandbox create requests may override it.
+	// Gateway, when enabled, injects the transparent egress proxy sidecar into
+	// this Pool's sandbox Pods. It is a Pod-shape decision and nothing more: the
+	// rules the proxy enforces, and the credentials it injects, are per-sandbox
+	// and arrive at claim time. For Env-owned Pools this is projected from the
+	// Env's overrides.gateway.
 	// +optional
-	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
+	Gateway *GatewaySpec `json:"gateway,omitempty"`
 
 	// MaxUnavailable bounds how many of this Pool's desired idle Pods may be
 	// unavailable at once while it rolls stale idle Pods onto a new revision

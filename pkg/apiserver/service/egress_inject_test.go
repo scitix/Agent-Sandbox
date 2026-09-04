@@ -16,141 +16,23 @@ package service
 
 import (
 	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 )
 
-// testCredName is the Env-level credential used across these fixtures.
-const testCredName = "openai"
-
-func poolWithInjection() *agentsv1alpha1.SandboxPool {
+// gatewayPool is an Env-owned Pool whose sandboxes carry the proxy sidecar.
+func gatewayPool() *agentsv1alpha1.SandboxPool {
 	p := &agentsv1alpha1.SandboxPool{}
 	p.Name = "pool-a"
-	p.Spec.NetworkPolicy = &agentsv1alpha1.SandboxNetworkPolicy{
-		Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"api.openai.com"}},
-		SecretInjection: &agentsv1alpha1.SecretInjection{
-			Credentials: []agentsv1alpha1.InjectedCredential{{
-				Name:      testCredName,
-				ValueFrom: agentsv1alpha1.SecretKeyRef{Name: "creds", Key: testCredName},
-				ExposeAs:  "OPENAI_API_KEY",
-			}},
-			Rules: []agentsv1alpha1.InjectionRule{{
-				Host:       "api.openai.com",
-				Headers:    []agentsv1alpha1.HeaderInjection{{Name: "Authorization", Value: "Bearer ${e2b.secrets.openai}"}},
-				Substitute: []string{testCredName},
-			}},
-		},
-	}
+	p.Spec.Gateway = &agentsv1alpha1.GatewaySpec{Enabled: true}
 	return p
 }
 
-func TestBuildEgressInjectAnnotation_NoInjectionIsNoop(t *testing.T) {
-	p := &agentsv1alpha1.SandboxPool{}
-	_, ok, err := buildEgressInjectAnnotation(p, nil)
-	if err != nil || ok {
-		t.Fatalf("pool without injection: ok=%v err=%v", ok, err)
-	}
-}
-
-// The annotation is stored in etcd and echoed by the API. It must carry rule
-// shapes and Secret *references* only — never a credential value.
-func TestBuildEgressInjectAnnotation_CarriesNoCredentialValue(t *testing.T) {
-	value, ok, err := buildEgressInjectAnnotation(poolWithInjection(), nil)
-	if err != nil || !ok {
-		t.Fatalf("ok=%v err=%v", ok, err)
-	}
-	// The template is preserved verbatim; nothing resolved it here.
-	if !strings.Contains(value, "Bearer ${e2b.secrets.openai}") {
-		t.Fatalf("annotation lost the unresolved template: %s", value)
-	}
-	if strings.Contains(value, "sk-") || strings.Contains(value, "real-key") {
-		t.Fatalf("annotation appears to contain credential material: %s", value)
-	}
-
-	var si agentsv1alpha1.SecretInjection
-	if uErr := json.Unmarshal([]byte(value), &si); uErr != nil {
-		t.Fatalf("annotation is not decodable: %v", uErr)
-	}
-	if si.Credentials[0].ValueFrom.Name != "creds" || si.Credentials[0].ValueFrom.Key != testCredName {
-		t.Fatalf("Secret reference not preserved: %+v", si.Credentials[0].ValueFrom)
-	}
-}
-
-// Every claim gets a fresh decoy, so a released pod's decoy is worthless to the
-// sandbox that recycles it.
-func TestBuildEgressInjectAnnotation_GeneratesUniquePlaceholder(t *testing.T) {
-	v1, _, err1 := buildEgressInjectAnnotation(poolWithInjection(), nil)
-	v2, _, err2 := buildEgressInjectAnnotation(poolWithInjection(), nil)
-	if err1 != nil || err2 != nil {
-		t.Fatalf("errs: %v %v", err1, err2)
-	}
-	var a, b agentsv1alpha1.SecretInjection
-	_ = json.Unmarshal([]byte(v1), &a)
-	_ = json.Unmarshal([]byte(v2), &b)
-
-	if a.Credentials[0].Placeholder == "" {
-		t.Fatal("exposeAs credential got no placeholder")
-	}
-	if !strings.HasPrefix(a.Credentials[0].Placeholder, agentsv1alpha1.PlaceholderPrefix) {
-		t.Fatalf("placeholder %q lacks the generated prefix", a.Credentials[0].Placeholder)
-	}
-	if len(a.Credentials[0].Placeholder) < agentsv1alpha1.MinPlaceholderLen {
-		t.Fatalf("placeholder %q is shorter than the minimum", a.Credentials[0].Placeholder)
-	}
-	if a.Credentials[0].Placeholder == b.Credentials[0].Placeholder {
-		t.Fatal("two claims received the same decoy")
-	}
-}
-
-// A pinned placeholder survives untouched — that is the point of the field,
-// since some SDKs validate credential shape before sending.
-func TestBuildEgressInjectAnnotation_KeepsPinnedPlaceholder(t *testing.T) {
-	p := poolWithInjection()
-	p.Spec.NetworkPolicy.SecretInjection.Credentials[0].Placeholder = "sk-proj-0000000000000000"
-	value, _, err := buildEgressInjectAnnotation(p, nil)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	var si agentsv1alpha1.SecretInjection
-	_ = json.Unmarshal([]byte(value), &si)
-	if si.Credentials[0].Placeholder != "sk-proj-0000000000000000" {
-		t.Fatalf("pinned placeholder was replaced with %q", si.Credentials[0].Placeholder)
-	}
-}
-
-func TestBuildEgressInjectAnnotation_RejectsInvalidConfig(t *testing.T) {
-	p := poolWithInjection()
-	p.Spec.NetworkPolicy.SecretInjection.Rules[0].Host = "*.openai.com"
-	_, _, err := buildEgressInjectAnnotation(p, nil)
-	if err == nil {
-		t.Fatal("wildcard host must be rejected at claim time too")
-	}
-}
-
-// Per-sandbox injection is refused: a credential travelling through a create
-// request would re-introduce the exposure this feature removes.
-func TestBuildEgressPolicyAnnotation_RejectsPerSandboxInjection(t *testing.T) {
-	pool := poolWithInjection()
-	override := &agentsv1alpha1.SandboxNetworkPolicy{
-		SecretInjection: &agentsv1alpha1.SecretInjection{
-			Rules: []agentsv1alpha1.InjectionRule{{Host: "api.openai.com"}},
-		},
-	}
-	_, _, err := buildEgressPolicyAnnotation(override, pool, "sbx-1")
-	if err == nil {
-		t.Fatal("per-sandbox secretInjection must be rejected")
-	}
-	if !strings.Contains(err.Error(), "SandboxEnv") {
-		t.Fatalf("error should point at the Env: %v", err)
-	}
-}
-
-// --------------------------------------------------------------------------
-// Per-sandbox rules merged with the Env's own injection block
-// --------------------------------------------------------------------------
-
+// perSandboxFixture is one create request's rules, already resolved against the
+// caller's vault.
 func perSandboxFixture() *perSandboxInjection {
 	return &perSandboxInjection{
 		rules: []agentsv1alpha1.InjectionRule{{
@@ -167,78 +49,150 @@ func perSandboxFixture() *perSandboxInjection {
 	}
 }
 
-// Rules are a union: the Env's promise to every sandbox in it must survive a
-// create request that adds its own.
-func TestBuildEgressInject_MergesPerSandboxRulesWithEnvRules(t *testing.T) {
-	value, ok, err := buildEgressInjectAnnotation(poolWithInjection(), perSandboxFixture())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestBuildEgressInjectAnnotation_NoRulesIsNoop(t *testing.T) {
+	if _, ok, err := buildEgressInjectAnnotation(nil, gatewayPool(), nil); err != nil || ok {
+		t.Fatalf("no rules: ok=%v err=%v", ok, err)
 	}
-	if !ok {
-		t.Fatal("expected an injection block")
+	empty := &perSandboxInjection{}
+	if _, ok, err := buildEgressInjectAnnotation(nil, gatewayPool(), empty); err != nil || ok {
+		t.Fatalf("empty rules: ok=%v err=%v", ok, err)
+	}
+}
+
+// The annotation is stored in etcd and echoed by the API. It must carry rule
+// shapes and Secret *references* only — never a credential value.
+func TestBuildEgressInjectAnnotation_CarriesNoCredentialValue(t *testing.T) {
+	value, ok, err := buildEgressInjectAnnotation(nil, gatewayPool(), perSandboxFixture())
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	// The template is preserved verbatim; nothing resolved it here.
+	if !strings.Contains(value, "${e2b.secrets.anthropic}") {
+		t.Fatalf("annotation lost the unresolved template: %s", value)
+	}
+	if strings.Contains(value, "sk-") {
+		t.Fatalf("annotation appears to contain credential material: %s", value)
 	}
 
 	var si agentsv1alpha1.SecretInjection
 	if uErr := json.Unmarshal([]byte(value), &si); uErr != nil {
-		t.Fatalf("decode: %v", uErr)
+		t.Fatalf("annotation is not decodable: %v", uErr)
 	}
-	if len(si.Rules) != 2 {
-		t.Fatalf("expected the Env rule plus the request's, got %d", len(si.Rules))
+	if len(si.Credentials) != 1 {
+		t.Fatalf("expected exactly the referenced credential, got %+v", si.Credentials)
 	}
-	// Env rules come first, so their ordering semantics are unchanged.
-	if si.Rules[len(si.Rules)-1].Host != "api.anthropic.com" {
-		t.Fatalf("per-sandbox rule should be appended last, got %+v", si.Rules)
+	if si.Credentials[0].ValueFrom.Name != "agbx-vault-alice-abc123" ||
+		si.Credentials[0].ValueFrom.Key != "anthropic" {
+		t.Fatalf("credential must point at the caller's vault Secret, got %+v", si.Credentials[0].ValueFrom)
 	}
+}
 
-	var found bool
-	for _, c := range si.Credentials {
-		if c.Name == "anthropic" {
-			found = true
-			if c.ValueFrom.Name != "agbx-vault-alice-abc123" || c.ValueFrom.Key != "anthropic" {
-				t.Fatalf("credential must point at the vault Secret, got %+v", c.ValueFrom)
-			}
-			// The annotation carries a reference, never a value.
-			if strings.Contains(value, "sk-") {
-				t.Fatal("annotation must not contain credential material")
-			}
+// Identical requests must render an identical annotation: the map of resolved
+// references has no order of its own, so the credential list is sorted.
+func TestBuildEgressInjectAnnotation_IsDeterministic(t *testing.T) {
+	ps := perSandboxFixture()
+	ps.refs["openai"] = agentsv1alpha1.SecretKeyRef{Name: "agbx-vault-alice-abc123", Key: "openai"}
+	ps.rules[0].Headers = append(ps.rules[0].Headers, agentsv1alpha1.HeaderInjection{
+		Name: "X-Other", Value: "${e2b.secrets.openai}",
+	})
+
+	first, _, err := buildEgressInjectAnnotation(nil, gatewayPool(), ps)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	for range 20 {
+		again, _, aErr := buildEgressInjectAnnotation(nil, gatewayPool(), ps)
+		if aErr != nil {
+			t.Fatalf("err: %v", aErr)
+		}
+		if again != first {
+			t.Fatalf("annotation is not stable:\n%s\n%s", first, again)
 		}
 	}
-	if !found {
-		t.Fatal("expected the vault credential to be added")
-	}
 }
 
-// With no Env-level injection at all, a request's rules still produce a block.
-func TestBuildEgressInject_PerSandboxOnly(t *testing.T) {
-	pool := &agentsv1alpha1.SandboxPool{}
-	value, ok, err := buildEgressInjectAnnotation(pool, perSandboxFixture())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected an injection block from the request alone")
-	}
-	var si agentsv1alpha1.SecretInjection
-	if uErr := json.Unmarshal([]byte(value), &si); uErr != nil {
-		t.Fatalf("decode: %v", uErr)
-	}
-	if len(si.Rules) != 1 || len(si.Credentials) != 1 {
-		t.Fatalf("unexpected block: %+v", si)
-	}
-}
-
-// A name that exists at both levels is refused rather than shadowed: either
-// resolution order surprises somebody, and one clear error costs less.
-func TestBuildEgressInject_NameCollisionIsRefused(t *testing.T) {
+// Validation runs at claim time as well, so a rule that would silently do
+// nothing (or leak) is refused before the sandbox is handed over.
+func TestBuildEgressInjectAnnotation_RejectsInvalidRules(t *testing.T) {
 	ps := perSandboxFixture()
-	ps.refs = map[string]agentsv1alpha1.SecretKeyRef{
-		testCredName: {Name: "agbx-vault-alice-abc123", Key: testCredName},
+	ps.rules[0].Host = "*.anthropic.com"
+	if _, _, err := buildEgressInjectAnnotation(nil, gatewayPool(), ps); err == nil {
+		t.Fatal("wildcard host must be rejected at claim time too")
 	}
-	_, _, err := buildEgressInjectAnnotation(poolWithInjection(), ps)
+}
+
+// The filter and the rules come from the same request, so they can contradict
+// each other: an allowlist that excludes the rule's host makes the rule dead.
+func TestBuildEgressInjectAnnotation_RejectsRuleHostOutsideAllowlist(t *testing.T) {
+	np := &agentsv1alpha1.SandboxNetworkPolicy{
+		Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"pypi.org"}},
+	}
+	_, _, err := buildEgressInjectAnnotation(np, gatewayPool(), perSandboxFixture())
 	if err == nil {
-		t.Fatal("expected a collision to be refused")
+		t.Fatal("a rule host outside the request's allowlist must be refused")
 	}
-	if !strings.Contains(err.Message, testCredName) {
-		t.Fatalf("message must name the clashing secret, got %q", err.Message)
+}
+
+// --------------------------------------------------------------------------
+// The gateway switch gates both paths
+// --------------------------------------------------------------------------
+
+// Without the sidecar there is no redirect either, so accepting the request
+// would leave it entirely unenforced while reporting success.
+func TestEgressAnnotations_RefusedWithoutTheGateway(t *testing.T) {
+	for name, pool := range map[string]*agentsv1alpha1.SandboxPool{
+		"no gateway block": {},
+		"gateway off":      {Spec: agentsv1alpha1.SandboxPoolSpec{Gateway: &agentsv1alpha1.GatewaySpec{}}},
+	} {
+		np := &agentsv1alpha1.SandboxNetworkPolicy{DisableEgress: true}
+		if _, _, err := buildEgressPolicyAnnotation(np, pool, "sbx-1"); err == nil {
+			t.Errorf("%s: a network policy must be refused", name)
+		}
+		if _, _, err := buildEgressInjectAnnotation(nil, pool, perSandboxFixture()); err == nil {
+			t.Errorf("%s: injection must be refused", name)
+		}
+	}
+}
+
+// A request that asks for nothing against a pool with no gateway is unaffected —
+// that is the overwhelming majority of sandboxes.
+func TestBuildEgressPolicyAnnotation_NoGatewayNoPolicyIsNoop(t *testing.T) {
+	if _, ok, err := buildEgressPolicyAnnotation(nil, &agentsv1alpha1.SandboxPool{}, "sbx-1"); err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+// The sidecar fails closed on a missing policy file, so a gateway-enabled pool
+// must be stamped even when the request asked for no filtering — otherwise
+// turning the gateway on would cut every sandbox off from the network.
+func TestBuildEgressPolicyAnnotation_GatewayOnWithNoRequestIsUnrestricted(t *testing.T) {
+	value, ok, err := buildEgressPolicyAnnotation(nil, gatewayPool(), "sbx-1")
+	if err != nil || !ok {
+		t.Fatalf("a gateway-enabled pool must always be stamped: ok=%v err=%v", ok, err)
+	}
+	p := decode(t, value)
+	if !p.Enforce || p.DisableEgress {
+		t.Fatalf("expected an enforcing allow-all policy, got %+v", p)
+	}
+	if !p.Evaluate("anything.example.com", net.ParseIP("8.8.8.8")).Allow {
+		t.Error("a sandbox that asked for nothing must reach the internet")
+	}
+	// Private ranges included: asking for the gateway must not narrow egress on
+	// its own, and split-horizon names resolve inside the cluster.
+	if !p.Evaluate("op.example.com", net.ParseIP("10.0.0.1")).Allow {
+		t.Error("a sandbox that asked for nothing must reach cluster-internal hosts")
+	}
+}
+
+func TestBuildEgressPolicyAnnotation_EncodesTheRequestsPolicy(t *testing.T) {
+	np := &agentsv1alpha1.SandboxNetworkPolicy{
+		Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"pypi.org"}},
+	}
+	value, ok, err := buildEgressPolicyAnnotation(np, gatewayPool(), "sbx-1")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(value, "pypi.org") || !strings.Contains(value, "sbx-1") {
+		t.Fatalf("policy did not survive encoding: %s", value)
 	}
 }

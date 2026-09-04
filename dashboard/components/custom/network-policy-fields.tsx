@@ -31,9 +31,12 @@ import { Textarea } from "@/components/ui/textarea"
 import { useTranslation } from "@/lib/i18n"
 
 /**
- * The egress-policy fields, shared by the SandboxEnv form and the create-sandbox
- * form. The i18n keys stay under `envs.form.networkPolicy.*` — they describe the
- * policy semantics, not the Env resource, so both callers read the same copy.
+ * The egress-policy fields of the create-sandbox form. The i18n keys stay under
+ * `envs.form.networkPolicy.*` — they describe the policy semantics rather than
+ * the form they appear on.
+ *
+ * The policy is per-sandbox and only per-sandbox: an environment decides whether
+ * the egress gateway exists, never what it permits.
  */
 export type NetworkPolicyMode = "unrestricted" | "disable" | "allowlist"
 
@@ -51,14 +54,7 @@ interface Props<T extends FieldValues> {
   register: (name: Path<T>) => Record<string, unknown>
   /** Per-field validation messages, keyed by field name. Values are i18n keys. */
   errors?: Partial<Record<keyof NetworkPolicyFormValues, { message?: string }>>
-  /**
-   * Whether to offer the "allow private networks" switch.
-   *
-   * The create-sandbox form sets this false: E2B's `SandboxNetworkConfig` has no
-   * field for it, so a per-sandbox request cannot carry it and the sandbox always
-   * runs under the anti-SSRF baseline. Showing a switch that silently does
-   * nothing is worse than not showing it — declare it on the SandboxEnv instead.
-   */
+  /** Whether to offer the "allow private networks" switch. */
   showPrivateNetworks?: boolean
   /** Rendered above the fields; omit on forms that already have a section header. */
   heading?: string

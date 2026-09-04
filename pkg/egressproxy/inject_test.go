@@ -28,12 +28,10 @@ func secretsFixture() Secrets {
 	return Secrets{
 		SandboxID: "sbx-1",
 		Rules: []InjectRule{{
-			Host:                   "api.openai.com",
-			Headers:                []InjectHeader{{Name: "Authorization", Value: testRealKey, Mode: ModeOverride}},
-			SubstitutePlaceholders: []string{"agbx_ph_decoy0000000000"},
-			PathPrefixes:           []string{"/v1/"},
+			Host:         "api.openai.com",
+			Headers:      []InjectHeader{{Name: "Authorization", Value: testRealKey, Mode: ModeOverride}},
+			PathPrefixes: []string{"/v1/"},
 		}},
-		Substitutions: map[string]string{"agbx_ph_decoy0000000000": "real-key"},
 	}
 }
 
@@ -98,38 +96,6 @@ func TestApply_IfAbsentInjectsWhenMissing(t *testing.T) {
 	}
 }
 
-func TestApply_SubstitutesPlaceholder(t *testing.T) {
-	s := secretsFixture()
-	s.Rules[0].Headers = nil // substitution only
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer agbx_ph_decoy0000000000")
-
-	out := s.Apply(req, s.MatchAll("api.openai.com", 443))
-	if out.Substituted != 1 {
-		t.Fatalf("Substituted=%d, want 1", out.Substituted)
-	}
-	if got := req.Header.Get("Authorization"); got != testRealKey {
-		t.Fatalf("Authorization=%q, want the decoy replaced by the real value", got)
-	}
-}
-
-// A placeholder must only be swapped on a host whose rule allows it, otherwise
-// the real credential could be steered to an unrelated destination.
-func TestApply_NoSubstitutionWhenRuleDoesNotAllowIt(t *testing.T) {
-	s := secretsFixture()
-	s.Rules[0].SubstitutePlaceholders = nil
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	req.Header.Set("X-Token", "agbx_ph_decoy0000000000")
-
-	out := s.Apply(req, s.MatchAll("api.openai.com", 443))
-	if out.Substituted != 0 {
-		t.Fatalf("Substituted=%d, want 0", out.Substituted)
-	}
-	if got := req.Header.Get("X-Token"); got != "agbx_ph_decoy0000000000" {
-		t.Fatalf("X-Token=%q, want the decoy left untouched", got)
-	}
-}
-
 func TestApply_PathPrefixNarrowing(t *testing.T) {
 	s := secretsFixture()
 	req := httptest.NewRequest(http.MethodGet, "/admin/keys", nil)
@@ -153,12 +119,13 @@ func TestApply_MethodNarrowing(t *testing.T) {
 	}
 }
 
-// Substitution runs before injection so "decoy first, header as fallback" is
-// expressible: Override wins over whatever substitution produced.
-func TestApply_OverrideWinsOverSubstitution(t *testing.T) {
+// Override means override: whatever the sandbox put in the header is replaced,
+// so a tool that reads its own key from an env var and sends it still leaves
+// with the brokered credential.
+func TestApply_OverrideReplacesWhatTheSandboxSent(t *testing.T) {
 	s := secretsFixture()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer agbx_ph_decoy0000000000")
+	req.Header.Set("Authorization", "Bearer whatever-the-sandbox-had")
 
 	s.Apply(req, s.MatchAll("api.openai.com", 443))
 	if got := req.Header.Get("Authorization"); got != testRealKey {
@@ -214,8 +181,8 @@ func TestRemoveSecrets_WipesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("second RemoveSecrets should be a no-op, got %v", err)
 	}
 	s, _ := LoadSecrets(path)
-	if s.Enabled() || len(s.Substitutions) != 0 {
-		t.Fatal("wiped config must expose no rules and no substitutions")
+	if s.Enabled() {
+		t.Fatal("wiped config must expose no rules")
 	}
 }
 

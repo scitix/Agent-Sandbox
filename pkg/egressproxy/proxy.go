@@ -125,9 +125,9 @@ func (p *Proxy) loadSecrets() {
 			p.ca.Store(ca)
 		}
 	}
-	// Deliberately logs counts only — never a header value, placeholder, or key.
+	// Deliberately logs counts only — never a header value or key.
 	p.log.Info("injection config loaded", "sandbox", s.SandboxID,
-		"rules", len(s.Rules), "substitutions", len(s.Substitutions), "ca", p.ca.Load() != nil)
+		"rules", len(s.Rules), "ca", p.ca.Load() != nil)
 }
 
 // Serve starts the three listeners and the policy hot-reload watcher, blocking

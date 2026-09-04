@@ -35,9 +35,9 @@ T = TypeVar("T", bound="EnvUpdateStrategy")
 
 @_attrs_define
 class EnvUpdateStrategy:
-    """ Automatic rollout policy for member Pools when their rendered idle-Pod identity (Template edit, image /
-    networkPolicy override) changes. Rollout mode is always Recreate: stale idle Pods are rebuilt; claimed
-    (Running/Starting) Pods are never disrupted and roll after returning to Idle.
+    """ Automatic rollout policy for member Pools when their rendered idle-Pod identity (Template edit, image / gateway
+    override) changes. Rollout mode is always Recreate: stale idle Pods are rebuilt; claimed (Running/Starting) Pods are
+    never disrupted and roll after returning to Idle.
 
         Attributes:
             auto_update (bool | Unset): Whether the member auto-rolls when its revision changes. Resolution order: member →

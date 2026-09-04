@@ -53,9 +53,8 @@ extensionsConfig:
 # Controller (sandbox operator + API server)
 # ---------------------------------------------------------------------------
 controller:
-  # egressProxyImage overrides the image the egress network-policy plugin injects
-  # as the filter sidecar + init container into sandbox Pods of Pools whose
-  # networkPolicy is set.
+  # egressProxyImage overrides the image the egress plugin injects as the proxy
+  # sidecar + init container into sandbox Pods of Pools whose gateway is on.
   #
   # LEAVE IT EMPTY. Empty does not disable anything — the plugin then uses the
   # Pool's own idleImage, which already bundles egress-proxy (they are the same

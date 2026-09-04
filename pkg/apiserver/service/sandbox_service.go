@@ -544,9 +544,9 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		}
 	}
 
-	// Egress network policy: resolve the effective policy (per-sandbox override
-	// else the Pool's Env-default) and stamp it as a managed annotation. The
-	// SandboxReady hook pushes it into the filter sidecar; release strips it.
+	// Egress network policy: whatever this request asked for, stamped as a
+	// managed annotation. The SandboxReady hook pushes it into the proxy
+	// sidecar; release strips it.
 	egressPolicyJSON, egressOn, egressErr := buildEgressPolicyAnnotation(input.NetworkPolicy, pool, sandboxID)
 	if egressErr != nil {
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
@@ -556,17 +556,17 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		annotations[agentsv1alpha1.SandboxEgressPolicyAnnotationKey] = egressPolicyJSON
 	}
 
-	// Credential injection comes from two places: the Env, and — when the
-	// request carried network.rules — the caller's own vault. Only names travel
-	// in the request; the values stay in Secrets, and the annotation holds rule
-	// shapes, references and per-claim decoys. The SandboxReady hook resolves
-	// the references and delivers the plaintext straight to the sidecar.
+	// Credential injection: the request's network.rules, resolved against the
+	// caller's own vault. Only names travel in the request; the values stay in
+	// Secrets, and the annotation holds rule shapes and references. The
+	// SandboxReady hook resolves those and delivers the plaintext straight to
+	// the sidecar.
 	perSandbox, resolveErr := s.resolveVaultRules(ctx, pool, input)
 	if resolveErr != nil {
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, resolveErr
 	}
-	egressInjectJSON, injectOn, injectErr := buildEgressInjectAnnotation(pool, perSandbox)
+	egressInjectJSON, injectOn, injectErr := buildEgressInjectAnnotation(input.NetworkPolicy, pool, perSandbox)
 	if injectErr != nil {
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, injectErr
@@ -2013,9 +2013,8 @@ func (s *k8sSandboxService) resolveVaultRules(
 		return nil, domain.NewBadRequest("network.rules requires the credential vault, which is not " +
 			"enabled in this AgentBox deployment")
 	}
-	if pool == nil || pool.Spec.NetworkPolicy == nil {
-		return nil, domain.NewBadRequest("this template has no egress sidecar, so injection rules would " +
-			"silently do nothing. Enable networkPolicy on the SandboxEnv first.")
+	if !gatewayEnabled(pool) {
+		return nil, errGatewayDisabled("credential injection")
 	}
 
 	names := vaultRefNames(input.VaultRules)

@@ -184,12 +184,12 @@ func TestPumpRequests_InjectsHeaderOnTheWayOut(t *testing.T) {
 	}
 }
 
-// The sandbox sends only a decoy; the real credential appears on the wire.
-func TestPumpRequests_SubstitutesDecoyOnTheWayOut(t *testing.T) {
+// Whatever the sandbox put in the header, the wire carries the brokered
+// credential instead.
+func TestPumpRequests_OverridesWhatTheSandboxSent(t *testing.T) {
 	s := secretsFixture()
-	s.Rules[0].Headers = nil
 	req := "GET /v1/models HTTP/1.1\r\nHost: api.openai.com\r\n" +
-		"Authorization: Bearer agbx_ph_decoy0000000000\r\nConnection: close\r\n\r\n"
+		"Authorization: Bearer whatever-the-sandbox-had\r\nConnection: close\r\n\r\n"
 	got, _ := runPump(t, s, req, func(*http.Request) string {
 		return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
 	})
@@ -197,7 +197,7 @@ func TestPumpRequests_SubstitutesDecoyOnTheWayOut(t *testing.T) {
 		t.Fatal("upstream received no request")
 	}
 	if v := got.Header.Get("Authorization"); v != testRealKey {
-		t.Fatalf("upstream saw Authorization=%q, want the decoy replaced", v)
+		t.Fatalf("upstream saw Authorization=%q, want the injected credential", v)
 	}
 }
 

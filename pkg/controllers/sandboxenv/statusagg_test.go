@@ -74,7 +74,7 @@ func TestSyncStatus_AggregatesReplicas(t *testing.T) {
 		Build()
 	r := &SandboxEnvReconciler{Client: c, Scheme: scheme, LocalClusterID: testLocalCluster}
 
-	if err := r.syncStatus(context.Background(), env, credentialsCondition{}); err != nil {
+	if err := r.syncStatus(context.Background(), env); err != nil {
 		t.Fatalf("syncStatus: %v", err)
 	}
 
@@ -120,7 +120,7 @@ func syncStatusForTest(t *testing.T, env *agentsv1alpha1.SandboxEnv, pools ...*a
 	}
 	c := b.Build()
 	r := &SandboxEnvReconciler{Client: c, Scheme: scheme, LocalClusterID: testLocalCluster}
-	if err := r.syncStatus(context.Background(), env, credentialsCondition{}); err != nil {
+	if err := r.syncStatus(context.Background(), env); err != nil {
 		t.Fatalf("syncStatus: %v", err)
 	}
 	got := &agentsv1alpha1.SandboxEnv{}

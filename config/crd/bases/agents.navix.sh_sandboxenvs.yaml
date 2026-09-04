@@ -520,6 +520,21 @@ spec:
                                   (pods with a per-pod agentbox.navix.sh/startup-timeout annotation are still cleaned up),
                                   and create requests without an explicit startupTimeout use the internal default (2 minutes).
                                 type: string
+                              gateway:
+                                description: |-
+                                  Gateway, when enabled, injects the transparent egress proxy sidecar into
+                                  this Pool's sandbox Pods. It is a Pod-shape decision and nothing more: the
+                                  rules the proxy enforces, and the credentials it injects, are per-sandbox
+                                  and arrive at claim time. For Env-owned Pools this is projected from the
+                                  Env's overrides.gateway.
+                                properties:
+                                  enabled:
+                                    description: |-
+                                      Enabled injects the egress gateway sidecar into every sandbox Pod of this
+                                      environment. Without it, a create request carrying network rules is
+                                      refused rather than silently unenforced.
+                                    type: boolean
+                                type: object
                               idleImage:
                                 description: |-
                                   IdleImage is the image to use when Pods are in the idle state.
@@ -537,211 +552,6 @@ spec:
                                   projected from the Env's (member/overrides) updateStrategy; nil disables
                                   rollout throttling and is treated as "20%".
                                 x-kubernetes-int-or-string: true
-                              networkPolicy:
-                                description: |-
-                                  NetworkPolicy, when set, enables sandbox egress filtering for Pods in this
-                                  Pool: the operator injects a transparent filter sidecar. For Env-owned
-                                  Pools this is projected from the Env's overrides.networkPolicy and serves
-                                  as the default ruleset; per-sandbox create requests may override it.
-                                properties:
-                                  allowPrivateNetworks:
-                                    description: |-
-                                      AllowPrivateNetworks disables the default deny of private / link-local /
-                                      cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.) for a policy that
-                                      declares filtering. Default false — the anti-SSRF baseline stays on.
-                                      Enable only for trusted intra-cluster access.
-
-                                      Implied when Egress is nil and DisableEgress is false: a policy that
-                                      filters nothing (SecretInjection-only, say) must not be stricter than
-                                      having no policy at all, where no sidecar exists and private ranges are
-                                      reachable. To allow every host but keep the baseline, declare
-                                      Egress with AllowedDomains ["*"] and AllowedCIDRs ["0.0.0.0/0"] instead.
-                                    type: boolean
-                                  disableEgress:
-                                    description: |-
-                                      DisableEgress blocks all outbound traffic (DNS still resolves so lookups
-                                      do not hang). Takes precedence over Egress. A quick "no internet" switch.
-                                    type: boolean
-                                  egress:
-                                    description: |-
-                                      Egress is the allowlist. When DisableEgress is false and Egress is nil,
-                                      egress is unrestricted — including private ranges, see
-                                      AllowPrivateNetworks.
-                                    properties:
-                                      allowedCIDRs:
-                                        description: AllowedCIDRs permits egress to
-                                          these CIDR blocks / bare IPs (as /32).
-                                        items:
-                                          type: string
-                                        type: array
-                                      allowedDomains:
-                                        description: |-
-                                          AllowedDomains permits egress to matching hostnames. Supports exact
-                                          ("pypi.org"), wildcard-all ("*"), and suffix ("*.pythonhosted.org").
-                                          Matched via TLS SNI (443) / HTTP Host (80); other ports are IP-only.
-                                        items:
-                                          type: string
-                                        type: array
-                                      deniedCIDRs:
-                                        description: |-
-                                          DeniedCIDRs blocks egress to these CIDR blocks / bare IPs. Domains are not
-                                          supported for deny (a domain resolves to many changing IPs).
-                                        items:
-                                          type: string
-                                        type: array
-                                    type: object
-                                  secretInjection:
-                                    description: |-
-                                      SecretInjection brokers credentials on the way out: the sidecar terminates
-                                      TLS for the listed hosts and adds (or substitutes) the configured headers,
-                                      so the sandbox can use a credential without ever being able to read it.
-                                      nil disables it.
-
-                                      Setting this alone (with Egress nil) is valid and means "inject, but do
-                                      not filter": the sidecar is still injected — which is what makes the
-                                      interception possible — while egress stays unrestricted, private ranges
-                                      included, so enabling injection never narrows what the sandbox can reach.
-
-                                      Declarable only on a SandboxEnv. Sandbox-create requests carrying it are
-                                      rejected, because a credential travelling through a create request would
-                                      re-introduce exactly the exposure this feature removes.
-                                    properties:
-                                      caCertTTL:
-                                        description: |-
-                                          CACertTTL bounds the lifetime of the per-sandbox CA minted for TLS
-                                          interception. Defaults to 24h.
-                                        type: string
-                                      credentials:
-                                        description: Credentials are the named secrets
-                                          rules may reference.
-                                        items:
-                                          description: InjectedCredential is one named
-                                            credential.
-                                          properties:
-                                            exposeAs:
-                                              description: |-
-                                                ExposeAs turns on placeholder mode: the sandbox gets an environment
-                                                variable of this name whose value is a decoy (see Placeholder), and the
-                                                proxy swaps the decoy for the real value on hosts that allow it. Leave
-                                                empty to use the credential through header injection only.
-                                              type: string
-                                            name:
-                                              description: |-
-                                                Name is how rules refer to this credential in a header value template,
-                                                written as ${e2b.secrets.NAME}. This is the same syntax the E2B SDK's
-                                                Secret.fill() produces, so a rule authored against the SDK and a rule
-                                                authored here are byte-identical.
-                                              type: string
-                                            placeholder:
-                                              description: |-
-                                                Placeholder is the decoy value handed to the sandbox. Empty means a fresh
-                                                random "agbx_ph_<32 hex>" per claim.
-
-                                                Set it when a client validates credential shape before sending — several
-                                                SDKs reject a key that lacks the expected prefix or length, so a random
-                                                decoy would fail inside the sandbox and never reach the proxy. A fixed
-                                                decoy costs nothing in secrecy (it already lives in the sandbox's
-                                                environment); it is merely identical across sandboxes.
-
-                                                Must be at least 16 characters, and no two credentials may share a
-                                                placeholder or have one be a substring of another — overlapping decoys
-                                                would substitute into each other.
-                                              type: string
-                                            valueFrom:
-                                              description: |-
-                                                ValueFrom points at the Secret key holding the credential. The Secret
-                                                must live in the SandboxEnv's namespace.
-                                              properties:
-                                                key:
-                                                  type: string
-                                                name:
-                                                  type: string
-                                              required:
-                                              - key
-                                              - name
-                                              type: object
-                                          required:
-                                          - name
-                                          - valueFrom
-                                          type: object
-                                        type: array
-                                      rules:
-                                        description: Rules declare what to inject,
-                                          per host.
-                                        items:
-                                          description: InjectionRule declares the
-                                            injection applied to one host.
-                                          properties:
-                                            headers:
-                                              description: Headers are the headers
-                                                to inject.
-                                              items:
-                                                description: HeaderInjection is one
-                                                  header to add to matching requests.
-                                                properties:
-                                                  mode:
-                                                    description: Mode defaults to
-                                                      Override.
-                                                    enum:
-                                                    - Override
-                                                    - IfAbsent
-                                                    type: string
-                                                  name:
-                                                    description: Name is the header
-                                                      name, compared case-insensitively.
-                                                    type: string
-                                                  value:
-                                                    description: |-
-                                                      Value is a template that may reference declared credentials by name, each
-                                                      name wrapped in a doubled pair of curly braces. For an Authorization
-                                                      header, that is a Bearer prefix followed by the brace-wrapped name of the
-                                                      credential holding the key.
-                                                    type: string
-                                                required:
-                                                - name
-                                                - value
-                                                type: object
-                                              type: array
-                                            host:
-                                              description: |-
-                                                Host must be an exact hostname. Wildcards are rejected: anyone able to
-                                                control a matching subdomain would receive the credential.
-                                              type: string
-                                            methods:
-                                              description: Methods narrows the rule
-                                                to these HTTP methods. Empty means
-                                                all.
-                                              items:
-                                                type: string
-                                              type: array
-                                            pathPrefixes:
-                                              description: PathPrefixes narrows the
-                                                rule to matching request paths. Empty
-                                                means all.
-                                              items:
-                                                type: string
-                                              type: array
-                                            ports:
-                                              description: |-
-                                                Ports narrows which destination ports the rule covers. Defaults to
-                                                [80, 443]; other ports get no L7 handling at all.
-                                              items:
-                                                format: int32
-                                                type: integer
-                                              type: array
-                                            substitute:
-                                              description: |-
-                                                Substitute lists credentials whose placeholder may be swapped for the
-                                                real value on this host.
-                                              items:
-                                                type: string
-                                              type: array
-                                          required:
-                                          - host
-                                          type: object
-                                        type: array
-                                    type: object
-                                type: object
                               podCreationImagePolicy:
                                 allOf:
                                 - enum:
@@ -1045,210 +855,28 @@ spec:
                       spec.defaultStartupTimeout. Applied to Sandbox.Create requests that
                       don't carry an explicit startupTimeout.
                     type: string
+                  gateway:
+                    description: |-
+                      Gateway turns on the egress gateway for every member Pool of this Env: the
+                      operator injects a transparent proxy sidecar into each sandbox Pod, which
+                      is what makes per-sandbox egress filtering and credential injection
+                      possible. It carries no rules of its own — those arrive on the create
+                      call. Nil, or enabled=false, means no sidecar, and a create request that
+                      asks for filtering or injection is then refused rather than silently
+                      unenforced.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled injects the egress gateway sidecar into every sandbox Pod of this
+                          environment. Without it, a create request carrying network rules is
+                          refused rather than silently unenforced.
+                        type: boolean
+                    type: object
                   image:
                     description: |-
                       Image overrides the main container (containers[0]) image of the
                       rendered Template. Applied before any per-Member overrides.
                     type: string
-                  networkPolicy:
-                    description: |-
-                      NetworkPolicy, when set, enables sandbox egress filtering for every member
-                      Pool of this Env. The operator injects a transparent filter sidecar into
-                      each sandbox Pod; this policy is the Env-wide default, overridable per
-                      sandbox at create time. Nil disables egress filtering (no sidecar).
-                    properties:
-                      allowPrivateNetworks:
-                        description: |-
-                          AllowPrivateNetworks disables the default deny of private / link-local /
-                          cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.) for a policy that
-                          declares filtering. Default false — the anti-SSRF baseline stays on.
-                          Enable only for trusted intra-cluster access.
-
-                          Implied when Egress is nil and DisableEgress is false: a policy that
-                          filters nothing (SecretInjection-only, say) must not be stricter than
-                          having no policy at all, where no sidecar exists and private ranges are
-                          reachable. To allow every host but keep the baseline, declare
-                          Egress with AllowedDomains ["*"] and AllowedCIDRs ["0.0.0.0/0"] instead.
-                        type: boolean
-                      disableEgress:
-                        description: |-
-                          DisableEgress blocks all outbound traffic (DNS still resolves so lookups
-                          do not hang). Takes precedence over Egress. A quick "no internet" switch.
-                        type: boolean
-                      egress:
-                        description: |-
-                          Egress is the allowlist. When DisableEgress is false and Egress is nil,
-                          egress is unrestricted — including private ranges, see
-                          AllowPrivateNetworks.
-                        properties:
-                          allowedCIDRs:
-                            description: AllowedCIDRs permits egress to these CIDR
-                              blocks / bare IPs (as /32).
-                            items:
-                              type: string
-                            type: array
-                          allowedDomains:
-                            description: |-
-                              AllowedDomains permits egress to matching hostnames. Supports exact
-                              ("pypi.org"), wildcard-all ("*"), and suffix ("*.pythonhosted.org").
-                              Matched via TLS SNI (443) / HTTP Host (80); other ports are IP-only.
-                            items:
-                              type: string
-                            type: array
-                          deniedCIDRs:
-                            description: |-
-                              DeniedCIDRs blocks egress to these CIDR blocks / bare IPs. Domains are not
-                              supported for deny (a domain resolves to many changing IPs).
-                            items:
-                              type: string
-                            type: array
-                        type: object
-                      secretInjection:
-                        description: |-
-                          SecretInjection brokers credentials on the way out: the sidecar terminates
-                          TLS for the listed hosts and adds (or substitutes) the configured headers,
-                          so the sandbox can use a credential without ever being able to read it.
-                          nil disables it.
-
-                          Setting this alone (with Egress nil) is valid and means "inject, but do
-                          not filter": the sidecar is still injected — which is what makes the
-                          interception possible — while egress stays unrestricted, private ranges
-                          included, so enabling injection never narrows what the sandbox can reach.
-
-                          Declarable only on a SandboxEnv. Sandbox-create requests carrying it are
-                          rejected, because a credential travelling through a create request would
-                          re-introduce exactly the exposure this feature removes.
-                        properties:
-                          caCertTTL:
-                            description: |-
-                              CACertTTL bounds the lifetime of the per-sandbox CA minted for TLS
-                              interception. Defaults to 24h.
-                            type: string
-                          credentials:
-                            description: Credentials are the named secrets rules may
-                              reference.
-                            items:
-                              description: InjectedCredential is one named credential.
-                              properties:
-                                exposeAs:
-                                  description: |-
-                                    ExposeAs turns on placeholder mode: the sandbox gets an environment
-                                    variable of this name whose value is a decoy (see Placeholder), and the
-                                    proxy swaps the decoy for the real value on hosts that allow it. Leave
-                                    empty to use the credential through header injection only.
-                                  type: string
-                                name:
-                                  description: |-
-                                    Name is how rules refer to this credential in a header value template,
-                                    written as ${e2b.secrets.NAME}. This is the same syntax the E2B SDK's
-                                    Secret.fill() produces, so a rule authored against the SDK and a rule
-                                    authored here are byte-identical.
-                                  type: string
-                                placeholder:
-                                  description: |-
-                                    Placeholder is the decoy value handed to the sandbox. Empty means a fresh
-                                    random "agbx_ph_<32 hex>" per claim.
-
-                                    Set it when a client validates credential shape before sending — several
-                                    SDKs reject a key that lacks the expected prefix or length, so a random
-                                    decoy would fail inside the sandbox and never reach the proxy. A fixed
-                                    decoy costs nothing in secrecy (it already lives in the sandbox's
-                                    environment); it is merely identical across sandboxes.
-
-                                    Must be at least 16 characters, and no two credentials may share a
-                                    placeholder or have one be a substring of another — overlapping decoys
-                                    would substitute into each other.
-                                  type: string
-                                valueFrom:
-                                  description: |-
-                                    ValueFrom points at the Secret key holding the credential. The Secret
-                                    must live in the SandboxEnv's namespace.
-                                  properties:
-                                    key:
-                                      type: string
-                                    name:
-                                      type: string
-                                  required:
-                                  - key
-                                  - name
-                                  type: object
-                              required:
-                              - name
-                              - valueFrom
-                              type: object
-                            type: array
-                          rules:
-                            description: Rules declare what to inject, per host.
-                            items:
-                              description: InjectionRule declares the injection applied
-                                to one host.
-                              properties:
-                                headers:
-                                  description: Headers are the headers to inject.
-                                  items:
-                                    description: HeaderInjection is one header to
-                                      add to matching requests.
-                                    properties:
-                                      mode:
-                                        description: Mode defaults to Override.
-                                        enum:
-                                        - Override
-                                        - IfAbsent
-                                        type: string
-                                      name:
-                                        description: Name is the header name, compared
-                                          case-insensitively.
-                                        type: string
-                                      value:
-                                        description: |-
-                                          Value is a template that may reference declared credentials by name, each
-                                          name wrapped in a doubled pair of curly braces. For an Authorization
-                                          header, that is a Bearer prefix followed by the brace-wrapped name of the
-                                          credential holding the key.
-                                        type: string
-                                    required:
-                                    - name
-                                    - value
-                                    type: object
-                                  type: array
-                                host:
-                                  description: |-
-                                    Host must be an exact hostname. Wildcards are rejected: anyone able to
-                                    control a matching subdomain would receive the credential.
-                                  type: string
-                                methods:
-                                  description: Methods narrows the rule to these HTTP
-                                    methods. Empty means all.
-                                  items:
-                                    type: string
-                                  type: array
-                                pathPrefixes:
-                                  description: PathPrefixes narrows the rule to matching
-                                    request paths. Empty means all.
-                                  items:
-                                    type: string
-                                  type: array
-                                ports:
-                                  description: |-
-                                    Ports narrows which destination ports the rule covers. Defaults to
-                                    [80, 443]; other ports get no L7 handling at all.
-                                  items:
-                                    format: int32
-                                    type: integer
-                                  type: array
-                                substitute:
-                                  description: |-
-                                    Substitute lists credentials whose placeholder may be swapped for the
-                                    real value on this host.
-                                  items:
-                                    type: string
-                                  type: array
-                              required:
-                              - host
-                              type: object
-                            type: array
-                        type: object
-                    type: object
                   podCreationImagePolicy:
                     allOf:
                     - enum:
@@ -1264,7 +892,7 @@ spec:
                   updateStrategy:
                     description: |-
                       UpdateStrategy is the Env-wide default rollout policy: when a member's
-                      effective idle-Pod identity changes (Template edit, image / networkPolicy
+                      effective idle-Pod identity changes (Template edit, image / gateway
                       override), whether and how fast its idle Pods are rebuilt. Per-member
                       EnvClusterMemberConfig.UpdateStrategy overrides this; see ResolveAutoUpdate
                       / ResolveMaxUnavailable for the resolution order.

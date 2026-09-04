@@ -100,10 +100,6 @@ type CreateSandboxEnvInput struct {
 	TemplateRef agentsv1alpha1.SandboxEnvTemplateRef
 	Mode        agentsv1alpha1.SandboxEnvMode
 	Overrides   *agentsv1alpha1.EnvOverridesSpec
-	// InjectedCredentialValues carries the write-only credential values keyed by
-	// credential name. It never reaches the CRD — the service stores it in the
-	// Env's credential Secret and fills in each credential's valueFrom.
-	InjectedCredentialValues map[string]string
 	// ImagePullSecret, when non-nil, instructs the service to materialise a
 	// dockerconfigjson Secret named ips-{envName} with an OwnerRef pointing
 	// at the Env (cascade-delete free). The Env Reconciler stamps a
@@ -123,9 +119,6 @@ type UpdateSandboxEnvInput struct {
 	Namespace string
 
 	Overrides *agentsv1alpha1.EnvOverridesSpec
-	// InjectedCredentialValues carries the write-only credential values keyed by
-	// credential name; omitted names keep whatever is already stored.
-	InjectedCredentialValues map[string]string
 	// ImagePullSecret, when non-nil, upserts the dockerconfigjson Secret
 	// backing this Env's image-pull credentials. Nil means leave existing
 	// Secret untouched.
@@ -211,29 +204,7 @@ func (s *k8sSandboxEnvService) Get(ctx context.Context, namespace, name string) 
 	result := envToGen(env)
 	s.enrichImagePullSecretStatus(ctx, env, &result)
 	s.enrichEnvDocs(ctx, env, &result)
-	s.enrichCredentialDigests(ctx, env, &result)
 	return &result, nil
-}
-
-// enrichCredentialDigests stamps each credential's valueDigest so a caller can
-// tell a configured credential from an empty one, and notice when the value
-// behind it changed — without the value itself ever being returned.
-func (s *k8sSandboxEnvService) enrichCredentialDigests(ctx context.Context, env *agentsv1alpha1.SandboxEnv, out *gen.SandboxEnv) {
-	digests := s.credentialDigests(ctx, env)
-	if len(digests) == 0 {
-		return
-	}
-	if out.Spec.Overrides == nil || out.Spec.Overrides.NetworkPolicy == nil ||
-		out.Spec.Overrides.NetworkPolicy.SecretInjection == nil ||
-		out.Spec.Overrides.NetworkPolicy.SecretInjection.Credentials == nil {
-		return
-	}
-	creds := *out.Spec.Overrides.NetworkPolicy.SecretInjection.Credentials
-	for i := range creds {
-		if d, ok := digests[creds[i].Name]; ok {
-			creds[i].ValueDigest = ptr.To(d)
-		}
-	}
 }
 
 // enrichEnvDocs populates result.EnvDocs from the linked SandboxTemplate's
@@ -289,20 +260,10 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 	if input.TemplateRef.Name == "" {
 		return nil, domain.NewBadRequest("templateRef.name is required")
 	}
-	// Fill in each credential's valueFrom before validation so a caller that
-	// only typed a name and a value still produces a complete, valid spec.
-	if err := resolveInjectedCredentialRefs(input.Overrides, input.Name, input.InjectedCredentialValues); err != nil {
-		return nil, err
-	}
 	if err := validateEnvOverrides(input.Overrides); err != nil {
 		return nil, err
 	}
 	if err := s.validateEnvVolumes(ctx, input.Namespace, input.TemplateRef.Name, input.Overrides); err != nil {
-		return nil, err
-	}
-	// Refuse before writing anything if a credential could not be materialised,
-	// rather than creating the Env and rolling it back below.
-	if err := s.preflightInjectedCredentials(ctx, input.Namespace, input.Name, input.Overrides, input.InjectedCredentialValues); err != nil {
 		return nil, err
 	}
 	mode := input.Mode
@@ -355,14 +316,6 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 			return nil, appErr
 		}
 	}
-	// Same ordering and rollback as above: an Env whose credentials never
-	// materialised would inject nothing while looking configured.
-	if appErr := s.upsertEnvSecretInjection(ctx, env, input.InjectedCredentialValues); appErr != nil {
-		if delErr := s.client.Delete(ctx, env); delErr != nil && !k8serrors.IsNotFound(delErr) {
-			_ = delErr
-		}
-		return nil, appErr
-	}
 	result := envToGen(env)
 	return &result, nil
 }
@@ -372,9 +325,6 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 // methods (AddMember / UpdateAutoscalingGroup / …) so accidental wholesale
 // replacement isn't possible here.
 func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEnvInput) (*gen.SandboxEnv, *domain.AppError) {
-	if err := resolveInjectedCredentialRefs(input.Overrides, input.Name, input.InjectedCredentialValues); err != nil {
-		return nil, err
-	}
 	if err := validateEnvOverrides(input.Overrides); err != nil {
 		return nil, err
 	}
@@ -394,13 +344,6 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 			ctx, input.Namespace, existing.Spec.TemplateRef.Name, input.Overrides); err != nil {
 			return nil, err
 		}
-	}
-	// Check the credentials before the Env is patched. An edit that does not
-	// re-type a credential sends no value (the field is write-only), so without
-	// this the Env would be saved referencing a key that upsertEnvSecretInjection
-	// then refuses to invent — leaving a live Env whose sandboxes fail closed.
-	if err := s.preflightInjectedCredentials(ctx, input.Namespace, input.Name, input.Overrides, input.InjectedCredentialValues); err != nil {
-		return nil, err
 	}
 	key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -428,9 +371,6 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 		if appErr := s.upsertEnvImagePullSecret(ctx, updated, input.ImagePullSecret); appErr != nil {
 			return nil, appErr
 		}
-	}
-	if appErr := s.upsertEnvSecretInjection(ctx, updated, input.InjectedCredentialValues); appErr != nil {
-		return nil, appErr
 	}
 	result := envToGen(updated)
 	return &result, nil
@@ -603,7 +543,7 @@ func envOverridesToGen(o *agentsv1alpha1.EnvOverridesSpec) *gen.EnvOverrides {
 	if o.DefaultIdleTimeout != nil {
 		out.DefaultIdleTimeout = ptr.To(o.DefaultIdleTimeout.Duration.String())
 	}
-	out.NetworkPolicy = networkPolicyToGen(o.NetworkPolicy)
+	out.Gateway = gatewayToGen(o.Gateway)
 	out.UpdateStrategy = updateStrategyToGen(o.UpdateStrategy)
 	out.Volumes = envVolumesToGen(o.Volumes)
 	return out
@@ -647,95 +587,12 @@ func updateStrategyToGen(s *agentsv1alpha1.EnvUpdateStrategy) *gen.EnvUpdateStra
 	return out
 }
 
-// networkPolicyToGen maps the CRD egress policy onto the wire shape (GET).
-func networkPolicyToGen(np *agentsv1alpha1.SandboxNetworkPolicy) *gen.SandboxNetworkPolicy {
-	if np == nil {
+// gatewayToGen maps the Env's egress-gateway switch onto the wire shape (GET).
+func gatewayToGen(g *agentsv1alpha1.GatewaySpec) *gen.GatewaySpec {
+	if g == nil {
 		return nil
 	}
-	g := &gen.SandboxNetworkPolicy{}
-	if np.DisableEgress {
-		g.DisableEgress = ptr.To(true)
-	}
-	if np.AllowPrivateNetworks {
-		g.AllowPrivateNetworks = ptr.To(true)
-	}
-	if np.Egress != nil {
-		e := &gen.EgressRules{}
-		if len(np.Egress.AllowedDomains) > 0 {
-			e.AllowedDomains = ptr.To(np.Egress.AllowedDomains)
-		}
-		if len(np.Egress.AllowedCIDRs) > 0 {
-			e.AllowedCIDRs = ptr.To(np.Egress.AllowedCIDRs)
-		}
-		if len(np.Egress.DeniedCIDRs) > 0 {
-			e.DeniedCIDRs = ptr.To(np.Egress.DeniedCIDRs)
-		}
-		g.Egress = e
-	}
-	g.SecretInjection = secretInjectionToGen(np.SecretInjection)
-	return g
-}
-
-// secretInjectionToGen maps the CRD credential-injection block onto the wire
-// shape (GET). Credential values are never resolved here — the response carries
-// only the Secret reference and the decoy, which are not secrets.
-func secretInjectionToGen(si *agentsv1alpha1.SecretInjection) *gen.SecretInjection {
-	if si == nil {
-		return nil
-	}
-	g := &gen.SecretInjection{}
-	if si.CACertTTL != nil {
-		g.CaCertTTL = ptr.To(si.CACertTTL.Duration.String())
-	}
-	if len(si.Credentials) > 0 {
-		creds := make([]gen.InjectedCredential, 0, len(si.Credentials))
-		for _, c := range si.Credentials {
-			out := gen.InjectedCredential{Name: c.Name}
-			if c.ValueFrom.Name != "" && c.ValueFrom.Key != "" {
-				out.ValueFrom = &gen.SecretKeyRef{Name: c.ValueFrom.Name, Key: c.ValueFrom.Key}
-			}
-			if c.ExposeAs != "" {
-				out.ExposeAs = ptr.To(c.ExposeAs)
-			}
-			if c.Placeholder != "" {
-				out.Placeholder = ptr.To(c.Placeholder)
-			}
-			creds = append(creds, out)
-		}
-		g.Credentials = &creds
-	}
-	if len(si.Rules) > 0 {
-		rules := make([]gen.InjectionRule, 0, len(si.Rules))
-		for _, r := range si.Rules {
-			out := gen.InjectionRule{Host: r.Host}
-			if len(r.Ports) > 0 {
-				out.Ports = ptr.To(r.Ports)
-			}
-			if len(r.Substitute) > 0 {
-				out.Substitute = ptr.To(r.Substitute)
-			}
-			if len(r.PathPrefixes) > 0 {
-				out.PathPrefixes = ptr.To(r.PathPrefixes)
-			}
-			if len(r.Methods) > 0 {
-				out.Methods = ptr.To(r.Methods)
-			}
-			if len(r.Headers) > 0 {
-				hs := make([]gen.HeaderInjection, 0, len(r.Headers))
-				for _, h := range r.Headers {
-					hi := gen.HeaderInjection{Name: h.Name, Value: h.Value}
-					if h.Mode != "" {
-						hi.Mode = ptr.To(gen.HeaderInjectionMode(h.Mode))
-					}
-					hs = append(hs, hi)
-				}
-				out.Headers = &hs
-			}
-			rules = append(rules, out)
-		}
-		g.Rules = &rules
-	}
-	return g
+	return &gen.GatewaySpec{Enabled: ptr.To(g.Enabled)}
 }
 
 // inlineResourcesToGen flattens corev1.ResourceRequirements into the wire
@@ -981,9 +838,6 @@ func envObservedMemberToGen(m agentsv1alpha1.EnvObservedMember) gen.EnvObservedM
 func validateEnvOverrides(o *agentsv1alpha1.EnvOverridesSpec) *domain.AppError {
 	if o == nil {
 		return nil
-	}
-	if err := agentsv1alpha1.ValidateSecretInjection(o.NetworkPolicy); err != nil {
-		return domain.NewBadRequest(fmt.Sprintf("invalid overrides.networkPolicy: %v", err))
 	}
 	// Shape-only checks here; the Template-aware checks (mount-path collisions
 	// with what the Template already mounts, and whether read-only can actually

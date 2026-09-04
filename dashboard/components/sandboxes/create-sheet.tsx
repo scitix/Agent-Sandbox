@@ -26,7 +26,7 @@
 "use client"
 
 import { Fragment, useMemo, useState } from "react"
-import { useForm, useFieldArray, Controller } from "react-hook-form"
+import { useForm, useFieldArray, useWatch, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { useAtomValue } from "jotai"
@@ -58,6 +58,7 @@ import { ApiKeyRequiredNotice } from "@/components/custom/api-key-required-notic
 import { NetworkPolicyFields } from "@/components/custom/network-policy-fields"
 import { useCreateSandbox, createSandboxViaE2B } from "@/lib/queries/sandbox"
 import { pickUsableApiKey } from "@/lib/queries/apikey"
+import { useSecrets, type SecretInfo } from "@/lib/queries/vault"
 import { envsQueryOptions, globalApiKeysQueryOptions } from "@/lib/queries"
 import { clustersAtom, impersonationAtom } from "@/lib/atoms"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -65,6 +66,7 @@ import { useTranslation } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import { SHORT_DURATION_RE } from "@/lib/utils/duration"
 import { buildE2BCreateBody } from "@/lib/utils/e2b-sandbox"
+import { validateNetworkPolicy } from "@/lib/utils/network-policy"
 import type { AgentSandboxEnvSummary } from "@/lib/api/client"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -84,22 +86,38 @@ const keyValueRow = z.object({
   value: z.string().optional(),
 })
 
-const schema = z.object({
-  poolName: z.string().min(1, "sandboxes.form.errors.envRequired"),
-  image: z.string().optional(),
-  startupTimeout: z.string().regex(SHORT_DURATION_RE, "sandboxes.form.errors.duration").optional(),
-  idleTimeout: z.string().regex(SHORT_DURATION_RE, "sandboxes.form.errors.duration").optional(),
-  // E2B-only below. Hidden when a cluster has no E2B gateway, because the native
-  // create endpoint ignores every one of them.
-  envVarRows: z.array(keyValueRow),
-  metadataRows: z.array(keyValueRow),
-  autoPause: z.boolean(),
-  secure: z.boolean(),
-  networkPolicyMode: z.enum(["unrestricted", "disable", "allowlist"]),
-  allowedDomains: z.string().optional(),
-  allowedCIDRs: z.string().optional(),
-  deniedCIDRs: z.string().optional(),
+const injectionRuleRow = z.object({
+  host: z.string().optional(),
+  headerName: z.string().optional(),
+  secretName: z.string().optional(),
 })
+
+const schema = z
+  .object({
+    poolName: z.string().min(1, "sandboxes.form.errors.envRequired"),
+    image: z.string().optional(),
+    startupTimeout: z
+      .string()
+      .regex(SHORT_DURATION_RE, "sandboxes.form.errors.duration")
+      .optional(),
+    idleTimeout: z.string().regex(SHORT_DURATION_RE, "sandboxes.form.errors.duration").optional(),
+    // E2B-only below. Hidden when a cluster has no E2B gateway, because the native
+    // create endpoint ignores every one of them.
+    envVarRows: z.array(keyValueRow),
+    metadataRows: z.array(keyValueRow),
+    autoPause: z.boolean(),
+    secure: z.boolean(),
+    networkPolicyMode: z.enum(["unrestricted", "disable", "allowlist"]),
+    allowedDomains: z.string().optional(),
+    allowedCIDRs: z.string().optional(),
+    deniedCIDRs: z.string().optional(),
+    allowPrivateNetworks: z.boolean(),
+    // Header injection: the gateway sets these on the way out, so the sandbox can
+    // use a credential it never receives. Only a vault entry can be referenced —
+    // a literal is refused server-side, since it would travel in the request body.
+    injectionRuleRows: z.array(injectionRuleRow),
+  })
+  .superRefine(validateNetworkPolicy)
 
 type FormData = z.infer<typeof schema>
 
@@ -116,6 +134,8 @@ const defaultValues: FormData = {
   allowedDomains: undefined,
   allowedCIDRs: undefined,
   deniedCIDRs: undefined,
+  allowPrivateNetworks: false,
+  injectionRuleRows: [],
 }
 
 // ─── Inner form ───────────────────────────────────────────────────────────────
@@ -159,6 +179,14 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
 
   const envVars = useFieldArray({ control, name: "envVarRows" })
   const metadata = useFieldArray({ control, name: "metadataRows" })
+  const injectionRules = useFieldArray({ control, name: "injectionRuleRows" })
+
+  // The vault is the only source a rule may reference, so the picker is the
+  // whole input: there is no free-text path that could smuggle in a literal.
+  const { data: secrets } = useSecrets(
+    { clusterID, apiKey: apiKey?.rawToken ?? "", impersonate: impersonation },
+    e2bEnabled,
+  )
 
   const onSubmit = async (data: FormData) => {
     setCreateTimeout(false)
@@ -334,15 +362,24 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
                       {t("envs.form.section.networkPolicy")}
                     </AccordionTrigger>
                     <AccordionContent className="px-3">
-                      {/* No "allow private networks" switch: E2B's network config
-                          has no field for it, so a per-sandbox request cannot
-                          carry it — declare it on the SandboxEnv instead. */}
-                      <NetworkPolicyFields
-                        control={control}
-                        register={register}
-                        errors={errors}
-                        showPrivateNetworks={false}
-                      />
+                      <div className="flex flex-col gap-5 pb-2">
+                        <NetworkPolicyFields
+                          control={control}
+                          register={register}
+                          errors={errors}
+                        />
+                        <Separator />
+                        <InjectionRulesSection
+                          control={control}
+                          register={register}
+                          rows={injectionRules.fields}
+                          onAppend={() =>
+                            injectionRules.append({ host: "", headerName: "", secretName: "" })
+                          }
+                          onRemove={injectionRules.remove}
+                          secrets={secrets ?? []}
+                        />
+                      </div>
                     </AccordionContent>
                   </AccordionItem>
 
@@ -515,6 +552,121 @@ function KeyValueRows({
         <Plus className="h-3.5 w-3.5" />
         {addLabel}
       </Button>
+    </section>
+  )
+}
+
+/**
+ * Per-sandbox header injection. Each row names a host, a header, and a vault
+ * entry; the gateway sets that header on matching outbound requests with the
+ * entry's value, which the sandbox itself never receives.
+ *
+ * The credential is picked, never typed. The server refuses a literal header
+ * value outright — it would put the credential in the request body and the
+ * access log — so offering a free-text field would only produce a 400 later.
+ */
+function InjectionRulesSection({
+  control,
+  register,
+  rows,
+  onAppend,
+  onRemove,
+  secrets,
+}: {
+  control: ReturnType<typeof useForm<FormData>>["control"]
+  register: ReturnType<typeof useForm<FormData>>["register"]
+  rows: { id: string }[]
+  onAppend: () => void
+  onRemove: (index: number) => void
+  secrets: SecretInfo[]
+}) {
+  const { t } = useTranslation()
+  const mode = useWatch({ control, name: "networkPolicyMode" })
+
+  // Nothing can reach the hosts a rule names when egress is off, and the server
+  // refuses the combination rather than dropping the rules silently. Say so here
+  // instead of letting the create fail.
+  if (mode === "disable") {
+    return (
+      <section className="space-y-2">
+        <FieldLabel>{t("sandboxes.form.rules.title")}</FieldLabel>
+        <p className="text-muted-foreground text-xs">{t("sandboxes.form.rules.egressDisabled")}</p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="space-y-2">
+      <div>
+        <FieldLabel>{t("sandboxes.form.rules.title")}</FieldLabel>
+        <FieldDescription>{t("sandboxes.form.rules.description")}</FieldDescription>
+      </div>
+      {secrets.length === 0 ? (
+        <p className="text-muted-foreground text-xs">{t("sandboxes.form.rules.noSecrets")}</p>
+      ) : (
+        <>
+          {rows.map((row, index) => (
+            <div key={row.id} className="flex items-center gap-2">
+              <Input
+                {...register(`injectionRuleRows.${index}.host` as const)}
+                placeholder={t("sandboxes.form.rules.hostPlaceholder")}
+                className="h-9 font-mono text-sm"
+              />
+              <Input
+                {...register(`injectionRuleRows.${index}.headerName` as const)}
+                placeholder="Authorization"
+                className="h-9 font-mono text-sm"
+              />
+              <Controller
+                control={control}
+                name={`injectionRuleRows.${index}.secretName` as const}
+                render={({ field }) => (
+                  <Combobox
+                    items={secrets.map((s) => s.name)}
+                    value={field.value ?? null}
+                    onValueChange={(v) => field.onChange(v ?? "")}
+                  >
+                    <ComboboxInput
+                      placeholder={t("sandboxes.form.rules.secretPlaceholder")}
+                      className="h-9 font-mono text-sm"
+                    />
+                    <ComboboxContent>
+                      <ComboboxEmpty>{t("sandboxes.form.rules.noSecrets")}</ComboboxEmpty>
+                      <ComboboxList>
+                        {(name: string) => (
+                          <ComboboxItem key={name} value={name}>
+                            {name}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                )}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => onRemove(index)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onAppend}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t("sandboxes.form.rules.add")}
+          </Button>
+          <p className="text-muted-foreground text-xs">{t("sandboxes.form.rules.allowlistNote")}</p>
+        </>
+      )}
     </section>
   )
 }

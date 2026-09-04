@@ -567,7 +567,6 @@ func (s *Server) CreateSandboxEnv(ctx context.Context, req gen.CreateSandboxEnvR
 	if req.Body.Annotations != nil {
 		input.Annotations = *req.Body.Annotations
 	}
-	input.InjectedCredentialValues = injectedCredentialValues(req.Body.Overrides)
 
 	result, appErr := s.env.Create(ctx, input)
 	if appErr != nil {
@@ -599,7 +598,6 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 		}
 		input.Overrides = ov
 		input.ImagePullSecret = req.Body.Overrides.ImagePullSecret
-		input.InjectedCredentialValues = injectedCredentialValues(req.Body.Overrides)
 	}
 	if input.Overrides == nil && input.ImagePullSecret == nil {
 		return gen.UpdateSandboxEnv400JSONResponse{Error: "at least one editable field must be provided"}, nil
@@ -661,13 +659,7 @@ func envOverridesFromGen(o *gen.EnvOverrides) (*agentsv1alpha1.EnvOverridesSpec,
 		}
 		out.DefaultIdleTimeout = &metav1.Duration{Duration: d}
 	}
-	out.NetworkPolicy = networkPolicyFromGen(o.NetworkPolicy)
-	// Accept a header value still written in the retired doubled-curly syntax
-	// and store it in the current one. The console round-trips whatever it read,
-	// so without this an Env created before the change could not be saved again
-	// without hand-editing every rule — and the people who own these objects
-	// edit them in the console, not with kubectl.
-	agentsv1alpha1.NormalizeInjectionPlaceholders(out.NetworkPolicy)
+	out.Gateway = gatewayFromGen(o.Gateway)
 	out.UpdateStrategy = updateStrategyFromGen(o.UpdateStrategy)
 	out.Volumes = envVolumesFromGen(o.Volumes)
 	return out, nil
@@ -715,115 +707,12 @@ func updateStrategyFromGen(s *gen.EnvUpdateStrategy) *agentsv1alpha1.EnvUpdateSt
 	return out
 }
 
-// networkPolicyFromGen maps the wire egress policy onto the CRD spec.
-func networkPolicyFromGen(g *gen.SandboxNetworkPolicy) *agentsv1alpha1.SandboxNetworkPolicy {
+// gatewayFromGen maps the wire egress-gateway switch onto the CRD spec.
+func gatewayFromGen(g *gen.GatewaySpec) *agentsv1alpha1.GatewaySpec {
 	if g == nil {
 		return nil
 	}
-	np := &agentsv1alpha1.SandboxNetworkPolicy{}
-	if g.DisableEgress != nil {
-		np.DisableEgress = *g.DisableEgress
-	}
-	if g.AllowPrivateNetworks != nil {
-		np.AllowPrivateNetworks = *g.AllowPrivateNetworks
-	}
-	if g.Egress != nil {
-		e := &agentsv1alpha1.EgressRules{}
-		if g.Egress.AllowedDomains != nil {
-			e.AllowedDomains = *g.Egress.AllowedDomains
-		}
-		if g.Egress.AllowedCIDRs != nil {
-			e.AllowedCIDRs = *g.Egress.AllowedCIDRs
-		}
-		if g.Egress.DeniedCIDRs != nil {
-			e.DeniedCIDRs = *g.Egress.DeniedCIDRs
-		}
-		np.Egress = e
-	}
-	np.SecretInjection = secretInjectionFromGen(g.SecretInjection)
-	return np
-}
-
-// injectedCredentialValues pulls the write-only credential values out of a wire
-// overrides block, keyed by credential name. They are carried to the service
-// separately so they never touch the CRD type — which is serialised into a Pod
-// annotation and returned by the API.
-func injectedCredentialValues(o *gen.EnvOverrides) map[string]string {
-	if o == nil || o.NetworkPolicy == nil || o.NetworkPolicy.SecretInjection == nil {
-		return nil
-	}
-	creds := o.NetworkPolicy.SecretInjection.Credentials
-	if creds == nil {
-		return nil
-	}
-	out := map[string]string{}
-	for _, c := range *creds {
-		if c.Value != nil && *c.Value != "" {
-			out[c.Name] = *c.Value
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// secretInjectionFromGen maps the wire credential-injection block onto the CRD
-// spec. value is extracted separately (see injectedCredentialValues) and
-// valueDigest is read-only, so neither is carried here.
-func secretInjectionFromGen(g *gen.SecretInjection) *agentsv1alpha1.SecretInjection {
-	if g == nil {
-		return nil
-	}
-	si := &agentsv1alpha1.SecretInjection{}
-	if g.CaCertTTL != nil && *g.CaCertTTL != "" {
-		if d, err := time.ParseDuration(*g.CaCertTTL); err == nil {
-			si.CACertTTL = &metav1.Duration{Duration: d}
-		}
-	}
-	if g.Credentials != nil {
-		for _, c := range *g.Credentials {
-			cred := agentsv1alpha1.InjectedCredential{Name: c.Name}
-			if c.ValueFrom != nil {
-				cred.ValueFrom = agentsv1alpha1.SecretKeyRef{Name: c.ValueFrom.Name, Key: c.ValueFrom.Key}
-			}
-			if c.ExposeAs != nil {
-				cred.ExposeAs = *c.ExposeAs
-			}
-			if c.Placeholder != nil {
-				cred.Placeholder = *c.Placeholder
-			}
-			si.Credentials = append(si.Credentials, cred)
-		}
-	}
-	if g.Rules != nil {
-		for _, r := range *g.Rules {
-			rule := agentsv1alpha1.InjectionRule{Host: r.Host}
-			if r.Ports != nil {
-				rule.Ports = *r.Ports
-			}
-			if r.Substitute != nil {
-				rule.Substitute = *r.Substitute
-			}
-			if r.PathPrefixes != nil {
-				rule.PathPrefixes = *r.PathPrefixes
-			}
-			if r.Methods != nil {
-				rule.Methods = *r.Methods
-			}
-			if r.Headers != nil {
-				for _, h := range *r.Headers {
-					hi := agentsv1alpha1.HeaderInjection{Name: h.Name, Value: h.Value}
-					if h.Mode != nil {
-						hi.Mode = agentsv1alpha1.HeaderInjectionMode(*h.Mode)
-					}
-					rule.Headers = append(rule.Headers, hi)
-				}
-			}
-			si.Rules = append(si.Rules, rule)
-		}
-	}
-	return si
+	return &agentsv1alpha1.GatewaySpec{Enabled: g.Enabled != nil && *g.Enabled}
 }
 
 // inlineResourcesFromGen projects the wire ResourceRequirements (Quantity

@@ -44,11 +44,6 @@ type Secrets struct {
 
 	// Rules is the per-host injection table.
 	Rules []InjectRule `json:"rules,omitempty"`
-
-	// Substitutions maps a placeholder handed to the sandbox to the real
-	// credential. A placeholder is only ever swapped on a host whose rule
-	// lists it, so the real value cannot be steered to another destination.
-	Substitutions map[string]string `json:"substitutions,omitempty"`
 }
 
 // InjectRule is the per-host injection action.
@@ -61,10 +56,6 @@ type InjectRule struct {
 
 	// Headers to inject.
 	Headers []InjectHeader `json:"headers,omitempty"`
-
-	// SubstitutePlaceholders lists the placeholders that may be swapped for
-	// their real value on this host.
-	SubstitutePlaceholders []string `json:"substitutePlaceholders,omitempty"`
 
 	// PathPrefixes / Methods narrow the rule. Empty means no narrowing.
 	PathPrefixes []string `json:"pathPrefixes,omitempty"`
@@ -159,21 +150,18 @@ func (r *InjectRule) coversRequest(method, path string) bool {
 // ApplyOutcome reports what a single Apply did, for metrics. It deliberately
 // carries no header values or credential material.
 type ApplyOutcome struct {
-	Skipped      bool // rule matched the host but not this request's path/method
-	HeadersSet   int
-	Substituted  int
-	SubstitutedK []string // placeholder-bearing header names, for debug logging
+	Skipped    bool // rule matched the host but not this request's path/method
+	HeadersSet int
 }
 
-// Apply rewrites req's headers according to the rule: placeholders are
-// substituted first, then declared headers are injected. The order matters and
-// is deliberate — an Override header wins over whatever substitution produced,
-// while IfAbsent leaves it alone, which is what makes "placeholder first,
-// header as fallback" expressible.
+// Apply writes each matching rule's declared headers onto req.
 //
-// Substitution only touches header *values*, never the body or the query
-// string: scanning a body would mean buffering the whole request, and a
-// credential in a query string ends up in the upstream's access log.
+// Only header *values* are ever rewritten, never the body or the query string:
+// scanning a body would mean buffering the whole request, and a credential in a
+// query string ends up in the upstream's access log. A tool that insists on
+// reading a key of its own gets an ordinary environment variable holding
+// whatever the caller chose to put there — the header rule replaces what
+// actually goes on the wire.
 func (s *Secrets) Apply(req *http.Request, rules []*InjectRule) ApplyOutcome {
 	var out ApplyOutcome
 	if len(rules) == 0 {
@@ -193,28 +181,8 @@ func (s *Secrets) Apply(req *http.Request, rules []*InjectRule) ApplyOutcome {
 	return out
 }
 
-// applyRule performs one rule's substitutions and header writes.
+// applyRule performs one rule's header writes.
 func (s *Secrets) applyRule(req *http.Request, r *InjectRule, out *ApplyOutcome) {
-	if len(r.SubstitutePlaceholders) > 0 && len(s.Substitutions) > 0 {
-		for name, values := range req.Header {
-			for i, v := range values {
-				nv := v
-				for _, ph := range r.SubstitutePlaceholders {
-					real, ok := s.Substitutions[ph]
-					if !ok || ph == "" || !strings.Contains(nv, ph) {
-						continue
-					}
-					nv = strings.ReplaceAll(nv, ph, real)
-					out.Substituted++
-				}
-				if nv != v {
-					values[i] = nv
-					out.SubstitutedK = append(out.SubstitutedK, name)
-				}
-			}
-		}
-	}
-
 	for i := range r.Headers {
 		h := &r.Headers[i]
 		if h.Name == "" {

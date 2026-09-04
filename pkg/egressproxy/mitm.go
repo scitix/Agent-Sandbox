@@ -140,8 +140,7 @@ func (p *Proxy) pumpRequests(clientStream, upstream net.Conn, secrets *Secrets, 
 		outcome := secrets.Apply(req, rules)
 		p.log.Info("egress inject", "host", hostname, "port", port,
 			"method", req.Method, "path", req.URL.Path,
-			"headersSet", outcome.HeadersSet, "substituted", outcome.Substituted,
-			"skipped", outcome.Skipped)
+			"headersSet", outcome.HeadersSet, "skipped", outcome.Skipped)
 
 		if err := req.Write(upstream); err != nil {
 			p.log.Error("egress inject: forwarding request failed", "host", hostname, "err", err)

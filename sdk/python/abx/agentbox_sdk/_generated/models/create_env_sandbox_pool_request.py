@@ -82,8 +82,8 @@ class CreateEnvSandboxPoolRequest:
             annotations (CreateEnvSandboxPoolRequestAnnotations | Unset): Annotations stamped onto this member's
                 SandboxPool.
             update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
-                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
-                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
+                Pod identity (Template edit, image / gateway override) changes. Rollout mode is always Recreate: stale idle Pods
+                are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
      """
 
     instance_type: str | Unset = UNSET
@@ -102,10 +102,10 @@ class CreateEnvSandboxPoolRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations
-        from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels
-        from ..models.env_update_strategy import EnvUpdateStrategy
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations # noqa: PLC0415
+        from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels # noqa: PLC0415
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
+        from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
         instance_type = self.instance_type
 
         multiplier = self.multiplier
@@ -162,10 +162,10 @@ class CreateEnvSandboxPoolRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations
-        from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels
-        from ..models.env_update_strategy import EnvUpdateStrategy
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations # noqa: PLC0415
+        from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels # noqa: PLC0415
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
+        from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
         d = dict(src_dict)
         instance_type = d.pop("instanceType", UNSET)
 

@@ -20,18 +20,8 @@ import (
 	"strings"
 )
 
-// PlaceholderPrefix marks a generated decoy value. Fixed placeholders supplied
-// by the user need not carry it.
-const PlaceholderPrefix = "agbx_ph_"
-
-// MinPlaceholderLen is the shortest accepted decoy. Short decoys risk colliding
-// with ordinary header content, which would substitute a real credential into
-// a request that never asked for one.
-const MinPlaceholderLen = 16
-
 var (
 	credNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`)
-	envNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	hostnameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
 	// templateRe matches a credential reference in a header value. The syntax is
 	// the E2B one — ${e2b.secrets.<name>} — so a rule written against the E2B
@@ -40,21 +30,20 @@ var (
 	headerNamRe = regexp.MustCompile(`^[A-Za-z0-9!#$%&'*+\-.^_` + "`" + `|~]+$`)
 )
 
-// ValidateSecretInjection checks a SandboxNetworkPolicy's injection block for
-// the mistakes that would otherwise fail silently or leak a credential. It is
-// called both when a SandboxEnv is written (so the author sees the error) and
-// at claim time (so a hand-edited CRD cannot slip through).
+// ValidateSecretInjection checks the credential-injection block resolved for a
+// claim against the egress policy resolved for the same claim, for the mistakes
+// that would otherwise fail silently or leak a credential.
 //
-// np may be nil or carry no injection block, in which case there is nothing to
-// check.
-func ValidateSecretInjection(np *SandboxNetworkPolicy) error {
-	if np == nil || np.SecretInjection == nil {
+// Both arguments come from one create request, so the two can genuinely
+// contradict each other: filtering that excludes a host the rules name leaves
+// the rule configured and dead. Either may be nil.
+func ValidateSecretInjection(np *SandboxNetworkPolicy, si *SecretInjection) error {
+	if si == nil {
 		return nil
 	}
-	si := np.SecretInjection
 
-	if np.DisableEgress {
-		return fmt.Errorf("secretInjection cannot be combined with disableEgress: " +
+	if np != nil && np.DisableEgress {
+		return fmt.Errorf("credential injection cannot be combined with disabled egress: " +
 			"nothing can reach the hosts the rules name")
 	}
 
@@ -62,28 +51,25 @@ func ValidateSecretInjection(np *SandboxNetworkPolicy) error {
 	if err != nil {
 		return err
 	}
-	if err := validatePlaceholderOverlap(si.Credentials); err != nil {
-		return err
-	}
 	if len(si.Rules) == 0 {
-		return fmt.Errorf("secretInjection declares no rules; nothing would be injected")
+		return fmt.Errorf("credential injection declares no rules; nothing would be injected")
 	}
 	referenced, err := validateRules(si.Rules, creds)
 	if err != nil {
 		return err
 	}
-	for name, c := range creds {
-		if !referenced[name] && c.ExposeAs == "" {
-			return fmt.Errorf("credential %q is declared but never used by a rule and not exposed", name)
+	for name := range creds {
+		if !referenced[name] {
+			return fmt.Errorf("credential %q is declared but never used by a rule", name)
 		}
 	}
 
 	// A host that is filtered out never reaches the proxy's L7 path, so the
 	// rule would look configured and do nothing.
-	if np.Egress != nil {
+	if np != nil && np.Egress != nil {
 		for i := range si.Rules {
 			if !domainAllowed(si.Rules[i].Host, np.Egress.AllowedDomains) {
-				return fmt.Errorf("rule host %q is not permitted by egress.allowedDomains; "+
+				return fmt.Errorf("rule host %q is not permitted by the request's allowed domains; "+
 					"add it there or the traffic is blocked before injection can run", si.Rules[i].Host)
 			}
 		}
@@ -105,43 +91,9 @@ func validateCredentials(in []InjectedCredential) (map[string]*InjectedCredentia
 		if c.ValueFrom.Name == "" || c.ValueFrom.Key == "" {
 			return nil, fmt.Errorf("credential %q needs valueFrom.name and valueFrom.key", c.Name)
 		}
-		if c.ExposeAs != "" && !envNameRe.MatchString(c.ExposeAs) {
-			return nil, fmt.Errorf("credential %q: exposeAs %q is not a valid environment variable name", c.Name, c.ExposeAs)
-		}
-		if c.Placeholder != "" {
-			if len(c.Placeholder) < MinPlaceholderLen {
-				return nil, fmt.Errorf("credential %q: placeholder must be at least %d characters so it cannot collide with ordinary header content",
-					c.Name, MinPlaceholderLen)
-			}
-			if c.ExposeAs == "" {
-				return nil, fmt.Errorf("credential %q sets a placeholder but no exposeAs, so the sandbox would never receive it", c.Name)
-			}
-		}
 		creds[c.Name] = c
 	}
 	return creds, nil
-}
-
-// validatePlaceholderOverlap rejects decoys that contain one another. An
-// overlap means a request meant to carry credential A could leave with B's
-// value spliced into it.
-func validatePlaceholderOverlap(creds []InjectedCredential) error {
-	for i := range creds {
-		for j := range creds {
-			if i == j {
-				continue
-			}
-			a, b := creds[i].Placeholder, creds[j].Placeholder
-			if a == "" || b == "" {
-				continue
-			}
-			if strings.Contains(a, b) {
-				return fmt.Errorf("credential %q's placeholder contains credential %q's; overlapping placeholders substitute into each other",
-					creds[i].Name, creds[j].Name)
-			}
-		}
-	}
-	return nil
 }
 
 // validateRules checks every rule and returns the set of credentials they use.
@@ -152,22 +104,11 @@ func validateRules(rules []InjectionRule, creds map[string]*InjectedCredential) 
 		if err := validateRuleHost(r); err != nil {
 			return nil, err
 		}
-		if len(r.Headers) == 0 && len(r.Substitute) == 0 {
-			return nil, fmt.Errorf("rule %q declares neither headers nor substitute; it would do nothing", r.Host)
+		if len(r.Headers) == 0 {
+			return nil, fmt.Errorf("rule %q declares no headers; it would do nothing", r.Host)
 		}
 		if err := validateRuleHeaders(r, creds, referenced); err != nil {
 			return nil, err
-		}
-		for _, name := range r.Substitute {
-			c, ok := creds[name]
-			if !ok {
-				return nil, fmt.Errorf("rule %q substitutes undeclared credential %q", r.Host, name)
-			}
-			if c.ExposeAs == "" {
-				return nil, fmt.Errorf("rule %q substitutes credential %q, but it has no exposeAs, "+
-					"so the sandbox never receives a placeholder to substitute", r.Host, name)
-			}
-			referenced[name] = true
 		}
 	}
 	return referenced, nil
@@ -203,7 +144,7 @@ func validateRuleHeaders(r *InjectionRule, creds map[string]*InjectedCredential,
 		names := templateRe.FindAllStringSubmatch(h.Value, -1)
 		if len(names) == 0 {
 			return fmt.Errorf("rule %q header %q: value references no credential — use "+
-				"${e2b.secrets.<name>}; a literal value here would be a plaintext secret in the CRD",
+				"${e2b.secrets.<name>}; a literal value would put the credential in the request body",
 				r.Host, h.Name)
 		}
 		for _, m := range names {
@@ -235,40 +176,4 @@ func domainAllowed(host string, allowed []string) bool {
 		}
 	}
 	return false
-}
-
-// legacyTemplateRe matches the placeholder syntax used before the E2B form was
-// adopted: a credential name wrapped in a doubled pair of curly braces.
-//
-// It survives only so stored objects written under the old syntax can be
-// rewritten. Nothing accepts it as a reference any more: validation rejects it,
-// and expansion leaves it alone rather than half-resolving it.
-var legacyTemplateRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}`)
-
-// NormalizeInjectionPlaceholders rewrites legacy credential references in a
-// policy's header values to the current syntax, and reports whether anything
-// changed.
-//
-// Migration has to happen without anyone editing a CR by hand: the people who
-// own these objects reach them through the console, not kubectl, and an Env
-// left on the old syntax would fail validation the moment its next sandbox is
-// claimed. So both writers call this — the API before it stores an update, and
-// the controller when it observes an object that predates the change — and the
-// rewrite is idempotent, so calling it on already-current values does nothing.
-func NormalizeInjectionPlaceholders(np *SandboxNetworkPolicy) bool {
-	if np == nil || np.SecretInjection == nil {
-		return false
-	}
-	changed := false
-	for i := range np.SecretInjection.Rules {
-		headers := np.SecretInjection.Rules[i].Headers
-		for j := range headers {
-			rewritten := legacyTemplateRe.ReplaceAllString(headers[j].Value, "${e2b.secrets.$1}")
-			if rewritten != headers[j].Value {
-				headers[j].Value = rewritten
-				changed = true
-			}
-		}
-	}
-	return changed
 }

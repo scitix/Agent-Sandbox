@@ -176,18 +176,6 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		log.V(3).Info("Env contains foreign cluster segments; local Reconciler will only touch the local segment")
 	}
 
-	// Rewrite credential placeholders written under the retired syntax before
-	// anything reads them. An Env stored that way would fail validation on its
-	// next claim, and the people who own these objects reach them through the
-	// console rather than kubectl — so the migration has to happen here, once,
-	// on its own. The rewrite is idempotent, so this is a no-op forever after.
-	if migrated, err := r.normalizePlaceholders(ctx, env); err != nil {
-		return ctrl.Result{}, err
-	} else if migrated {
-		log.Info("migrated credential placeholders to the ${e2b.secrets.NAME} syntax")
-		return ctrl.Result{Requeue: true}, nil
-	}
-
 	// Keep autoscaling groups in lockstep with the ScalingGroups members
 	// reference: create any missing group, garbage-collect any orphan. Runs
 	// before Pool materialisation so status aggregation sees the converged
@@ -214,17 +202,8 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Guarantee the Env's own credential Secret exists (existence only — its
-	// Data belongs to the API write path) and resolve every declared credential
-	// so syncStatus can report an unusable one on the Env rather than leaving it
-	// to surface as sandboxes that fail to start.
-	credCond, err := r.reconcileCredentialSecret(ctx, env)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// Aggregate status from member Pools (writes status.clusters[local]).
-	if err := r.syncStatus(ctx, env, credCond); err != nil {
+	if err := r.syncStatus(ctx, env); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -307,20 +286,4 @@ func (r *SandboxEnvReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	return builder.Complete(r)
-}
-
-// normalizePlaceholders rewrites legacy credential references on the Env and
-// patches it when anything changed.
-func (r *SandboxEnvReconciler) normalizePlaceholders(ctx context.Context, env *agentsv1alpha1.SandboxEnv) (bool, error) {
-	if env.Spec.Overrides == nil || env.Spec.Overrides.NetworkPolicy == nil {
-		return false, nil
-	}
-	base := env.DeepCopy()
-	if !agentsv1alpha1.NormalizeInjectionPlaceholders(env.Spec.Overrides.NetworkPolicy) {
-		return false, nil
-	}
-	if err := r.Patch(ctx, env, client.MergeFrom(base)); err != nil {
-		return false, err
-	}
-	return true, nil
 }

@@ -23,10 +23,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/egressproxy"
 )
 
-func poolWith(np *agentsv1alpha1.SandboxNetworkPolicy) *agentsv1alpha1.SandboxPool {
-	return &agentsv1alpha1.SandboxPool{Spec: agentsv1alpha1.SandboxPoolSpec{NetworkPolicy: np}}
-}
-
 func decode(t *testing.T, s string) egressproxy.Policy {
 	t.Helper()
 	var p egressproxy.Policy
@@ -36,41 +32,17 @@ func decode(t *testing.T, s string) egressproxy.Policy {
 	return p
 }
 
-func TestBuildEgressPolicyAnnotation_NoPolicyPool(t *testing.T) {
-	// Pool without a policy + no override => no annotation, no error.
-	v, ok, err := buildEgressPolicyAnnotation(nil, poolWith(nil), "s1")
-	if err != nil || ok || v != "" {
-		t.Fatalf("expected no annotation; got v=%q ok=%v err=%v", v, ok, err)
+func TestBuildEgressPolicyAnnotation_EncodesWhatTheRequestAsked(t *testing.T) {
+	np := &agentsv1alpha1.SandboxNetworkPolicy{
+		Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"pypi.org"}},
 	}
-	// Pool without a policy + a per-sandbox override => rejected (fail-closed,
-	// no sidecar to enforce it).
-	_, _, err = buildEgressPolicyAnnotation(&agentsv1alpha1.SandboxNetworkPolicy{}, poolWith(nil), "s1")
-	if err == nil {
-		t.Fatal("override on a non-enabled pool must be rejected")
-	}
-}
-
-func TestBuildEgressPolicyAnnotation_EnvDefault(t *testing.T) {
-	env := &agentsv1alpha1.SandboxNetworkPolicy{Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"pypi.org"}}}
-	v, ok, err := buildEgressPolicyAnnotation(nil, poolWith(env), "s1")
+	v, ok, err := buildEgressPolicyAnnotation(np, gatewayPool(), "s1")
 	if err != nil || !ok {
-		t.Fatalf("env default should produce annotation: ok=%v err=%v", ok, err)
+		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 	p := decode(t, v)
 	if !p.Enforce || p.SandboxID != "s1" || len(p.AllowedDomains) != 1 || p.AllowedDomains[0] != "pypi.org" {
 		t.Errorf("unexpected policy: %+v", p)
-	}
-}
-
-func TestBuildEgressPolicyAnnotation_OverrideWins(t *testing.T) {
-	env := &agentsv1alpha1.SandboxNetworkPolicy{Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"pypi.org"}}}
-	override := &agentsv1alpha1.SandboxNetworkPolicy{DisableEgress: true}
-	v, ok, err := buildEgressPolicyAnnotation(override, poolWith(env), "s1")
-	if err != nil || !ok {
-		t.Fatalf("ok=%v err=%v", ok, err)
-	}
-	if p := decode(t, v); !p.DisableEgress {
-		t.Errorf("override (DisableEgress) must win over env default: %+v", p)
 	}
 }
 
