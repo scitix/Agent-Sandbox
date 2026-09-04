@@ -15,6 +15,7 @@
 package syncmgr
 
 import (
+	"maps"
 	"strings"
 	"time"
 
@@ -97,6 +98,9 @@ func clusterConfigToProto(cfg cluster.ClusterConfig) *syncv1.ClusterConfig {
 				Host: r.Host,
 				Type: r.Type,
 			})
+		}
+		if c.Logs != nil && len(c.Logs.Filters) > 0 {
+			entry.Logs = &syncv1.LogsConfig{Filters: maps.Clone(c.Logs.Filters)}
 		}
 		out.Clusters = append(out.Clusters, entry)
 	}

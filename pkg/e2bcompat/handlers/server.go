@@ -43,6 +43,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
+	"github.com/scitix/agent-sandbox/pkg/utils/logclient"
 	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
@@ -66,6 +67,11 @@ type Services struct {
 	// means no cluster scoping, which is only correct for a backend that serves
 	// a single cluster.
 	MetricsSelector func() string
+	// CentralLogs reads finished sandboxes' output. Nil limits logs to live
+	// sandboxes.
+	CentralLogs *logclient.Client
+	// LogFilters scopes central-log queries to this cluster.
+	LogFilters func() map[string]string
 	// Forwarder enables cross-cluster forwarding via E2B API.
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	// When Forwarder is nil, cross-cluster requests will be rejected.
@@ -97,9 +103,15 @@ type Server struct {
 	// string because the value arrives on the cluster-config stream and can
 	// change while the process runs.
 	metricsSelector func() string
-	k8sClient       client.Client
-	gatewayDomain   string
-	forwarder       *service.CrossClusterForwarder
+	// centralLogs reads a finished sandbox's output, whose Pod no longer
+	// exists. Nil means only live sandboxes can be asked for logs.
+	centralLogs *logclient.Client
+	// logFilters scopes a central-log query to this cluster; same liveness
+	// reasoning as metricsSelector.
+	logFilters    func() map[string]string
+	k8sClient     client.Client
+	gatewayDomain string
+	forwarder     *service.CrossClusterForwarder
 }
 
 // NewServer creates a new E2B handler Server.
@@ -112,6 +124,8 @@ func NewServer(svcs Services, k8sClient client.Client, gatewayDomain string) *Se
 		localClusterID:  svcs.LocalClusterID,
 		metrics:         svcs.Metrics,
 		metricsSelector: svcs.MetricsSelector,
+		centralLogs:     svcs.CentralLogs,
+		logFilters:      svcs.LogFilters,
 		k8sClient:       k8sClient,
 		gatewayDomain:   gatewayDomain,
 		forwarder:       svcs.Forwarder,

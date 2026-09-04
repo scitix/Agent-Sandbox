@@ -236,3 +236,39 @@ func domainAllowed(host string, allowed []string) bool {
 	}
 	return false
 }
+
+// legacyTemplateRe matches the placeholder syntax used before the E2B form was
+// adopted: a credential name wrapped in a doubled pair of curly braces.
+//
+// It survives only so stored objects written under the old syntax can be
+// rewritten. Nothing accepts it as a reference any more: validation rejects it,
+// and expansion leaves it alone rather than half-resolving it.
+var legacyTemplateRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}`)
+
+// NormalizeInjectionPlaceholders rewrites legacy credential references in a
+// policy's header values to the current syntax, and reports whether anything
+// changed.
+//
+// Migration has to happen without anyone editing a CR by hand: the people who
+// own these objects reach them through the console, not kubectl, and an Env
+// left on the old syntax would fail validation the moment its next sandbox is
+// claimed. So both writers call this — the API before it stores an update, and
+// the controller when it observes an object that predates the change — and the
+// rewrite is idempotent, so calling it on already-current values does nothing.
+func NormalizeInjectionPlaceholders(np *SandboxNetworkPolicy) bool {
+	if np == nil || np.SecretInjection == nil {
+		return false
+	}
+	changed := false
+	for i := range np.SecretInjection.Rules {
+		headers := np.SecretInjection.Rules[i].Headers
+		for j := range headers {
+			rewritten := legacyTemplateRe.ReplaceAllString(headers[j].Value, "${e2b.secrets.$1}")
+			if rewritten != headers[j].Value {
+				headers[j].Value = rewritten
+				changed = true
+			}
+		}
+	}
+	return changed
+}

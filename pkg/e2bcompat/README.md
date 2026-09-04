@@ -82,15 +82,26 @@ surface live in the AgentBox native API or console.
 `agentbox_e2b_unsupported_total{operation,category}` counts what callers
 actually reach for, so the next batch of work is chosen from evidence.
 
-## Metrics backend
+## Observability backends
 
-The metrics endpoints read container metrics (cAdvisor series) from a
-Prometheus-compatible backend, scoped to the Pod backing the sandbox. Configure
-the operator with `--prometheus-url` (and `PROMETHEUS_TOKEN` from a Secret for
-the credential); the per-cluster label matcher comes from the cluster config's
-`selector`. Without it the endpoints answer 501 naming the missing
-configuration rather than an empty series, which would read as "this sandbox is
-idle".
+**Metrics** read container metrics (cAdvisor series) from a Prometheus-compatible
+backend, scoped to the Pod backing the sandbox. Configure the operator with
+`--prometheus-url` and `PROMETHEUS_TOKEN`; the per-cluster label matcher comes
+from the cluster config's `selector`.
+
+**Logs** come from two places, chosen by whether the sandbox still exists. A live
+sandbox's lines are read from its Pod through the Kubernetes log API. Once the
+sandbox is released the Pod is recycled and that source is empty, so a finished
+run is served from the central log service (`--log-service-url`,
+`LOG_SERVICE_TOKEN`, and `--log-service-project` where the gateway requires a
+scope); the per-cluster filters come from the cluster config's `logs.filters`.
+
+Either backend left unconfigured makes its endpoints answer 501 naming the
+missing configuration, rather than an empty result — which would read as "this
+sandbox is idle" or "this sandbox printed nothing".
+
+Credentials come from the environment rather than flags so they do not appear in
+the Pod spec or in `ps` output; the worker chart moves them into its Secret.
 
 ## Layout
 

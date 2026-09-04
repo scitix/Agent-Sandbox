@@ -1,0 +1,115 @@
+diff --git a/packages/envd/main.go b/packages/envd/main.go
+index 7bb0df1..ac4bb53 100644
+--- a/packages/envd/main.go
++++ b/packages/envd/main.go
+@@ -10,6 +10,7 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	"connectrpc.com/authn"
+@@ -27,6 +28,8 @@ import (
+ 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+ 	filesystemRpc "github.com/e2b-dev/infra/packages/envd/internal/services/filesystem"
+ 	processRpc "github.com/e2b-dev/infra/packages/envd/internal/services/process"
++	"github.com/e2b-dev/infra/packages/envd/internal/services/spec/filesystem/filesystemconnect"
++	"github.com/e2b-dev/infra/packages/envd/internal/services/spec/process/processconnect"
+ 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
+ 	"github.com/e2b-dev/infra/packages/envd/pkg"
+ )
+@@ -58,7 +61,9 @@ var (
+ 	commitSHA string
+ 
+ 	isNotFC bool
+-	port    int64
++	// awaitInit gates the process and filesystem RPCs until the first /init.
++	awaitInit bool
++	port      int64
+ 
+ 	versionFlag bool
+ 	commitFlag  bool
+@@ -79,6 +84,16 @@ func parseFlags() {
+ 		false,
+ 		"run outside of Firecracker (skips MMDS poll and HTTP log exporter)",
+ 	)
++	flag.BoolVar(
++		&awaitInit,
++		"await-init",
++		false,
++		"Reject process and filesystem RPCs until the first /init has been received. "+
++			"Under an orchestrator that delivers environment variables, a trust-store "+
++			"certificate, or egress credentials through /init, a command accepted before "+
++			"that call runs in a sandbox that is not yet the one the caller asked for. "+
++			"Leaves /health unaffected, so readiness still reports the daemon itself.",
++	)
+ 
+ 	flag.BoolVar(
+ 		&versionFlag,
+@@ -187,6 +202,7 @@ func run() error {
+ 	defaults := &execcontext.Defaults{
+ 		User:    defaultUser,
+ 		EnvVars: utils.NewEnvVars(),
++		IsNotFC: isNotFC,
+ 	}
+ 	isFCBoolStr := strconv.FormatBool(!isNotFC)
+ 	defaults.EnvVars.Store("E2B_SANDBOX", isFCBoolStr)
+@@ -307,6 +323,9 @@ func run() error {
+ 		})
+ 	}
+ 	handler := api.HandlerFromMux(service, m)
++	if awaitInit {
++		handler = gateUntilInitialized(handler, service)
++	}
+ 	middleware := authn.NewMiddleware(permissions.AuthenticateUsername)
+ 
+ 	s := &http.Server{
+@@ -523,3 +542,47 @@ func createCgroupManager() (m cgroups.Manager) {
+ 
+ 	return mgr
+ }
++
++// rpcPathPrefixes are the Connect service routes gated by -await-init: the ones
++// that run code or touch the filesystem. Everything else — /health, /init
++// itself, port forwarding — stays reachable, or the gate could never be lifted
++// and readiness would deadlock against it.
++var rpcPathPrefixes = []string{
++	"/" + processconnect.ProcessName + "/",
++	"/" + filesystemconnect.FilesystemName + "/",
++}
++
++// gateUntilInitialized refuses the RPCs above until /init has been received.
++//
++// The orchestrator delivers a sandbox's environment variables, its injected
++// trust-store certificate and its egress credentials through /init, and it does
++// so after the daemon starts listening. A command accepted in that window runs
++// in a sandbox that is not yet the one the caller asked for: an empty
++// environment, an untrusted CA, an egress path that has not been armed. Failing
++// it with a precondition error is recoverable; running it and returning a wrong
++// answer is not.
++//
++// Connect maps a JSON error body with this code onto FAILED_PRECONDITION, which
++// the SDKs surface as a distinct error rather than a transport failure.
++func gateUntilInitialized(next http.Handler, service *api.API) http.Handler {
++	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if service.Initialized() {
++			next.ServeHTTP(w, r)
++			return
++		}
++		gated := false
++		for _, prefix := range rpcPathPrefixes {
++			if strings.HasPrefix(r.URL.Path, prefix) {
++				gated = true
++				break
++			}
++		}
++		if !gated {
++			next.ServeHTTP(w, r)
++			return
++		}
++		w.Header().Set("Content-Type", "application/json")
++		w.WriteHeader(http.StatusServiceUnavailable)
++		fmt.Fprint(w, `{"code":"failed_precondition","message":"sandbox is not initialized yet"}`)
++	})
++}

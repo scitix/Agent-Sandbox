@@ -300,6 +300,12 @@ message GatewayConfig {
   map<string, string> data_headers = 7;
 }
 
+// LogsConfig scopes central-log-service queries to one cluster. Without it a
+// query by pod name would match same-named pods on other clusters.
+message LogsConfig {
+  map<string, string> filters = 1;
+}
+
 message ClusterEntry {
   string id = 1;
   string name = 2;
@@ -311,6 +317,7 @@ message ClusterEntry {
   string visible = 6;
   GatewayConfig gateway = 7;
   repeated RegistryEntry registries = 8;
+  LogsConfig logs = 9;
 }
 
 message ClusterConfig {

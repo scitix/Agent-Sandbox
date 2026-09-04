@@ -202,11 +202,38 @@ func TestMergeInitHook_CreatesHookWhenNoneExists(t *testing.T) {
 	}
 }
 
-func TestMergeInitHook_NothingToDoIsNoop(t *testing.T) {
+// With nothing to deliver, the caller's own hooks are left alone but an empty
+// /init is still appended: envd can be gated on having received one, and a
+// sandbox that had nothing to send would otherwise never lift that gate.
+func TestMergeInitHook_StillSendsInitWithNothingToDeliver(t *testing.T) {
 	hooks := []Action{{Exec: &ExecAction{Command: "true"}}}
 	out := mergeInitHook(hooks, "", nil)
-	if len(out) != 1 || out[0].Exec == nil {
-		t.Fatalf("unexpected mutation: %+v", out)
+	if len(out) != 2 {
+		t.Fatalf("expected the caller's hook plus an /init, got %+v", out)
+	}
+	if out[0].Exec == nil || out[0].Exec.Command != "true" {
+		t.Fatalf("the caller's own hook must be preserved and come first: %+v", out[0])
+	}
+	if out[1].HTTPPost == nil || out[1].HTTPPost.Path != "/init" {
+		t.Fatalf("expected an appended /init, got %+v", out[1])
+	}
+	if len(out[1].HTTPPost.Body) != 0 {
+		t.Fatalf("nothing to deliver means an empty body, got %+v", out[1].HTTPPost.Body)
+	}
+}
+
+// An /init the caller already declared is the carrier; a second one would
+// overwrite the first's effect with an empty body.
+func TestMergeInitHook_DoesNotDuplicateAnExistingInit(t *testing.T) {
+	hooks := []Action{{HTTPPost: &HTTPPostAction{
+		Port: envdInitPort, Path: "/init", Body: map[string]any{"envVars": map[string]string{"A": "1"}},
+	}}}
+	out := mergeInitHook(hooks, "", nil)
+	if len(out) != 1 {
+		t.Fatalf("expected the existing /init to be reused, got %+v", out)
+	}
+	if out[0].HTTPPost.Body["envVars"] == nil {
+		t.Fatal("the existing body must survive")
 	}
 }
 

@@ -16,8 +16,10 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
@@ -105,6 +107,13 @@ func (q logQuery) matches(entry e2bgen.SandboxLogEntry) bool {
 }
 
 // fetchLogEntries loads a sandbox's log lines and applies the query.
+//
+// Two sources, chosen by whether the sandbox still exists. A live sandbox's
+// lines are in its Pod, read straight from the Kubernetes log API. Once the
+// sandbox is released the Pod is recycled and that source is empty — but the
+// lines were shipped to the central log service, which is the only place a
+// finished run can still be examined. Answering "no logs" for a sandbox that
+// ended two minutes ago would be the least useful true statement available.
 func (s *Server) fetchLogEntries(ctx context.Context, sandboxID string, q logQuery) ([]e2bgen.SandboxLogEntry, *apidomain.AppError) {
 	auth := authFrom(ctx)
 
@@ -116,26 +125,40 @@ func (s *Server) fetchLogEntries(ctx context.Context, sandboxID string, q logQue
 		lines = defaultLogLimit
 	}
 
+	var raw []logSourceEntry
 	result, appErr := s.sandbox.GetLogs(ctx, auth.Namespace, sandboxID, gen.GetSandboxLogsParams{
 		Lines: &lines,
 	})
-	if appErr != nil {
+	switch {
+	case appErr == nil:
+		raw = make([]logSourceEntry, 0, len(result.Entries))
+		for i := range result.Entries {
+			e := logSourceEntry{Message: result.Entries[i].Log, Container: result.Entries[i].Container, Source: "stdout"}
+			if ts := result.Entries[i].Timestamp; ts != nil {
+				e.Timestamp = *ts
+			}
+			raw = append(raw, e)
+		}
+	case appErr.Code == apidomain.ErrCodeNotFound:
+		central, centralErr := s.fetchCentralLogEntries(ctx, sandboxID, lines)
+		if centralErr != nil {
+			return nil, centralErr
+		}
+		raw = central
+	default:
 		return nil, appErr
 	}
 
-	entries := make([]e2bgen.SandboxLogEntry, 0, len(result.Entries))
-	for i := range result.Entries {
-		src := result.Entries[i]
+	entries := make([]e2bgen.SandboxLogEntry, 0, len(raw))
+	for _, src := range raw {
 		entry := e2bgen.SandboxLogEntry{
-			Message: src.Log,
-			Level:   parseLogLevel(src.Log),
+			Timestamp: src.Timestamp,
+			Message:   src.Message,
+			Level:     parseLogLevel(src.Message),
 			Fields: map[string]string{
 				"container": src.Container,
-				"source":    "stdout",
+				"source":    src.Source,
 			},
-		}
-		if src.Timestamp != nil {
-			entry.Timestamp = *src.Timestamp
 		}
 		if !q.matches(entry) {
 			continue
@@ -236,4 +259,69 @@ func (s *Server) GetV2SandboxesSandboxIDLogs(ctx context.Context, req e2bgen.Get
 			N500JSONResponse: e2bgen.N500JSONResponse(errRespAppErr(ctx, appErr))}, nil
 	}
 	return e2bgen.GetV2SandboxesSandboxIDLogs200JSONResponse{Logs: entries}, nil
+}
+
+// logSourceEntry is one line as either source produces it, before the query
+// filters and the E2B projection are applied.
+type logSourceEntry struct {
+	Timestamp time.Time
+	Message   string
+	Container string
+	Source    string
+}
+
+// fetchCentralLogEntries reads a finished sandbox's lines from the central log
+// service, using the sandbox's own record for the pod name and the window it
+// ran in.
+func (s *Server) fetchCentralLogEntries(ctx context.Context, sandboxID string, limit int) ([]logSourceEntry, *apidomain.AppError) {
+	if s.centralLogs == nil || !s.centralLogs.Ready() {
+		// Nothing else can answer, and the sandbox is genuinely gone.
+		return nil, apidomain.NewNotFound(fmt.Sprintf(
+			"sandbox %s has ended and its pod was recycled; historical logs are not available "+
+				"because this deployment has no central log service configured", sandboxID))
+	}
+
+	auth := authFrom(ctx)
+	// Get, not GetLive: the whole point here is a sandbox that has finished, and
+	// its record is what carries the pod name and the window it ran in.
+	sb, appErr := s.sandbox.Get(ctx, auth.Namespace, sandboxID)
+	if appErr != nil {
+		return nil, appErr
+	}
+	if sb.PodName == "" {
+		return nil, apidomain.NewNotFound(fmt.Sprintf("sandbox %s has no recorded pod", sandboxID))
+	}
+
+	// Widen the window by a second at each end: the record's timestamps and the
+	// log shipper's clocks are not the same clock, and a line written in the
+	// last moment before teardown is exactly the one worth reading.
+	start := sb.ClaimedAt.Add(-time.Second)
+	end := time.Now()
+	if sb.TerminatedAt != nil {
+		end = sb.TerminatedAt.Add(time.Second)
+	}
+
+	entries, err := s.centralLogs.Query(ctx, sb.PodName, s.centralLogFilters(), start, end, limit)
+	if err != nil {
+		return nil, apidomain.NewInternal("central log service query failed", err)
+	}
+
+	out := make([]logSourceEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, logSourceEntry{
+			Timestamp: e.Timestamp,
+			Message:   e.Log,
+			Container: e.ContainerName,
+			Source:    "central",
+		})
+	}
+	return out, nil
+}
+
+// centralLogFilters scopes a central-log query to this cluster.
+func (s *Server) centralLogFilters() map[string]string {
+	if s.logFilters == nil {
+		return nil
+	}
+	return s.logFilters()
 }

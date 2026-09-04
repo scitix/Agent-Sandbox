@@ -1947,6 +1947,52 @@ func (x *GatewayConfig) GetDataHeaders() map[string]string {
 	return nil
 }
 
+// LogsConfig scopes central-log-service queries to one cluster. Without it a
+// query by pod name would match same-named pods on other clusters.
+type LogsConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Filters       map[string]string      `protobuf:"bytes,1,rep,name=filters,proto3" json:"filters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogsConfig) Reset() {
+	*x = LogsConfig{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogsConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogsConfig) ProtoMessage() {}
+
+func (x *LogsConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogsConfig.ProtoReflect.Descriptor instead.
+func (*LogsConfig) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *LogsConfig) GetFilters() map[string]string {
+	if x != nil {
+		return x.Filters
+	}
+	return nil
+}
+
 type ClusterEntry struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1959,13 +2005,14 @@ type ClusterEntry struct {
 	Visible       string            `protobuf:"bytes,6,opt,name=visible,proto3" json:"visible,omitempty"`
 	Gateway       *GatewayConfig    `protobuf:"bytes,7,opt,name=gateway,proto3" json:"gateway,omitempty"`
 	Registries    []*RegistryEntry  `protobuf:"bytes,8,rep,name=registries,proto3" json:"registries,omitempty"`
+	Logs          *LogsConfig       `protobuf:"bytes,9,opt,name=logs,proto3" json:"logs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ClusterEntry) Reset() {
 	*x = ClusterEntry{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[32]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1977,7 +2024,7 @@ func (x *ClusterEntry) String() string {
 func (*ClusterEntry) ProtoMessage() {}
 
 func (x *ClusterEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[32]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1990,7 +2037,7 @@ func (x *ClusterEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterEntry.ProtoReflect.Descriptor instead.
 func (*ClusterEntry) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{32}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ClusterEntry) GetId() string {
@@ -2049,6 +2096,13 @@ func (x *ClusterEntry) GetRegistries() []*RegistryEntry {
 	return nil
 }
 
+func (x *ClusterEntry) GetLogs() *LogsConfig {
+	if x != nil {
+		return x.Logs
+	}
+	return nil
+}
+
 type ClusterConfig struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Clusters      []*ClusterEntry        `protobuf:"bytes,1,rep,name=clusters,proto3" json:"clusters,omitempty"`
@@ -2059,7 +2113,7 @@ type ClusterConfig struct {
 
 func (x *ClusterConfig) Reset() {
 	*x = ClusterConfig{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[33]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2071,7 +2125,7 @@ func (x *ClusterConfig) String() string {
 func (*ClusterConfig) ProtoMessage() {}
 
 func (x *ClusterConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[33]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2084,7 +2138,7 @@ func (x *ClusterConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterConfig.ProtoReflect.Descriptor instead.
 func (*ClusterConfig) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{33}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ClusterConfig) GetClusters() []*ClusterEntry {
@@ -2113,7 +2167,7 @@ type ClusterConfigEvent struct {
 
 func (x *ClusterConfigEvent) Reset() {
 	*x = ClusterConfigEvent{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[34]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2125,7 +2179,7 @@ func (x *ClusterConfigEvent) String() string {
 func (*ClusterConfigEvent) ProtoMessage() {}
 
 func (x *ClusterConfigEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[34]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2138,7 +2192,7 @@ func (x *ClusterConfigEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterConfigEvent.ProtoReflect.Descriptor instead.
 func (*ClusterConfigEvent) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{34}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ClusterConfigEvent) GetSnapshot() *ClusterConfig {
@@ -2156,7 +2210,7 @@ type WatchClusterConfigRequest struct {
 
 func (x *WatchClusterConfigRequest) Reset() {
 	*x = WatchClusterConfigRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[35]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2168,7 +2222,7 @@ func (x *WatchClusterConfigRequest) String() string {
 func (*WatchClusterConfigRequest) ProtoMessage() {}
 
 func (x *WatchClusterConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[35]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2181,7 +2235,7 @@ func (x *WatchClusterConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchClusterConfigRequest.ProtoReflect.Descriptor instead.
 func (*WatchClusterConfigRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{35}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{36}
 }
 
 // EnvCapacity is one cluster's runtime capacity for a single member pool of a
@@ -2220,7 +2274,7 @@ type EnvCapacity struct {
 
 func (x *EnvCapacity) Reset() {
 	*x = EnvCapacity{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[36]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2232,7 +2286,7 @@ func (x *EnvCapacity) String() string {
 func (*EnvCapacity) ProtoMessage() {}
 
 func (x *EnvCapacity) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[36]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2245,7 +2299,7 @@ func (x *EnvCapacity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnvCapacity.ProtoReflect.Descriptor instead.
 func (*EnvCapacity) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{36}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *EnvCapacity) GetClusterId() string {
@@ -2348,7 +2402,7 @@ type ReportFederationRequest struct {
 
 func (x *ReportFederationRequest) Reset() {
 	*x = ReportFederationRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[37]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2360,7 +2414,7 @@ func (x *ReportFederationRequest) String() string {
 func (*ReportFederationRequest) ProtoMessage() {}
 
 func (x *ReportFederationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[37]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2373,7 +2427,7 @@ func (x *ReportFederationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportFederationRequest.ProtoReflect.Descriptor instead.
 func (*ReportFederationRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{37}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ReportFederationRequest) GetItems() []*EnvCapacity {
@@ -2391,7 +2445,7 @@ type ReportFederationResponse struct {
 
 func (x *ReportFederationResponse) Reset() {
 	*x = ReportFederationResponse{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[38]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2403,7 +2457,7 @@ func (x *ReportFederationResponse) String() string {
 func (*ReportFederationResponse) ProtoMessage() {}
 
 func (x *ReportFederationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[38]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2416,7 +2470,7 @@ func (x *ReportFederationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportFederationResponse.ProtoReflect.Descriptor instead.
 func (*ReportFederationResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{38}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{39}
 }
 
 type FederationBroadcast struct {
@@ -2428,7 +2482,7 @@ type FederationBroadcast struct {
 
 func (x *FederationBroadcast) Reset() {
 	*x = FederationBroadcast{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[39]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2440,7 +2494,7 @@ func (x *FederationBroadcast) String() string {
 func (*FederationBroadcast) ProtoMessage() {}
 
 func (x *FederationBroadcast) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[39]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2453,7 +2507,7 @@ func (x *FederationBroadcast) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FederationBroadcast.ProtoReflect.Descriptor instead.
 func (*FederationBroadcast) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{39}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *FederationBroadcast) GetItems() []*EnvCapacity {
@@ -2471,7 +2525,7 @@ type WatchFederationRequest struct {
 
 func (x *WatchFederationRequest) Reset() {
 	*x = WatchFederationRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[40]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2483,7 +2537,7 @@ func (x *WatchFederationRequest) String() string {
 func (*WatchFederationRequest) ProtoMessage() {}
 
 func (x *WatchFederationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[40]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2496,7 +2550,7 @@ func (x *WatchFederationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchFederationRequest.ProtoReflect.Descriptor instead.
 func (*WatchFederationRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{40}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{41}
 }
 
 var File_sandbox_sync_v1_sync_proto protoreflect.FileDescriptor
@@ -2645,7 +2699,13 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
 	"\x10DataHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf6\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8c\x01\n" +
+	"\n" +
+	"LogsConfig\x12B\n" +
+	"\afilters\x18\x01 \x03(\v2(.sandbox.sync.v1.LogsConfig.FiltersEntryR\afilters\x1a:\n" +
+	"\fFiltersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa7\x03\n" +
 	"\fClusterEntry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
@@ -2656,7 +2716,8 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\agateway\x18\a \x01(\v2\x1e.sandbox.sync.v1.GatewayConfigR\agateway\x12>\n" +
 	"\n" +
 	"registries\x18\b \x03(\v2\x1e.sandbox.sync.v1.RegistryEntryR\n" +
-	"registries\x1a:\n" +
+	"registries\x12/\n" +
+	"\x04logs\x18\t \x01(\v2\x1b.sandbox.sync.v1.LogsConfigR\x04logs\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +
@@ -2720,7 +2781,7 @@ func file_sandbox_sync_v1_sync_proto_rawDescGZIP() []byte {
 	return file_sandbox_sync_v1_sync_proto_rawDescData
 }
 
-var file_sandbox_sync_v1_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
+var file_sandbox_sync_v1_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_sandbox_sync_v1_sync_proto_goTypes = []any{
 	(*APIKeyMetadata)(nil),            // 0: sandbox.sync.v1.APIKeyMetadata
 	(*CreateKeyRequest)(nil),          // 1: sandbox.sync.v1.CreateKeyRequest
@@ -2754,34 +2815,36 @@ var file_sandbox_sync_v1_sync_proto_goTypes = []any{
 	(*HostAlias)(nil),                 // 29: sandbox.sync.v1.HostAlias
 	(*RegistryEntry)(nil),             // 30: sandbox.sync.v1.RegistryEntry
 	(*GatewayConfig)(nil),             // 31: sandbox.sync.v1.GatewayConfig
-	(*ClusterEntry)(nil),              // 32: sandbox.sync.v1.ClusterEntry
-	(*ClusterConfig)(nil),             // 33: sandbox.sync.v1.ClusterConfig
-	(*ClusterConfigEvent)(nil),        // 34: sandbox.sync.v1.ClusterConfigEvent
-	(*WatchClusterConfigRequest)(nil), // 35: sandbox.sync.v1.WatchClusterConfigRequest
-	(*EnvCapacity)(nil),               // 36: sandbox.sync.v1.EnvCapacity
-	(*ReportFederationRequest)(nil),   // 37: sandbox.sync.v1.ReportFederationRequest
-	(*ReportFederationResponse)(nil),  // 38: sandbox.sync.v1.ReportFederationResponse
-	(*FederationBroadcast)(nil),       // 39: sandbox.sync.v1.FederationBroadcast
-	(*WatchFederationRequest)(nil),    // 40: sandbox.sync.v1.WatchFederationRequest
-	nil,                               // 41: sandbox.sync.v1.GatewayConfig.HeadersEntry
-	nil,                               // 42: sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
-	nil,                               // 43: sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
-	nil,                               // 44: sandbox.sync.v1.GatewayConfig.DataHeadersEntry
-	nil,                               // 45: sandbox.sync.v1.ClusterEntry.HeadersEntry
-	(*timestamppb.Timestamp)(nil),     // 46: google.protobuf.Timestamp
+	(*LogsConfig)(nil),                // 32: sandbox.sync.v1.LogsConfig
+	(*ClusterEntry)(nil),              // 33: sandbox.sync.v1.ClusterEntry
+	(*ClusterConfig)(nil),             // 34: sandbox.sync.v1.ClusterConfig
+	(*ClusterConfigEvent)(nil),        // 35: sandbox.sync.v1.ClusterConfigEvent
+	(*WatchClusterConfigRequest)(nil), // 36: sandbox.sync.v1.WatchClusterConfigRequest
+	(*EnvCapacity)(nil),               // 37: sandbox.sync.v1.EnvCapacity
+	(*ReportFederationRequest)(nil),   // 38: sandbox.sync.v1.ReportFederationRequest
+	(*ReportFederationResponse)(nil),  // 39: sandbox.sync.v1.ReportFederationResponse
+	(*FederationBroadcast)(nil),       // 40: sandbox.sync.v1.FederationBroadcast
+	(*WatchFederationRequest)(nil),    // 41: sandbox.sync.v1.WatchFederationRequest
+	nil,                               // 42: sandbox.sync.v1.GatewayConfig.HeadersEntry
+	nil,                               // 43: sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
+	nil,                               // 44: sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
+	nil,                               // 45: sandbox.sync.v1.GatewayConfig.DataHeadersEntry
+	nil,                               // 46: sandbox.sync.v1.LogsConfig.FiltersEntry
+	nil,                               // 47: sandbox.sync.v1.ClusterEntry.HeadersEntry
+	(*timestamppb.Timestamp)(nil),     // 48: google.protobuf.Timestamp
 }
 var file_sandbox_sync_v1_sync_proto_depIdxs = []int32{
-	46, // 0: sandbox.sync.v1.APIKeyMetadata.issued_at:type_name -> google.protobuf.Timestamp
-	46, // 1: sandbox.sync.v1.APIKeyMetadata.expires_at:type_name -> google.protobuf.Timestamp
-	46, // 2: sandbox.sync.v1.CreateKeyRequest.expires_at:type_name -> google.protobuf.Timestamp
-	46, // 3: sandbox.sync.v1.CreateKeyRequest.issued_at:type_name -> google.protobuf.Timestamp
-	46, // 4: sandbox.sync.v1.CreateKeyResponse.issued_at:type_name -> google.protobuf.Timestamp
+	48, // 0: sandbox.sync.v1.APIKeyMetadata.issued_at:type_name -> google.protobuf.Timestamp
+	48, // 1: sandbox.sync.v1.APIKeyMetadata.expires_at:type_name -> google.protobuf.Timestamp
+	48, // 2: sandbox.sync.v1.CreateKeyRequest.expires_at:type_name -> google.protobuf.Timestamp
+	48, // 3: sandbox.sync.v1.CreateKeyRequest.issued_at:type_name -> google.protobuf.Timestamp
+	48, // 4: sandbox.sync.v1.CreateKeyResponse.issued_at:type_name -> google.protobuf.Timestamp
 	6,  // 5: sandbox.sync.v1.KeyEvent.snapshot:type_name -> sandbox.sync.v1.KeySnapshot
 	0,  // 6: sandbox.sync.v1.KeyEvent.upsert:type_name -> sandbox.sync.v1.APIKeyMetadata
 	7,  // 7: sandbox.sync.v1.KeyEvent.delete:type_name -> sandbox.sync.v1.KeyDelete
 	0,  // 8: sandbox.sync.v1.KeySnapshot.items:type_name -> sandbox.sync.v1.APIKeyMetadata
-	46, // 9: sandbox.sync.v1.VaultEntry.created_at:type_name -> google.protobuf.Timestamp
-	46, // 10: sandbox.sync.v1.VaultEntry.updated_at:type_name -> google.protobuf.Timestamp
+	48, // 9: sandbox.sync.v1.VaultEntry.created_at:type_name -> google.protobuf.Timestamp
+	48, // 10: sandbox.sync.v1.VaultEntry.updated_at:type_name -> google.protobuf.Timestamp
 	9,  // 11: sandbox.sync.v1.PutVaultEntryRequest.entry:type_name -> sandbox.sync.v1.VaultEntry
 	9,  // 12: sandbox.sync.v1.PutVaultEntryResponse.entry:type_name -> sandbox.sync.v1.VaultEntry
 	9,  // 13: sandbox.sync.v1.VaultSnapshot.items:type_name -> sandbox.sync.v1.VaultEntry
@@ -2791,49 +2854,51 @@ var file_sandbox_sync_v1_sync_proto_depIdxs = []int32{
 	26, // 17: sandbox.sync.v1.TemplateEvent.snapshot:type_name -> sandbox.sync.v1.TemplateSnapshot
 	24, // 18: sandbox.sync.v1.TemplateEvent.upsert:type_name -> sandbox.sync.v1.TemplateUpsert
 	25, // 19: sandbox.sync.v1.TemplateEvent.delete:type_name -> sandbox.sync.v1.TemplateDelete
-	41, // 20: sandbox.sync.v1.GatewayConfig.headers:type_name -> sandbox.sync.v1.GatewayConfig.HeadersEntry
-	42, // 21: sandbox.sync.v1.GatewayConfig.native_headers:type_name -> sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
-	43, // 22: sandbox.sync.v1.GatewayConfig.e2b_headers:type_name -> sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
-	44, // 23: sandbox.sync.v1.GatewayConfig.data_headers:type_name -> sandbox.sync.v1.GatewayConfig.DataHeadersEntry
-	45, // 24: sandbox.sync.v1.ClusterEntry.headers:type_name -> sandbox.sync.v1.ClusterEntry.HeadersEntry
-	31, // 25: sandbox.sync.v1.ClusterEntry.gateway:type_name -> sandbox.sync.v1.GatewayConfig
-	30, // 26: sandbox.sync.v1.ClusterEntry.registries:type_name -> sandbox.sync.v1.RegistryEntry
-	32, // 27: sandbox.sync.v1.ClusterConfig.clusters:type_name -> sandbox.sync.v1.ClusterEntry
-	29, // 28: sandbox.sync.v1.ClusterConfig.host_aliases:type_name -> sandbox.sync.v1.HostAlias
-	33, // 29: sandbox.sync.v1.ClusterConfigEvent.snapshot:type_name -> sandbox.sync.v1.ClusterConfig
-	36, // 30: sandbox.sync.v1.ReportFederationRequest.items:type_name -> sandbox.sync.v1.EnvCapacity
-	36, // 31: sandbox.sync.v1.FederationBroadcast.items:type_name -> sandbox.sync.v1.EnvCapacity
-	1,  // 32: sandbox.sync.v1.APIKeyService.CreateKey:input_type -> sandbox.sync.v1.CreateKeyRequest
-	3,  // 33: sandbox.sync.v1.APIKeyService.DeleteKey:input_type -> sandbox.sync.v1.DeleteKeyRequest
-	8,  // 34: sandbox.sync.v1.APIKeyService.WatchKeys:input_type -> sandbox.sync.v1.WatchKeysRequest
-	10, // 35: sandbox.sync.v1.VaultService.PutEntry:input_type -> sandbox.sync.v1.PutVaultEntryRequest
-	12, // 36: sandbox.sync.v1.VaultService.DeleteEntry:input_type -> sandbox.sync.v1.DeleteVaultEntryRequest
-	17, // 37: sandbox.sync.v1.VaultService.WatchEntries:input_type -> sandbox.sync.v1.WatchVaultRequest
-	18, // 38: sandbox.sync.v1.TemplateService.CreateTemplate:input_type -> sandbox.sync.v1.CreateTemplateRequest
-	20, // 39: sandbox.sync.v1.TemplateService.UpdateTemplate:input_type -> sandbox.sync.v1.UpdateTemplateRequest
-	22, // 40: sandbox.sync.v1.TemplateService.DeleteTemplate:input_type -> sandbox.sync.v1.DeleteTemplateRequest
-	28, // 41: sandbox.sync.v1.TemplateService.WatchTemplates:input_type -> sandbox.sync.v1.WatchTemplatesRequest
-	35, // 42: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:input_type -> sandbox.sync.v1.WatchClusterConfigRequest
-	37, // 43: sandbox.sync.v1.FederationService.ReportFederation:input_type -> sandbox.sync.v1.ReportFederationRequest
-	40, // 44: sandbox.sync.v1.FederationService.WatchFederation:input_type -> sandbox.sync.v1.WatchFederationRequest
-	2,  // 45: sandbox.sync.v1.APIKeyService.CreateKey:output_type -> sandbox.sync.v1.CreateKeyResponse
-	4,  // 46: sandbox.sync.v1.APIKeyService.DeleteKey:output_type -> sandbox.sync.v1.DeleteKeyResponse
-	5,  // 47: sandbox.sync.v1.APIKeyService.WatchKeys:output_type -> sandbox.sync.v1.KeyEvent
-	11, // 48: sandbox.sync.v1.VaultService.PutEntry:output_type -> sandbox.sync.v1.PutVaultEntryResponse
-	13, // 49: sandbox.sync.v1.VaultService.DeleteEntry:output_type -> sandbox.sync.v1.DeleteVaultEntryResponse
-	16, // 50: sandbox.sync.v1.VaultService.WatchEntries:output_type -> sandbox.sync.v1.VaultEvent
-	19, // 51: sandbox.sync.v1.TemplateService.CreateTemplate:output_type -> sandbox.sync.v1.CreateTemplateResponse
-	21, // 52: sandbox.sync.v1.TemplateService.UpdateTemplate:output_type -> sandbox.sync.v1.UpdateTemplateResponse
-	23, // 53: sandbox.sync.v1.TemplateService.DeleteTemplate:output_type -> sandbox.sync.v1.DeleteTemplateResponse
-	27, // 54: sandbox.sync.v1.TemplateService.WatchTemplates:output_type -> sandbox.sync.v1.TemplateEvent
-	34, // 55: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:output_type -> sandbox.sync.v1.ClusterConfigEvent
-	38, // 56: sandbox.sync.v1.FederationService.ReportFederation:output_type -> sandbox.sync.v1.ReportFederationResponse
-	39, // 57: sandbox.sync.v1.FederationService.WatchFederation:output_type -> sandbox.sync.v1.FederationBroadcast
-	45, // [45:58] is the sub-list for method output_type
-	32, // [32:45] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	42, // 20: sandbox.sync.v1.GatewayConfig.headers:type_name -> sandbox.sync.v1.GatewayConfig.HeadersEntry
+	43, // 21: sandbox.sync.v1.GatewayConfig.native_headers:type_name -> sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
+	44, // 22: sandbox.sync.v1.GatewayConfig.e2b_headers:type_name -> sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
+	45, // 23: sandbox.sync.v1.GatewayConfig.data_headers:type_name -> sandbox.sync.v1.GatewayConfig.DataHeadersEntry
+	46, // 24: sandbox.sync.v1.LogsConfig.filters:type_name -> sandbox.sync.v1.LogsConfig.FiltersEntry
+	47, // 25: sandbox.sync.v1.ClusterEntry.headers:type_name -> sandbox.sync.v1.ClusterEntry.HeadersEntry
+	31, // 26: sandbox.sync.v1.ClusterEntry.gateway:type_name -> sandbox.sync.v1.GatewayConfig
+	30, // 27: sandbox.sync.v1.ClusterEntry.registries:type_name -> sandbox.sync.v1.RegistryEntry
+	32, // 28: sandbox.sync.v1.ClusterEntry.logs:type_name -> sandbox.sync.v1.LogsConfig
+	33, // 29: sandbox.sync.v1.ClusterConfig.clusters:type_name -> sandbox.sync.v1.ClusterEntry
+	29, // 30: sandbox.sync.v1.ClusterConfig.host_aliases:type_name -> sandbox.sync.v1.HostAlias
+	34, // 31: sandbox.sync.v1.ClusterConfigEvent.snapshot:type_name -> sandbox.sync.v1.ClusterConfig
+	37, // 32: sandbox.sync.v1.ReportFederationRequest.items:type_name -> sandbox.sync.v1.EnvCapacity
+	37, // 33: sandbox.sync.v1.FederationBroadcast.items:type_name -> sandbox.sync.v1.EnvCapacity
+	1,  // 34: sandbox.sync.v1.APIKeyService.CreateKey:input_type -> sandbox.sync.v1.CreateKeyRequest
+	3,  // 35: sandbox.sync.v1.APIKeyService.DeleteKey:input_type -> sandbox.sync.v1.DeleteKeyRequest
+	8,  // 36: sandbox.sync.v1.APIKeyService.WatchKeys:input_type -> sandbox.sync.v1.WatchKeysRequest
+	10, // 37: sandbox.sync.v1.VaultService.PutEntry:input_type -> sandbox.sync.v1.PutVaultEntryRequest
+	12, // 38: sandbox.sync.v1.VaultService.DeleteEntry:input_type -> sandbox.sync.v1.DeleteVaultEntryRequest
+	17, // 39: sandbox.sync.v1.VaultService.WatchEntries:input_type -> sandbox.sync.v1.WatchVaultRequest
+	18, // 40: sandbox.sync.v1.TemplateService.CreateTemplate:input_type -> sandbox.sync.v1.CreateTemplateRequest
+	20, // 41: sandbox.sync.v1.TemplateService.UpdateTemplate:input_type -> sandbox.sync.v1.UpdateTemplateRequest
+	22, // 42: sandbox.sync.v1.TemplateService.DeleteTemplate:input_type -> sandbox.sync.v1.DeleteTemplateRequest
+	28, // 43: sandbox.sync.v1.TemplateService.WatchTemplates:input_type -> sandbox.sync.v1.WatchTemplatesRequest
+	36, // 44: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:input_type -> sandbox.sync.v1.WatchClusterConfigRequest
+	38, // 45: sandbox.sync.v1.FederationService.ReportFederation:input_type -> sandbox.sync.v1.ReportFederationRequest
+	41, // 46: sandbox.sync.v1.FederationService.WatchFederation:input_type -> sandbox.sync.v1.WatchFederationRequest
+	2,  // 47: sandbox.sync.v1.APIKeyService.CreateKey:output_type -> sandbox.sync.v1.CreateKeyResponse
+	4,  // 48: sandbox.sync.v1.APIKeyService.DeleteKey:output_type -> sandbox.sync.v1.DeleteKeyResponse
+	5,  // 49: sandbox.sync.v1.APIKeyService.WatchKeys:output_type -> sandbox.sync.v1.KeyEvent
+	11, // 50: sandbox.sync.v1.VaultService.PutEntry:output_type -> sandbox.sync.v1.PutVaultEntryResponse
+	13, // 51: sandbox.sync.v1.VaultService.DeleteEntry:output_type -> sandbox.sync.v1.DeleteVaultEntryResponse
+	16, // 52: sandbox.sync.v1.VaultService.WatchEntries:output_type -> sandbox.sync.v1.VaultEvent
+	19, // 53: sandbox.sync.v1.TemplateService.CreateTemplate:output_type -> sandbox.sync.v1.CreateTemplateResponse
+	21, // 54: sandbox.sync.v1.TemplateService.UpdateTemplate:output_type -> sandbox.sync.v1.UpdateTemplateResponse
+	23, // 55: sandbox.sync.v1.TemplateService.DeleteTemplate:output_type -> sandbox.sync.v1.DeleteTemplateResponse
+	27, // 56: sandbox.sync.v1.TemplateService.WatchTemplates:output_type -> sandbox.sync.v1.TemplateEvent
+	35, // 57: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:output_type -> sandbox.sync.v1.ClusterConfigEvent
+	39, // 58: sandbox.sync.v1.FederationService.ReportFederation:output_type -> sandbox.sync.v1.ReportFederationResponse
+	40, // 59: sandbox.sync.v1.FederationService.WatchFederation:output_type -> sandbox.sync.v1.FederationBroadcast
+	47, // [47:60] is the sub-list for method output_type
+	34, // [34:47] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_sandbox_sync_v1_sync_proto_init() }
@@ -2862,7 +2927,7 @@ func file_sandbox_sync_v1_sync_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_sync_v1_sync_proto_rawDesc), len(file_sandbox_sync_v1_sync_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   46,
+			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   5,
 		},

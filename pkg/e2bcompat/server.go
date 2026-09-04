@@ -36,6 +36,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/metrics"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
+	"github.com/scitix/agent-sandbox/pkg/utils/logclient"
 	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
@@ -58,6 +59,9 @@ type Config struct {
 	// cluster's series in a shared metrics backend, e.g. `cluster="foo"`.
 	// Evaluated per query, because the cluster config it comes from is live.
 	MetricsSelector func() string
+	// LogFilters returns the central-log-service filters scoping queries to
+	// this cluster (region / cluster labels). Evaluated per query.
+	LogFilters func() map[string]string
 }
 
 // Server is the E2B-compatible HTTP API server.
@@ -75,7 +79,7 @@ func New(cfg Config, k8sClient client.Client,
 	keyStore apikey.KeyStore, adminKeyMgr *apikey.AdminKeyManager, iamSvc service.IAMService,
 	sandboxSvc service.SandboxService, forwarder *service.CrossClusterForwarder,
 	fedRegistry *federation.Registry, metricsClient *promclient.Client,
-	vaultSvc service.VaultService) *Server {
+	vaultSvc service.VaultService, centralLogs *logclient.Client) *Server {
 
 	gin.SetMode(gin.ReleaseMode)
 	binding.EnableDecoderDisallowUnknownFields = false // E2B SDK may send extra fields
@@ -98,6 +102,8 @@ func New(cfg Config, k8sClient client.Client,
 		LocalClusterID:  cfg.LocalClusterID,
 		Metrics:         metricsClient,
 		MetricsSelector: cfg.MetricsSelector,
+		CentralLogs:     centralLogs,
+		LogFilters:      cfg.LogFilters,
 	}
 
 	authMw := middleware.NewE2BAuthMiddleware(adminKeyMgr, keyStore, iamSvc)

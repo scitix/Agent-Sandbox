@@ -20,24 +20,25 @@ import { Fragment } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
+  BarChart3,
   Bot,
   Box,
   Boxes,
-  Layers,
-  Settings,
-  KeyRound,
-  Github,
-  FileText,
-  Sun,
-  Moon,
-  PanelLeftClose,
   ExternalLink,
-  BarChart3,
-  LogOut,
-  ReceiptTextIcon,
-  LayoutDashboard,
+  FileText,
+  Github,
   HardDrive,
+  KeyRound,
+  Layers,
+  LayoutDashboard,
+  LogOut,
+  Moon,
   Package,
+  PanelLeftClose,
+  ReceiptTextIcon,
+  Settings,
+  Sun,
+  Vault,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useAtomValue } from "jotai"
@@ -96,7 +97,12 @@ export const navSectionDefs: NavSectionDef[] = [
   },
   {
     groupKey: "nav.agent",
-    items: [{ labelKey: "nav.managedAgents", page: "managed-agents", icon: Bot }],
+    items: [
+      { labelKey: "nav.managedAgents", page: "managed-agents", icon: Bot },
+      // The vault sits with the agents rather than under Team: it is what an
+      // agent's outbound calls draw on, and it is scoped per user, not per team.
+      { labelKey: "nav.vault", page: "vault", icon: Vault },
+    ],
   },
   {
     groupKey: "nav.team",

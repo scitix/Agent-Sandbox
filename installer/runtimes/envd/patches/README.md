@@ -52,3 +52,32 @@ Files: `internal/execcontext/context.go`, `main.go`,
 This replaces the old `install_sh_shim` hack in `agentbox-entrypoint.sh` (which
 mutated every image's `/bin/sh` and corrupted busybox images). Candidate for
 upstreaming — gating the wrapper on `!isNotFC` is a legitimate change.
+
+## 0002-await-init-gate.patch
+
+**Base:** envd 0.7.0 (`8a3f69da6f822c2de2b310dd1076d2c309eef919`)
+
+**Problem.** envd starts listening before the orchestrator has finished setting
+the sandbox up. A sandbox's environment variables, its injected trust-store
+certificate and its egress credentials all arrive through `POST /init`, which
+happens *after* the daemon is up. A command accepted in that window runs in a
+sandbox that is not yet the one the caller asked for: an empty environment, an
+untrusted CA, an egress path with no credentials armed. It does not fail — it
+returns a wrong answer, which is the harder failure to notice.
+
+AgentBox closes this at two other layers already: the create call waits for the
+sandbox to be armed, and the data-plane router refuses to route to one that is
+not. This patch is the third: it holds even for a caller that reaches the Pod
+directly, bypassing both.
+
+**Fix.** A new `-await-init` flag. When set, envd refuses the process and
+filesystem Connect RPCs with a `failed_precondition` until the first `/init`
+lands. `/health` is deliberately **not** gated: the readiness probe drives the
+phase transition that triggers the very `/init` this gate waits for, so gating
+health would deadlock the two against each other.
+
+**Rollout order matters.** The control plane must already be sending an
+unconditional `/init` before any template turns this on; otherwise sandboxes in
+that template are permanently unusable. It ships default-off for that reason.
+
+Files: `main.go`.
