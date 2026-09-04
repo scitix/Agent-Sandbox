@@ -75,15 +75,12 @@ func injectionAnnotation(t *testing.T) string {
 	t.Helper()
 	si := agentsv1alpha1.SecretInjection{
 		Credentials: []agentsv1alpha1.InjectedCredential{{
-			Name:        "openai",
-			ValueFrom:   agentsv1alpha1.SecretKeyRef{Name: "creds", Key: "openai"},
-			ExposeAs:    "OPENAI_API_KEY",
-			Placeholder: "agbx_ph_0123456789abcdef",
+			Name:      "openai",
+			ValueFrom: agentsv1alpha1.SecretKeyRef{Name: "creds", Key: "openai"},
 		}},
 		Rules: []agentsv1alpha1.InjectionRule{{
-			Host:       "api.openai.com",
-			Headers:    []agentsv1alpha1.HeaderInjection{{Name: "Authorization", Value: "Bearer ${e2b.secrets.openai}"}},
-			Substitute: []string{"openai"},
+			Host:    "api.openai.com",
+			Headers: []agentsv1alpha1.HeaderInjection{{Name: "Authorization", Value: "Bearer ${e2b.secrets.openai}"}},
 		}},
 	}
 	b, err := json.Marshal(si)
@@ -112,17 +109,13 @@ func TestPrepareInjection_ResolvesCredentialsAndMintsCA(t *testing.T) {
 	if got := plan.secrets.Rules[0].Headers[0].Value; got != "Bearer sk-real-value" {
 		t.Fatalf("sidecar header value = %q, want the resolved credential", got)
 	}
-	if plan.secrets.Substitutions["agbx_ph_0123456789abcdef"] != "sk-real-value" {
-		t.Fatalf("decoy is not mapped to the real value: %+v", plan.secrets.Substitutions)
-	}
 	if plan.secrets.CAKeyPEM == "" || plan.secrets.CACertPEM == "" {
 		t.Fatal("no CA minted")
 	}
 
-	// ...and the sandbox gets only the decoy.
-	if plan.envVars["OPENAI_API_KEY"] != "agbx_ph_0123456789abcdef" {
-		t.Fatalf("sandbox env got %q, want the decoy", plan.envVars["OPENAI_API_KEY"])
-	}
+	// ...and the sandbox gets nothing but the trust-store overrides. Whatever
+	// value a tool inside it reads is an ordinary env var the caller set on the
+	// create request; the credential itself never crosses this line.
 	for k, v := range plan.envVars {
 		if strings.Contains(v, "sk-real-value") {
 			t.Fatalf("env var %s leaks the real credential into the sandbox", k)
@@ -166,8 +159,8 @@ func TestPrepareInjection_MissingKeyIsAnError(t *testing.T) {
 }
 
 // envd replaces the whole user env-var set on any /init carrying envVars, so
-// the CA and decoys must ride along with the sandbox's own variables rather
-// than arrive in a second call that would wipe them.
+// the CA overrides must ride along with the sandbox's own variables rather than
+// arrive in a second call that would wipe them.
 func TestMergeInitHook_MergesIntoExistingInitCall(t *testing.T) {
 	hooks := []Action{{HTTPPost: &HTTPPostAction{
 		Port: envdInitPort,
@@ -175,7 +168,7 @@ func TestMergeInitHook_MergesIntoExistingInitCall(t *testing.T) {
 		Body: map[string]any{"envVars": map[string]string{"USER_VAR": "keep-me"}},
 	}}}
 
-	out := mergeInitHook(hooks, "CA-PEM", map[string]string{"OPENAI_API_KEY": "decoy"})
+	out := mergeInitHook(hooks, "CA-PEM", map[string]string{"SSL_CERT_FILE": "/etc/agbx/ca.pem"})
 	if len(out) != 1 {
 		t.Fatalf("expected the existing hook to be reused, got %d hooks", len(out))
 	}
@@ -187,8 +180,8 @@ func TestMergeInitHook_MergesIntoExistingInitCall(t *testing.T) {
 	if env["USER_VAR"] != "keep-me" {
 		t.Fatal("merging dropped the sandbox's own env var")
 	}
-	if env["OPENAI_API_KEY"] != "decoy" {
-		t.Fatal("decoy was not merged in")
+	if env["SSL_CERT_FILE"] != "/etc/agbx/ca.pem" {
+		t.Fatal("the CA path override was not merged in")
 	}
 }
 

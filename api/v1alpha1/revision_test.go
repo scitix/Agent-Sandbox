@@ -70,8 +70,8 @@ func TestComputeRevisionHash_SensitiveToPodIdentity(t *testing.T) {
 		"add sidecar": func(s *SandboxPoolSpec) {
 			s.Template.Spec.Containers = append(s.Template.Spec.Containers, corev1.Container{Name: "sidecar", Image: "sc:v1"})
 		},
-		"enable networkPolicy": func(s *SandboxPoolSpec) {
-			s.NetworkPolicy = &SandboxNetworkPolicy{DisableEgress: true}
+		"enable gateway": func(s *SandboxPoolSpec) {
+			s.Gateway = &GatewaySpec{Enabled: true}
 		},
 		"template label": func(s *SandboxPoolSpec) {
 			s.Template.Labels = map[string]string{"team": "hisys"}

@@ -39,8 +39,15 @@ func parseE2BNetworkPolicy(body *e2bgen.NewSandbox) (*agentsv1alpha1.SandboxNetw
 
 	np := &agentsv1alpha1.SandboxNetworkPolicy{}
 	// allow_internet_access=false is E2B sugar for "deny all egress"; it wins
-	// over any allow rules in the same request.
+	// over any allow rules in the same request. Transform rules are refused
+	// rather than dropped alongside them: nothing can reach the hosts they name,
+	// so a silently ignored rule would look configured and never fire.
 	if disableAll {
+		if ncfg != nil && ncfg.Rules != nil && len(*ncfg.Rules) > 0 {
+			e := errRespCode(400, "network.rules cannot be combined with allow_internet_access=false: "+
+				"nothing can reach the hosts the rules name.")
+			return nil, nil, &e
+		}
 		np.DisableEgress = true
 		return np, nil, nil
 	}
@@ -162,8 +169,8 @@ func convertTransformHeaders(host string, headers map[string]string) ([]agentsv1
 		out = append(out, agentsv1alpha1.HeaderInjection{
 			Name: name,
 			// E2B's transform semantics are "an existing header with the same
-			// name is replaced", which is Override. IfAbsent stays an Env-level
-			// capability because the wire shape cannot express it.
+			// name is replaced", which is Override. The wire shape cannot
+			// express IfAbsent, so nothing produces it here.
 			Mode:  agentsv1alpha1.HeaderInjectionOverride,
 			Value: value,
 		})

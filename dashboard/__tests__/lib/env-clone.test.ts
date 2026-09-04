@@ -27,7 +27,6 @@ import {
 import { envFormDefaults } from "@/lib/utils/env-form"
 import type { FormValues } from "@/lib/utils/env-form"
 
-const EGRESS_CREDENTIAL = "sk-egress-super-secret"
 const REGISTRY_PASSWORD = "hunter2-registry"
 
 function filled(over: Partial<FormValues> = {}): FormValues {
@@ -38,16 +37,10 @@ function filled(over: Partial<FormValues> = {}): FormValues {
     image: "ghcr.io/org/runtime:1.2",
     defaultStartupTimeout: "5m",
     defaultIdleTimeout: "30m",
-    networkPolicyMode: "allowlist",
-    allowedDomains: "pypi.org\n*.pythonhosted.org",
-    allowPrivateNetworks: true,
+    gatewayEnabled: true,
     imagePullSecretRows: [
       { registry: "registry.example.com", username: "robot", password: REGISTRY_PASSWORD },
     ],
-    injectionCredentialRows: [
-      { name: "OPENAI", value: EGRESS_CREDENTIAL, exposeAs: "Authorization" },
-    ],
-    injectionRuleRows: [{ host: "api.openai.com", headerName: "Authorization" }],
     autoUpdate: true,
     maxUnavailable: "20%",
     ...over,
@@ -56,29 +49,22 @@ function filled(over: Partial<FormValues> = {}): FormValues {
 
 /**
  * The assertion that matters. An exported file gets attached to tickets and
- * checked into repos, and the form does hold real credentials — the egress
- * injection value and the registry password.
+ * checked into repos, and the form does hold a real credential — the registry
+ * password.
  */
 describe("an export carries no secret material", () => {
   const payload = toEnvClonePayload(filled(), new Date("2026-08-11T00:00:00Z"))
   const serialised = JSON.stringify(payload)
-
-  it("blanks the egress credential value", () => {
-    expect(payload.values.injectionCredentialRows[0]!.value).toBe("")
-  })
 
   it("blanks the image-pull-secret password", () => {
     expect(payload.values.imagePullSecretRows[0]!.password).toBeUndefined()
   })
 
   it("contains no secret-shaped value anywhere in the file", () => {
-    expect(serialised).not.toContain(EGRESS_CREDENTIAL)
     expect(serialised).not.toContain(REGISTRY_PASSWORD)
   })
 
-  it("keeps the non-secret half of those rows, so only the value must be re-typed", () => {
-    expect(payload.values.injectionCredentialRows[0]!.name).toBe("OPENAI")
-    expect(payload.values.injectionCredentialRows[0]!.exposeAs).toBe("Authorization")
+  it("keeps the non-secret half of that row, so only the password must be re-typed", () => {
     expect(payload.values.imagePullSecretRows[0]!.registry).toBe("registry.example.com")
     expect(payload.values.imagePullSecretRows[0]!.username).toBe("robot")
   })
@@ -86,7 +72,6 @@ describe("an export carries no secret material", () => {
   it("does not mutate the caller's values", () => {
     const values = filled()
     stripEnvCloneSecrets(values)
-    expect(values.injectionCredentialRows[0]!.value).toBe(EGRESS_CREDENTIAL)
     expect(values.imagePullSecretRows[0]!.password).toBe(REGISTRY_PASSWORD)
   })
 })
@@ -103,19 +88,15 @@ describe("round trip", () => {
     const { values } = parsed.result
     expect(values.name).toBe("slimedev")
     expect(values.templateName).toBe("navix-runtime")
-    expect(values.networkPolicyMode).toBe("allowlist")
-    expect(values.allowedDomains).toBe("pypi.org\n*.pythonhosted.org")
-    expect(values.allowPrivateNetworks).toBe(true)
+    expect(values.gatewayEnabled).toBe(true)
     expect(values.maxUnavailable).toBe("20%")
-    expect(values.injectionRuleRows[0]!.host).toBe("api.openai.com")
-    expect(values.injectionCredentialRows[0]!.value).toBe("")
   })
 
   it("reports how many secrets need re-typing", () => {
     const parsed = fromEnvCloneJson(JSON.stringify(toEnvClonePayload(filled())))
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    expect(parsed.result.warnings).toEqual([{ key: "secretsOmitted", count: 2 }])
+    expect(parsed.result.warnings).toEqual([{ key: "secretsOmitted", count: 1 }])
   })
 
   it("fills defaults for keys an older export omitted", () => {
@@ -129,7 +110,7 @@ describe("round trip", () => {
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     // Defaults, not undefined — `register`ed inputs must not go uncontrolled.
-    expect(parsed.result.values.networkPolicyMode).toBe("unrestricted")
+    expect(parsed.result.values.gatewayEnabled).toBe(false)
     expect(parsed.result.values.autoUpdate).toBe(true)
     expect(parsed.result.values.imagePullSecretRows).toEqual([])
   })
@@ -174,13 +155,13 @@ describe("rejections", () => {
       JSON.stringify({
         kind: ENV_CLONE_KIND,
         version: ENV_CLONE_VERSION,
-        values: { networkPolicyMode: "nonsense" },
+        values: { gatewayEnabled: "nonsense" },
       }),
     )
     expect(parsed.ok).toBe(false)
     if (parsed.ok) return
     expect(parsed.error.kind).toBe("schema")
-    expect(parsed.error.detail).toContain("networkPolicyMode")
+    expect(parsed.error.detail).toContain("gatewayEnabled")
   })
 })
 

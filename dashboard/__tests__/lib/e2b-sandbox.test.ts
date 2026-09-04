@@ -21,6 +21,7 @@ import {
   buildE2BCreateBody,
   E2B_META_IMAGE,
   E2B_META_STARTUP_TIMEOUT,
+  E2B_META_ALLOW_PRIVATE_NETWORKS,
 } from "@/lib/utils/e2b-sandbox"
 
 describe("durationToSeconds", () => {
@@ -154,5 +155,93 @@ describe("buildE2BCreateBody network policy", () => {
   it("omits network entirely when allowlist mode has no entries", () => {
     const body = buildE2BCreateBody({ poolName: "e", networkPolicyMode: "allowlist" })
     expect(body.network).toBeUndefined()
+  })
+})
+
+describe("buildE2BCreateBody credential injection", () => {
+  const oneRule = [{ host: "api.example.com", headerName: "Authorization", secretName: "tok" }]
+
+  // The wire must carry a reference, never a value. This is the whole reason the
+  // form offers a picker instead of a text field, and the server refuses a
+  // literal, so a regression here surfaces as a 400 rather than a leak — but the
+  // shape is worth pinning anyway.
+  it("emits a vault reference, not a value", () => {
+    const body = buildE2BCreateBody({
+      poolName: "e",
+      networkPolicyMode: "unrestricted",
+      injectionRuleRows: oneRule,
+    })
+    expect(body.network?.rules).toEqual({
+      "api.example.com": [{ transform: { headers: { Authorization: "${e2b.secrets.tok}" } } }],
+    })
+  })
+
+  it("collapses several headers on one host into a single rule", () => {
+    const body = buildE2BCreateBody({
+      poolName: "e",
+      networkPolicyMode: "unrestricted",
+      injectionRuleRows: [
+        { host: "api.example.com", headerName: "Authorization", secretName: "tok" },
+        { host: "api.example.com", headerName: "X-Org", secretName: "org" },
+      ],
+    })
+    const rules = body.network?.rules?.["api.example.com"]
+    expect(rules).toHaveLength(1)
+    expect(rules?.[0]!.transform.headers).toEqual({
+      Authorization: "${e2b.secrets.tok}",
+      "X-Org": "${e2b.secrets.org}",
+    })
+  })
+
+  // Rules ride alongside the allowlist, not instead of it: a host that is not
+  // allowed out is blocked before the L7 path ever runs.
+  it("carries rules alongside an allowlist", () => {
+    const body = buildE2BCreateBody({
+      poolName: "e",
+      networkPolicyMode: "allowlist",
+      allowedDomains: "api.example.com",
+      injectionRuleRows: oneRule,
+    })
+    expect(body.network?.allowOut).toEqual(["api.example.com"])
+    expect(Object.keys(body.network?.rules ?? {})).toEqual(["api.example.com"])
+  })
+
+  it("ignores incomplete rows rather than sending a half rule", () => {
+    const body = buildE2BCreateBody({
+      poolName: "e",
+      networkPolicyMode: "unrestricted",
+      injectionRuleRows: [
+        { host: "api.example.com", headerName: "Authorization" }, // no secret
+        { host: "", headerName: "X", secretName: "tok" }, // no host
+        { host: "b.example.com", secretName: "tok" }, // no header
+      ],
+    })
+    expect(body.network).toBeUndefined()
+  })
+})
+
+describe("buildE2BCreateBody allowPrivateNetworks", () => {
+  // E2B's network config has no field for it, so it rides as a reserved metadata
+  // key the server consumes and strips.
+  it("travels as a reserved metadata key", () => {
+    const body = buildE2BCreateBody({
+      poolName: "e",
+      networkPolicyMode: "allowlist",
+      allowedDomains: "op.example.com",
+      allowPrivateNetworks: true,
+    })
+    expect(body.metadata?.[E2B_META_ALLOW_PRIVATE_NETWORKS]).toBe("true")
+  })
+
+  // With no network config there is no filter to relax, and sending the key
+  // alone would be read as declaring one.
+  it("is dropped when the request declares no network config", () => {
+    const body = buildE2BCreateBody({
+      poolName: "e",
+      networkPolicyMode: "unrestricted",
+      allowPrivateNetworks: true,
+    })
+    expect(body.network).toBeUndefined()
+    expect(body.metadata?.[E2B_META_ALLOW_PRIVATE_NETWORKS]).toBeUndefined()
   })
 })

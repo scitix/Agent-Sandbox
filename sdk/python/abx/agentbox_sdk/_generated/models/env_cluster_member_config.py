@@ -69,8 +69,8 @@ class EnvClusterMemberConfig:
             scale_down_priority (int | Unset): Scale-down order within the scaling group — lower shrunk first. When omitted,
                 falls back to priority.
             update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
-                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
-                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
+                Pod identity (Template edit, image / gateway override) changes. Rollout mode is always Recreate: stale idle Pods
+                are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
      """
 
     labels: EnvClusterMemberConfigLabels | Unset = UNSET
@@ -92,10 +92,10 @@ class EnvClusterMemberConfig:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations
-        from ..models.env_cluster_member_config_labels import EnvClusterMemberConfigLabels
-        from ..models.env_update_strategy import EnvUpdateStrategy
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations # noqa: PLC0415
+        from ..models.env_cluster_member_config_labels import EnvClusterMemberConfigLabels # noqa: PLC0415
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
+        from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
         labels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.labels, Unset):
             labels = self.labels.to_dict()
@@ -164,10 +164,10 @@ class EnvClusterMemberConfig:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations
-        from ..models.env_cluster_member_config_labels import EnvClusterMemberConfigLabels
-        from ..models.env_update_strategy import EnvUpdateStrategy
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.env_cluster_member_config_annotations import EnvClusterMemberConfigAnnotations # noqa: PLC0415
+        from ..models.env_cluster_member_config_labels import EnvClusterMemberConfigLabels # noqa: PLC0415
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
+        from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
         d = dict(src_dict)
         _labels = d.pop("labels", UNSET)
         labels: EnvClusterMemberConfigLabels | Unset

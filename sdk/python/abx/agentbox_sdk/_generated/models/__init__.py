@@ -36,7 +36,6 @@ from .delete_sandbox_env_result import DeleteSandboxEnvResult
 from .delete_sandbox_pool_result import DeleteSandboxPoolResult
 from .delete_sandbox_result import DeleteSandboxResult
 from .delete_sandbox_template_result import DeleteSandboxTemplateResult
-from .egress_rules import EgressRules
 from .env_autoscaling_group import EnvAutoscalingGroup
 from .env_autoscaling_group_envelope import EnvAutoscalingGroupEnvelope
 from .env_autoscaling_spec import EnvAutoscalingSpec
@@ -61,11 +60,8 @@ from .exec_command_request import ExecCommandRequest
 from .exec_command_result import ExecCommandResult
 from .exec_token_response import ExecTokenResponse
 from .feature_gates import FeatureGates
-from .header_injection import HeaderInjection
-from .header_injection_mode import HeaderInjectionMode
+from .gateway_spec import GatewaySpec
 from .image_pull_secret_input import ImagePullSecretInput
-from .injected_credential import InjectedCredential
-from .injection_rule import InjectionRule
 from .instance_type_item import InstanceTypeItem
 from .instance_type_item_extensions import InstanceTypeItemExtensions
 from .list_clusters_result import ListClustersResult
@@ -119,7 +115,6 @@ from .sandbox_log_entry import SandboxLogEntry
 from .sandbox_logs_result import SandboxLogsResult
 from .sandbox_logs_result_source import SandboxLogsResultSource
 from .sandbox_metadata import SandboxMetadata
-from .sandbox_network_policy import SandboxNetworkPolicy
 from .sandbox_pool import SandboxPool
 from .sandbox_pool_envelope import SandboxPoolEnvelope
 from .sandbox_pool_spec import SandboxPoolSpec
@@ -141,8 +136,6 @@ from .sandbox_template_envelope import SandboxTemplateEnvelope
 from .sandbox_template_spec import SandboxTemplateSpec
 from .sandbox_template_status import SandboxTemplateStatus
 from .sandbox_template_summary import SandboxTemplateSummary
-from .secret_injection import SecretInjection
-from .secret_key_ref import SecretKeyRef
 from .self_create_api_key_request import SelfCreateAPIKeyRequest
 from .set_sandbox_timeout_request import SetSandboxTimeoutRequest
 from .teams_result import TeamsResult
@@ -183,7 +176,6 @@ __all__ = (
     "DeleteSandboxPoolResult",
     "DeleteSandboxResult",
     "DeleteSandboxTemplateResult",
-    "EgressRules",
     "EnvAutoscalingGroup",
     "EnvAutoscalingGroupEnvelope",
     "EnvAutoscalingSpec",
@@ -208,11 +200,8 @@ __all__ = (
     "ExecCommandResult",
     "ExecTokenResponse",
     "FeatureGates",
-    "HeaderInjection",
-    "HeaderInjectionMode",
+    "GatewaySpec",
     "ImagePullSecretInput",
-    "InjectedCredential",
-    "InjectionRule",
     "InstanceTypeItem",
     "InstanceTypeItemExtensions",
     "ListClustersResult",
@@ -266,7 +255,6 @@ __all__ = (
     "SandboxLogsResult",
     "SandboxLogsResultSource",
     "SandboxMetadata",
-    "SandboxNetworkPolicy",
     "SandboxPool",
     "SandboxPoolEnvelope",
     "SandboxPoolSpec",
@@ -288,8 +276,6 @@ __all__ = (
     "SandboxTemplateSpec",
     "SandboxTemplateStatus",
     "SandboxTemplateSummary",
-    "SecretInjection",
-    "SecretKeyRef",
     "SelfCreateAPIKeyRequest",
     "SetSandboxTimeoutRequest",
     "TeamsResult",

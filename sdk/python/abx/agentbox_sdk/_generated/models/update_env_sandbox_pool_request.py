@@ -51,8 +51,8 @@ class UpdateEnvSandboxPoolRequest:
                 the Env autoscaler. Always accepted.
             max_replicas (int | Unset): Upper bound on this pool's replicas. Always accepted.
             update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
-                Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale
-                idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
+                Pod identity (Template edit, image / gateway override) changes. Rollout mode is always Recreate: stale idle Pods
+                are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
      """
 
     replicas: int | Unset = UNSET
@@ -66,7 +66,7 @@ class UpdateEnvSandboxPoolRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_update_strategy import EnvUpdateStrategy
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
         replicas = self.replicas
 
         min_replicas = self.min_replicas
@@ -97,7 +97,7 @@ class UpdateEnvSandboxPoolRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_update_strategy import EnvUpdateStrategy
+        from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
         d = dict(src_dict)
         replicas = d.pop("replicas", UNSET)
 

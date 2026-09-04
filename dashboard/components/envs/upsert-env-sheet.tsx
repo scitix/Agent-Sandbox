@@ -54,7 +54,6 @@ import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { CopyEnvDialog } from "@/components/envs/copy-env-dialog"
 import { FormCloneActions } from "@/components/custom/form-clone-actions"
-import { NetworkPolicyFields } from "@/components/custom/network-policy-fields"
 import type {
   AgentSandboxEnv,
   AgentSandboxTemplateSummary,
@@ -416,23 +415,30 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                 </AccordionItem>
 
                 <AccordionItem value="network">
-                  <AccordionTrigger className="text-muted-foreground px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
-                    {t("envs.form.section.networkPolicy")}
-                  </AccordionTrigger>
+                  {/* The switch is a SIBLING of the trigger, not a child: the
+                      trigger is itself a <button>, so nesting would be invalid
+                      markup and every toggle would also open the panel. */}
+                  <div className="flex items-center pr-3">
+                    <AccordionTrigger className="text-muted-foreground flex-1 px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
+                      {t("envs.form.section.gateway")}
+                    </AccordionTrigger>
+                    <Controller
+                      control={control}
+                      name="gatewayEnabled"
+                      render={({ field }) => (
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          aria-label={t("envs.form.gateway.enabled")}
+                        />
+                      )}
+                    />
+                  </div>
                   <AccordionContent className="px-3">
-                    <div className="flex flex-col gap-5 pb-2">
-                      <NetworkPolicyFields
-                        control={control}
-                        register={register}
-                        errors={errors}
-                        heading={t("envs.form.section.networkPolicy")}
-                      />
-                      <Separator />
-                      <SecretInjectionSection
-                        control={control}
-                        register={register}
-                        errors={errors}
-                      />
+                    <div className="text-muted-foreground space-y-2 pb-2 text-xs">
+                      <p>{t("envs.form.gateway.hint")}</p>
+                      <p>{t("envs.form.gateway.perSandbox")}</p>
+                      <p>{t("envs.form.gateway.rollout")}</p>
                     </div>
                   </AccordionContent>
                 </AccordionItem>
@@ -921,251 +927,6 @@ function ImagePullSecretSection({ control, register }: ImagePullSecretSectionPro
     </section>
   )
 }
-
-interface SecretInjectionSectionProps {
-  control: ReturnType<typeof useForm<FormValues>>["control"]
-  register: ReturnType<typeof useForm<FormValues>>["register"]
-  errors: ReturnType<typeof useForm<FormValues>>["formState"]["errors"]
-}
-
-function SecretInjectionSection({ control, register, errors }: SecretInjectionSectionProps) {
-  const { t } = useTranslation()
-  const creds = useFieldArray({ control, name: "injectionCredentialRows" })
-  const rules = useFieldArray({ control, name: "injectionRuleRows" })
-
-  return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
-          {t("envs.form.section.secretInjection")}
-        </h3>
-        <p className="text-muted-foreground mt-1 text-xs">{t("envs.form.secretInjection.hint")}</p>
-      </div>
-
-      <div className="flex items-center justify-between">
-        <FieldLabel className="text-[11px]">
-          {t("envs.form.secretInjection.credentials")}
-        </FieldLabel>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            creds.append({ name: "", value: "", configured: false, exposeAs: "", placeholder: "" })
-          }
-          className="h-7 gap-1 font-mono text-[11px]"
-        >
-          <Plus className="h-3 w-3" />
-          {t("envs.form.secretInjection.addCredential")}
-        </Button>
-      </div>
-      {creds.fields.length === 0 && (
-        <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-center text-xs">
-          {t("envs.form.secretInjection.empty")}
-        </p>
-      )}
-      <div className="space-y-2">
-        {creds.fields.map((field, index) => (
-          <div
-            key={field.id}
-            className="bg-muted/30 flex items-start gap-2 rounded-md border p-2.5"
-          >
-            <div className="flex-1 space-y-2">
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.credName")}
-                </FieldLabel>
-                <Input
-                  placeholder="openai"
-                  {...register(`injectionCredentialRows.${index}.name` as const)}
-                />
-                <FieldDescription className="text-[11px]">
-                  {t("envs.form.secretInjection.credNameDescription")}
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.value")}
-                  {creds.fields[index]?.configured && (
-                    <span className="text-muted-foreground ml-2 font-normal">
-                      {t("envs.form.secretInjection.valueStored")}
-                    </span>
-                  )}
-                </FieldLabel>
-                <Input
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder={
-                    creds.fields[index]?.configured
-                      ? t("envs.form.secretInjection.valueKeep")
-                      : "sk-..."
-                  }
-                  {...register(`injectionCredentialRows.${index}.value` as const)}
-                />
-                <FieldDescription className="text-[11px]">
-                  {t("envs.form.secretInjection.valueDescription")}
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.exposeAs")}
-                </FieldLabel>
-                <Input
-                  placeholder="OPENAI_API_KEY"
-                  {...register(`injectionCredentialRows.${index}.exposeAs` as const)}
-                />
-                <FieldDescription className="text-[11px]">
-                  {t("envs.form.secretInjection.exposeAsDescription")}
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.placeholder")}
-                </FieldLabel>
-                <Input
-                  placeholder={t("envs.form.secretInjection.placeholderHint")}
-                  {...register(`injectionCredentialRows.${index}.placeholder` as const)}
-                />
-                <FieldDescription className="text-[11px]">
-                  {t("envs.form.secretInjection.placeholderDescription")}
-                </FieldDescription>
-              </Field>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => creds.remove(index)}
-              className="text-destructive mt-5"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        ))}
-      </div>
-
-      <div className="flex items-center justify-between pt-1">
-        <FieldLabel className="text-[11px]">{t("envs.form.secretInjection.rules")}</FieldLabel>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            rules.append({
-              host: "",
-              headerName: "Authorization",
-              headerValue: "",
-              mode: "Override",
-              substitute: "",
-              pathPrefixes: "",
-            })
-          }
-          className="h-7 gap-1 font-mono text-[11px]"
-        >
-          <Plus className="h-3 w-3" />
-          {t("envs.form.secretInjection.addRule")}
-        </Button>
-      </div>
-      <div className="space-y-2">
-        {rules.fields.map((field, index) => (
-          <div
-            key={field.id}
-            className="bg-muted/30 flex items-start gap-2 rounded-md border p-2.5"
-          >
-            <div className="flex-1 space-y-2">
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.host")}
-                </FieldLabel>
-                <Input
-                  placeholder="api.openai.com"
-                  {...register(`injectionRuleRows.${index}.host` as const)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.headerName")}
-                </FieldLabel>
-                <Input
-                  placeholder="Authorization"
-                  {...register(`injectionRuleRows.${index}.headerName` as const)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.headerValue")}
-                </FieldLabel>
-                <Input
-                  placeholder="Bearer {{ openai }}"
-                  {...register(`injectionRuleRows.${index}.headerValue` as const)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.mode")}
-                </FieldLabel>
-                <Controller
-                  control={control}
-                  name={`injectionRuleRows.${index}.mode` as const}
-                  render={({ field: f }) => (
-                    <Select value={f.value ?? "Override"} onValueChange={f.onChange}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Override">
-                          {t("envs.form.secretInjection.modeOverride")}
-                        </SelectItem>
-                        <SelectItem value="IfAbsent">
-                          {t("envs.form.secretInjection.modeIfAbsent")}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.substitute")}
-                </FieldLabel>
-                <Input
-                  placeholder="openai"
-                  {...register(`injectionRuleRows.${index}.substitute` as const)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel className="text-[11px]">
-                  {t("envs.form.secretInjection.pathPrefixes")}
-                </FieldLabel>
-                <Input
-                  placeholder="/v1/"
-                  {...register(`injectionRuleRows.${index}.pathPrefixes` as const)}
-                />
-              </Field>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => rules.remove(index)}
-              className="text-destructive mt-5"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        ))}
-      </div>
-      {(errors.injectionCredentialRows || errors.injectionRuleRows) && (
-        <p className="text-destructive text-xs">{t("envs.form.secretInjection.hasErrors")}</p>
-      )}
-      <p className="text-muted-foreground text-xs">
-        {t("envs.form.secretInjection.usableNotReadable")}
-      </p>
-    </section>
-  )
-}
-
-// ─── Network policy section ─────────────────────────────────────────────────
 
 interface UpdateStrategySectionProps {
   control: ReturnType<typeof useForm<FormValues>>["control"]

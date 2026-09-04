@@ -46,8 +46,8 @@ that id can be passed straight back to `create`.
 
 `Secret.create(name, value)` stores a credential; `Secret.fill(name)` produces
 the `${e2b.secrets.<name>}` placeholder, which goes in a `network.rules`
-transform header. The egress proxy substitutes the real value per request, so
-the sandbox can use the credential without being able to read it.
+transform header. The egress gateway sets the real value on each matching
+request, so the sandbox can use the credential without being able to read it.
 
 Values are write-only: no read surface returns one. Header values in
 `network.rules` must be built from placeholders — a literal is refused, because
@@ -55,6 +55,12 @@ it would put the credential in the request body and the access log.
 
 Secrets are scoped to (namespace, user) and replicated to every cluster, so a
 sandbox placed on another cluster resolves the same credential.
+
+The environment has to have the gateway on for any of this: without the sidecar
+there is nothing to intercept the request, so a create carrying `network.rules`
+— or any egress filtering — is refused rather than silently unenforced. That
+switch (`overrides.gateway.enabled`) is the environment's whole say in the
+matter; the rules themselves are per sandbox and arrive on the create call.
 
 ## Accepted and ignored
 

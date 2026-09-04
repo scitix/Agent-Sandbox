@@ -251,6 +251,52 @@ const imageOverrideMetaKey = "agentbox.scitix.ai/image"
 // and will NOT be forwarded to sandbox metadata.
 const startupTimeoutMetaKey = "agentbox.scitix.ai/startup-timeout"
 
+// allowPrivateNetworksMetaKey is the reserved metadata key that lifts the
+// anti-SSRF baseline for this sandbox, letting a declared allowlist reach
+// private / link-local / cloud-metadata ranges (RFC1918, 169.254.0.0/16, ...).
+// Accepted values are "true" and "1"; anything else leaves the baseline on.
+//
+// It rides on metadata because E2B's SandboxNetworkConfig has no field for it
+// and inventing one would be a dialect. The default is off everywhere: reaching
+// inside the cluster is the one egress decision that is dangerous by default
+// rather than by configuration, so it has to be asked for per sandbox and never
+// inherited. Consumed here and NOT forwarded to sandbox metadata.
+const allowPrivateNetworksMetaKey = "agentbox.scitix.ai/allow-private-networks"
+
+// consumeReservedMetadata applies the reserved metadata keys to input and
+// removes them from input.Metadata, so they configure the sandbox rather than
+// being stored as its own metadata and echoed back on every read.
+//
+// Returns whether the request asked to lift the anti-SSRF baseline. That one is
+// returned rather than written onto input because it belongs to the network
+// policy, which is parsed further down from a different part of the body.
+func consumeReservedMetadata(input *service.CreateSandboxInput) bool {
+	// Image override: takes priority over the "poolName//image" syntax.
+	if img, ok := input.Metadata[imageOverrideMetaKey]; ok && img != "" {
+		input.Image = img
+		delete(input.Metadata, imageOverrideMetaKey)
+	}
+	// Startup timeout, in seconds.
+	if raw, ok := input.Metadata[startupTimeoutMetaKey]; ok && raw != "" {
+		if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+			input.StartupTimeout = time.Duration(secs) * time.Second
+		}
+		delete(input.Metadata, startupTimeoutMetaKey)
+	}
+	// Scaling-group placement: pin this create to a specific autoscaling group
+	// (e.g. "1c2Gi") so it only lands on member pools in that group.
+	if grp, ok := input.Metadata[service.MetaKeyScalingGroup]; ok && grp != "" {
+		input.RequestedScalingGroup = grp
+		delete(input.Metadata, service.MetaKeyScalingGroup)
+	}
+	allowPrivate := false
+	if raw, ok := input.Metadata[allowPrivateNetworksMetaKey]; ok {
+		allowPrivate = raw == "true" || raw == "1"
+		delete(input.Metadata, allowPrivateNetworksMetaKey)
+	}
+	return allowPrivate
+}
+
 func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequestObject) (e2bgen.PostSandboxesResponseObject, error) {
 	if req.Body == nil || strings.TrimSpace(req.Body.TemplateID) == "" {
 		return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(errRespCode(400, "templateID is required"))}, nil
@@ -267,6 +313,7 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	}
 
 	auth := authFrom(ctx)
+	allowPrivate := false
 	input := service.CreateSandboxInput{
 		ClusterID: parsed.ClusterID,
 		PoolName:  parsed.PoolName,
@@ -276,27 +323,7 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	}
 	if req.Body.Metadata != nil {
 		input.Metadata = map[string]string(*req.Body.Metadata)
-		// Image override: new key takes priority over legacy key.
-		// Both keys are consumed and NOT forwarded to sandbox metadata.
-		if img, ok := input.Metadata[imageOverrideMetaKey]; ok && img != "" {
-			input.Image = img
-			delete(input.Metadata, imageOverrideMetaKey)
-		}
-		// Startup timeout override via metadata (value in seconds).
-		// Consumed and NOT forwarded to sandbox metadata.
-		if raw, ok := input.Metadata[startupTimeoutMetaKey]; ok && raw != "" {
-			if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
-				input.StartupTimeout = time.Duration(secs) * time.Second
-			}
-			delete(input.Metadata, startupTimeoutMetaKey)
-		}
-		// Scaling-group placement: pin this create to a specific autoscaling
-		// group (e.g. "1c2Gi") so it only lands on member pools in that group.
-		// Consumed and NOT forwarded to sandbox metadata.
-		if grp, ok := input.Metadata[service.MetaKeyScalingGroup]; ok && grp != "" {
-			input.RequestedScalingGroup = grp
-			delete(input.Metadata, service.MetaKeyScalingGroup)
-		}
+		allowPrivate = consumeReservedMetadata(&input)
 	}
 	if req.Body.EnvVars != nil && len(*req.Body.EnvVars) > 0 {
 		input.PostStartHooks = []poststarthooks.Action{{
@@ -314,18 +341,20 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	}
 	// Egress network policy: map E2B network / allow_internet_access onto the
 	// AgentBox SandboxNetworkPolicy. Unsupported E2B features (SOCKS5 egress
-	// proxy, per-domain transform rules) are rejected rather than silently
-	// dropped — matching E2B's own feature gating. The service layer rejects a
-	// policy targeting a pool without egress filtering enabled.
+	// proxy) are rejected rather than silently dropped — matching E2B's own
+	// feature gating. The service layer rejects a request targeting an
+	// environment whose gateway is off.
 	np, vaultRules, npErr := parseE2BNetworkPolicy(req.Body)
 	if npErr != nil {
 		return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(*npErr)}, nil
 	}
+	if np != nil {
+		np.AllowPrivateNetworks = allowPrivate
+	}
 	input.NetworkPolicy = np
-	// Carried as a separate input rather than folded into NetworkPolicy: the
-	// service still refuses a request that hands it a ready-made SecretInjection,
-	// and these rules only become one after their references have been checked
-	// against the caller's own vault.
+	// Carried as a separate input rather than folded into NetworkPolicy: these
+	// rules only become an injection block after every ${e2b.secrets.<name>}
+	// reference has been resolved against the caller's own vault.
 	input.VaultRules = vaultRules
 	// Inject team/user from auth into labels so they are recorded on the pod
 	// and metrics (agentbox_sandbox_create_total) carry the correct dimensions.

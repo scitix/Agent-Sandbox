@@ -38,7 +38,6 @@ import (
 func (r *SandboxEnvReconciler) syncStatus(
 	ctx context.Context,
 	env *agentsv1alpha1.SandboxEnv,
-	credCond credentialsCondition,
 ) error {
 	localSpec, _ := findLocalClusterSpec(env, r.LocalClusterID)
 
@@ -181,7 +180,10 @@ func (r *SandboxEnvReconciler) syncStatus(
 	// Conditions
 	setReadyCondition(env, observed)
 	setTemplateConsistentCondition(env, observed, rolloutInProgress)
-	setCredentialsResolvableCondition(env, credCond)
+	// The Env declares no credentials of its own — injection is a property of
+	// one create request — so nothing evaluates this verdict. Drop it rather
+	// than leave an Env carrying one nothing refreshes.
+	removeCondition(env, "CredentialsResolvable")
 
 	if equality.Semantic.DeepEqual(base.Status, env.Status) {
 		return nil
@@ -484,17 +486,6 @@ func setTemplateConsistentCondition(env *agentsv1alpha1.SandboxEnv, observed []a
 		message = "at least one member is rolling onto a new template revision"
 	}
 	setCondition(env, agentsv1alpha1.SandboxEnvConditionTemplateConsistent, status, reason, message)
-}
-
-// setCredentialsResolvableCondition reports whether every declared injected
-// credential resolves. An Env that declares none carries no such condition, so
-// removing the last credential clears it rather than leaving a stale verdict.
-func setCredentialsResolvableCondition(env *agentsv1alpha1.SandboxEnv, c credentialsCondition) {
-	if !c.evaluated {
-		removeCondition(env, agentsv1alpha1.SandboxEnvConditionCredentialsResolvable)
-		return
-	}
-	setCondition(env, agentsv1alpha1.SandboxEnvConditionCredentialsResolvable, c.status, c.reason, c.message)
 }
 
 // removeCondition drops a Condition entry if present.

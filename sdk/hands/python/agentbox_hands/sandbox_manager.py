@@ -23,9 +23,9 @@ On bind the daemon seeds the workspace and keeps the entry until the session end
 Sandboxes are single-use: killed when the session ends.
 
 The sandbox holds no credential of its own. Where a deployment's agent has to
-reach an authenticated service, the platform's egress injection substitutes the
-real token into outbound requests, so this daemon writes nothing into the sandbox
-and the agent has nothing to read even if it looks. Handing the sandbox a real
+reach an authenticated service, the platform's egress gateway sets the real token
+on outbound requests, so this daemon writes nothing into the sandbox and the agent
+has nothing to read even if it looks. Handing the sandbox a real
 token instead — as an earlier version did, written as root under /root — makes
 every process in it, and anything the agent can be talked into running, a holder
 of that credential.
@@ -76,8 +76,7 @@ SBX_REATTACH_TIMEOUT = int(os.environ.get("SBX_TIMEOUT", "3600"))
 #
 # NEVER put a credential here. The value reaches the sandbox's own environment,
 # where the agent can read it; secrets belong in the platform's egress injection,
-# which substitutes them into outbound requests without the sandbox ever holding
-# them.
+# which sets them on outbound requests without the sandbox ever holding them.
 def _sandbox_env_from_environ() -> Dict[str, str]:
     raw = os.environ.get("SBX_SANDBOX_ENV", "").strip()
     if not raw:

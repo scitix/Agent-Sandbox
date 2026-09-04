@@ -56,14 +56,40 @@ func PodHasEgressProxy(pod *corev1.Pod) bool {
 	return false
 }
 
-// SandboxNetworkPolicy configures sandbox egress control. It is enforced by an
-// in-Pod transparent proxy sidecar (not a Kubernetes NetworkPolicy), so it can
-// match domains — which the cluster CNIs in use (Calico, Aliyun ENI) cannot.
+// GatewaySpec is the whole of a SandboxEnv's network configuration: whether its
+// sandboxes get the egress gateway.
 //
-// A non-nil SandboxNetworkPolicy opts a SandboxEnv (and its member Pools) into
-// egress filtering: the operator injects the filter sidecar into every sandbox
-// Pod. The effective per-sandbox ruleset is pushed at claim time and reset on
-// release/restart. Semantics are allowlist / default-deny.
+// It is a single switch on purpose. Enabling the gateway adds a sidecar and an
+// iptables redirect to the Pod, which is a Pod-spec change and therefore rolls
+// the pool — that is the one decision that genuinely belongs to the environment.
+// Everything else (what may be reached, what gets injected into which request)
+// is a property of one sandbox, arrives on the create call, and is expressed in
+// standard E2B terms: network.allowOut / denyOut, network.rules with
+// Secret.fill(), and envVars for whatever placeholder the caller wants its tools
+// to see.
+//
+// The Env used to be able to declare egress rules and injection rules of its
+// own. That bought nothing: a create request's network config replaced the
+// Env's outright, so the Env's rules were a default rather than a floor, and
+// Env-level injection applied the same credentials to every tenant sharing the
+// environment. What it cost was a second configuration surface, a merge
+// semantics between the two (union for injection, replace for filtering), and a
+// dialect users had to learn on top of the E2B SDK.
+type GatewaySpec struct {
+	// Enabled injects the egress gateway sidecar into every sandbox Pod of this
+	// environment. Without it, a create request carrying network rules is
+	// refused rather than silently unenforced.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// SandboxNetworkPolicy is the per-sandbox egress configuration carried on a
+// create request. It is never stored on a SandboxEnv or SandboxPool.
+//
+// Enforcement is an in-Pod transparent proxy sidecar (not a Kubernetes
+// NetworkPolicy), so it can match domains — which the cluster CNIs in use
+// (Calico, Aliyun ENI) cannot. The ruleset is pushed at claim time and reset on
+// release. Semantics are allowlist / default-deny.
 type SandboxNetworkPolicy struct {
 	// DisableEgress blocks all outbound traffic (DNS still resolves so lookups
 	// do not hang). Takes precedence over Egress. A quick "no internet" switch.
@@ -77,39 +103,31 @@ type SandboxNetworkPolicy struct {
 	Egress *EgressRules `json:"egress,omitempty"`
 
 	// AllowPrivateNetworks disables the default deny of private / link-local /
-	// cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.) for a policy that
+	// cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.) for a request that
 	// declares filtering. Default false — the anti-SSRF baseline stays on.
 	// Enable only for trusted intra-cluster access.
 	//
-	// Implied when Egress is nil and DisableEgress is false: a policy that
-	// filters nothing (SecretInjection-only, say) must not be stricter than
-	// having no policy at all, where no sidecar exists and private ranges are
-	// reachable. To allow every host but keep the baseline, declare
-	// Egress with AllowedDomains ["*"] and AllowedCIDRs ["0.0.0.0/0"] instead.
+	// Implied when Egress is nil and DisableEgress is false: a request that
+	// filters nothing (rules only, say) must not be stricter than one that says
+	// nothing at all, where private ranges are reachable. To allow every host
+	// but keep the baseline, declare Egress with AllowedDomains ["*"] and
+	// AllowedCIDRs ["0.0.0.0/0"] instead.
 	// +optional
 	AllowPrivateNetworks bool `json:"allowPrivateNetworks,omitempty"`
-
-	// SecretInjection brokers credentials on the way out: the sidecar terminates
-	// TLS for the listed hosts and adds (or substitutes) the configured headers,
-	// so the sandbox can use a credential without ever being able to read it.
-	// nil disables it.
-	//
-	// Setting this alone (with Egress nil) is valid and means "inject, but do
-	// not filter": the sidecar is still injected — which is what makes the
-	// interception possible — while egress stays unrestricted, private ranges
-	// included, so enabling injection never narrows what the sandbox can reach.
-	//
-	// Declarable only on a SandboxEnv. Sandbox-create requests carrying it are
-	// rejected, because a credential travelling through a create request would
-	// re-introduce exactly the exposure this feature removes.
-	// +optional
-	SecretInjection *SecretInjection `json:"secretInjection,omitempty"`
 }
 
-// SecretInjection declares the outbound credential broker. It never carries a
-// credential value: values live in Secrets and are resolved by the operator at
-// push time, because this struct is serialised into a Pod annotation and into
-// API responses.
+// SecretInjection declares the outbound credential broker: the sidecar
+// terminates TLS for the listed hosts and sets the configured headers, so the
+// sandbox can use a credential without ever being able to read it.
+//
+// It is assembled at claim time from one create request's network.rules and the
+// caller's own vault. It is never stored on a SandboxEnv or SandboxPool — a
+// credential shared by an environment would be a credential shared by every
+// tenant of it.
+//
+// It never carries a credential value: values live in Secrets and are resolved
+// by the operator at push time, because this struct is serialised into a Pod
+// annotation.
 type SecretInjection struct {
 	// Credentials are the named secrets rules may reference.
 	// +optional
@@ -141,31 +159,16 @@ type InjectedCredential struct {
 	// authored here are byte-identical.
 	Name string `json:"name"`
 
-	// ValueFrom points at the Secret key holding the credential. The Secret
-	// must live in the SandboxEnv's namespace.
+	// ValueFrom points at the Secret key holding the credential — for a vault
+	// reference, the caller's own vault Secret. It must live in the sandbox's
+	// namespace.
+	//
+	// A credential a tool has to *see* (because it validates the key's shape, or
+	// signs with it locally) is not this feature's business: set an ordinary
+	// environment variable on the create call to whatever decoy or real value
+	// the tool should read, and let the header rule replace what goes on the
+	// wire.
 	ValueFrom SecretKeyRef `json:"valueFrom"`
-
-	// ExposeAs turns on placeholder mode: the sandbox gets an environment
-	// variable of this name whose value is a decoy (see Placeholder), and the
-	// proxy swaps the decoy for the real value on hosts that allow it. Leave
-	// empty to use the credential through header injection only.
-	// +optional
-	ExposeAs string `json:"exposeAs,omitempty"`
-
-	// Placeholder is the decoy value handed to the sandbox. Empty means a fresh
-	// random "agbx_ph_<32 hex>" per claim.
-	//
-	// Set it when a client validates credential shape before sending — several
-	// SDKs reject a key that lacks the expected prefix or length, so a random
-	// decoy would fail inside the sandbox and never reach the proxy. A fixed
-	// decoy costs nothing in secrecy (it already lives in the sandbox's
-	// environment); it is merely identical across sandboxes.
-	//
-	// Must be at least 16 characters, and no two credentials may share a
-	// placeholder or have one be a substring of another — overlapping decoys
-	// would substitute into each other.
-	// +optional
-	Placeholder string `json:"placeholder,omitempty"`
 }
 
 // SecretKeyRef selects one key of one Secret.
@@ -188,11 +191,6 @@ type InjectionRule struct {
 	// Headers are the headers to inject.
 	// +optional
 	Headers []HeaderInjection `json:"headers,omitempty"`
-
-	// Substitute lists credentials whose placeholder may be swapped for the
-	// real value on this host.
-	// +optional
-	Substitute []string `json:"substitute,omitempty"`
 
 	// PathPrefixes narrows the rule to matching request paths. Empty means all.
 	// +optional
@@ -221,10 +219,9 @@ type HeaderInjection struct {
 	// Name is the header name, compared case-insensitively.
 	Name string `json:"name"`
 
-	// Value is a template that may reference declared credentials by name, each
-	// name wrapped in a doubled pair of curly braces. For an Authorization
-	// header, that is a Bearer prefix followed by the brace-wrapped name of the
-	// credential holding the key.
+	// Value is a template that may reference declared credentials by name,
+	// written as ${e2b.secrets.NAME}. For an Authorization header, that is a
+	// Bearer prefix followed by the reference to the credential holding the key.
 	Value string `json:"value"`
 
 	// Mode defaults to Override.

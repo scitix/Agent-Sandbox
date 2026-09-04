@@ -259,16 +259,14 @@ func TestValidateEnvVolumes_MissingTemplate(t *testing.T) {
 
 // TestUpdate_OverridesAreReplacedWholesale_NotMerged pins decision B. PATCH
 // replaces the whole overrides block; the only existing client relies on
-// omission-means-clear to remove a network policy, and this is also what lets a
+// omission-means-clear to turn the gateway off, and this is also what lets a
 // caller delete the last volume mount.
 func TestUpdate_OverridesAreReplacedWholesale_NotMerged(t *testing.T) {
 	env := newEnv(envTestName, "team-1", "user-1")
 	env.Spec.TemplateRef.Name = volTestTemplate
 	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{
-		Image: "custom:v1",
-		NetworkPolicy: &agentsv1alpha1.SandboxNetworkPolicy{
-			DisableEgress: true,
-		},
+		Image:   "custom:v1",
+		Gateway: &agentsv1alpha1.GatewaySpec{Enabled: true},
 		Volumes: []agentsv1alpha1.EnvVolumeMount{
 			{ClaimName: "ds", MountPath: "/volume/ds", ReadOnly: ptr.To(true)},
 		},
@@ -276,7 +274,7 @@ func TestUpdate_OverridesAreReplacedWholesale_NotMerged(t *testing.T) {
 	svc := newVolEnvService(t, VolumeConfig{Enabled: true},
 		env, volTemplate(false, "", nil), boundPVC("ds"), boundPVC("other"))
 
-	// PATCH carrying only volumes must wipe image and networkPolicy.
+	// PATCH carrying only volumes must wipe image and gateway.
 	if _, err := svc.Update(context.Background(), UpdateSandboxEnvInput{
 		Name:      envTestName,
 		Namespace: envTestNamespace,
@@ -294,8 +292,8 @@ func TestUpdate_OverridesAreReplacedWholesale_NotMerged(t *testing.T) {
 	if stored.Spec.Overrides.Image != "" {
 		t.Errorf("image should have been replaced away, got %q", stored.Spec.Overrides.Image)
 	}
-	if stored.Spec.Overrides.NetworkPolicy != nil {
-		t.Error("networkPolicy should have been replaced away")
+	if stored.Spec.Overrides.Gateway != nil {
+		t.Error("gateway should have been replaced away")
 	}
 	if len(stored.Spec.Overrides.Volumes) != 1 ||
 		stored.Spec.Overrides.Volumes[0].ClaimName != "other" {

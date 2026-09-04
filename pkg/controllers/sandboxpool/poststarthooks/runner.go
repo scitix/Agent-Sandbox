@@ -292,12 +292,12 @@ func (r *Runner) pushEgressSecrets(ctx context.Context, pod *corev1.Pod, plan *i
 		return fmt.Errorf("push credentials to sidecar (%d rules): %w", len(plan.secrets.Rules), err)
 	}
 	klog.V(2).InfoS("egress inject: credentials armed", "pod", klog.KObj(pod),
-		"rules", len(plan.secrets.Rules), "substitutions", len(plan.secrets.Substitutions))
+		"rules", len(plan.secrets.Rules))
 	return nil
 }
 
 // runPostStartHooks executes the user-declared post-start hooks recorded on the
-// pod's annotation, after folding in the CA certificate and decoy env vars that
+// pod's annotation, after folding in the CA certificate and the env vars that
 // credential injection needs the sandbox to have.
 func (r *Runner) runPostStartHooks(ctx context.Context, pod *corev1.Pod, plan *injectionPlan) error {
 	var hooks []Action

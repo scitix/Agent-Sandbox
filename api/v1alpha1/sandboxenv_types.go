@@ -122,15 +122,18 @@ type EnvOverridesSpec struct {
 	// +optional
 	DefaultIdleTimeout *metav1.Duration `json:"defaultIdleTimeout,omitempty"`
 
-	// NetworkPolicy, when set, enables sandbox egress filtering for every member
-	// Pool of this Env. The operator injects a transparent filter sidecar into
-	// each sandbox Pod; this policy is the Env-wide default, overridable per
-	// sandbox at create time. Nil disables egress filtering (no sidecar).
+	// Gateway turns on the egress gateway for every member Pool of this Env: the
+	// operator injects a transparent proxy sidecar into each sandbox Pod, which
+	// is what makes per-sandbox egress filtering and credential injection
+	// possible. It carries no rules of its own — those arrive on the create
+	// call. Nil, or enabled=false, means no sidecar, and a create request that
+	// asks for filtering or injection is then refused rather than silently
+	// unenforced.
 	// +optional
-	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
+	Gateway *GatewaySpec `json:"gateway,omitempty"`
 
 	// UpdateStrategy is the Env-wide default rollout policy: when a member's
-	// effective idle-Pod identity changes (Template edit, image / networkPolicy
+	// effective idle-Pod identity changes (Template edit, image / gateway
 	// override), whether and how fast its idle Pods are rebuilt. Per-member
 	// EnvClusterMemberConfig.UpdateStrategy overrides this; see ResolveAutoUpdate
 	// / ResolveMaxUnavailable for the resolution order.
@@ -793,12 +796,6 @@ const (
 	// SandboxEnvConditionAutoscalingActive indicates the autoscaler is
 	// configured, enabled, and has not stalled due to misconfiguration.
 	SandboxEnvConditionAutoscalingActive = "AutoscalingActive"
-	// SandboxEnvConditionCredentialsResolvable indicates every declared
-	// injected credential resolves to a non-empty value right now. False means
-	// a sandbox claim would fail closed, so the Env carries the diagnosis
-	// instead of leaving it to be inferred from Pods that never start. Absent
-	// on Envs that declare no credentials.
-	SandboxEnvConditionCredentialsResolvable = "CredentialsResolvable"
 )
 
 // +kubebuilder:object:root=true

@@ -22,43 +22,44 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 
 
 
 
 
 
-T = TypeVar("T", bound="SecretKeyRef")
+T = TypeVar("T", bound="GatewaySpec")
 
 
 
 @_attrs_define
-class SecretKeyRef:
-    """ 
+class GatewaySpec:
+    """ Egress gateway switch. Enabling it adds a transparent proxy sidecar and an
+    iptables redirect to every sandbox Pod of the environment; the rules it
+    enforces are supplied per sandbox on the create call.
+
         Attributes:
-            name (str): Secret name.
-            key (str): Key within the Secret.
+            enabled (bool | Unset): Inject the egress proxy sidecar. A create request carrying network rules against an
+                environment without it is refused rather than silently unenforced.
      """
 
-    name: str
-    key: str
+    enabled: bool | Unset = UNSET
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        name = self.name
-
-        key = self.key
+        enabled = self.enabled
 
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update({
-            "name": name,
-            "key": key,
         })
+        if enabled is not UNSET:
+            field_dict["enabled"] = enabled
 
         return field_dict
 
@@ -67,14 +68,11 @@ class SecretKeyRef:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        name = d.pop("name")
+        enabled = d.pop("enabled", UNSET)
 
-        key = d.pop("key")
-
-        secret_key_ref = cls(
-            name=name,
-            key=key,
+        gateway_spec = cls(
+            enabled=enabled,
         )
 
-        return secret_key_ref
+        return gateway_spec
 

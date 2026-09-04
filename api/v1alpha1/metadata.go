@@ -38,7 +38,7 @@ const (
 	ManagedByLabelKey    = "agentbox.navix.sh/managed-by"
 
 	// TemplateHashLabelKey carries the fnv32 revision hash of a Pool's
-	// materialised idle-Pod identity (IdleImage + pod-spec body + NetworkPolicy
+	// materialised idle-Pod identity (IdleImage + pod-spec body + Gateway
 	// + template metadata; see ComputeRevisionHash). Stamped by the Env
 	// renderer onto both SandboxPool.metadata.labels and
 	// SandboxPool.spec.template.metadata.labels, from where it flows to every
@@ -100,20 +100,19 @@ const (
 	// update resets the pod to idle and clears StableContainerStatuses.
 	SandboxContainerIDAnnotationKey = "agentbox.navix.sh/container-id"
 
-	// SandboxEgressPolicyAnnotationKey carries the JSON-encoded effective egress
-	// policy (pkg/egressproxy.Policy) resolved for a claimed sandbox: the merge
-	// of the per-sandbox override and the Pool's Env-default networkPolicy. The
-	// SandboxReady hook reads it and pushes it into the filter sidecar via exec.
+	// SandboxEgressPolicyAnnotationKey carries the JSON-encoded egress policy
+	// (pkg/egressproxy.Policy) resolved for a claimed sandbox from its create
+	// request. The SandboxReady hook reads it and pushes it into the proxy
+	// sidecar via exec.
 	// Registered as a managed annotation key so it is stripped on release,
 	// giving free reset-on-recycle.
 	SandboxEgressPolicyAnnotationKey = "agentbox.navix.sh/egress-policy"
 
 	// SandboxEgressInjectAnnotationKey carries the JSON-encoded credential
-	// injection block (v1alpha1.SecretInjection) resolved for a claimed sandbox,
-	// with per-claim placeholders filled in.
+	// injection block (v1alpha1.SecretInjection) resolved for a claimed sandbox.
 	//
-	// It holds rule shapes, credential names, Secret references and decoys —
-	// never a credential value. The SandboxReady hook resolves the referenced
+	// It holds rule shapes, credential names and Secret references — never a
+	// credential value. The SandboxReady hook resolves the referenced
 	// Secrets and delivers the plaintext straight to the sidecar over exec, so
 	// no credential is ever written to etcd or returned by the API. Registered
 	// as a managed annotation key so release strips it.
@@ -283,19 +282,6 @@ const (
 // for this name into every member Pool's spec.template.spec.imagePullSecrets.
 func EnvImagePullSecretName(envName string) string {
 	return ImagePullSecretNamePrefix + envName
-}
-
-// EnvSecretInjectionNamePrefix is prepended to an Env's name to form the Secret
-// that holds its injected credentials — one Secret per Env, one key per
-// credential (keyed by the credential's Name), not one Secret per credential.
-const EnvSecretInjectionNamePrefix = "eis-"
-
-// EnvSecretInjectionName returns the Secret backing an Env's declared
-// credentials. Callers may also point a credential at a Secret of their own;
-// this is only the one the platform materialises from values typed into the
-// API, mirroring how imagePullSecret works.
-func EnvSecretInjectionName(envName string) string {
-	return EnvSecretInjectionNamePrefix + envName
 }
 
 // BoolAnnotation reads a boolean opt-in annotation off an object.

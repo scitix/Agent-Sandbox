@@ -97,9 +97,9 @@ const (
 	msgLiveNetwork = "Changing the egress policy of a running sandbox is not supported yet. Pass the " +
 		"network configuration when creating the sandbox instead."
 
-	msgSecrets = "Secrets are not enabled in this AgentBox deployment. To give a sandbox a credential it " +
-		"cannot read, ask your platform admin to declare it on the SandboxEnv, which injects it into " +
-		"outbound requests the same way."
+	msgSecrets = "Secrets are not enabled in this AgentBox deployment. Without the credential vault there " +
+		"is nowhere to store a value that ${e2b.secrets.<name>} could resolve to, so network.rules cannot " +
+		"be used either. Ask your platform admin to enable it."
 
 	msgLogs = "Sandbox log retrieval is not enabled in this AgentBox deployment. Use the output returned " +
 		"by the command call itself, or read the Pod logs in the AgentBox console."

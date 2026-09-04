@@ -83,8 +83,8 @@ type Config struct {
 	Image string
 }
 
-// Plugin injects the egress filter sidecar. It self-gates on
-// pool.Spec.NetworkPolicy — Pools without a policy are untouched.
+// Plugin injects the egress proxy sidecar. It self-gates on
+// pool.Spec.Gateway — Pools that did not enable the gateway are untouched.
 type Plugin struct {
 	plugins.BasePlugin
 	cfg Config
@@ -96,10 +96,10 @@ func New(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
 func (p *Plugin) Name() string { return pluginName }
 
 // PreCreatePod injects the init container + native sidecar + policy volume when
-// the owning Pool has a NetworkPolicy, and hardens the sandbox containers
+// the owning Pool enabled the gateway, and hardens the sandbox containers
 // (strip NET_ADMIN, reject a uid collision with the proxy). Idempotent.
 func (p *Plugin) PreCreatePod(_ context.Context, pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) (bool, *domain.AppError) {
-	if pool == nil || pool.Spec.NetworkPolicy == nil {
+	if pool == nil || pool.Spec.Gateway == nil || !pool.Spec.Gateway.Enabled {
 		return false, nil
 	}
 	if agentsv1alpha1.PodHasEgressProxy(pod) {

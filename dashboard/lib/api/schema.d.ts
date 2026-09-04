@@ -1454,7 +1454,7 @@ export interface components {
             /** @description Per-member override of the Env-wide overrides.updateStrategy. Unset fields inherit from the Env default, then autoUpdate=true / maxUnavailable=20%. */
             updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
         };
-        /** @description Automatic rollout policy for member Pools when their rendered idle-Pod identity (Template edit, image / networkPolicy override) changes. Rollout mode is always Recreate: stale idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle. */
+        /** @description Automatic rollout policy for member Pools when their rendered idle-Pod identity (Template edit, image / gateway override) changes. Rollout mode is always Recreate: stale idle Pods are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle. */
         EnvUpdateStrategy: {
             /** @description Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision. */
             autoUpdate?: boolean;
@@ -1498,12 +1498,17 @@ export interface components {
             /** @description Server-set on GET: true when the ips-{envName} Secret exists in the Env's namespace. Write attempts via PATCH are ignored. */
             readonly imagePullSecretConfigured?: boolean;
             /**
-             * @description Egress network policy applied uniformly to every member Pool's sandbox
-             *     Pods. When set, the operator injects a transparent egress-filter sidecar
-             *     and enforces the policy (default-deny allowlist). Omit for unrestricted
-             *     egress. Per-sandbox overrides are available via the E2B create body.
+             * @description Egress gateway for every member Pool's sandbox Pods. Enabling it injects a
+             *     transparent proxy sidecar, which is what makes per-sandbox egress filtering
+             *     (network.allowOut / denyOut) and credential injection (network.rules with
+             *     Secret.fill) possible on the create call.
+             *
+             *     It carries no rules of its own: what a sandbox may reach, and what gets
+             *     injected into which request, belong to that one sandbox and arrive with it.
+             *     Changing this switch changes the Pod spec and therefore rolls the Env's
+             *     pools.
              */
-            networkPolicy?: components["schemas"]["SandboxNetworkPolicy"];
+            gateway?: components["schemas"]["GatewaySpec"];
             /** @description Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy. */
             updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
             /**
@@ -1532,79 +1537,14 @@ export interface components {
              */
             readOnly: boolean;
         };
-        /** @description Sandbox egress network policy, enforced by an in-Pod transparent proxy sidecar (supports domain matching, which the cluster CNIs cannot). Allowlist / default-deny semantics. */
-        SandboxNetworkPolicy: {
-            /** @description Block all outbound traffic (DNS still resolves). A quick 'no internet' switch; takes precedence over egress. */
-            disableEgress?: boolean;
-            /** @description Allowlist. When disableEgress is false and egress is omitted, egress is unrestricted (subject to the anti-SSRF baseline). */
-            egress?: components["schemas"]["EgressRules"];
-            /** @description Disable the default deny of private / link-local / cloud-metadata ranges (RFC1918, 169.254.0.0/16, ...). Default false — the anti-SSRF baseline stays on. */
-            allowPrivateNetworks?: boolean;
-            /** @description Outbound credential broker: the sidecar terminates TLS for the listed hosts and injects (or substitutes) headers, so a sandbox can use a credential without being able to read it. Declarable on a SandboxEnv only — sandbox-create requests carrying it are rejected. Setting it with egress omitted means 'inject but do not filter'. */
-            secretInjection?: components["schemas"]["SecretInjection"];
-        };
-        /** @description Credential injection applied to matching outbound requests. Never carries a credential value: values live in Secrets and are resolved by the operator at push time. */
-        SecretInjection: {
-            /** @description Named credentials that rules may reference. */
-            credentials?: components["schemas"]["InjectedCredential"][];
-            /** @description Per-host injection actions. */
-            rules?: components["schemas"]["InjectionRule"][];
-            /** @description Lifetime of the per-sandbox CA minted for TLS interception, as a Go duration ('24h'). Defaults to 24h. */
-            caCertTTL?: string;
-        };
-        InjectedCredential: {
-            /** @description How rules refer to this credential in a value template ('{{ name }}'). Also the key under which the value is stored in the Env's credential Secret, so it must be a valid Secret key: alphanumeric plus - and _. */
-            name: string;
-            /** @description The credential itself. Write-only: the server stores it in the Env's credential Secret (one Secret per Env, keyed by this credential's name), fills in valueFrom, and never returns it. Supply this OR valueFrom, not both. On update, omit it to keep the stored value unchanged. */
-            value?: string;
-            /** @description Point at a Secret you manage yourself instead of having the platform store the value. Filled in automatically when `value` is supplied. Must be in the SandboxEnv's namespace. */
-            valueFrom?: components["schemas"]["SecretKeyRef"];
-            /** @description Environment variable name handed to the sandbox carrying the decoy value (placeholder mode). Omit to use this credential through header injection only. */
-            exposeAs?: string;
-            /** @description Decoy value given to the sandbox. Omit for a fresh random 'agbx_ph_<32 hex>' per claim. Set it when a client validates credential shape before sending. Minimum 16 characters; placeholders must not overlap. */
-            placeholder?: string;
-            /** @description First 8 hex characters of the SHA-256 of the resolved credential, so callers can tell whether a value is configured or has changed. The value itself is never returned. */
-            readonly valueDigest?: string;
-        };
-        SecretKeyRef: {
-            /** @description Secret name. */
-            name: string;
-            /** @description Key within the Secret. */
-            key: string;
-        };
-        InjectionRule: {
-            /** @description Exact hostname. Wildcards are rejected: anyone controlling a matching subdomain would receive the credential. */
-            host: string;
-            /** @description Destination ports the rule covers. Defaults to [80, 443]; other ports get no L7 handling. */
-            ports?: number[];
-            /** @description Headers to inject. */
-            headers?: components["schemas"]["HeaderInjection"][];
-            /** @description Credentials whose placeholder may be swapped for the real value on this host. */
-            substitute?: string[];
-            /** @description Narrow the rule to matching request paths. Empty means all paths. */
-            pathPrefixes?: string[];
-            /** @description Narrow the rule to these HTTP methods. Empty means all methods. */
-            methods?: string[];
-        };
-        HeaderInjection: {
-            /** @description Header name, compared case-insensitively. */
-            name: string;
-            /** @description Value template referencing declared credentials as '{{ credName }}', e.g. 'Bearer {{ openai }}'. A literal here would be a plaintext secret in the CRD and is rejected. */
-            value: string;
-            /**
-             * @description Override (default) replaces whatever the sandbox sent; IfAbsent injects only when the sandbox set no such header, so an agent supplying its own credential keeps it.
-             * @enum {string}
-             */
-            mode?: "Override" | "IfAbsent";
-        };
-        /** @description Allow/deny rules for sandbox outbound traffic. */
-        EgressRules: {
-            /** @description Permit egress to matching hostnames. Exact ('pypi.org'), wildcard-all ('*'), or suffix ('*.pythonhosted.org'). Matched via TLS SNI (443) / HTTP Host (80). */
-            allowedDomains?: string[];
-            /** @description Permit egress to these CIDR blocks / bare IPs (promoted to /32). */
-            allowedCIDRs?: string[];
-            /** @description Block egress to these CIDR blocks / bare IPs. Domains are not supported for deny. */
-            deniedCIDRs?: string[];
+        /**
+         * @description Egress gateway switch. Enabling it adds a transparent proxy sidecar and an
+         *     iptables redirect to every sandbox Pod of the environment; the rules it
+         *     enforces are supplied per sandbox on the create call.
+         */
+        GatewaySpec: {
+            /** @description Inject the egress proxy sidecar. A create request carrying network rules against an environment without it is refused rather than silently unenforced. */
+            enabled?: boolean;
         };
         EnvClusterSpec: {
             /** @description Cluster identifier that owns this segment. Each Worker only mutates the segment matching its own clusterID. */
