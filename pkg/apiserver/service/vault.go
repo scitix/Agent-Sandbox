@@ -28,6 +28,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
@@ -358,9 +360,10 @@ func (s *k8sVaultService) Create(ctx context.Context, ns, user string, in VaultC
 	entry := vaultEntryMeta{Version: 1, CreatedAt: now, UpdatedAt: now, Metadata: in.Metadata}
 	meta[name] = entry
 
-	if appErr := s.persist(ctx, ns, user, secret, meta, func(data map[string][]byte) {
-		data[name] = []byte(in.Value)
-	}); appErr != nil {
+	if appErr := s.persist(ctx, ns, user,
+		func(m map[string]vaultEntryMeta) { m[name] = entry },
+		func(data map[string][]byte) { data[name] = []byte(in.Value) },
+	); appErr != nil {
 		return nil, appErr
 	}
 	return &VaultItem{Name: name, Version: 1, Metadata: in.Metadata, CreatedAt: now, UpdatedAt: now}, nil
@@ -442,11 +445,10 @@ func (s *k8sVaultService) Update(ctx context.Context, ns, user, idOrName string,
 	if in.MetadataSet {
 		entry.Metadata = in.Metadata
 	}
-	meta[name] = entry
-
-	if appErr := s.persist(ctx, ns, user, secret, meta, func(data map[string][]byte) {
-		data[name] = []byte(in.Value)
-	}); appErr != nil {
+	if appErr := s.persist(ctx, ns, user,
+		func(m map[string]vaultEntryMeta) { m[name] = entry },
+		func(data map[string][]byte) { data[name] = []byte(in.Value) },
+	); appErr != nil {
 		return nil, appErr
 	}
 	return &VaultItem{
@@ -460,7 +462,8 @@ func (s *k8sVaultService) Delete(ctx context.Context, ns, user, idOrName string)
 	if appErr != nil {
 		return appErr
 	}
-	secret, meta, appErr := s.loadVault(ctx, ns, user)
+	// Existence check only; persist re-reads inside its conflict retry.
+	secret, _, appErr := s.loadVault(ctx, ns, user)
 	if appErr != nil {
 		return appErr
 	}
@@ -476,75 +479,99 @@ func (s *k8sVaultService) Delete(ctx context.Context, ns, user, idOrName string)
 				"the control plane is not reachable, so the secret was not deleted: %v", err))
 		}
 	}
-	delete(meta, name)
-	return s.persist(ctx, ns, user, secret, meta, func(data map[string][]byte) {
-		delete(data, name)
-	})
+	return s.persist(ctx, ns, user,
+		func(m map[string]vaultEntryMeta) { delete(m, name) },
+		func(data map[string][]byte) { delete(data, name) },
+	)
 }
 
-// persist writes the vault Secret, creating it on first use. mutate applies the
-// change to the data map.
+// persist applies a change to the user's vault Secret, creating it on first use.
+//
+// Read-modify-write, retried on conflict with a fresh read each attempt. The
+// retry is load-bearing rather than defensive: a replicated write echoes back
+// from the Hub and is applied to the same Secret by the watch handler, so the
+// object this request read a moment ago is routinely stale by the time it
+// writes. Without the retry that shows up as a 409 on an operation that
+// actually succeeded.
+//
+// mutateMeta and mutateData are called on each attempt, against freshly read
+// state, so they must be idempotent — every caller here either sets or deletes
+// one key, which is.
 func (s *k8sVaultService) persist(
 	ctx context.Context,
 	ns, user string,
-	existing *corev1.Secret,
-	meta map[string]vaultEntryMeta,
-	mutate func(data map[string][]byte),
+	mutateMeta func(meta map[string]vaultEntryMeta),
+	mutateData func(data map[string][]byte),
 ) *domain.AppError {
-	metaJSON, err := json.Marshal(meta)
-	if err != nil {
-		return domain.NewInternal("encode vault metadata", err)
-	}
-
-	if existing == nil {
-		data := map[string][]byte{}
-		mutate(data)
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      VaultSecretName(user),
-				Namespace: ns,
-				Labels: map[string]string{
-					VaultLabelManagedBy: VaultManagedByValue,
-					VaultLabelOwner:     vaultOwnerHash(user),
-				},
-				Annotations: map[string]string{
-					VaultAnnotationUser: user,
-					VaultAnnotationMeta: string(metaJSON),
-				},
-			},
-			Type: corev1.SecretTypeOpaque,
-			Data: data,
+	var lastErr error
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		existing, meta, appErr := s.loadVault(ctx, ns, user)
+		if appErr != nil {
+			lastErr = fmt.Errorf("%s", appErr.Message)
+			return lastErr
 		}
-		if err := s.client.Create(ctx, secret); err != nil {
-			if k8serrors.IsAlreadyExists(err) {
-				return domain.NewConflict("vault was created concurrently; retry the request")
+		mutateMeta(meta)
+		metaJSON, mErr := json.Marshal(meta)
+		if mErr != nil {
+			lastErr = mErr
+			return mErr
+		}
+
+		if existing == nil {
+			data := map[string][]byte{}
+			mutateData(data)
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      VaultSecretName(user),
+					Namespace: ns,
+					Labels: map[string]string{
+						VaultLabelManagedBy: VaultManagedByValue,
+						VaultLabelOwner:     vaultOwnerHash(user),
+					},
+					Annotations: map[string]string{
+						VaultAnnotationUser: user,
+						VaultAnnotationMeta: string(metaJSON),
+					},
+				},
+				Type: corev1.SecretTypeOpaque,
+				Data: data,
 			}
-			return domain.NewInternal(fmt.Sprintf("create vault for %s/%s: %v", ns, user, err), err)
+			cErr := s.client.Create(ctx, secret)
+			if k8serrors.IsAlreadyExists(cErr) {
+				// Created concurrently — retry as an update against the object
+				// that now exists.
+				return k8serrors.NewConflict(
+					schema.GroupResource{Resource: "secrets"}, secret.Name, cErr)
+			}
+			lastErr = cErr
+			return cErr
 		}
-		return nil
-	}
 
-	updated := existing.DeepCopy()
-	if updated.Data == nil {
-		updated.Data = map[string][]byte{}
-	}
-	mutate(updated.Data)
-	if updated.Labels == nil {
-		updated.Labels = map[string]string{}
-	}
-	updated.Labels[VaultLabelManagedBy] = VaultManagedByValue
-	updated.Labels[VaultLabelOwner] = vaultOwnerHash(user)
-	if updated.Annotations == nil {
-		updated.Annotations = map[string]string{}
-	}
-	updated.Annotations[VaultAnnotationUser] = user
-	updated.Annotations[VaultAnnotationMeta] = string(metaJSON)
+		updated := existing.DeepCopy()
+		if updated.Data == nil {
+			updated.Data = map[string][]byte{}
+		}
+		mutateData(updated.Data)
+		if updated.Labels == nil {
+			updated.Labels = map[string]string{}
+		}
+		updated.Labels[VaultLabelManagedBy] = VaultManagedByValue
+		updated.Labels[VaultLabelOwner] = vaultOwnerHash(user)
+		if updated.Annotations == nil {
+			updated.Annotations = map[string]string{}
+		}
+		updated.Annotations[VaultAnnotationUser] = user
+		updated.Annotations[VaultAnnotationMeta] = string(metaJSON)
 
-	if err := s.client.Update(ctx, updated); err != nil {
+		uErr := s.client.Update(ctx, updated)
+		lastErr = uErr
+		return uErr
+	})
+	if err != nil {
 		if k8serrors.IsConflict(err) {
-			return domain.NewConflict("vault changed concurrently; retry the request")
+			return domain.NewConflict("vault is being written concurrently; retry the request")
 		}
-		return domain.NewInternal(fmt.Sprintf("update vault for %s/%s: %v", ns, user, err), err)
+		return domain.NewInternal(fmt.Sprintf("write vault for %s/%s: %v", ns, user, err), lastErr)
 	}
 	return nil
 }
@@ -628,7 +655,7 @@ func (s *k8sVaultService) SetReplicator(r VaultReplicator) {
 
 // ApplyVaultEntry writes a replicated entry into local storage.
 func (s *k8sVaultService) ApplyVaultEntry(ctx context.Context, e VaultReplicatedEntry) error {
-	secret, meta, appErr := s.loadVault(ctx, e.Namespace, e.User)
+	_, meta, appErr := s.loadVault(ctx, e.Namespace, e.User)
 	if appErr != nil {
 		return fmt.Errorf("%s", appErr.Message)
 	}
@@ -643,10 +670,10 @@ func (s *k8sVaultService) ApplyVaultEntry(ctx context.Context, e VaultReplicated
 	if prev, ok := meta[e.Name]; ok && prev.Version > e.Version {
 		return nil
 	}
-	meta[e.Name] = entry
-	if appErr := s.persist(ctx, e.Namespace, e.User, secret, meta, func(data map[string][]byte) {
-		data[e.Name] = []byte(e.Value)
-	}); appErr != nil {
+	if appErr := s.persist(ctx, e.Namespace, e.User,
+		func(m map[string]vaultEntryMeta) { m[e.Name] = entry },
+		func(data map[string][]byte) { data[e.Name] = []byte(e.Value) },
+	); appErr != nil {
 		return fmt.Errorf("%s", appErr.Message)
 	}
 	return nil
@@ -654,7 +681,7 @@ func (s *k8sVaultService) ApplyVaultEntry(ctx context.Context, e VaultReplicated
 
 // DeleteVaultEntry removes a replicated entry from local storage.
 func (s *k8sVaultService) DeleteVaultEntry(ctx context.Context, namespace, user, name string) error {
-	secret, meta, appErr := s.loadVault(ctx, namespace, user)
+	secret, _, appErr := s.loadVault(ctx, namespace, user)
 	if appErr != nil {
 		return fmt.Errorf("%s", appErr.Message)
 	}
@@ -664,10 +691,10 @@ func (s *k8sVaultService) DeleteVaultEntry(ctx context.Context, namespace, user,
 	if _, ok := secret.Data[name]; !ok {
 		return nil
 	}
-	delete(meta, name)
-	if appErr := s.persist(ctx, namespace, user, secret, meta, func(data map[string][]byte) {
-		delete(data, name)
-	}); appErr != nil {
+	if appErr := s.persist(ctx, namespace, user,
+		func(m map[string]vaultEntryMeta) { delete(m, name) },
+		func(data map[string][]byte) { delete(data, name) },
+	); appErr != nil {
 		return fmt.Errorf("%s", appErr.Message)
 	}
 	return nil
@@ -692,7 +719,7 @@ func (s *k8sVaultService) ReconcileVault(ctx context.Context, keep []VaultReplic
 	}
 
 	for sc, names := range wanted {
-		secret, meta, appErr := s.loadVault(ctx, sc.ns, sc.user)
+		secret, _, appErr := s.loadVault(ctx, sc.ns, sc.user)
 		if appErr != nil || secret == nil {
 			continue
 		}
@@ -705,14 +732,18 @@ func (s *k8sVaultService) ReconcileVault(ctx context.Context, keep []VaultReplic
 		if len(stale) == 0 {
 			continue
 		}
-		for _, name := range stale {
-			delete(meta, name)
-		}
-		if appErr := s.persist(ctx, sc.ns, sc.user, secret, meta, func(data map[string][]byte) {
-			for _, name := range stale {
-				delete(data, name)
-			}
-		}); appErr != nil {
+		if appErr := s.persist(ctx, sc.ns, sc.user,
+			func(m map[string]vaultEntryMeta) {
+				for _, name := range stale {
+					delete(m, name)
+				}
+			},
+			func(data map[string][]byte) {
+				for _, name := range stale {
+					delete(data, name)
+				}
+			},
+		); appErr != nil {
 			return fmt.Errorf("%s", appErr.Message)
 		}
 	}
