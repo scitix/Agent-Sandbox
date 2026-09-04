@@ -345,7 +345,7 @@ func (p *Proxy) handle(ctx context.Context, conn net.Conn, r role) {
 	// through to the untouched splice path below.
 	if r != roleOther {
 		if secrets := p.currentSecrets(); secrets.Intercepts(hostname, origPort) {
-			p.serveL7(ctx, conn, br, hostname, origPort, r)
+			p.serveL7(ctx, conn, br, hostname, origPort, r, decision.AllowsPrivate)
 			return
 		}
 	}
@@ -354,7 +354,7 @@ func (p *Proxy) handle(ctx context.Context, conn net.Conn, r role) {
 	if decision.Match == MatchDomain {
 		// Dial by hostname (not the sandbox-resolved IP) to defeat /etc/hosts
 		// spoofing, and verify the resolved IP is not internal before connect.
-		upstream, err = p.dialHostname(ctx, hostname, origPort)
+		upstream, err = p.dialHostname(ctx, hostname, origPort, decision.AllowsPrivate)
 	} else {
 		upstream, err = net.DialTimeout("tcp", net.JoinHostPort(origIP.String(), strconv.Itoa(origPort)), upstreamDialTimeout)
 	}
@@ -368,10 +368,15 @@ func (p *Proxy) handle(ctx context.Context, conn net.Conn, r role) {
 }
 
 // dialHostname resolves and connects to host:port, rejecting (before connect)
-// any candidate IP inside the anti-SSRF denied ranges — blocking DNS-rebind to
-// internal targets. Honors AllowPrivateNetworks.
-func (p *Proxy) dialHostname(ctx context.Context, host string, port int) (net.Conn, error) {
-	allowPrivate := p.current().AllowPrivateNetworks
+// any candidate IP the policy would not have permitted — blocking a DNS rebind
+// from turning an allowed hostname into a path to an internal address.
+//
+// allowsPrivate comes from the decision that admitted this connection, not from
+// the policy alone: a hostname allowed by a specific rule was meant to be
+// reachable wherever it resolves, while one allowed by a wildcard was not.
+// The always-denied tier is checked regardless — a hostname resolving to the
+// metadata endpoint is the textbook rebind.
+func (p *Proxy) dialHostname(ctx context.Context, host string, port int, allowsPrivate bool) (net.Conn, error) {
 	d := &net.Dialer{
 		Timeout: upstreamDialTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -383,7 +388,10 @@ func (p *Proxy) dialHostname(ctx context.Context, host string, port int) (net.Co
 			if ip == nil {
 				return fmt.Errorf("unparseable resolved address %q", address)
 			}
-			if !allowPrivate && isPrivateIP(ip) {
+			if isAlwaysDenied(ip) {
+				return fmt.Errorf("resolved to %s, which is never reachable from a sandbox", ip)
+			}
+			if !allowsPrivate && isPrivateIP(ip) {
 				return fmt.Errorf("resolved to internal IP %s (blocked)", ip)
 			}
 			return nil

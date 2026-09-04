@@ -550,6 +550,13 @@ func Run(opts Options) {
 	}); ok {
 		r.SetArmWaiter(armRegistry)
 	}
+	// The same runner owns the exec channel into a sandbox's proxy sidecar, so
+	// it is also what delivers a revised egress policy to a running sandbox.
+	if r, ok := sandboxSvc.(interface {
+		SetEgressRepusher(service.EgressRepusher)
+	}); ok {
+		r.SetEgressRepusher(hooksRunner)
+	}
 
 	// One vault instance is shared by the sandbox service (which resolves the
 	// ${e2b.secrets.<name>} references a create request carries), the E2B

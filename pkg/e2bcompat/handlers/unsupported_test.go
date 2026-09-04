@@ -38,7 +38,6 @@ var allMessages = map[string]string{
 	"clusterAdmin":   msgClusterAdmin,
 	"accessTokens":   msgAccessTokens,
 	"apiKeyRename":   msgAPIKeyRename,
-	"liveNetwork":    msgLiveNetwork,
 	"secrets":        msgSecrets,
 	"logs":           msgLogs,
 	"metrics":        msgMetrics,

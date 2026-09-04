@@ -36,7 +36,7 @@ const l7IdleTimeout = 5 * time.Minute
 // This path runs *only* for hosts named in the injection table. Everything else
 // keeps the byte-for-byte splice, so enabling credential injection cannot
 // change the behaviour — or the TLS fingerprint — of unrelated traffic.
-func (p *Proxy) serveL7(ctx context.Context, client net.Conn, br *bufio.Reader, hostname string, port int, r role) {
+func (p *Proxy) serveL7(ctx context.Context, client net.Conn, br *bufio.Reader, hostname string, port int, r role, allowsPrivate bool) {
 	secrets := p.currentSecrets()
 
 	clientStream := net.Conn(newBufConn(client, br))
@@ -78,7 +78,7 @@ func (p *Proxy) serveL7(ctx context.Context, client net.Conn, br *bufio.Reader, 
 		clientStream = tlsConn
 	}
 
-	upstream, err := p.dialUpstreamFor(ctx, hostname, port, plaintext)
+	upstream, err := p.dialUpstreamFor(ctx, hostname, port, plaintext, allowsPrivate)
 	if err != nil {
 		p.log.Error("egress inject: upstream dial failed", "host", hostname, "port", port, "err", err)
 		return
@@ -90,11 +90,12 @@ func (p *Proxy) serveL7(ctx context.Context, client net.Conn, br *bufio.Reader, 
 
 // dialUpstreamFor opens the real connection. It reuses dialHostname so the
 // anti-rebind guarantee is identical to the splice path: resolve the name
-// ourselves, refuse private addresses before connect. For TLS destinations the
-// proxy then performs a *fully verified* handshake — interception is applied to
-// the sandbox side only, never to the upstream side.
-func (p *Proxy) dialUpstreamFor(ctx context.Context, hostname string, port int, plaintext bool) (net.Conn, error) {
-	raw, err := p.dialHostname(ctx, hostname, port)
+// ourselves, refuse before connect any address the admitting decision would not
+// have permitted. For TLS destinations the proxy then performs a *fully
+// verified* handshake — interception is applied to the sandbox side only, never
+// to the upstream side.
+func (p *Proxy) dialUpstreamFor(ctx context.Context, hostname string, port int, plaintext, allowsPrivate bool) (net.Conn, error) {
+	raw, err := p.dialHostname(ctx, hostname, port, allowsPrivate)
 	if err != nil {
 		return nil, err
 	}

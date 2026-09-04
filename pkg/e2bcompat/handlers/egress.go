@@ -229,3 +229,48 @@ func hostCIDR(ip net.IP) string {
 	}
 	return ip.String() + "/128"
 }
+
+// parseE2BNetworkUpdate maps a live network update onto a SandboxNetworkPolicy.
+//
+// The body is a full replacement per E2B's contract ("Omitting a field clears
+// it"), so a nil or empty body legitimately means "unrestricted" — this is the
+// one place where saying nothing is a decision rather than an absence.
+//
+// Transform rules are refused rather than applied: the CA the gateway uses to
+// intercept TLS is minted per claim and installed into the sandbox's trust
+// store while it is being armed, so a rule added later would have nothing to
+// sign with. Saying so beats accepting the field and injecting nothing.
+func parseE2BNetworkUpdate(body *e2bgen.SandboxNetworkUpdateConfig) (*agentsv1alpha1.SandboxNetworkPolicy, *e2bgen.Error) {
+	np := &agentsv1alpha1.SandboxNetworkPolicy{}
+	if body == nil {
+		return np, nil
+	}
+
+	if body.Rules != nil && len(*body.Rules) > 0 {
+		e := errRespCode(400, "network.rules cannot be changed on a running sandbox: the certificate "+
+			"authority the gateway uses to intercept TLS is minted when the sandbox is created and "+
+			"installed into its trust store then. Pass the rules on create, or create a new sandbox.")
+		return nil, &e
+	}
+
+	if body.AllowInternetAccess != nil && !*body.AllowInternetAccess {
+		np.DisableEgress = true
+		return np, nil
+	}
+
+	var eg agentsv1alpha1.EgressRules
+	if body.AllowOut != nil {
+		eg.AllowedDomains, eg.AllowedCIDRs = splitAllowOut(*body.AllowOut)
+	}
+	if body.DenyOut != nil {
+		for _, d := range *body.DenyOut {
+			if d = strings.TrimSpace(d); d != "" {
+				eg.DeniedCIDRs = append(eg.DeniedCIDRs, normalizeCIDR(d))
+			}
+		}
+	}
+	if len(eg.AllowedDomains) > 0 || len(eg.AllowedCIDRs) > 0 || len(eg.DeniedCIDRs) > 0 {
+		np.Egress = &eg
+	}
+	return np, nil
+}

@@ -199,3 +199,80 @@ func TestParseInjectionRules_RejectionIsDeterministic(t *testing.T) {
 		t.Fatalf("expected the first host in sorted order, got %q", first)
 	}
 }
+
+// --------------------------------------------------------------------------
+// Live network update
+// --------------------------------------------------------------------------
+
+// The body is a full replacement per E2B's contract ("Omitting a field clears
+// it"), so an empty one is a decision — unrestricted — rather than an absence.
+func TestParseE2BNetworkUpdate_EmptyBodyIsUnrestricted(t *testing.T) {
+	for name, body := range map[string]*e2bgen.SandboxNetworkUpdateConfig{
+		"nil":   nil,
+		"empty": {},
+	} {
+		np, err := parseE2BNetworkUpdate(body)
+		if err != nil {
+			t.Fatalf("%s: %+v", name, err)
+		}
+		if np == nil || np.DisableEgress || np.Egress != nil {
+			t.Fatalf("%s: expected an unrestricted policy, got %+v", name, np)
+		}
+	}
+}
+
+func TestParseE2BNetworkUpdate_AllowAndDeny(t *testing.T) {
+	np, err := parseE2BNetworkUpdate(&e2bgen.SandboxNetworkUpdateConfig{
+		AllowOut: &[]string{"pypi.org", "10.20.0.0/16", "8.8.8.8"},
+		DenyOut:  &[]string{"1.2.3.4"},
+	})
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if np.Egress == nil {
+		t.Fatal("no egress rules produced")
+	}
+	if len(np.Egress.AllowedDomains) != 1 || np.Egress.AllowedDomains[0] != "pypi.org" {
+		t.Errorf("domains: %+v", np.Egress.AllowedDomains)
+	}
+	// Bare IPs are promoted to host CIDRs so the proxy's matcher can use them.
+	if len(np.Egress.AllowedCIDRs) != 2 || np.Egress.AllowedCIDRs[1] != "8.8.8.8/32" {
+		t.Errorf("cidrs: %+v", np.Egress.AllowedCIDRs)
+	}
+	if len(np.Egress.DeniedCIDRs) != 1 || np.Egress.DeniedCIDRs[0] != "1.2.3.4/32" {
+		t.Errorf("denied: %+v", np.Egress.DeniedCIDRs)
+	}
+}
+
+func TestParseE2BNetworkUpdate_DisableWins(t *testing.T) {
+	no := false
+	np, err := parseE2BNetworkUpdate(&e2bgen.SandboxNetworkUpdateConfig{
+		AllowInternetAccess: &no,
+		AllowOut:            &[]string{"pypi.org"},
+	})
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if !np.DisableEgress || np.Egress != nil {
+		t.Fatalf("allow_internet_access=false must win outright, got %+v", np)
+	}
+}
+
+// Rules are refused rather than accepted and quietly not applied: the CA that
+// makes interception possible is minted per claim and installed into the
+// sandbox's trust store while it is armed, so one added later has nothing to
+// sign with.
+func TestParseE2BNetworkUpdate_RefusesRules(t *testing.T) {
+	rules := map[string][]e2bgen.SandboxNetworkRule{
+		"api.example.com": {{Transform: &e2bgen.SandboxNetworkTransform{
+			Headers: &map[string]string{"Authorization": "Bearer ${e2b.secrets.tok}"},
+		}}},
+	}
+	_, err := parseE2BNetworkUpdate(&e2bgen.SandboxNetworkUpdateConfig{Rules: &rules})
+	if err == nil {
+		t.Fatal("changing rules on a live sandbox must be refused")
+	}
+	if !strings.Contains(err.Message, "certificate authority") {
+		t.Fatalf("the message must explain why, got %q", err.Message)
+	}
+}

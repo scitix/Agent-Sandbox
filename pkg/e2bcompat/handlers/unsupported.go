@@ -94,9 +94,6 @@ const (
 	msgAPIKeyRename = "Renaming an API key is not supported. Delete it with DELETE /api-keys/{apiKeyID} " +
 		"and create a new one."
 
-	msgLiveNetwork = "Changing the egress policy of a running sandbox is not supported yet. Pass the " +
-		"network configuration when creating the sandbox instead."
-
 	msgSecrets = "Secrets are not enabled in this AgentBox deployment. Without the credential vault there " +
 		"is nowhere to store a value that ${e2b.secrets.<name>} could resolve to, so network.rules cannot " +
 		"be used either. Ask your platform admin to enable it."
@@ -225,9 +222,6 @@ func (u unsupported) VisitDeleteAccessTokensAccessTokenIDResponse(w http.Respons
 	return u.write(w)
 }
 func (u unsupported) VisitPatchApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
-	return u.write(w)
-}
-func (u unsupported) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }
 func (u unsupported) VisitGetSecretsResponse(w http.ResponseWriter) error          { return u.write(w) }

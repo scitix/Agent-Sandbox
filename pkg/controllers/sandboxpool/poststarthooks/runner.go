@@ -237,6 +237,19 @@ func (r *Runner) OnSandboxRelease(ctx context.Context, pod *corev1.Pod) {
 	}
 }
 
+// RepushEgressPolicy delivers the pod's current egress-policy annotation to its
+// proxy sidecar. It exists for the live-update path: the API server stamps a
+// revised policy and calls this, and the sidecar reloads it for connections
+// opened from then on.
+//
+// Deliberately narrower than a re-arm. Re-running OnSandboxReady would remint
+// the interception CA and re-install it through envd's /init, which is also the
+// call that carries the sandbox's environment variables — a heavy, lossy way to
+// change an allowlist.
+func (r *Runner) RepushEgressPolicy(ctx context.Context, pod *corev1.Pod) error {
+	return r.pushEgressPolicy(ctx, pod)
+}
+
 // pushEgressPolicy pushes the effective egress policy (from the egress-policy
 // annotation) into the filter sidecar via exec. No-op when the pod has no
 // policy annotation or no sidecar.

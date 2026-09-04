@@ -102,16 +102,22 @@ type SandboxNetworkPolicy struct {
 	// +optional
 	Egress *EgressRules `json:"egress,omitempty"`
 
-	// AllowPrivateNetworks disables the default deny of private / link-local /
-	// cloud-metadata ranges (RFC1918, 169.254.0.0/16, etc.) for a request that
-	// declares filtering. Default false — the anti-SSRF baseline stays on.
-	// Enable only for trusted intra-cluster access.
+	// AllowPrivateNetworks opens the private ranges (RFC1918, CGNAT, ULA)
+	// wholesale for a request that declares filtering. Default false.
+	//
+	// Usually unnecessary: naming an internal host or CIDR in Egress already
+	// reaches it, because a specific allowlist entry lifts the baseline for the
+	// destination it names. This is for "allow everything, the cluster network
+	// included" — a wildcard entry deliberately does not imply that.
+	//
+	// It never opens the cloud-metadata and link-local ranges. Those are denied
+	// unconditionally: an unauthenticated GET to 169.254.169.254 (or, on this
+	// cloud, 100.100.100.200) hands out instance credentials, and no sandbox
+	// workload has a legitimate reason to reach them.
 	//
 	// Implied when Egress is nil and DisableEgress is false: a request that
 	// filters nothing (rules only, say) must not be stricter than one that says
-	// nothing at all, where private ranges are reachable. To allow every host
-	// but keep the baseline, declare Egress with AllowedDomains ["*"] and
-	// AllowedCIDRs ["0.0.0.0/0"] instead.
+	// nothing at all, where private ranges are reachable.
 	// +optional
 	AllowPrivateNetworks bool `json:"allowPrivateNetworks,omitempty"`
 }

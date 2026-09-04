@@ -56,6 +56,31 @@ it would put the credential in the request body and the access log.
 Secrets are scoped to (namespace, user) and replicated to every cluster, so a
 sandbox placed on another cluster resolves the same credential.
 
+`PUT /sandboxes/{id}/network` replaces the egress filtering of a running
+sandbox, so an agent can install its dependencies and then lock down before it
+runs anything untrusted. Two limits: `rules` cannot be changed there (the CA the
+gateway uses to intercept TLS is minted per claim and installed into the
+sandbox's trust store while it starts), and connections already open are not
+re-evaluated — tightening applies to what the sandbox does next, it is not a
+kill switch.
+
+### Reaching an internal service
+
+The anti-SSRF baseline has two tiers. The cloud metadata endpoints and
+link-local (169.254.0.0/16, 100.100.100.200, fd00:ec2::254) are denied
+unconditionally — no field opens them, because an unauthenticated GET there
+hands out instance credentials. RFC1918 / CGNAT / ULA are denied by default but
+reachable when the request names them:
+
+```python
+network={"allowOut": ["harbor.internal", "10.20.0.0/16", "pypi.org"]}
+```
+
+A named host or CIDR lifts the baseline for that destination. A wildcard does
+not: `allowOut: ["*"]` means the internet, not the cluster network. For
+"everything, cluster network included", pass
+`metadata={"agentbox.scitix.ai/allow-private-networks": "true"}`.
+
 The environment has to have the gateway on for any of this: without the sidecar
 there is nothing to intercept the request, so a create carrying `network.rules`
 — or any egress filtering — is refused rather than silently unenforced. That
