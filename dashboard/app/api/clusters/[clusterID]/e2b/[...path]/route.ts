@@ -128,6 +128,16 @@ async function doProxy(
   if (hostHeader) headers["Host"] = hostHeader
   if (headers["Host"]) log.upstreamHost = headers["Host"]
 
+  // Admin impersonation, forwarded exactly as the native proxy forwards it.
+  // The console's user switcher has to change whose sandboxes and whose
+  // credentials this surface addresses; without these the admin's own identity
+  // is used and the switcher silently does nothing here. The upstream decides
+  // whether to honour them — it ignores them for a non-admin caller.
+  const impersonateTeam = request.headers.get("X-Impersonate-Team")
+  const impersonateUser = request.headers.get("X-Impersonate-User")
+  if (impersonateTeam) headers["X-Impersonate-Team"] = impersonateTeam
+  if (impersonateUser) headers["X-Impersonate-User"] = impersonateUser
+
   const contentType = request.headers.get("Content-Type")
   if (contentType) headers["Content-Type"] = contentType
 

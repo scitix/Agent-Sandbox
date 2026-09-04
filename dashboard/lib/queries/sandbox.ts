@@ -19,6 +19,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { AgentSandbox, currentApiClient, currentFetchClient } from "@/lib/api/client"
 import { SUPPRESSED_ERROR_CODES, basePath, getToken, handleErrorResponse } from "@/lib/api/client"
+import { impersonationHeaders } from "./utils"
 import type { E2BCreateBody } from "@/lib/utils/e2b-sandbox"
 import { apiFor, delayedInvalidate } from "./utils"
 
@@ -102,14 +103,28 @@ export function useCreateExecToken() {
  */
 export async function createSandboxViaE2B(
   body: E2BCreateBody,
-  opts: { clusterID: string; apiKey: string },
+  opts: {
+    clusterID: string
+    apiKey: string
+    /**
+     * Admin impersonation target. Without it a sandbox an admin creates while
+     * the user switcher is set lands in the admin's own namespace — the
+     * switcher appears to do nothing on this surface.
+     */
+    impersonate?: { team: string; user: string } | null
+  },
 ): Promise<{ sandboxID?: string }> {
+  const impersonation =
+    opts.impersonate?.team && opts.impersonate?.user
+      ? impersonationHeaders(opts.impersonate.team, opts.impersonate.user)
+      : {}
   const res = await fetch(`${basePath}/api/clusters/${opts.clusterID}/e2b/sandboxes`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${getToken()}`,
       "X-API-Key": opts.apiKey,
+      ...impersonation,
     },
     body: JSON.stringify(body),
   })
