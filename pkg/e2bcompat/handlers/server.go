@@ -398,8 +398,16 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	result, appErr := s.sandbox.Create(ctx, input)
 	if appErr != nil {
 		switch appErr.Code {
-		case apidomain.ErrCodeNotFound:
+		// A missing Env reads as a bad templateID rather than a missing
+		// resource: E2B's create has no 404, and the id came from the caller.
+		case apidomain.ErrCodeNotFound, apidomain.ErrCodeBadRequest:
 			return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(errRespCode(400, appErr.Message))}, nil
+		// Capacity, not correctness: retrying the identical request can succeed
+		// once a pool has an idle Pod again, which 500 would not tell a client.
+		case apidomain.ErrCodeServiceUnavailable:
+			return e2bgen.PostSandboxes503JSONResponse{N503JSONResponse: e2bgen.N503JSONResponse(errRespAppErr(ctx, appErr))}, nil
+		case apidomain.ErrCodeGatewayTimeout:
+			return e2bgen.PostSandboxes504JSONResponse{N504JSONResponse: e2bgen.N504JSONResponse(errRespAppErr(ctx, appErr))}, nil
 		default:
 			return e2bgen.PostSandboxes500JSONResponse{N500JSONResponse: e2bgen.N500JSONResponse(errRespAppErr(ctx, appErr))}, nil
 		}
