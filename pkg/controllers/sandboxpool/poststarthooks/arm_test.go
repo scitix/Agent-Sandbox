@@ -31,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
@@ -304,54 +303,60 @@ func TestWaitRuntimesReady_NoClient_IsNoop(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
-// markArmResult
+// Arming verdicts
 // --------------------------------------------------------------------------
 
-func TestMarkArmResult_Success_StampsSandboxID(t *testing.T) {
-	pod := armPod("10.0.0.1")
-	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(pod).Build()
-	r := &Runner{crClient: c}
+// recordingNotifier captures what the runner reports.
+type recordingNotifier struct {
+	id  string
+	err error
+	got bool
+}
 
-	r.markArmResult(context.Background(), pod, "sb1", nil)
+func (n *recordingNotifier) Notify(sandboxID string, err error) {
+	n.id, n.err, n.got = sandboxID, err, true
+}
 
-	got := &corev1.Pod{}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pod), got); err != nil {
-		t.Fatalf("get: %v", err)
+// The verdict goes to the waiting request directly. Writing it onto the Pod
+// instead would cost an API-server write per sandbox, fanned out to every Pod
+// informer in the cluster, to carry a fact between two goroutines of the same
+// process.
+func TestOnSandboxReady_ReportsFailureToTheWaiter(t *testing.T) {
+	// Point the /init hook at a port nothing listens on, so the dial is
+	// refused immediately. A routable-but-silent address would make the retry
+	// backoff wait out its full budget and turn this into a minutes-long test.
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	host, _ := hostPort(t, closed.URL)
+	closed.Close()
+
+	pod := armPod(host)
+	// No crClient, so the pool lookup is skipped; the /init hook then fails
+	// against the closed port — which is the failure we want reported.
+	r := &Runner{httpClient: &http.Client{Timeout: time.Second}}
+	n := &recordingNotifier{}
+	r.armNotifier = n
+
+	r.OnSandboxReady(context.Background(), pod)
+
+	if !n.got {
+		t.Fatal("the waiting request was never told the outcome")
 	}
-	if got.Annotations[agentsv1alpha1.SandboxArmedAnnotationKey] != "sb1" {
-		t.Fatalf("expected the armed mark to carry the sandbox ID, got %q",
-			got.Annotations[agentsv1alpha1.SandboxArmedAnnotationKey])
+	if n.id != "sb1" {
+		t.Fatalf("verdict addressed to %q", n.id)
 	}
-	if _, bad := got.Annotations[agentsv1alpha1.SandboxArmErrorAnnotationKey]; bad {
-		t.Fatal("success must not also record an arm error")
+	if n.err == nil {
+		t.Fatal("a failed arming must be reported as a failure")
 	}
 }
 
-func TestMarkArmResult_Failure_StampsReasonNotArmed(t *testing.T) {
-	pod := armPod("10.0.0.1")
-	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(pod).Build()
-	r := &Runner{crClient: c}
-
-	r.markArmResult(context.Background(), pod, "", errors.New("runtime never answered"))
-
-	got := &corev1.Pod{}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pod), got); err != nil {
-		t.Fatalf("get: %v", err)
+// A runner built without a notifier must not panic: that is every unit test and
+// any build without the API server half.
+func TestNewRunner_NilNotifierIsANoop(t *testing.T) {
+	r := NewRunner("", nil, nil, nil, nil)
+	if r.armNotifier == nil {
+		t.Fatal("expected a no-op notifier rather than nil")
 	}
-	if got.Annotations[agentsv1alpha1.SandboxArmErrorAnnotationKey] != "runtime never answered" {
-		t.Fatalf("expected the failure reason, got %q",
-			got.Annotations[agentsv1alpha1.SandboxArmErrorAnnotationKey])
-	}
-	if _, armed := got.Annotations[agentsv1alpha1.SandboxArmedAnnotationKey]; armed {
-		t.Fatal("a failed arming must never leave the armed mark behind")
-	}
-}
-
-func TestTruncateReason_BoundsAnnotationSize(t *testing.T) {
-	got := truncateReason(strings.Repeat("x", 5000))
-	if len(got) > 600 {
-		t.Fatalf("reason not bounded: %d bytes", len(got))
-	}
+	r.armNotifier.Notify("sb1", nil)
 }
 
 func TestArmOutcome_DistinguishesTimeoutFromError(t *testing.T) {

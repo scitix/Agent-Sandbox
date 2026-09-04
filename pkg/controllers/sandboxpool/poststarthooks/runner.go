@@ -30,7 +30,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -92,24 +91,35 @@ type Runner struct {
 	httpClient     *http.Client
 	clientset      kubernetes.Interface
 	restConfig     *rest.Config
-	// crClient reads the owning SandboxPool (for runtime readiness probes) and
-	// writes the arming annotations back onto the Pod. Nil disables the
-	// readiness wait; arming then still runs, it just cannot pre-check the
-	// runtimes.
+	// crClient reads the owning SandboxPool for its runtime readiness probes.
+	// Nil skips the readiness pre-check; arming still runs.
 	crClient client.Client
+	// armNotifier hands the arming verdict to the create request waiting on it.
+	armNotifier ArmNotifier
 }
 
 // NewRunner creates a Runner. gatewayBaseURL may be empty (it is only a
 // fallback for post-start HTTP hooks; the normal path dials the Pod directly).
 // clientset / restConfig may be nil (Exec hooks are skipped); crClient may be
-// nil (runtime readiness pre-check and arming annotations are skipped).
-func NewRunner(gatewayBaseURL string, clientset kubernetes.Interface, restConfig *rest.Config, crClient client.Client) *Runner {
+// nil (the runtime readiness pre-check is skipped); armNotifier may be nil
+// (nobody is waiting on the verdict).
+func NewRunner(
+	gatewayBaseURL string,
+	clientset kubernetes.Interface,
+	restConfig *rest.Config,
+	crClient client.Client,
+	armNotifier ArmNotifier,
+) *Runner {
+	if armNotifier == nil {
+		armNotifier = noopArmNotifier{}
+	}
 	return &Runner{
 		gatewayBaseURL: gatewayBaseURL,
 		httpClient:     &http.Client{Timeout: 15 * time.Second},
 		clientset:      clientset,
 		restConfig:     restConfig,
 		crClient:       crClient,
+		armNotifier:    armNotifier,
 	}
 }
 
@@ -135,28 +145,58 @@ func (r *Runner) OnSandboxReady(ctx context.Context, pod *corev1.Pod) {
 	sandboxID := pod.Annotations[agentsv1alpha1.SandboxIDAnnotationKey]
 	start := time.Now()
 
-	if err := r.arm(ctx, pod); err != nil {
+	err := r.Arm(ctx, pod)
+
+	// Hand the verdict to the create request waiting on it, if there is one.
+	// This is a channel send between two goroutines of the same process, which
+	// is what the arrangement is worth: recording it on the Pod instead would
+	// spend an API-server write per sandbox, fanned out to every Pod informer
+	// in the cluster, so that the create path could watch for something it
+	// could simply have been told.
+	//
+	// A re-arm triggered by a configuration change has no requester; Notify
+	// drops that verdict.
+	r.armNotifier.Notify(sandboxID, err)
+
+	if err != nil {
 		klog.ErrorS(err, "arming failed; sandbox will not be delivered",
 			"pod", klog.KObj(pod), "sandboxID", sandboxID)
-		r.markArmResult(ctx, pod, "", err)
 		pkgmetrics.SandboxArmTotal.WithLabelValues(pod.Namespace, poolOf(pod), armOutcome(err)).Inc()
 		return
 	}
-
-	r.markArmResult(ctx, pod, sandboxID, nil)
 	pkgmetrics.SandboxArmTotal.WithLabelValues(pod.Namespace, poolOf(pod), armOutcomeSuccess).Inc()
 	pkgmetrics.SandboxArmDuration.WithLabelValues(pod.Namespace, poolOf(pod)).Observe(time.Since(start).Seconds())
 }
 
-// arm runs every step that has to succeed before a sandbox may be handed to its
+// ArmNotifier receives the arming verdict for a claimed sandbox. Declared as an
+// interface so a nil one is a working no-op rather than a panic.
+type ArmNotifier interface {
+	Notify(sandboxID string, err error)
+}
+
+// noopArmNotifier stands in when nobody is waiting on arming verdicts, which is
+// every unit test and any build without the API server half.
+type noopArmNotifier struct{}
+
+func (noopArmNotifier) Notify(string, error) {}
+
+// Arm runs every step that has to succeed before a sandbox may be handed to its
 // caller, and returns the first failure. The step order is a security contract,
 // not a convenience (see the doc comment on OnSandboxReady).
 //
-// Step 0 exists because the phase transition that triggers this hook only
-// compares container image digests — it does not wait for the runtime inside
-// the new container to answer. Without it, "armed" would mean "the image was
-// swapped", which is not the same as "the sandbox is usable".
-func (r *Runner) arm(ctx context.Context, pod *corev1.Pod) error {
+// The caller owns the outcome. Arming used to record its verdict on the Pod so
+// the create path could watch for it, which cost one API-server write per
+// sandbox — fanned out to every Pod informer in the cluster — to move a fact
+// between two goroutines. The claim path calls this directly instead and gets
+// the error as a return value.
+//
+// Exactly one caller may arm a given claim. It is not idempotent: each run
+// mints a fresh per-sandbox CA, and installing a second one after the sandbox
+// already trusts the first breaks interception for connections in flight.
+//
+// Step 0 exists because a container running the right image is not yet a
+// sandbox that answers. Nothing else waits for the runtime to come up.
+func (r *Runner) Arm(ctx context.Context, pod *corev1.Pod) error {
 	deadline := armDeadline(pod)
 	armCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
@@ -430,6 +470,17 @@ const (
 
 // armDeadline derives when arming must give up: the sandbox's own startup
 // timeout, measured from when it was claimed, clamped into [min, max].
+//
+// Arming is inside the startup budget, not additional to it — from the caller's
+// side "how long until I get a usable sandbox" is one number, and splitting it
+// would let a create take twice its configured timeout. The floor exists
+// because a claim that lands at the very end of that budget still needs enough
+// time for the arming round trips; failing it on arithmetic would be a worse
+// answer than overrunning slightly.
+//
+// The runner reporting its own timeout, rather than going quiet and letting the
+// waiter guess, is what keeps a hopeless arming diagnosable: the caller gets the
+// reason instead of "nothing happened".
 func armDeadline(pod *corev1.Pod) time.Time {
 	now := time.Now()
 	budget := maxArmBudget
@@ -567,44 +618,6 @@ func probeOnce(ctx context.Context, hc *http.Client, url string) error {
 		return fmt.Errorf("probe returned %d", resp.StatusCode)
 	}
 	return nil
-}
-
-// markArmResult records the outcome of arming on the Pod. Exactly one of the
-// two annotations is ever present: success carries the sandbox ID (so a
-// recycled Pod's stale mark cannot be read as an arming of the current claim),
-// failure carries the reason. Both are managed annotation keys, so releasing
-// the sandbox strips them and the next claim starts unarmed.
-func (r *Runner) markArmResult(ctx context.Context, pod *corev1.Pod, sandboxID string, armErr error) {
-	if r.crClient == nil {
-		return
-	}
-
-	key, value := agentsv1alpha1.SandboxArmedAnnotationKey, sandboxID
-	if armErr != nil {
-		key, value = agentsv1alpha1.SandboxArmErrorAnnotationKey, truncateReason(armErr.Error())
-	}
-
-	patch := fmt.Appendf(nil, `{"metadata":{"annotations":{%q:%q}}}`, key, value)
-	err := retry.OnError(defaultBackoff, func(error) bool { return true }, func() error {
-		return r.crClient.Patch(ctx, pod.DeepCopy(), client.RawPatch(types.MergePatchType, patch))
-	})
-	if err != nil {
-		// The sandbox is (or is not) armed regardless; only the record failed.
-		// The create path will time out waiting and release the pod, which is
-		// the safe direction.
-		klog.ErrorS(err, "arming: failed to record result on pod",
-			"pod", klog.KObj(pod), "annotation", key)
-	}
-}
-
-// truncateReason bounds an arming failure so it cannot blow the 256 KiB
-// annotation budget on a pathological error chain.
-func truncateReason(s string) string {
-	const maxReason = 512
-	if len(s) <= maxReason {
-		return s
-	}
-	return s[:maxReason] + "…"
 }
 
 // poolOf returns the pod's pool name for metric labels.

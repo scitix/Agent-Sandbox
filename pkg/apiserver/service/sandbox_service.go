@@ -146,13 +146,10 @@ type k8sSandboxService struct {
 	// than served without the credentials it asked for.
 	vault VaultService
 
-	// armWaitEnabled makes Create block until the claimed sandbox is armed.
-	// It is turned on at startup only when a hook runner is wired, because the
-	// mark it waits for is written by that runner: without one, nothing would
-	// ever arm and every create would block until its deadline. Off by default
-	// so a service built without the controller half (and every unit test)
-	// behaves as it did before.
-	armWaitEnabled bool
+	// armWaiter delivers the arming verdict for a claimed sandbox, sent by the
+	// post-start hook runner in the same process. Nil means nothing arms, which
+	// is what every unit test and any build without the controller half wants.
+	armWaiter ArmWaiter
 
 	// lastCreateTracker accumulates the most recent Sandbox.Create
 	// timestamp per Pool in process memory and flushes it to the
@@ -185,11 +182,25 @@ func (s *k8sSandboxService) SetVaultService(v VaultService) {
 	s.vault = v
 }
 
-// SetArmWaitEnabled turns on waiting for the arming mark in Create. Called at
-// startup from cmd/sandbox once the post-start hook runner — the writer of that
-// mark — is wired into the controller manager.
-func (s *k8sSandboxService) SetArmWaitEnabled(enabled bool) {
-	s.armWaitEnabled = enabled
+// ArmWaiter registers interest in a sandbox's arming verdict.
+//
+// The verdict travels in memory, not through the API server: the hook runner
+// that produces it and the create request that wants it are two goroutines of
+// the same process. Recording it on the Pod would cost one write per sandbox,
+// fanned out to every Pod informer in the cluster, to move a fact between
+// goroutines that already share an address space.
+type ArmWaiter interface {
+	// Wait returns the channel the verdict will arrive on and a cancel
+	// function the caller must defer. Register before the work that produces
+	// the verdict can start: one delivered with no waiter registered is
+	// dropped.
+	Wait(sandboxID string) (<-chan error, func())
+}
+
+// SetArmWaiter wires the arming-verdict channel. Called at startup from
+// cmd/sandbox alongside the hook runner that sends on it.
+func (s *k8sSandboxService) SetArmWaiter(w ArmWaiter) {
+	s.armWaiter = w
 }
 
 // SetLastCreateTracker wires the in-process Sandbox.Create timestamp
@@ -620,6 +631,17 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 			"outcome":     claimOutcome,
 		}).Observe(time.Since(claimStart).Seconds())
 	}()
+	// Register for the arming verdict before the claim can start. Arming begins
+	// as soon as the reconciler sees the Pod reach Running, which can be before
+	// the claim call has even returned here, and a verdict delivered with no
+	// waiter registered is dropped.
+	var armWait <-chan error
+	if s.armWaiter != nil && !skipArmWait {
+		ch, cancelWait := s.armWaiter.Wait(sandboxID)
+		defer cancelWait()
+		armWait = ch
+	}
+
 	resultCh := make(chan schedule.ClaimResult, 1)
 	reqCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
@@ -720,26 +742,25 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		return nil, domain.NewInternal("request canceled by client", ctx.Err())
 	}
 
-	// A claimed Pod is not a usable sandbox yet. The phase transition that
-	// released it only compared container image digests — it did not wait for
-	// the runtime inside the new container to start listening — and the
-	// post-start hooks that deliver the caller's env vars, install the injected
-	// CA, push the egress policy and arm the credentials all run afterwards, in
-	// a controller goroutine. Returning here would hand back an ID whose first
-	// command fails with a misleading gateway error, or (worse, with injection
-	// configured) one that reaches its upstreams carrying only a decoy.
+	// A claimed Pod is not a usable sandbox yet: the container is running the
+	// right image, but nothing has waited for the runtime inside it to answer,
+	// and the caller's env vars, the injected CA, the egress policy and the
+	// credentials have not been delivered. Returning here would hand back an ID
+	// whose first command fails with a misleading gateway error, or — with
+	// injection configured — one that reaches its upstreams carrying a decoy.
 	//
-	// So wait for the arming mark the hook runner writes when every one of
-	// those steps has succeeded. This moves a wait that callers previously had
-	// to implement themselves into the API, where it can also fail loudly.
-	if s.armWaitEnabled && !skipArmWait {
-		armed, armErr := s.waitUntilArmed(ctx, pod, sandboxID, startupTimeout)
-		if armErr != nil {
+	// This request does that work itself rather than handing it to the pool
+	// reconciler and watching the Pod for a verdict. It is the only party that
+	// needs the answer, it already holds everything required to do the work,
+	// and the alternative spends one API-server write per sandbox — fanned out
+	// to every Pod informer in the cluster — to move a fact between two
+	// goroutines.
+	if armWait != nil {
+		if armErr := s.awaitArming(ctx, armWait, pod, sandboxID); armErr != nil {
 			s.releaseAfterFailedArm(pod, pool)
 			pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 			return nil, armErr
 		}
-		pod = armed
 	}
 
 	pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("success")).Inc()
@@ -1858,83 +1879,101 @@ func endpointReady(ctx context.Context, httpClient *http.Client, url string) boo
 // Arming wait
 // ---------------------------------------------------------------------------
 
-// armWaitPollInterval is how often the claimed Pod is re-read while waiting for
-// the arming verdict. The read comes from the controller-runtime cache, so it
-// costs no apiserver round trip; the interval only bounds how quickly the
-// verdict is noticed.
-const armWaitPollInterval = 100 * time.Millisecond
+// The arming wait has one primary path and two backstops, and each exists for a
+// failure the others cannot see.
+//
+// The verdict arrives on a channel from the hook runner: same process, no
+// API-server round trip, and it carries the reason when arming failed. That is
+// the path every normal create takes, successful or not.
+//
+// The runner bounds its own work by the sandbox's startup timeout, so a
+// hopeless arming reports a failure rather than going quiet. armWaitBackstop is
+// therefore longer than the runner can possibly take: if it fires, the verdict
+// was lost rather than late — the arming ran on a different replica during a
+// control-plane rollout, say — and it is reported as its own outcome so that
+// shows up in the metric instead of hiding among ordinary timeouts.
+//
+// The second backstop is abandonment. A sandbox can stop being ours while we
+// wait: deleted by its owner, released by the idle sweeper, or reclaimed for
+// another claim. None of those produce a verdict, and holding the request open
+// for the full budget would leave the caller waiting on something that is
+// already gone. Polling the informer cache costs no API-server traffic, so it
+// runs at a second's cadence purely to end the wait early.
+var (
+	// armWaitBackstop caps the wait when no verdict arrives at all.
+	armWaitBackstop = 12 * time.Minute
+	// armAbandonPollInterval is how often the claimed Pod is re-checked for
+	// deletion, release, or reclaim while waiting.
+	armAbandonPollInterval = time.Second
+)
 
-// armWaitGrace is added to the sandbox's startup timeout to bound the wait.
-// Arming starts only once the Pod reaches Running, which can be at the very end
-// of the startup budget, and the arming steps themselves (readiness probe,
-// /init, two execs) then need their own time. Without the grace a cold-image
-// claim would routinely be released one round trip before it succeeded.
+// awaitArming blocks until the sandbox reports armed, and maps every way that
+// can fail onto a status the caller can act on.
 //
-// A var rather than a const so tests can shrink it; nothing in production
-// writes to it.
-var armWaitGrace = 60 * time.Second
-
-// waitUntilArmed blocks until the claimed Pod carries the arming mark for this
-// sandbox, and returns the refreshed Pod.
-//
-// Three failure modes, each mapped to a status the caller can act on:
-//   - the hook runner recorded an arming error   → 500 with its reason
-//   - the deadline passed with no verdict        → 504
-//   - the client disconnected                    → 500 (canceled)
-//
-// In all three the sandbox must not be delivered; the caller releases the Pod.
-func (s *k8sSandboxService) waitUntilArmed(
+// In all of them the sandbox must not be delivered; the caller releases the Pod.
+func (s *k8sSandboxService) awaitArming(
 	ctx context.Context,
+	armWait <-chan error,
 	pod *corev1.Pod,
 	sandboxID string,
-	startupTimeout time.Duration,
-) (*corev1.Pod, *domain.AppError) {
-	budget := startupTimeout + armWaitGrace
-	waitCtx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
+) *domain.AppError {
+	backstop := time.NewTimer(armWaitBackstop)
+	defer backstop.Stop()
+	poll := time.NewTicker(armAbandonPollInterval)
+	defer poll.Stop()
 
 	key := client.ObjectKeyFromObject(pod)
-	ticker := time.NewTicker(armWaitPollInterval)
-	defer ticker.Stop()
 
 	for {
-		current := &corev1.Pod{}
-		if err := s.client.Get(waitCtx, key, current); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil, domain.NewInternal(
-					fmt.Sprintf("sandbox %s: pod was deleted while starting up", sandboxID), err)
-			}
-			// A transient cache/apiserver error is not a verdict; keep waiting.
-			klog.V(4).InfoS("waitUntilArmed: pod read failed, retrying",
-				"pod", key.String(), "error", err)
-		} else {
-			// The sandbox ID guards against reading a mark left by an earlier
-			// claim of the same recycled Pod.
-			if current.Annotations[agentsv1alpha1.SandboxArmedAnnotationKey] == sandboxID {
-				return current, nil
-			}
-			if reason := current.Annotations[agentsv1alpha1.SandboxArmErrorAnnotationKey]; reason != "" {
-				return nil, domain.NewInternal(
-					fmt.Sprintf("sandbox %s failed to start up: %s", sandboxID, reason), nil)
-			}
-			if current.Labels[agentsv1alpha1.SandboxIDLabelKey] != sandboxID {
-				// The Pod was reclaimed for someone else — our claim is gone.
-				return nil, domain.NewInternal(
-					fmt.Sprintf("sandbox %s: pod was reclaimed while starting up", sandboxID), nil)
-			}
-		}
-
 		select {
-		case <-waitCtx.Done():
-			if ctx.Err() != nil {
-				return nil, domain.NewInternal("request canceled by client", ctx.Err())
+		case err := <-armWait:
+			if err != nil {
+				return domain.NewInternal(
+					fmt.Sprintf("sandbox %s failed to start up: %v", sandboxID, err), err)
 			}
-			return nil, domain.NewGatewayTimeout(fmt.Sprintf(
-				"sandbox %s did not become ready within %s: its runtime never answered, "+
-					"or a post-start step did not finish", sandboxID, budget), waitCtx.Err())
-		case <-ticker.C:
+			return nil
+
+		case <-ctx.Done():
+			return domain.NewInternal("request canceled by client", ctx.Err())
+
+		case <-backstop.C:
+			// Distinct from an arming timeout, which the runner reports itself.
+			// Reaching here means the verdict never came.
+			pkgmetrics.SandboxArmTotal.WithLabelValues(
+				pod.Namespace, pod.Labels[agentsv1alpha1.SandboxPoolLabelKey], "lost").Inc()
+			return domain.NewGatewayTimeout(fmt.Sprintf(
+				"sandbox %s: no start-up result was reported within %s. The sandbox was released; "+
+					"retry the request", sandboxID, armWaitBackstop), nil)
+
+		case <-poll.C:
+			if appErr := s.checkStillOurs(ctx, key, sandboxID); appErr != nil {
+				return appErr
+			}
 		}
 	}
+}
+
+// checkStillOurs ends the wait early when the claim has gone away underneath
+// it. Reads come from the informer cache, so this costs no API-server traffic.
+func (s *k8sSandboxService) checkStillOurs(ctx context.Context, key client.ObjectKey, sandboxID string) *domain.AppError {
+	current := &corev1.Pod{}
+	if err := s.client.Get(ctx, key, current); err != nil {
+		if apierrors.IsNotFound(err) {
+			return domain.NewInternal(
+				fmt.Sprintf("sandbox %s: pod was deleted while starting up", sandboxID), err)
+		}
+		// A transient cache miss is not a verdict; keep waiting.
+		return nil
+	}
+	if current.DeletionTimestamp != nil {
+		return domain.NewInternal(
+			fmt.Sprintf("sandbox %s: pod is being deleted", sandboxID), nil)
+	}
+	if current.Labels[agentsv1alpha1.SandboxIDLabelKey] != sandboxID {
+		return domain.NewInternal(
+			fmt.Sprintf("sandbox %s: pod was reclaimed while starting up", sandboxID), nil)
+	}
+	return nil
 }
 
 // releaseAfterFailedArm returns a Pod to the pool after arming failed or timed
