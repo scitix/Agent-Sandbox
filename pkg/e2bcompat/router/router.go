@@ -23,6 +23,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/handlers"
+	"github.com/scitix/agent-sandbox/pkg/utils/logclient"
 	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
@@ -40,6 +41,10 @@ type Services struct {
 	Metrics *promclient.Client
 	// MetricsSelector returns the PromQL label matcher for this cluster.
 	MetricsSelector func() string
+	// CentralLogs reads finished sandboxes' output.
+	CentralLogs *logclient.Client
+	// LogFilters scopes central-log queries to this cluster.
+	LogFilters func() map[string]string
 	// Forwarder enables cross-cluster forwarding via E2B API.
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	Forwarder *service.CrossClusterForwarder
@@ -57,6 +62,8 @@ func Setup(r *gin.Engine, svcs Services, k8sClient client.Client, authMw gin.Han
 		LocalClusterID:  svcs.LocalClusterID,
 		Metrics:         svcs.Metrics,
 		MetricsSelector: svcs.MetricsSelector,
+		CentralLogs:     svcs.CentralLogs,
+		LogFilters:      svcs.LogFilters,
 		Forwarder:       svcs.Forwarder,
 	}, k8sClient, gatewayDomain)
 

@@ -225,11 +225,11 @@ func toIntSlice(in []int32) []int {
 // second request would wipe whatever the create request had set.
 func mergeInitHook(hooks []Action, caCertPEM string, envVars map[string]string) []Action {
 	if caCertPEM == "" && len(envVars) == 0 {
-		return hooks
+		return ensureInitHook(hooks)
 	}
 	for i := range hooks {
 		h := hooks[i].HTTPPost
-		if h == nil || h.Path != "/init" {
+		if h == nil || h.Path != envdInitPath {
 			continue
 		}
 		if h.Body == nil {
@@ -266,7 +266,7 @@ func mergeInitHook(hooks []Action, caCertPEM string, envVars map[string]string) 
 	}
 	return append(hooks, Action{HTTPPost: &HTTPPostAction{
 		Port: envdInitPort,
-		Path: "/init",
+		Path: envdInitPath,
 		Body: body,
 	}})
 }
@@ -274,3 +274,31 @@ func mergeInitHook(hooks []Action, caCertPEM string, envVars map[string]string) 
 // envdInitPort is the in-sandbox envd listener that owns trust-store and
 // env-var setup.
 const envdInitPort int32 = 49983
+
+// envdInitPath is the endpoint that carries the trust-store certificate and the
+// sandbox's environment variables, and that lifts envd's await-init gate.
+const envdInitPath = "/init"
+
+// ensureInitHook appends an empty /init when the hook list has none.
+//
+// envd can be run with a gate that refuses to execute anything until it has
+// received an /init (see the await-init patch), which exists because a command
+// accepted before setup runs in a sandbox that is not yet configured. That gate
+// can only ever be lifted if the call always happens — including for a sandbox
+// with no environment variables and no injected certificate, which otherwise
+// had nothing to send and sent nothing.
+//
+// The call is harmless where the gate is off: /init with an empty body sets
+// nothing.
+func ensureInitHook(hooks []Action) []Action {
+	for i := range hooks {
+		if h := hooks[i].HTTPPost; h != nil && h.Path == envdInitPath {
+			return hooks
+		}
+	}
+	return append(hooks, Action{HTTPPost: &HTTPPostAction{
+		Port: envdInitPort,
+		Path: envdInitPath,
+		Body: map[string]any{},
+	}})
+}

@@ -662,6 +662,12 @@ func envOverridesFromGen(o *gen.EnvOverrides) (*agentsv1alpha1.EnvOverridesSpec,
 		out.DefaultIdleTimeout = &metav1.Duration{Duration: d}
 	}
 	out.NetworkPolicy = networkPolicyFromGen(o.NetworkPolicy)
+	// Accept a header value still written in the retired doubled-curly syntax
+	// and store it in the current one. The console round-trips whatever it read,
+	// so without this an Env created before the change could not be saved again
+	// without hand-editing every rule — and the people who own these objects
+	// edit them in the console, not with kubectl.
+	agentsv1alpha1.NormalizeInjectionPlaceholders(out.NetworkPolicy)
 	out.UpdateStrategy = updateStrategyFromGen(o.UpdateStrategy)
 	out.Volumes = envVolumesFromGen(o.Volumes)
 	return out, nil

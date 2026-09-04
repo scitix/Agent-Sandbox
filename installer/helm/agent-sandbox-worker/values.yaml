@@ -168,6 +168,34 @@ controller:
     metricsName: ""    # default: agent-sandbox-controller-metrics
     e2bName: ""        # default: agent-sandbox-e2b-api
 
+  # Observability backends the worker queries directly.
+  #
+  # The worker serves the E2B /metrics and /logs endpoints itself rather than
+  # proxying through the hub, so it needs its own credentials for the shared
+  # observability gateway. The per-cluster scoping (the PromQL selector and the
+  # log filters) already travels in the cluster config; only the endpoint and
+  # the token are set here.
+  #
+  # url/token empty leaves the corresponding endpoints answering 501 with a
+  # message naming the missing configuration, rather than an empty result that
+  # would read as "this sandbox is idle" or "this sandbox printed nothing".
+  observability:
+    # Prometheus-compatible query API, e.g.
+    # https://omniobs.example.com/api/query/metrics
+    metricsUrl: ""
+    # Central log service download endpoint, e.g.
+    # https://omniobs.example.com/api/query/logs/download
+    logsUrl: ""
+    # Bearer token for both. Moved into the release Secret by the chart.
+    token: ""
+    # appId selects the signed auth scheme (Signature/AppID/Timestamp/Randstr);
+    # leave empty for Bearer.
+    appId: ""
+    # project scopes the log query on gateways that require it. An unset or
+    # wrong value returns empty results without an error, so it is worth
+    # checking when logs come back empty.
+    project: ""
+
   # Secrets for the controller
   secrets:
     # adminKey is used to authenticate admin-level API operations.

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"sync"
 	"time"
 
@@ -633,6 +634,9 @@ func protoToClusterConfig(p *syncv1.ClusterConfig) cluster.ClusterConfig {
 				Host: r.Host,
 				Type: r.Type,
 			})
+		}
+		if c.Logs != nil && len(c.Logs.Filters) > 0 {
+			entry.Logs = &cluster.LogsConfig{Filters: maps.Clone(c.Logs.Filters)}
 		}
 		out.Clusters = append(out.Clusters, entry)
 	}

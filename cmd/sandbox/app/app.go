@@ -55,6 +55,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/imageresolver"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
+	"github.com/scitix/agent-sandbox/pkg/utils/logclient"
 	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 	"github.com/scitix/agent-sandbox/pkg/version"
 
@@ -113,6 +114,10 @@ func Run(opts Options) {
 		volumeAllowedRuntimeClasses                      string
 		prometheusURL                                    string
 		prometheusToken                                  string
+		logServiceURL                                    string
+		logServiceToken                                  string
+		logServiceAppID                                  string
+		logServiceProject                                string
 		tlsOpts                                          []func(*tls.Config)
 	)
 
@@ -166,6 +171,17 @@ func Run(opts Options) {
 	flag.StringVar(&prometheusToken, "prometheus-token", os.Getenv("PROMETHEUS_TOKEN"),
 		"Bearer token for --prometheus-url. Supply it through PROMETHEUS_TOKEN from a Secret rather "+
 			"than on the command line, where it would be visible in the Pod spec and in ps output.")
+	flag.StringVar(&logServiceURL, "log-service-url", os.Getenv("LOG_SERVICE_URL"),
+		"Download endpoint of the central log service, used to serve logs for sandboxes whose Pod has "+
+			"already been recycled. Empty limits log retrieval to live sandboxes.")
+	flag.StringVar(&logServiceToken, "log-service-token", os.Getenv("LOG_SERVICE_TOKEN"),
+		"Token for --log-service-url. Supply it through LOG_SERVICE_TOKEN from a Secret rather than "+
+			"on the command line, where it would be visible in the Pod spec and in ps output.")
+	flag.StringVar(&logServiceAppID, "log-service-app-id", os.Getenv("LOG_SERVICE_APP_ID"),
+		"Application ID for the log service's signed auth scheme. Empty selects Bearer auth.")
+	flag.StringVar(&logServiceProject, "log-service-project", os.Getenv("LOG_SERVICE_PROJECT"),
+		"Query scope required by some log gateways. A wrong or missing value yields empty results "+
+			"rather than an error, so check it first when logs come back empty.")
 	flag.StringVar(&clustersConfigMapName, "clusters-configmap-name", "agentbox-clusters-config",
 		"Name of the ConfigMap containing cross-cluster gateway configuration.")
 	flag.StringVar(&egressProxyImage, "egress-proxy-image", os.Getenv("AGENTBOX_EGRESS_PROXY_IMAGE"),
@@ -681,13 +697,42 @@ func Run(opts Options) {
 			return entry.Selector
 		}
 
+		// A sandbox's Pod holds its logs only while it exists; once released,
+		// the only remaining copy is in the central service. Same shape as the
+		// metrics wiring: endpoint and credential from flags, per-cluster scope
+		// read live from the cluster config.
+		var centralLogs *logclient.Client
+		if logServiceURL != "" && logServiceToken != "" {
+			centralLogs = logclient.New(logclient.Config{
+				URL:     logServiceURL,
+				Token:   logServiceToken,
+				AppID:   logServiceAppID,
+				Project: logServiceProject,
+			})
+			setupLog.Info("central sandbox logs enabled", "endpoint", logServiceURL)
+		} else {
+			setupLog.Info("central sandbox logs disabled; only live sandboxes can be queried")
+		}
+		logFiltersFn := func() map[string]string {
+			if clusterStore == nil || localClusterID == "" {
+				return nil
+			}
+			entry, ok := clusterStore.Get(localClusterID)
+			if !ok || entry.Logs == nil {
+				return nil
+			}
+			return logclient.CloneFilters(entry.Logs.Filters)
+		}
+
 		e2bServer := e2bcompat.New(e2bcompat.Config{
 			BindAddress:     e2bBindAddress,
 			Domain:          e2bDomain,
 			ServerVersion:   version.Version,
 			LocalClusterID:  localClusterID,
 			MetricsSelector: selectorFn,
-		}, mgr.GetClient(), keyStore, adminKeyMgr, iamSvc, sandboxSvc, ccForwarder, fedRegistry, metricsClient, vaultSvc)
+			LogFilters:      logFiltersFn,
+		}, mgr.GetClient(), keyStore, adminKeyMgr, iamSvc, sandboxSvc, ccForwarder, fedRegistry, metricsClient,
+			vaultSvc, centralLogs)
 		go func() { errCh <- e2bServer.Start(ctx) }()
 	}
 

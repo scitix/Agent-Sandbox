@@ -266,8 +266,13 @@ func (r *Runner) runPostStartHooks(ctx context.Context, pod *corev1.Pod, plan *i
 			return fmt.Errorf("decode post-start hooks annotation: %w", err)
 		}
 	}
+	// mergeInitHook is called even without an injection plan so the /init call
+	// always happens: envd may be gated on having received one, and a sandbox
+	// with nothing to deliver would otherwise never lift that gate.
 	if plan != nil {
 		hooks = mergeInitHook(hooks, plan.caCertPEM, plan.envVars)
+	} else {
+		hooks = mergeInitHook(hooks, "", nil)
 	}
 	if len(hooks) == 0 {
 		return nil

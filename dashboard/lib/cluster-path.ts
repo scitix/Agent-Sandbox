@@ -29,6 +29,7 @@ export type DashboardPage =
   | "images"
   | "datasets"
   | "managed-agents"
+  | "vault"
   | "admin"
   | "general"
   | "api-keys"

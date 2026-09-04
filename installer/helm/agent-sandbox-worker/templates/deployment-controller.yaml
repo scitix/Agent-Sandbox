@@ -45,12 +45,38 @@ spec:
             {{- with .Values.controller.volumeAllowedRuntimeClasses }}
             - --volume-allowed-runtime-classes={{ join "," . }}
             {{- end }}
+            {{- with .Values.controller.observability.metricsUrl }}
+            - --prometheus-url={{ . }}
+            {{- end }}
+            {{- with .Values.controller.observability.logsUrl }}
+            - --log-service-url={{ . }}
+            {{- end }}
+            {{- with .Values.controller.observability.appId }}
+            - --log-service-app-id={{ . }}
+            {{- end }}
+            {{- with .Values.controller.observability.project }}
+            - --log-service-project={{ . }}
+            {{- end }}
             {{- if .Values.extensionsConfig.create }}
             - --extension-config=/etc/agentbox/extensions.yaml
             {{- end }}
           env:
             - name: LOCAL_CLUSTER_ID
               value: {{ .Values.controller.localClusterId | quote }}
+            {{- if .Values.controller.observability.token }}
+            # Both observability backends share one token; the binary reads it
+            # from the environment so it never lands in the Pod spec's args.
+            - name: PROMETHEUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-worker.secretName" . }}
+                  key: OBSERVABILITY_TOKEN
+            - name: LOG_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-worker.secretName" . }}
+                  key: OBSERVABILITY_TOKEN
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "agent-sandbox-worker.secretName" . }}

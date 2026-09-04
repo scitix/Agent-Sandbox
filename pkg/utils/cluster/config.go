@@ -72,6 +72,19 @@ type ClusterEntry struct {
 	Visible    string            `json:"visible,omitempty"` // visibility control
 	Gateway    *GatewayConfig    `json:"gateway,omitempty"` // cross-cluster gateway config
 	Registries []RegistryEntry   `json:"registries,omitempty"`
+	// Logs carries this cluster's scoping for the central log service. The
+	// dashboard has read it from clusters.yaml since the log integration
+	// existed; it is on the Go side too because the worker now serves sandbox
+	// logs and needs the same scope to ask about its own pods.
+	Logs *LogsConfig `json:"logs,omitempty"`
+}
+
+// LogsConfig scopes queries to the central log service for one cluster.
+type LogsConfig struct {
+	// Filters are forwarded verbatim as equality matchers, e.g.
+	// {"region": "region-a", "cluster": "prod-foo"}. Without them a query for
+	// a pod name would match same-named pods in other clusters.
+	Filters map[string]string `json:"filters,omitempty"`
 }
 
 // RegistryEntry describes a private container image registry that belongs to a
