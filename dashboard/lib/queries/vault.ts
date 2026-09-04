@@ -27,6 +27,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { basePath, getToken, handleErrorResponse } from "@/lib/api/client"
+import { impersonationHeaders } from "./utils"
 
 /** One vault entry's metadata. Never carries a value. */
 export interface SecretInfo {
@@ -41,6 +42,14 @@ export interface SecretInfo {
 interface VaultRequestOptions {
   clusterID: string
   apiKey: string
+  /**
+   * Admin impersonation target. The vault is scoped to (namespace, user), so
+   * without this an admin using the console's user switcher would be shown
+   * their own credentials while believing they were looking at someone else's.
+   * The credential on the wire stays the admin's own key; only the effective
+   * identity changes, which is what keeps the audit trail honest.
+   */
+  impersonate?: { team: string; user: string } | null
 }
 
 async function vaultFetch<T>(
@@ -48,12 +57,17 @@ async function vaultFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const impersonation =
+    opts.impersonate?.team && opts.impersonate?.user
+      ? impersonationHeaders(opts.impersonate.team, opts.impersonate.user)
+      : {}
   const res = await fetch(`${basePath}/api/clusters/${opts.clusterID}/e2b${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${getToken()}`,
       "X-API-Key": opts.apiKey,
+      ...impersonation,
       ...(init?.headers ?? {}),
     },
   })
@@ -66,11 +80,14 @@ async function vaultFetch<T>(
   return (await res.json()) as T
 }
 
-export const vaultQueryKey = (clusterID: string) => ["vault", clusterID] as const
+// The impersonation target is part of the key: two users' vaults are different
+// data, and without it switching users would serve the previous one from cache.
+export const vaultQueryKey = (clusterID: string, user?: string | null) =>
+  ["vault", clusterID, user ?? ""] as const
 
 export function useSecrets(opts: VaultRequestOptions, enabled: boolean) {
   return useQuery({
-    queryKey: vaultQueryKey(opts.clusterID),
+    queryKey: vaultQueryKey(opts.clusterID, opts.impersonate?.user),
     // An API key is required to read the vault at all; without one the query
     // stays idle rather than firing a request that can only 401.
     enabled: enabled && Boolean(opts.apiKey),
@@ -86,7 +103,8 @@ export function useCreateSecret(opts: VaultRequestOptions) {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: vaultQueryKey(opts.clusterID) }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: vaultQueryKey(opts.clusterID, opts.impersonate?.user) }),
   })
 }
 
@@ -109,7 +127,8 @@ export function useRotateSecret(opts: VaultRequestOptions) {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: vaultQueryKey(opts.clusterID) }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: vaultQueryKey(opts.clusterID, opts.impersonate?.user) }),
   })
 }
 
@@ -118,7 +137,8 @@ export function useDeleteSecret(opts: VaultRequestOptions) {
   return useMutation({
     mutationFn: (secretID: string) =>
       vaultFetch<void>(opts, `/secrets/${encodeURIComponent(secretID)}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: vaultQueryKey(opts.clusterID) }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: vaultQueryKey(opts.clusterID, opts.impersonate?.user) }),
   })
 }
 

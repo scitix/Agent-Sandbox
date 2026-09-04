@@ -59,7 +59,7 @@ import { NetworkPolicyFields } from "@/components/custom/network-policy-fields"
 import { useCreateSandbox, createSandboxViaE2B } from "@/lib/queries/sandbox"
 import { pickUsableApiKey } from "@/lib/queries/apikey"
 import { envsQueryOptions, globalApiKeysQueryOptions } from "@/lib/queries"
-import { clustersAtom } from "@/lib/atoms"
+import { clustersAtom, impersonationAtom } from "@/lib/atoms"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useTranslation } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
@@ -139,6 +139,9 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
   // native endpoint keeps serving and the E2B-only fields are hidden.
   const e2bEnabled = !!clusters.find((c) => c.id === clusterID)?.gateway?.e2bURL
 
+  // The user switcher must decide whose namespace the sandbox lands in.
+  const impersonation = useAtomValue(impersonationAtom)
+
   const { data: envs } = useQuery(envsQueryOptions())
   const { data: apiKeys, isLoading: keysLoading } = useQuery({
     ...globalApiKeysQueryOptions(),
@@ -191,6 +194,7 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
     setSubmitting(true)
     try {
       await createSandboxViaE2B(buildE2BCreateBody(data), {
+        impersonate: impersonation,
         clusterID,
         apiKey: apiKey.rawToken,
       })

@@ -18,6 +18,7 @@
 
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { useAtomValue } from "jotai"
 import { CheckCheck, Copy, Plus, RotateCw, Trash2, Vault } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -34,6 +35,7 @@ import {
 } from "@/components/ui/dialog"
 import { ApiKeyRequiredNotice } from "@/components/custom/api-key-required-notice"
 import { globalApiKeysQueryOptions, pickUsableApiKey } from "@/lib/queries"
+import { impersonationAtom } from "@/lib/atoms"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useTranslation } from "@/lib/i18n"
 import {
@@ -118,7 +120,11 @@ export default function VaultPage() {
   const { data: apiKeys, isLoading: keysLoading } = useQuery(globalApiKeysQueryOptions())
   const apiKey = useMemo(() => pickUsableApiKey(apiKeys)?.rawToken ?? "", [apiKeys])
 
-  const opts = { clusterID, apiKey }
+  // A vault belongs to (namespace, user), so an admin using the user switcher
+  // must be shown the switched-to user's credentials — not their own under a
+  // different heading.
+  const impersonation = useAtomValue(impersonationAtom)
+  const opts = { clusterID, apiKey, impersonate: impersonation }
   const { data: secrets, isLoading } = useSecrets(opts, true)
   const createSecret = useCreateSecret(opts)
   const rotateSecret = useRotateSecret(opts)

@@ -38,6 +38,17 @@ const (
 	// AuthContextKey is the gin context key used to store AuthInfo.
 	AuthContextKey = "auth"
 
+	// ImpersonateTeamHeader and ImpersonateUserHeader let an admin caller act
+	// on behalf of another user, exactly as on the native API. The console
+	// needs it here too: its user switcher has to change whose sandboxes and
+	// whose credentials are addressed, and an increasing share of what it does
+	// goes through this surface rather than the native one.
+	//
+	// The credential stays the admin's own key, so the audit trail records who
+	// really acted. Borrowing the target user's key would erase that.
+	ImpersonateTeamHeader = "X-Impersonate-Team"
+	ImpersonateUserHeader = "X-Impersonate-User"
+
 	// DefaultNamespace is the default namespace when none is specified.
 	DefaultNamespace = "default"
 )
@@ -84,11 +95,15 @@ func NewE2BAuthMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore apikey.K
 
 		// Check admin key first (constant-time comparison).
 		if adminKeyMgr.IsAdminKey(providedKey) {
-			c.Set(AuthContextKey, domain.AuthInfo{
+			auth := domain.AuthInfo{
 				Namespace: DefaultNamespace,
 				Role:      apikey.RoleAdmin,
 				User:      "admin",
-			})
+			}
+			if !applyImpersonation(c, &auth, iamSvc) {
+				return
+			}
+			c.Set(AuthContextKey, auth)
 			c.Next()
 			return
 		}
@@ -120,14 +135,51 @@ func NewE2BAuthMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore apikey.K
 			ns = DefaultNamespace
 		}
 
-		c.Set(AuthContextKey, domain.AuthInfo{
+		auth := domain.AuthInfo{
 			Namespace: ns,
 			Role:      meta.Role,
 			User:      meta.User,
 			Team:      meta.Team,
-		})
+		}
+		if !applyImpersonation(c, &auth, iamSvc) {
+			return
+		}
+		c.Set(AuthContextKey, auth)
 		c.Next()
 	}
+}
+
+// applyImpersonation overwrites the caller's identity with the impersonation
+// target when an admin asks for one, mirroring the native middleware.
+//
+// The rules are the native ones, deliberately: only an admin may impersonate, a
+// non-admin's headers are ignored rather than refused (a stray header should
+// not break an ordinary request), and both headers are required — one alone is
+// an incomplete identity, not a partial one.
+//
+// Returns false when it has already written an error response.
+func applyImpersonation(c *gin.Context, auth *domain.AuthInfo, iamSvc service.IAMService) bool {
+	team := strings.TrimSpace(c.GetHeader(ImpersonateTeamHeader))
+	user := strings.TrimSpace(c.GetHeader(ImpersonateUserHeader))
+	if team == "" || user == "" {
+		return true
+	}
+	if auth.Role != apikey.RoleAdmin {
+		return true
+	}
+	if iamSvc == nil {
+		writeError(c, http.StatusServiceUnavailable, "IAM service not configured for impersonation")
+		return false
+	}
+	ns, appErr := iamSvc.ResolveNamespace(c.Request.Context(), team, user)
+	if appErr != nil {
+		writeError(c, http.StatusServiceUnavailable, appErr.Message)
+		return false
+	}
+	auth.Team = team
+	auth.User = user
+	auth.Namespace = ns
+	return true
 }
 
 // AuthFromContext retrieves AuthInfo from the gin context.
