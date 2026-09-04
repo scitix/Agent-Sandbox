@@ -84,19 +84,6 @@ export const isAdminAtom = atom((get) => {
   return auth?.role === "admin"
 })
 
-export const apiKeyAtom = atom((get) => {
-  const auth = get(authAtom)
-  if (!auth?.token) return ""
-  try {
-    const payload = auth.token.split(".")[1]
-    if (!payload) return ""
-    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")))
-    return decoded?.apiKey ?? ""
-  } catch {
-    return ""
-  }
-})
-
 // Cluster list fetched from BFF /api/clusters (cached in localStorage, rarely changes)
 export const clustersAtom = atomWithStorage<ClusterListResponse>("agentbox-clusters", {
   clusters: [],

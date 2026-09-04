@@ -57,6 +57,7 @@ import { Field, FieldLabel, FieldError, FieldDescription } from "@/components/ui
 import { ApiKeyRequiredNotice } from "@/components/custom/api-key-required-notice"
 import { NetworkPolicyFields } from "@/components/custom/network-policy-fields"
 import { useCreateSandbox, createSandboxViaE2B } from "@/lib/queries/sandbox"
+import { pickUsableApiKey } from "@/lib/queries/apikey"
 import { envsQueryOptions, globalApiKeysQueryOptions } from "@/lib/queries"
 import { clustersAtom } from "@/lib/atoms"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -64,7 +65,7 @@ import { useTranslation } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 import { SHORT_DURATION_RE } from "@/lib/utils/duration"
 import { buildE2BCreateBody } from "@/lib/utils/e2b-sandbox"
-import type { AgentSandboxEnvSummary, GlobalApiKeyItem } from "@/lib/api/client"
+import type { AgentSandboxEnvSummary } from "@/lib/api/client"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -74,18 +75,6 @@ import type { AgentSandboxEnvSummary, GlobalApiKeyItem } from "@/lib/api/client"
 // from GET /envs/{name}, so it is absent here and must not be read.
 function totalIdleFor(env: AgentSandboxEnvSummary): number {
   return env.idleReplicas ?? 0
-}
-
-/**
- * The key a create should authenticate with: the newest one whose plaintext the
- * platform still holds. Legacy keys (hash only) cannot be sent upstream at all,
- * so they are not candidates.
- */
-function pickApiKey(keys: GlobalApiKeyItem[] | undefined): GlobalApiKeyItem | undefined {
-  return (keys ?? [])
-    .filter((k) => !!k.rawToken)
-    .sort((a, b) => (b.issuedAt ?? "").localeCompare(a.issuedAt ?? ""))
-    .at(0)
 }
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -155,7 +144,7 @@ function CreateSandboxForm({ onOpenChange, onCreated }: CreateSandboxFormProps) 
     ...globalApiKeysQueryOptions(),
     enabled: e2bEnabled,
   })
-  const apiKey = useMemo(() => pickApiKey(apiKeys), [apiKeys])
+  const apiKey = useMemo(() => pickUsableApiKey(apiKeys), [apiKeys])
 
   const {
     register,
