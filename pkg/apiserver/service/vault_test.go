@@ -497,3 +497,51 @@ func TestVault_ReconcileLeavesUnmentionedScopesAlone(t *testing.T) {
 		t.Fatalf("an unmentioned scope must be left alone: %v", appErr)
 	}
 }
+
+// A replicated write echoes back from the Hub and is applied to the same Secret
+// by the watch handler, so the object a request read a moment ago is routinely
+// stale by the time it writes. Before the conflict retry that surfaced as a 409
+// on a delete that had in fact succeeded.
+func TestVault_ConcurrentApplyDoesNotFailTheRequest(t *testing.T) {
+	v, _ := newTestVault(t)
+	sink := v.(*k8sVaultService)
+	ctx := context.Background()
+
+	if _, appErr := v.Create(ctx, vNS, vUsr, VaultCreateInput{Name: "tok", Value: "v1"}); appErr != nil {
+		t.Fatalf("create: %v", appErr)
+	}
+
+	// Another writer touches the same Secret between this request's read and
+	// its write, exactly as the replication sink does.
+	if err := sink.ApplyVaultEntry(ctx, VaultReplicatedEntry{
+		Namespace: vNS, User: vUsr, Name: "other", Value: "v", Version: 1,
+	}); err != nil {
+		t.Fatalf("concurrent apply: %v", err)
+	}
+
+	if appErr := v.Delete(ctx, vNS, vUsr, "tok"); appErr != nil {
+		t.Fatalf("delete must not fail because another writer touched the vault: %v", appErr)
+	}
+
+	items, _ := v.List(ctx, vNS, vUsr)
+	if len(items) != 1 || items[0].Name != "other" {
+		t.Fatalf("expected only the concurrently-added entry to remain, got %+v", items)
+	}
+}
+
+// Two writes to different entries of the same user must both land; a
+// last-write-wins persist would drop one.
+func TestVault_InterleavedWritesBothSurvive(t *testing.T) {
+	v, _ := newTestVault(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"a", "b", "c"} {
+		if _, appErr := v.Create(ctx, vNS, vUsr, VaultCreateInput{Name: name, Value: "v"}); appErr != nil {
+			t.Fatalf("create %s: %v", name, appErr)
+		}
+	}
+	items, _ := v.List(ctx, vNS, vUsr)
+	if len(items) != 3 {
+		t.Fatalf("expected 3 entries, got %d: %+v", len(items), items)
+	}
+}

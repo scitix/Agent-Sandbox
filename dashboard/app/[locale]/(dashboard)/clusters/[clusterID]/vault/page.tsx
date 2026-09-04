@@ -46,6 +46,30 @@ import {
   type SecretInfo,
 } from "@/lib/queries/vault"
 
+/**
+ * Attributes that keep a browser's password manager out of these fields.
+ *
+ * A name box next to a masked box looks exactly like a login form, so Chrome
+ * fills the first with the saved username and offers a saved password for the
+ * second — which is how a secret ends up named after whoever is logged in.
+ * `autoComplete="off"` alone does not stop it: browsers ignore it on
+ * credential-shaped fields, and only the "this is a new password" hint reliably
+ * suppresses the saved-credential dropdown. The data-* attributes are the
+ * opt-outs 1Password and LastPass read.
+ */
+const noAutofill = {
+  autoComplete: "off",
+  autoCorrect: "off",
+  autoCapitalize: "off",
+  spellCheck: false,
+  "data-1p-ignore": true,
+  "data-lpignore": "true",
+  "data-form-type": "other",
+} as const
+
+/** As above, for the masked value field, which needs the stronger hint. */
+const noAutofillSecret = { ...noAutofill, autoComplete: "new-password" } as const
+
 function formatDate(value?: string): string {
   if (!value) return "—"
   const d = new Date(value)
@@ -231,6 +255,10 @@ export default function VaultPage() {
             <Field>
               <FieldLabel>{t("vault.create.nameLabel")}</FieldLabel>
               <Input
+                {...noAutofill}
+                // Not "name": a field literally called name is what the
+                // password manager latches onto.
+                name="vault-entry"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="openai-api-key"
@@ -246,10 +274,11 @@ export default function VaultPage() {
             <Field>
               <FieldLabel>{t("vault.create.valueLabel")}</FieldLabel>
               <Input
+                {...noAutofillSecret}
+                name="vault-value"
                 type="password"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                autoComplete="off"
               />
               <p className="text-muted-foreground text-xs">{t("vault.valueWriteOnly")}</p>
             </Field>
@@ -278,10 +307,11 @@ export default function VaultPage() {
           <Field>
             <FieldLabel>{t("vault.create.valueLabel")}</FieldLabel>
             <Input
+              {...noAutofillSecret}
+              name="vault-rotate-value"
               type="password"
               value={rotateValue}
               onChange={(e) => setRotateValue(e.target.value)}
-              autoComplete="off"
             />
           </Field>
           <DialogFooter>
