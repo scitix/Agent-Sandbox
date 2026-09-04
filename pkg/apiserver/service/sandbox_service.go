@@ -85,6 +85,11 @@ type SandboxService interface {
 	// sandbox has no Pod. Use it wherever the result is handed back as something
 	// the caller will then act on.
 	GetLive(ctx context.Context, namespace, sandboxID string) (*gen.Sandbox, *domain.AppError)
+
+	// UpdateSandboxNetwork replaces a running sandbox's egress policy and
+	// delivers it to its gateway sidecar. Egress filtering only — see the
+	// implementation for why credential injection is fixed at claim time.
+	UpdateSandboxNetwork(ctx context.Context, namespace, sandboxID string, np *agentsv1alpha1.SandboxNetworkPolicy) *domain.AppError
 	Delete(ctx context.Context, namespace, sandboxID string) (*gen.DeleteSandboxResult, *domain.AppError)
 	// SetTimeout updates the idle timeout annotation on the sandbox pod.
 	// A timeout of 0 removes the annotation (no expiry).
@@ -151,6 +156,12 @@ type k8sSandboxService struct {
 	// is what every unit test and any build without the controller half wants.
 	armWaiter ArmWaiter
 
+	// egressRepusher re-pushes an updated egress policy into the proxy sidecar
+	// of a sandbox that is already running. Nil in a build without the
+	// controller half, in which case a live network update is refused rather
+	// than recorded and never delivered.
+	egressRepusher EgressRepusher
+
 	// lastCreateTracker accumulates the most recent Sandbox.Create
 	// timestamp per Pool in process memory and flushes it to the
 	// LastSandboxCreateTimeAnnotationKey on a 5 s cadence. The Pool
@@ -162,6 +173,19 @@ type k8sSandboxService struct {
 
 	schedulersMu sync.RWMutex
 	schedulers   map[string]*schedule.PoolScheduler // key: "namespace/name"
+}
+
+// EgressRepusher delivers a revised egress policy to a running sandbox's proxy
+// sidecar. Implemented by the post-start hook runner, which owns the exec
+// channel into the Pod.
+//
+// Only the policy: the credential half is fixed at claim time, because the CA
+// the sidecar uses to intercept TLS is minted per claim and installed into the
+// sandbox's trust store during arming. Replacing it on a live sandbox would mean
+// re-running that install, and the install rides on the same envd /init call
+// that carries the sandbox's environment.
+type EgressRepusher interface {
+	RepushEgressPolicy(ctx context.Context, pod *corev1.Pod) error
 }
 
 // LastCreateBumper is the minimal interface k8sSandboxService needs from
@@ -201,6 +225,12 @@ type ArmWaiter interface {
 // cmd/sandbox alongside the hook runner that sends on it.
 func (s *k8sSandboxService) SetArmWaiter(w ArmWaiter) {
 	s.armWaiter = w
+}
+
+// SetEgressRepusher wires the exec channel used to update a running sandbox's
+// egress policy. Called at startup from cmd/sandbox/app.
+func (s *k8sSandboxService) SetEgressRepusher(r EgressRepusher) {
+	s.egressRepusher = r
 }
 
 // SetLastCreateTracker wires the in-process Sandbox.Create timestamp
@@ -2023,6 +2053,97 @@ func (s *k8sSandboxService) resolveVaultRules(
 		return nil, appErr
 	}
 	return &perSandboxInjection{rules: input.VaultRules, refs: refs}, nil
+}
+
+// UpdateSandboxNetwork replaces the egress policy of a running sandbox and
+// pushes it into the proxy sidecar, so a caller can widen or tighten what a
+// sandbox reaches without recreating it — the "install dependencies, then lock
+// down before running untrusted code" shape.
+//
+// Two things it deliberately does not do:
+//
+//   - Change credential injection. The CA the sidecar uses to intercept TLS is
+//     minted per claim and installed into the sandbox's trust store while
+//     arming; swapping it on a live sandbox means re-running that install,
+//     which travels on the same envd call that carries the sandbox's
+//     environment. Rules are refused here rather than half-applied.
+//   - Re-evaluate connections that are already open. The sidecar reloads the
+//     policy for new connections; a stream established under the old one keeps
+//     running. Tightening is therefore not a kill switch.
+func (s *k8sSandboxService) UpdateSandboxNetwork(
+	ctx context.Context,
+	namespace, sandboxID string,
+	np *agentsv1alpha1.SandboxNetworkPolicy,
+) *domain.AppError {
+	rawID := s.stripSandboxID(sandboxID)
+	pod, err := sandboxpool.FindClaimedPodBySandboxID(ctx, s.client, namespace, rawID)
+	if err != nil {
+		if errors.Is(err, sandboxpool.ErrSandboxNotFound) {
+			return domain.NewNotFound(err.Error())
+		}
+		return domain.NewInternal(err.Error(), err)
+	}
+
+	// The live Pod is the ground truth, not the Pool spec: a Pod materialised
+	// before its Env turned the gateway on has neither the sidecar nor the
+	// iptables redirect, and accepting a policy for it would report success
+	// over traffic that leaves unfiltered.
+	if !agentsv1alpha1.PodHasEgressProxy(pod) {
+		return domain.NewBadRequest("this sandbox has no egress gateway, so a network policy " +
+			"would not be enforced. Enable it on the SandboxEnv (overrides.gateway.enabled); " +
+			"sandboxes created after its pools roll will carry the sidecar")
+	}
+	if s.egressRepusher == nil {
+		return domain.NewInternal("live network updates are not available in this deployment", nil)
+	}
+
+	if np == nil {
+		np = &agentsv1alpha1.SandboxNetworkPolicy{}
+	}
+	value, ok, buildErr := toProxyPolicyJSON(np, rawID)
+	if buildErr != nil {
+		return buildErr
+	}
+	if !ok {
+		return domain.NewInternal("failed to encode egress policy", nil)
+	}
+
+	base := pod.DeepCopy()
+	if pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
+	}
+	pod.Annotations[agentsv1alpha1.SandboxEgressPolicyAnnotationKey] = value
+	// Optimistic concurrency against a concurrent release: without the
+	// precondition the annotation could land on a Pod that has already been
+	// recycled for someone else, handing them this caller's policy.
+	if patchErr := s.client.Patch(ctx, pod, client.MergeFromWithOptions(base,
+		client.MergeFromWithOptimisticLock{})); patchErr != nil {
+		if apierrors.IsConflict(patchErr) {
+			return domain.NewConflict("sandbox changed while its network policy was being updated; retry")
+		}
+		return domain.NewInternal(fmt.Sprintf("failed to record the egress policy: %v", patchErr), patchErr)
+	}
+
+	if pushErr := s.egressRepusher.RepushEgressPolicy(ctx, pod); pushErr != nil {
+		// The annotation is already stamped, so the policy is what a re-arm
+		// would apply — but this sandbox is still running under the old one.
+		// Say so rather than report success.
+		return domain.NewInternal(fmt.Sprintf(
+			"the new policy was recorded but could not be delivered to the sandbox's gateway, "+
+				"so it is still running under the previous one: %v", pushErr), pushErr)
+	}
+	return nil
+}
+
+// toProxyPolicyJSON encodes a per-sandbox policy for the egress-policy
+// annotation. Shared by the claim path and the live-update path so both stamp
+// byte-identical values for the same input.
+func toProxyPolicyJSON(np *agentsv1alpha1.SandboxNetworkPolicy, sandboxID string) (string, bool, *domain.AppError) {
+	data, err := json.Marshal(toProxyPolicy(np, sandboxID))
+	if err != nil {
+		return "", false, domain.NewInternal("failed to encode egress policy", err)
+	}
+	return string(data), true, nil
 }
 
 // vaultRefNames extracts referenced entry names from rule header values.

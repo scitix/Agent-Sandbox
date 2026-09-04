@@ -66,40 +66,37 @@ func TestToProxyPolicy_UnrestrictedRepresentation(t *testing.T) {
 	}
 }
 
-func TestToProxyPolicy_BaselineStaysWhereFilteringIsDeclared(t *testing.T) {
-	// Allowlisting a domain does NOT lift the anti-SSRF baseline: the baseline is
-	// evaluated before the domain match, so a host resolving into a private range
-	// stays denied until AllowPrivateNetworks is set explicitly.
+func TestToProxyPolicy_NamingAnInternalHostReachesIt(t *testing.T) {
+	// The whole reason the baseline has two tiers: a request that filters and
+	// also names an internal service gets that service. Requiring an extra flag
+	// would push callers toward opening the entire cluster network instead.
 	np := &agentsv1alpha1.SandboxNetworkPolicy{
 		Egress: &agentsv1alpha1.EgressRules{AllowedDomains: []string{"op.example.com"}},
 	}
 	p := toProxyPolicy(np, "s1")
 	if p.AllowPrivateNetworks {
-		t.Errorf("declared filtering must keep the baseline: %+v", p)
+		t.Errorf("declared filtering must not flip the blanket opt-in: %+v", p)
 	}
-	if d := p.Evaluate("op.example.com", net.ParseIP("10.0.0.1")); d.Allow {
-		t.Error("allowlisted domain resolving private must be SSRF-denied")
-	} else if d.Match != egressproxy.MatchSSRF {
-		t.Errorf("expected an SSRF denial, got match=%v", d.Match)
-	}
-	if p.Evaluate("", net.ParseIP("169.254.169.254")).Allow {
-		t.Error("metadata IP must be SSRF-denied under a filtering policy")
-	}
-
-	// Opting in reaches the domain match, which then decides.
-	np.AllowPrivateNetworks = true
-	p = toProxyPolicy(np, "s1")
 	if !p.Evaluate("op.example.com", net.ParseIP("10.0.0.1")).Allow {
-		t.Error("allowlisted domain must be reachable once private networks are allowed")
+		t.Error("a specifically allowlisted host must be reachable where it resolves")
 	}
-	if p.Evaluate("other.example.com", net.ParseIP("10.0.0.1")).Allow {
-		t.Error("a domain outside the allowlist must stay denied")
+	// Anything the request did not name stays denied.
+	if d := p.Evaluate("other.example.com", net.ParseIP("10.0.0.1")); d.Allow {
+		t.Error("an unnamed internal host must stay denied")
+	}
+	// And the metadata endpoint is not reachable by any route.
+	if p.Evaluate("", net.ParseIP("169.254.169.254")).Allow {
+		t.Error("metadata IP must be denied under a filtering policy")
+	}
+	if d := p.Evaluate("", net.ParseIP("100.100.100.200")); d.Allow {
+		t.Errorf("this cloud's metadata endpoint must be denied too, got %+v", d)
 	}
 }
 
 func TestToProxyPolicy_AllowAllWithBaselineIsExpressible(t *testing.T) {
-	// The escape hatch for "allow everything but keep the anti-SSRF baseline":
-	// declare the allow-all rules explicitly instead of leaving Egress nil.
+	// "Allow everything but keep the baseline": declare the allow-all rules
+	// explicitly instead of leaving Egress nil. A wildcard is deliberately not
+	// a specific match, so it reaches the internet without exposing the cluster.
 	p := toProxyPolicy(&agentsv1alpha1.SandboxNetworkPolicy{
 		Egress: &agentsv1alpha1.EgressRules{
 			AllowedDomains: []string{"*"},
@@ -111,5 +108,8 @@ func TestToProxyPolicy_AllowAllWithBaselineIsExpressible(t *testing.T) {
 	}
 	if p.Evaluate("", net.ParseIP("169.254.169.254")).Allow {
 		t.Error("explicit allow-all must still SSRF-deny metadata IP")
+	}
+	if p.Evaluate("internal.example.com", net.ParseIP("10.0.0.1")).Allow {
+		t.Error("explicit allow-all must not reach the cluster network")
 	}
 }

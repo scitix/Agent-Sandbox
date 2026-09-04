@@ -251,16 +251,17 @@ const imageOverrideMetaKey = "agentbox.scitix.ai/image"
 // and will NOT be forwarded to sandbox metadata.
 const startupTimeoutMetaKey = "agentbox.scitix.ai/startup-timeout"
 
-// allowPrivateNetworksMetaKey is the reserved metadata key that lifts the
-// anti-SSRF baseline for this sandbox, letting a declared allowlist reach
-// private / link-local / cloud-metadata ranges (RFC1918, 169.254.0.0/16, ...).
-// Accepted values are "true" and "1"; anything else leaves the baseline on.
+// allowPrivateNetworksMetaKey opens the private ranges (RFC1918, CGNAT, ULA)
+// wholesale for this sandbox. Accepted values are "true" and "1"; anything else
+// leaves the baseline on. Consumed here and NOT forwarded to sandbox metadata.
+//
+// Rarely needed: listing an internal host or CIDR in network.allowOut already
+// reaches it. This is for "allow everything, the cluster network included",
+// which network.allowOut ["*"] deliberately does not mean.
 //
 // It rides on metadata because E2B's SandboxNetworkConfig has no field for it
-// and inventing one would be a dialect. The default is off everywhere: reaching
-// inside the cluster is the one egress decision that is dangerous by default
-// rather than by configuration, so it has to be asked for per sandbox and never
-// inherited. Consumed here and NOT forwarded to sandbox metadata.
+// and inventing one would be a dialect. It never opens the cloud-metadata or
+// link-local ranges — nothing does.
 const allowPrivateNetworksMetaKey = "agentbox.scitix.ai/allow-private-networks"
 
 // consumeReservedMetadata applies the reserved metadata keys to input and
@@ -771,8 +772,50 @@ func (s *Server) DeleteAdminTeamsTeamIDApiKeysApiKeyID(_ context.Context, _ e2bg
 	return unsupportedOp("DeleteAdminTeamsTeamIDApiKeysApiKeyID", catArchitectural, msgClusterAdmin), nil
 }
 
-func (s *Server) PutSandboxesSandboxIDNetwork(_ context.Context, _ e2bgen.PutSandboxesSandboxIDNetworkRequestObject) (e2bgen.PutSandboxesSandboxIDNetworkResponseObject, error) {
-	return unsupportedOp("PutSandboxesSandboxIDNetwork", catUnimplemented, msgLiveNetwork), nil
+// networkUpdateBadRequest carries a 400 for the live-network update, which E2B's
+// spec does not declare a 400 for — the generator therefore emits no response
+// type for it. A rejected body is still a client error and has to say so, so the
+// status is written directly rather than dressed up as one of the declared ones.
+type networkUpdateBadRequest struct{ err e2bgen.Error }
+
+func (r networkUpdateBadRequest) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	return json.NewEncoder(w).Encode(r.err)
+}
+
+// PutSandboxesSandboxIDNetwork replaces a running sandbox's egress filtering.
+// Per E2B's contract the body is a full replacement: an omitted field clears it,
+// so an empty body means "unrestricted" rather than "leave as it was".
+func (s *Server) PutSandboxesSandboxIDNetwork(ctx context.Context, req e2bgen.PutSandboxesSandboxIDNetworkRequestObject) (e2bgen.PutSandboxesSandboxIDNetworkResponseObject, error) {
+	auth := authFrom(ctx)
+	sandboxID := req.SandboxID
+	if clusterID, _ := cluster.SplitSandboxID(sandboxID); s.isCrossCluster(clusterID) {
+		s.forwarder.Forward(httpctx.GinFromCtx(ctx), clusterID, service.URLKindE2B, nil)
+		return nil, nil
+	}
+
+	np, npErr := parseE2BNetworkUpdate(req.Body)
+	if npErr != nil {
+		return networkUpdateBadRequest{err: *npErr}, nil
+	}
+
+	if appErr := s.sandbox.UpdateSandboxNetwork(ctx, auth.Namespace, sandboxID, np); appErr != nil {
+		switch appErr.Code {
+		case apidomain.ErrCodeNotFound:
+			return e2bgen.PutSandboxesSandboxIDNetwork404JSONResponse{
+				N404JSONResponse: e2bgen.N404JSONResponse(errRespCode(404, appErr.Message))}, nil
+		case apidomain.ErrCodeConflict:
+			return e2bgen.PutSandboxesSandboxIDNetwork409JSONResponse{
+				N409JSONResponse: e2bgen.N409JSONResponse(errRespCode(409, appErr.Message))}, nil
+		case apidomain.ErrCodeBadRequest:
+			return networkUpdateBadRequest{err: errRespCode(400, appErr.Message)}, nil
+		default:
+			return e2bgen.PutSandboxesSandboxIDNetwork500JSONResponse{
+				N500JSONResponse: e2bgen.N500JSONResponse(errRespAppErr(ctx, appErr))}, nil
+		}
+	}
+	return e2bgen.PutSandboxesSandboxIDNetwork204Response{}, nil
 }
 
 func (s *Server) PostAdminTeamsTeamIDSandboxesKill(_ context.Context, _ e2bgen.PostAdminTeamsTeamIDSandboxesKillRequestObject) (e2bgen.PostAdminTeamsTeamIDSandboxesKillResponseObject, error) {

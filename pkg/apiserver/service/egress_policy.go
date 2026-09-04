@@ -69,12 +69,7 @@ func buildEgressPolicyAnnotation(np *agentsv1alpha1.SandboxNetworkPolicy, pool *
 		np = &agentsv1alpha1.SandboxNetworkPolicy{}
 	}
 
-	policy := toProxyPolicy(np, sandboxID)
-	data, mErr := json.Marshal(policy)
-	if mErr != nil {
-		return "", false, domain.NewInternal("failed to encode egress policy", mErr)
-	}
-	return string(data), true, nil
+	return toProxyPolicyJSON(np, sandboxID)
 }
 
 // toProxyPolicy converts the request's SandboxNetworkPolicy to the on-disk
@@ -87,10 +82,13 @@ func buildEgressPolicyAnnotation(np *agentsv1alpha1.SandboxNetworkPolicy, pool *
 // filtering must not end up more restricted than one that says nothing at all,
 // where private ranges are reachable. Otherwise a request that only wanted a
 // credential injected would silently lose every host that resolves inside the
-// cluster, including split-horizon public names. The anti-SSRF baseline stays
-// on wherever filtering *is* declared (Egress set, or DisableEgress), and
-// "allow everything but keep the baseline" remains expressible as
-// Egress{AllowedDomains: ["*"], AllowedCIDRs: ["0.0.0.0/0"]}.
+// cluster, including split-horizon public names.
+//
+// Where filtering *is* declared, the proxy keeps the baseline but lifts it for
+// any destination the allowlist names specifically — so "filter, and also reach
+// this one internal service" needs no extra flag, while
+// Egress{AllowedDomains: ["*"], AllowedCIDRs: ["0.0.0.0/0"]} still means the
+// internet rather than the cluster network.
 func toProxyPolicy(np *agentsv1alpha1.SandboxNetworkPolicy, sandboxID string) egressproxy.Policy {
 	p := egressproxy.Policy{
 		SandboxID:            sandboxID,

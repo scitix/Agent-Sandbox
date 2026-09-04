@@ -56,8 +56,12 @@ type Policy struct {
 	AllowedCIDRs []string `json:"allowedCIDRs,omitempty"`
 	DeniedCIDRs  []string `json:"deniedCIDRs,omitempty"`
 
-	// AllowPrivateNetworks disables the built-in anti-SSRF deny of private /
-	// link-local / cloud-metadata ranges. Default false (baseline stays on).
+	// AllowPrivateNetworks opens the re-openable half of the anti-SSRF baseline
+	// (RFC1918, CGNAT, ULA) wholesale. Default false. It is the blunt option:
+	// naming an internal host or CIDR in the allowlist already reaches it, so
+	// this is only needed for "everything, including the cluster network".
+	//
+	// It does NOT open the cloud-metadata and link-local ranges — nothing does.
 	AllowPrivateNetworks bool `json:"allowPrivateNetworks,omitempty"`
 }
 
