@@ -48,6 +48,7 @@ import (
 	plugininstancetype "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	pluginquota "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/framework/providerset"
+	"github.com/scitix/agent-sandbox/pkg/lifecycle/armnotify"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/lastcreate"
 	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 	"github.com/scitix/agent-sandbox/pkg/store"
@@ -537,13 +538,17 @@ func Run(opts Options) {
 	iamSvc := service.NewIAMService(mgr.GetClient())
 
 	digestResolver := imageresolver.NewResolver(mgr.GetClient(), 3*24*time.Hour)
-	hooksRunner := poststarthooks.NewRunner(envoyGatewayBaseURL, clientset, restCfg, mgr.GetClient())
-
-	// The hook runner is what marks a claimed sandbox as armed, so only now is
-	// it safe for Create to wait for that mark. Wiring it here, next to the
-	// runner, keeps the two facts in one place: no runner, no wait.
-	if r, ok := sandboxSvc.(interface{ SetArmWaitEnabled(bool) }); ok {
-		r.SetArmWaitEnabled(true)
+	// The arming verdict goes straight from the hook runner to the create
+	// request waiting on it — both are goroutines of this process. Recording it
+	// on the Pod instead would spend an API-server write per sandbox, fanned
+	// out to every Pod informer in the cluster, to carry a fact across a
+	// function-call boundary.
+	armRegistry := armnotify.New()
+	hooksRunner := poststarthooks.NewRunner(envoyGatewayBaseURL, clientset, restCfg, mgr.GetClient(), armRegistry)
+	if r, ok := sandboxSvc.(interface {
+		SetArmWaiter(service.ArmWaiter)
+	}); ok {
+		r.SetArmWaiter(armRegistry)
 	}
 
 	// One vault instance is shared by the sandbox service (which resolves the
