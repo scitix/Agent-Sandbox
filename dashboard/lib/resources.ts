@@ -124,3 +124,61 @@ export function formatCores(cores: number): string {
   if (Number.isInteger(cores)) return `${cores}`
   return parseFloat(cores.toFixed(3)).toString()
 }
+
+// ---------------------------------------------------------------------------
+// Unit-aware form input
+//
+// Resource forms take a whole number plus a unit, so a Pod can be sized in
+// milli-cores / MiB as well as whole cores / GiB. Milli-cores and MiB are the
+// comparison basis throughout: comparing in whole cores instead would floor a
+// 20m request to 0 (or round it up to a whole core) and misjudge limits.
+// ---------------------------------------------------------------------------
+
+export type CpuUnit = "core" | "milli"
+export type MemoryUnit = "Gi" | "Mi"
+
+/** Converts a form amount + unit into milli-cores. */
+export function toMilliCores(
+  value: number | string | undefined,
+  unit: CpuUnit,
+): number | undefined {
+  if (value === undefined || value === "") return undefined
+  const n = Number(value)
+  if (!Number.isFinite(n)) return undefined
+  return unit === "milli" ? n : n * 1000
+}
+
+/** Converts a form amount + unit into MiB. */
+export function toMiB(value: number | string | undefined, unit: MemoryUnit): number | undefined {
+  if (value === undefined || value === "") return undefined
+  const n = Number(value)
+  if (!Number.isFinite(n)) return undefined
+  return unit === "Mi" ? n : n * 1024
+}
+
+/** Renders a form amount + unit as a Kubernetes CPU Quantity ("2", "20m"). */
+export function cpuQuantity(value: number, unit: CpuUnit): string {
+  return unit === "milli" ? `${value}m` : String(value)
+}
+
+/** Renders a form amount + unit as a Kubernetes memory Quantity ("8Gi", "128Mi"). */
+export function memoryQuantity(value: number, unit: MemoryUnit): string {
+  return `${value}${unit}`
+}
+
+/**
+ * Picks the unit that renders the amount as a whole number, so a Pool created
+ * with 20m reopens showing "20 millicores" rather than a rounded-off "1 core".
+ */
+export function splitCpu(cores: number): { value: number; unit: CpuUnit } {
+  const milli = Math.round(cores * 1000)
+  if (milli !== 0 && milli % 1000 === 0) return { value: milli / 1000, unit: "core" }
+  return { value: milli, unit: "milli" }
+}
+
+/** Memory counterpart of splitCpu: whole GiB stays GiB, anything else is MiB. */
+export function splitMemory(mib: number): { value: number; unit: MemoryUnit } {
+  const rounded = Math.round(mib)
+  if (rounded !== 0 && rounded % 1024 === 0) return { value: rounded / 1024, unit: "Gi" }
+  return { value: rounded, unit: "Mi" }
+}

@@ -61,27 +61,28 @@ func (Noop) DeriveScalingGroupName(observed corev1.ResourceRequirements) string 
 // to a richer catalog. It is exported so other providers can delegate to it
 // for resource shapes outside their own catalog.
 //
-// Output shape: "Xc{Y}Gi" plus optional "-<count><resource-suffix>" segments
-// for every non-zero extended resource (e.g. GPUs). Examples:
+// Output shape: cpu + memory rendered in their largest lossless unit, plus
+// optional "-<count><resource-suffix>" segments for every non-zero extended
+// resource (e.g. GPUs). Examples:
 //
 //	{cpu:1, mem:4Gi}                                  → "1c4Gi"
 //	{cpu:22, mem:220Gi, nvidia.com/gpu:1}             → "22c220Gi-1gpu"
 //	{cpu:8, mem:32Gi, "scitix.ai/tpu":4}              → "8c32Gi-4scitix.ai-tpu"
+//	{cpu:20m, mem:128Mi}                              → "20mc128Mi"
 //	{}                                                → "default"
 //
-// Numeric values are rounded up by k8s resource.Quantity.Value() (so 500m
-// CPU → 1, 1500Mi memory → 2Gi). Sub-unit shapes therefore collapse to the
-// next whole unit — acceptable for the MVP pre-warmed-pool use case, where
-// members are usually whole-CPU sized.
+// Sub-core / sub-GiB shapes keep their precision (milli-cores and MiB) so they
+// land in distinct scaling groups instead of collapsing onto one whole-unit
+// name. Extended resources are still whole-numbered via Quantity.Value().
 func DeriveDefaultScalingGroupName(observed corev1.ResourceRequirements) string {
 	reqs := observed.Requests
-	cpu := reqs.Cpu().Value()    // cores, rounded down
-	mem := reqs.Memory().Value() // bytes
-	memGi := mem / (1 << 30)
-	if cpu == 0 && memGi == 0 && len(reqs) == 0 {
+	if len(reqs) == 0 {
 		return "default"
 	}
-	parts := []string{fmt.Sprintf("%dc%dGi", cpu, memGi)}
+	parts := []string{
+		formatCPUKey(reqs.Cpu().MilliValue(), "c", "mc") +
+			formatMemoryKey(reqs.Memory().Value(), "Gi", "Mi"),
+	}
 
 	// Extended resources (GPU, accelerators) — sort by name so output is stable.
 	type extra struct {

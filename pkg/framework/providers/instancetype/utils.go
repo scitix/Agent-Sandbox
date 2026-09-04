@@ -20,21 +20,60 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// DeriveResourceKey renders a resource shape as a lowercase DNS-label-safe key
+// used for both the ScalingGroup name and the PoolName suffix.
+//
+// Each dimension is rendered in its largest lossless unit, so whole-unit shapes
+// stay compact while sub-unit shapes keep their precision:
+//
+//	{cpu:1,    mem:16Gi}   → "1c16gi"
+//	{cpu:500m, mem:2Gi}    → "500mc2gi"
+//	{cpu:20m,  mem:128Mi}  → "20mc128mi"
+//	{cpu:2,    mem:1536Mi} → "2c1536mi"
+//	{}                     → "default"
+//
+// Rendering sub-unit shapes losslessly is what keeps them in distinct scaling
+// groups: collapsing them to whole cores/GiB would map every shape under 1Gi
+// onto the same key, and two differently-sized Pools would then collide on
+// PoolName.
 func DeriveResourceKey(observed corev1.ResourceRequirements) string {
 	reqs := observed.Requests
 	if len(reqs) == 0 {
 		reqs = observed.Limits
 	}
 
-	cpu := reqs.Cpu().Value()
+	cpuMilli := reqs.Cpu().MilliValue()
 	memBytes := reqs.Memory().Value()
-	memGi := memBytes / (1 << 30)
 
-	if cpu == 0 && memGi == 0 {
+	if cpuMilli == 0 && memBytes == 0 {
 		return "default"
 	}
 
-	return fmt.Sprintf("%dc%dgi", cpu, memGi)
+	return formatCPUKey(cpuMilli, "c", "mc") + formatMemoryKey(memBytes, "gi", "mi")
+}
+
+// formatCPUKey renders a milli-core count as "<cores>"+coreUnit for whole
+// cores, else "<milli>"+milliUnit. Callers supply the unit spelling so the
+// lowercase resource key and the mixed-case scaling-group name can share the
+// rounding logic.
+func formatCPUKey(milli int64, coreUnit, milliUnit string) string {
+	if milli%1000 == 0 {
+		return fmt.Sprintf("%d%s", milli/1000, coreUnit)
+	}
+	return fmt.Sprintf("%d%s", milli, milliUnit)
+}
+
+// formatMemoryKey renders a byte count as "<gib>"+gibUnit for whole GiB, else
+// "<mib>"+mibUnit rounded up to the next whole MiB.
+func formatMemoryKey(bytes int64, gibUnit, mibUnit string) string {
+	const (
+		mib = 1 << 20
+		gib = 1 << 30
+	)
+	if bytes%gib == 0 {
+		return fmt.Sprintf("%d%s", bytes/gib, gibUnit)
+	}
+	return fmt.Sprintf("%d%s", (bytes+mib-1)/mib, mibUnit)
 }
 
 // FitsWithin reports whether every resource dimension in pod is ≤ the
