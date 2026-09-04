@@ -252,10 +252,15 @@ spec:
                               type: string
                             name:
                               description: 'Name is how rules refer to this credential
-                                in a value template: the
+                                in a header value template,
 
-                                credential name wrapped in a doubled pair of curly
-                                braces.'
+                                written as ${e2b.secrets.NAME}. This is the same syntax
+                                the E2B SDK''s
+
+                                Secret.fill() produces, so a rule authored against
+                                the SDK and a rule
+
+                                authored here are byte-identical.'
                               type: string
                             placeholder:
                               description: "Placeholder is the decoy value handed\

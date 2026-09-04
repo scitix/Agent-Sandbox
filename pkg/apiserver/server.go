@@ -96,6 +96,10 @@ type Config struct {
 	// (federation rides the same ws-proxy sync connection).
 	FederationRegistry *federation.Registry
 	FederationSource   federation.CapacitySource
+	// VaultService is the credential vault. Passing the same instance the E2B
+	// server and the sandbox service use is what lets Hub replication land in
+	// the store those two read from.
+	VaultService service.VaultService
 	// ImageRegistry, when non-nil, rewrites container images to the local
 	// cluster's registry while freezing a member Pool's spec. It must be the
 	// same value the SandboxEnv Reconciler holds — see
@@ -149,6 +153,26 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 			syncSvc = service.NewSyncServiceWithTemplate(cfg.KeyStore, templateSvc)
 			log.Info("sync mode enabled: template and API key writes will be forwarded to ws-proxy")
 		}
+		// Wire vault replication both ways: local writes forward to the Hub,
+		// and the Hub's stream lands back in the same local store. Without this
+		// the vault is per-cluster, and a cross-cluster create would fail to
+		// resolve a credential the caller can plainly see in the console.
+		if cfg.VaultService != nil {
+			if vs, ok := cfg.VaultService.(interface {
+				SetReplicator(service.VaultReplicator)
+			}); ok {
+				if rep, ok2 := syncSvc.(service.VaultReplicator); ok2 {
+					vs.SetReplicator(rep)
+				}
+			}
+			if sink, ok := cfg.VaultService.(service.VaultSink); ok {
+				if ss, ok2 := syncSvc.(interface{ SetVaultSink(service.VaultSink) }); ok2 {
+					ss.SetVaultSink(sink)
+					log.Info("credential vault replication enabled")
+				}
+			}
+		}
+
 		// Wire cross-cluster federation onto the sync service when configured.
 		if cfg.FederationRegistry != nil && cfg.FederationSource != nil {
 			if fs, ok := syncSvc.(interface {

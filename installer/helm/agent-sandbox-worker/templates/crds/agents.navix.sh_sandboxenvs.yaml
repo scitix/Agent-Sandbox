@@ -320,15 +320,23 @@ spec:
                           \ submit, scheduling\n    labels, NodeAffinity, \u2026)\
                           \ survive Pool recreate / Env re-apply without\n    redoing\
                           \ the side-effect. **Not exposed through the REST API.**\
-                          \ Template\n    upgrades do NOT auto-propagate into Spec;\
-                          \ an explicit RefreshMember API\n    (Phase 2 TODO) is the\
-                          \ way to align an existing member with a newer\n    Template\
-                          \ revision.\n  - Config: user-declared intent (sizing, scaling-group\
-                          \ bookkeeping, routing\n    priorities). This is the only\
-                          \ bucket exposed through the REST API.\n    Plugins do not\
-                          \ mutate Config \u2014 it stays equal to whatever the caller\n\
-                          \    supplied at AddMember/UpdateMember time so it remains\
-                          \ a faithful\n    description of the request shape."
+                          \ Template\n    and override changes DO auto-propagate into\
+                          \ Spec by default:\n    refreshAutoUpdateMembers re-renders\
+                          \ the member on every reconcile,\n    compares revision\
+                          \ hashes, and rewrites Spec when they differ. The pod-spec\n\
+                          \    body is replaced wholesale (so field deletions take\
+                          \ effect) while the\n    pod-template ObjectMeta is merged,\
+                          \ and neither Metadata nor PreCreatePool\n    is re-run\
+                          \ \u2014 so plugin identity survives and no side-effect\
+                          \ is replayed.\n    Set updateStrategy.autoUpdate=false\
+                          \ to hold a frozen snapshot instead\n    (see ResolveAutoUpdate,\
+                          \ which defaults to true).\n  - Config: user-declared intent\
+                          \ (sizing, scaling-group bookkeeping, routing\n    priorities).\
+                          \ This is the only bucket exposed through the REST API.\n\
+                          \    Plugins do not mutate Config \u2014 it stays equal\
+                          \ to whatever the caller\n    supplied at AddMember/UpdateMember\
+                          \ time so it remains a faithful\n    description of the\
+                          \ request shape."
                         properties:
                           config:
                             description: 'Config carries user-declared intent: sizing
@@ -351,16 +359,16 @@ spec:
                                   same propagation rules as Labels.'
                                 type: object
                               inlineResources:
-                                description: 'InlineResources is the Phase 1 migration
-                                  escape hatch (legacy Pools
+                                description: 'InlineResources is the migration escape
+                                  hatch for legacy Pools without
 
-                                  without an InstanceType label) AND the source of
-                                  truth used by a
+                                  an InstanceType label, and the source of truth that
+                                  keeps resource sizing
 
-                                  future RefreshMember API to keep resource sizing
-                                  stable when the
+                                  stable across a Template upgrade: the auto-update
+                                  re-render reads it from
 
-                                  underlying Template is upgraded. New Envs created
+                                  Config, which plugins never mutate. New Envs created
                                   via the Dashboard
 
                                   should leave this empty and use InstanceType+Multiplier
@@ -804,11 +812,16 @@ spec:
                                               type: string
                                             name:
                                               description: 'Name is how rules refer
-                                                to this credential in a value template:
-                                                the
+                                                to this credential in a header value
+                                                template,
 
-                                                credential name wrapped in a doubled
-                                                pair of curly braces.'
+                                                written as ${e2b.secrets.NAME}. This
+                                                is the same syntax the E2B SDK''s
+
+                                                Secret.fill() produces, so a rule
+                                                authored against the SDK and a rule
+
+                                                authored here are byte-identical.'
                                               type: string
                                             placeholder:
                                               description: "Placeholder is the decoy\
@@ -1449,10 +1462,15 @@ spec:
                                   type: string
                                 name:
                                   description: 'Name is how rules refer to this credential
-                                    in a value template: the
+                                    in a header value template,
 
-                                    credential name wrapped in a doubled pair of curly
-                                    braces.'
+                                    written as ${e2b.secrets.NAME}. This is the same
+                                    syntax the E2B SDK''s
+
+                                    Secret.fill() produces, so a rule authored against
+                                    the SDK and a rule
+
+                                    authored here are byte-identical.'
                                   type: string
                                 placeholder:
                                   description: "Placeholder is the decoy value handed\

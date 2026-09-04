@@ -129,13 +129,16 @@ type SecretInjection struct {
 // controller-gen copies them verbatim into the CRD field descriptions, and every
 // consumer that renders the resulting manifest as a Go template — Helm, because
 // the CRDs ship under a chart's templates/, and delivery platforms that parse a
-// service YAML for variables — then fails on the unknown action. Spell the
-// placeholder syntax out in words instead.
+// service YAML for variables — then fails on the unknown action. The credential
+// placeholder syntax below is safe to spell out because it uses ${...}, which
+// no template engine in that chain interprets.
 
 // InjectedCredential is one named credential.
 type InjectedCredential struct {
-	// Name is how rules refer to this credential in a value template: the
-	// credential name wrapped in a doubled pair of curly braces.
+	// Name is how rules refer to this credential in a header value template,
+	// written as ${e2b.secrets.NAME}. This is the same syntax the E2B SDK's
+	// Secret.fill() produces, so a rule authored against the SDK and a rule
+	// authored here are byte-identical.
 	Name string `json:"name"`
 
 	// ValueFrom points at the Secret key holding the credential. The Secret

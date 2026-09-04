@@ -144,6 +144,75 @@ service APIKeyService {
   rpc WatchKeys(WatchKeysRequest) returns (stream KeyEvent);
 }
 
+// ── Credential vault ─────────────────────────────────────────────────────────
+//
+// Vault entries are replicated Hub → every Worker so a sandbox created on any
+// cluster can reference the caller's credentials. Without replication a rule
+// would resolve on the cluster the entry happened to be written to and fail
+// everywhere else, which is indistinguishable from a typo to the caller.
+//
+// The value travels in the clear on this stream, as APIKeyMetadata.raw_token
+// already does: the transport is the authenticated WebSocket to the Hub. It is
+// never logged, and each side writes it only into a Kubernetes Secret.
+
+message VaultEntry {
+  string namespace = 1;
+  // user scopes the entry within the namespace. Namespaces are usually a single
+  // user, but the shared one is not, and two users there must not see each
+  // other's credentials.
+  string user = 2;
+  // name is the canonical (lower-cased) entry name.
+  string name = 3;
+  int64  version = 4;
+  // metadata_json is the caller's own metadata map, encoded.
+  string metadata_json = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  // value is the credential itself. Empty in a Delete event.
+  string value = 8;
+}
+
+message PutVaultEntryRequest  { VaultEntry entry = 1; }
+message PutVaultEntryResponse { VaultEntry entry = 1; }
+
+message DeleteVaultEntryRequest {
+  string namespace = 1;
+  string user = 2;
+  string name = 3;
+}
+message DeleteVaultEntryResponse {}
+
+message VaultDelete {
+  string namespace = 1;
+  string user = 2;
+  string name = 3;
+}
+
+message VaultSnapshot { repeated VaultEntry items = 1; }
+
+message VaultEvent {
+  oneof kind {
+    VaultSnapshot snapshot = 1;
+    VaultEntry    upsert   = 2;
+    VaultDelete   delete   = 3;
+  }
+}
+
+message WatchVaultRequest {}
+
+service VaultService {
+  // PutEntry creates or rotates an entry. The Hub owns the version counter, so
+  // two Workers writing the same name cannot both believe they produced v2.
+  rpc PutEntry(PutVaultEntryRequest) returns (PutVaultEntryResponse);
+  rpc DeleteEntry(DeleteVaultEntryRequest) returns (DeleteVaultEntryResponse);
+
+  // WatchEntries emits a Snapshot first, then Upsert/Delete events. The
+  // Snapshot is authoritative: a Worker reconciling against it must drop local
+  // entries the Hub no longer knows about, or a delete that arrived while the
+  // connection was down would never take effect.
+  rpc WatchEntries(WatchVaultRequest) returns (stream VaultEvent);
+}
+
 // ── SandboxTemplate ──────────────────────────────────────────────────────────
 //
 // CRD bodies travel as JSON bytes (template_json). The Worker side

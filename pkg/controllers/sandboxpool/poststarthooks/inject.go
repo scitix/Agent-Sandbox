@@ -54,7 +54,11 @@ var caEnvVars = []string{
 	"GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
 }
 
-var injectTemplateRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}`)
+// injectTemplateRe matches a credential reference in a header value. It is the
+// E2B placeholder syntax, shared by Env-level rules and by rules a create
+// request carries, so there is exactly one thing to learn and nothing to
+// rewrite between the wire and the CRD.
+var injectTemplateRe = regexp.MustCompile(`\$\{e2b\.secrets\.([a-zA-Z0-9_-]+)\}`)
 
 // injectionPlan is everything the operator resolved for one claimed sandbox.
 // It holds live credential material, so it exists only for the duration of one
@@ -181,7 +185,7 @@ func (r *Runner) prepareInjection(ctx context.Context, pod *corev1.Pod) (*inject
 	}, nil
 }
 
-// expandCredentialTemplate substitutes "{{ name }}" with the resolved
+// expandCredentialTemplate substitutes ${e2b.secrets.name} with the resolved
 // credential. An unknown name is an error rather than an empty expansion: a
 // silently blank Authorization header is far harder to diagnose than a refusal.
 func expandCredentialTemplate(tmpl string, values map[string]string) (string, error) {

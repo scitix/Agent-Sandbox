@@ -15,7 +15,10 @@
 package handlers
 
 import (
+	"fmt"
 	"net"
+	"regexp"
+	"sort"
 	"strings"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
@@ -23,14 +26,15 @@ import (
 )
 
 // parseE2BNetworkPolicy maps the E2B create body's network / allow_internet_access
-// onto an AgentBox SandboxNetworkPolicy. Returns (nil, nil) when the request
-// carries no network intent. Unsupported E2B features are rejected with an
-// E2B-shaped error rather than silently dropped.
-func parseE2BNetworkPolicy(body *e2bgen.NewSandbox) (*agentsv1alpha1.SandboxNetworkPolicy, *e2bgen.Error) {
+// onto an AgentBox SandboxNetworkPolicy, and extracts any per-host injection
+// rules. Returns (nil, nil, nil) when the request carries no network intent.
+// Unsupported E2B features are rejected with an E2B-shaped error rather than
+// silently dropped.
+func parseE2BNetworkPolicy(body *e2bgen.NewSandbox) (*agentsv1alpha1.SandboxNetworkPolicy, []agentsv1alpha1.InjectionRule, *e2bgen.Error) {
 	disableAll := body.AllowInternetAccess != nil && !*body.AllowInternetAccess
 	ncfg := body.Network
 	if ncfg == nil && !disableAll {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	np := &agentsv1alpha1.SandboxNetworkPolicy{}
@@ -38,23 +42,19 @@ func parseE2BNetworkPolicy(body *e2bgen.NewSandbox) (*agentsv1alpha1.SandboxNetw
 	// over any allow rules in the same request.
 	if disableAll {
 		np.DisableEgress = true
-		return np, nil
+		return np, nil, nil
 	}
 
 	// ncfg != nil here.
 	if ncfg.EgressProxy != nil {
-		e := errRespCode(400, "network.egressProxy (SOCKS5 BYOP) is not supported by AgentBox")
-		return nil, &e
+		e := errRespCode(400, "network.egressProxy (SOCKS5 BYOP) is not supported: AgentBox filters "+
+			"egress in an in-Pod sidecar, not through an external proxy.")
+		return nil, nil, &e
 	}
-	if ncfg.Rules != nil && len(*ncfg.Rules) > 0 {
-		// AgentBox does support per-host header injection, but only as a
-		// SandboxEnv declaration backed by a Secret. E2B's wire shape carries
-		// the header value inline, which would put a credential in the request
-		// body, the access log, and the caller's source — the exposure the
-		// feature exists to eliminate.
-		e := errRespCode(400, "network.rules is not accepted per sandbox; declare credential "+
-			"injection on the SandboxEnv (overrides.networkPolicy.secretInjection) instead")
-		return nil, &e
+
+	rules, ruleErr := parseInjectionRules(ncfg.Rules)
+	if ruleErr != nil {
+		return nil, nil, ruleErr
 	}
 
 	var eg agentsv1alpha1.EgressRules
@@ -73,7 +73,115 @@ func parseE2BNetworkPolicy(body *e2bgen.NewSandbox) (*agentsv1alpha1.SandboxNetw
 	}
 	// An empty ncfg with no rules leaves np.Egress nil = unrestricted (subject to
 	// the anti-SSRF baseline the proxy always enforces).
-	return np, nil
+	return np, rules, nil
+}
+
+// vaultRefRe matches a vault reference in a header value. It is the syntax the
+// E2B SDK's Secret.fill() produces, and the same syntax the CRD stores, so a
+// rule crosses the API boundary unrewritten.
+var vaultRefRe = regexp.MustCompile(`\$\{e2b\.secrets\.([a-zA-Z0-9_-]+)\}`)
+
+// identityRefRe matches the workload-identity placeholder, which we do not
+// serve. Recognised only so it can be refused by name instead of falling into
+// the generic "references no credential" error, which would send the caller
+// looking for a typo that is not there.
+var identityRefRe = regexp.MustCompile(`\$\{e2b\.identity\.[^}]*\}`)
+
+// parseInjectionRules converts E2B's per-host transform rules into the CRD
+// shape, accepting only header values built from vault references.
+//
+// A literal value is refused, and that is the whole point: a credential written
+// inline would land in the request body, the access log, and the caller's
+// source — exactly the exposure that injecting it server-side exists to remove.
+// A reference carries only a name, and names are not secret.
+func parseInjectionRules(in *map[string][]e2bgen.SandboxNetworkRule) ([]agentsv1alpha1.InjectionRule, *e2bgen.Error) {
+	if in == nil || len(*in) == 0 {
+		return nil, nil
+	}
+
+	// Hosts are visited in sorted order so a rejection is deterministic: the
+	// same request must not blame a different host on a retry.
+	hosts := make([]string, 0, len(*in))
+	for host := range *in {
+		hosts = append(hosts, host)
+	}
+	sort.Strings(hosts)
+
+	var out []agentsv1alpha1.InjectionRule
+	for _, host := range hosts {
+		if strings.Contains(host, "*") {
+			e := errRespCode(400, fmt.Sprintf("network.rules host %q: wildcard hosts are not accepted, "+
+				"because anyone able to control a matching subdomain would receive the injected "+
+				"credential. Use an exact hostname.", host))
+			return nil, &e
+		}
+		for _, rule := range (*in)[host] {
+			if rule.Transform == nil || rule.Transform.Headers == nil || len(*rule.Transform.Headers) == 0 {
+				continue
+			}
+			converted, convErr := convertTransformHeaders(host, *rule.Transform.Headers)
+			if convErr != nil {
+				return nil, convErr
+			}
+			out = append(out, agentsv1alpha1.InjectionRule{Host: host, Headers: converted})
+		}
+	}
+	return out, nil
+}
+
+// convertTransformHeaders validates and converts one rule's headers.
+func convertTransformHeaders(host string, headers map[string]string) ([]agentsv1alpha1.HeaderInjection, *e2bgen.Error) {
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]agentsv1alpha1.HeaderInjection, 0, len(names))
+	for _, name := range names {
+		value := headers[name]
+
+		if identityRefRe.MatchString(value) {
+			e := errRespCode(400, fmt.Sprintf("network.rules host %q header %q references a workload "+
+				"identity token, which AgentBox does not issue. Store the credential with POST /secrets "+
+				"and reference it as ${e2b.secrets.<name>} instead.", host, name))
+			return nil, &e
+		}
+		if strings.Contains(value, "{{") || strings.Contains(value, "}}") {
+			e := errRespCode(400, fmt.Sprintf("network.rules host %q header %q uses a doubled-curly "+
+				"template, which is no longer the placeholder syntax. Use ${e2b.secrets.<name>}.", host, name))
+			return nil, &e
+		}
+		if !vaultRefRe.MatchString(value) {
+			e := errRespCode(400, fmt.Sprintf("network.rules host %q header %q must reference a stored "+
+				"secret: build the value with Secret.fill(\"name\") so it reads ${e2b.secrets.name}. "+
+				"A literal value would put the credential in the request body and the access log.", host, name))
+			return nil, &e
+		}
+
+		out = append(out, agentsv1alpha1.HeaderInjection{
+			Name: name,
+			// E2B's transform semantics are "an existing header with the same
+			// name is replaced", which is Override. IfAbsent stays an Env-level
+			// capability because the wire shape cannot express it.
+			Mode:  agentsv1alpha1.HeaderInjectionOverride,
+			Value: value,
+		})
+	}
+	return out, nil
+}
+
+// VaultRefsIn returns every vault entry name referenced by these rules.
+func VaultRefsIn(rules []agentsv1alpha1.InjectionRule) []string {
+	seen := map[string]struct{}{}
+	for i := range rules {
+		for j := range rules[i].Headers {
+			for _, m := range vaultRefRe.FindAllStringSubmatch(rules[i].Headers[j].Value, -1) {
+				seen[m[1]] = struct{}{}
+			}
+		}
+	}
+	return sortedNames(seen)
 }
 
 // splitAllowOut partitions E2B allowOut entries into domains vs CIDRs. An entry

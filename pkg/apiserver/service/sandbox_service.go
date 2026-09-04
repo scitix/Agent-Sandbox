@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
@@ -139,6 +141,19 @@ type k8sSandboxService struct {
 
 	envRouter EnvRouter // may be nil; set via SetEnvRouter at startup
 
+	// vault resolves per-sandbox credential references at claim time. May be
+	// nil, in which case a request carrying network.rules is refused rather
+	// than served without the credentials it asked for.
+	vault VaultService
+
+	// armWaitEnabled makes Create block until the claimed sandbox is armed.
+	// It is turned on at startup only when a hook runner is wired, because the
+	// mark it waits for is written by that runner: without one, nothing would
+	// ever arm and every create would block until its deadline. Off by default
+	// so a service built without the controller half (and every unit test)
+	// behaves as it did before.
+	armWaitEnabled bool
+
 	// lastCreateTracker accumulates the most recent Sandbox.Create
 	// timestamp per Pool in process memory and flushes it to the
 	// LastSandboxCreateTimeAnnotationKey on a 5 s cadence. The Pool
@@ -162,6 +177,19 @@ type LastCreateBumper interface {
 	// path; the production implementation takes a brief mutex on an
 	// in-memory map.
 	Bump(namespace, name string)
+}
+
+// SetVaultService wires the credential vault used to resolve the references in
+// a create request's network.rules.
+func (s *k8sSandboxService) SetVaultService(v VaultService) {
+	s.vault = v
+}
+
+// SetArmWaitEnabled turns on waiting for the arming mark in Create. Called at
+// startup from cmd/sandbox once the post-start hook runner — the writer of that
+// mark — is wired into the controller manager.
+func (s *k8sSandboxService) SetArmWaitEnabled(enabled bool) {
+	s.armWaitEnabled = enabled
 }
 
 // SetLastCreateTracker wires the in-process Sandbox.Create timestamp
@@ -481,6 +509,16 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	if startupTimeout > 0 {
 		annotations[agentsv1alpha1.SandboxStartupTimeoutAnnotationKey] = strconv.FormatInt(int64(startupTimeout.Seconds()), 10)
 	}
+	// Consumed here rather than in each handler so both the native and the
+	// E2B create paths honour it, and so it never reaches the stored metadata.
+	skipArmWait := false
+	if len(input.Metadata) > 0 {
+		if raw, ok := input.Metadata[MetaKeyNoWait]; ok {
+			skipArmWait, _ = strconv.ParseBool(raw)
+			input.Metadata = maps.Clone(input.Metadata)
+			delete(input.Metadata, MetaKeyNoWait)
+		}
+	}
 	if len(input.Metadata) > 0 {
 		encodedMetadata, encErr := json.Marshal(input.Metadata)
 		if encErr != nil {
@@ -507,11 +545,17 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		annotations[agentsv1alpha1.SandboxEgressPolicyAnnotationKey] = egressPolicyJSON
 	}
 
-	// Credential injection: resolved from the Env only (a create request may not
-	// carry it, see the rejection in the E2B compat layer). The annotation holds
-	// rule shapes and per-claim decoys; the SandboxReady hook resolves the
-	// referenced Secrets and delivers the plaintext straight to the sidecar.
-	egressInjectJSON, injectOn, injectErr := buildEgressInjectAnnotation(pool)
+	// Credential injection comes from two places: the Env, and — when the
+	// request carried network.rules — the caller's own vault. Only names travel
+	// in the request; the values stay in Secrets, and the annotation holds rule
+	// shapes, references and per-claim decoys. The SandboxReady hook resolves
+	// the references and delivers the plaintext straight to the sidecar.
+	perSandbox, resolveErr := s.resolveVaultRules(ctx, pool, input)
+	if resolveErr != nil {
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
+		return nil, resolveErr
+	}
+	egressInjectJSON, injectOn, injectErr := buildEgressInjectAnnotation(pool, perSandbox)
 	if injectErr != nil {
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, injectErr
@@ -547,9 +591,12 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		// previous sandbox's rules or decoys into the next claim.
 		managedAnnoKeyList = append(managedAnnoKeyList, agentsv1alpha1.SandboxEgressInjectAnnotationKey)
 	}
-	if egressOn || injectOn {
-		sort.Strings(managedAnnoKeyList)
-	}
+	// Arming always happens, so the two arming annotations are always managed:
+	// a recycled Pod must never carry the previous sandbox's arming verdict.
+	managedAnnoKeyList = append(managedAnnoKeyList,
+		agentsv1alpha1.SandboxArmedAnnotationKey,
+		agentsv1alpha1.SandboxArmErrorAnnotationKey)
+	sort.Strings(managedAnnoKeyList)
 	managedAnnotationKeys, encErr := json.Marshal(managedAnnoKeyList)
 	if encErr != nil {
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
@@ -671,6 +718,28 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		claimOutcome = "timeout"
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, domain.NewInternal("request canceled by client", ctx.Err())
+	}
+
+	// A claimed Pod is not a usable sandbox yet. The phase transition that
+	// released it only compared container image digests — it did not wait for
+	// the runtime inside the new container to start listening — and the
+	// post-start hooks that deliver the caller's env vars, install the injected
+	// CA, push the egress policy and arm the credentials all run afterwards, in
+	// a controller goroutine. Returning here would hand back an ID whose first
+	// command fails with a misleading gateway error, or (worse, with injection
+	// configured) one that reaches its upstreams carrying only a decoy.
+	//
+	// So wait for the arming mark the hook runner writes when every one of
+	// those steps has succeeded. This moves a wait that callers previously had
+	// to implement themselves into the API, where it can also fail loudly.
+	if s.armWaitEnabled && !skipArmWait {
+		armed, armErr := s.waitUntilArmed(ctx, pod, sandboxID, startupTimeout)
+		if armErr != nil {
+			s.releaseAfterFailedArm(pod, pool)
+			pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
+			return nil, armErr
+		}
+		pod = armed
 	}
 
 	pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("success")).Inc()
@@ -1238,11 +1307,15 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 			continue
 		}
 		totalBytes += int64(len(raw))
-		for _, line := range splitLogLines(raw) {
-			if line == "" {
+		for _, l := range splitLogLines(raw) {
+			if l.Line == "" {
 				continue
 			}
-			entries = append(entries, gen.SandboxLogEntry{Container: c.Name, Log: line})
+			entry := gen.SandboxLogEntry{Container: c.Name, Log: l.Line}
+			if !l.Timestamp.IsZero() {
+				entry.Timestamp = ptr.To(l.Timestamp)
+			}
+			entries = append(entries, entry)
 		}
 	}
 
@@ -1258,22 +1331,34 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 
 // splitLogLines splits raw Kubernetes log output into individual log lines,
 // stripping the optional RFC3339Nano timestamp prefix added when Timestamps=true.
-func splitLogLines(raw []byte) []string {
+func splitLogLines(raw []byte) []logLine {
 	lines := strings.Split(string(raw), "\n")
-	result := make([]string, 0, len(lines))
+	result := make([]logLine, 0, len(lines))
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		// Strip leading timestamp prefix if present: "<RFC3339Nano> <rest>"
+		// The kubelet prefixes each line with "<RFC3339Nano> " when Timestamps
+		// is set. Keep the parsed value instead of discarding it: consumers that
+		// have to order or window log lines — the E2B logs endpoints among them
+		// — have nothing else to go on, and re-deriving it is impossible once
+		// the prefix is gone.
+		out := logLine{Line: line}
 		if idx := strings.IndexByte(line, ' '); idx > 0 {
-			if _, err := time.Parse(time.RFC3339Nano, line[:idx]); err == nil {
-				line = line[idx+1:]
+			if ts, err := time.Parse(time.RFC3339Nano, line[:idx]); err == nil {
+				out.Timestamp = ts
+				out.Line = line[idx+1:]
 			}
 		}
-		result = append(result, line)
+		result = append(result, out)
 	}
 	return result
+}
+
+// logLine is one container log line with its kubelet timestamp, when present.
+type logLine struct {
+	Timestamp time.Time
+	Line      string
 }
 
 // getRuntimeLogs reads a runtime's log file from inside the pod via exec.
@@ -1768,3 +1853,157 @@ func endpointReady(ctx context.Context, httpClient *http.Client, url string) boo
 	}
 	return !strings.Contains(body.Error, "sandbox not found")
 }
+
+// ---------------------------------------------------------------------------
+// Arming wait
+// ---------------------------------------------------------------------------
+
+// armWaitPollInterval is how often the claimed Pod is re-read while waiting for
+// the arming verdict. The read comes from the controller-runtime cache, so it
+// costs no apiserver round trip; the interval only bounds how quickly the
+// verdict is noticed.
+const armWaitPollInterval = 100 * time.Millisecond
+
+// armWaitGrace is added to the sandbox's startup timeout to bound the wait.
+// Arming starts only once the Pod reaches Running, which can be at the very end
+// of the startup budget, and the arming steps themselves (readiness probe,
+// /init, two execs) then need their own time. Without the grace a cold-image
+// claim would routinely be released one round trip before it succeeded.
+//
+// A var rather than a const so tests can shrink it; nothing in production
+// writes to it.
+var armWaitGrace = 60 * time.Second
+
+// waitUntilArmed blocks until the claimed Pod carries the arming mark for this
+// sandbox, and returns the refreshed Pod.
+//
+// Three failure modes, each mapped to a status the caller can act on:
+//   - the hook runner recorded an arming error   → 500 with its reason
+//   - the deadline passed with no verdict        → 504
+//   - the client disconnected                    → 500 (canceled)
+//
+// In all three the sandbox must not be delivered; the caller releases the Pod.
+func (s *k8sSandboxService) waitUntilArmed(
+	ctx context.Context,
+	pod *corev1.Pod,
+	sandboxID string,
+	startupTimeout time.Duration,
+) (*corev1.Pod, *domain.AppError) {
+	budget := startupTimeout + armWaitGrace
+	waitCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	key := client.ObjectKeyFromObject(pod)
+	ticker := time.NewTicker(armWaitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		current := &corev1.Pod{}
+		if err := s.client.Get(waitCtx, key, current); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, domain.NewInternal(
+					fmt.Sprintf("sandbox %s: pod was deleted while starting up", sandboxID), err)
+			}
+			// A transient cache/apiserver error is not a verdict; keep waiting.
+			klog.V(4).InfoS("waitUntilArmed: pod read failed, retrying",
+				"pod", key.String(), "error", err)
+		} else {
+			// The sandbox ID guards against reading a mark left by an earlier
+			// claim of the same recycled Pod.
+			if current.Annotations[agentsv1alpha1.SandboxArmedAnnotationKey] == sandboxID {
+				return current, nil
+			}
+			if reason := current.Annotations[agentsv1alpha1.SandboxArmErrorAnnotationKey]; reason != "" {
+				return nil, domain.NewInternal(
+					fmt.Sprintf("sandbox %s failed to start up: %s", sandboxID, reason), nil)
+			}
+			if current.Labels[agentsv1alpha1.SandboxIDLabelKey] != sandboxID {
+				// The Pod was reclaimed for someone else — our claim is gone.
+				return nil, domain.NewInternal(
+					fmt.Sprintf("sandbox %s: pod was reclaimed while starting up", sandboxID), nil)
+			}
+		}
+
+		select {
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return nil, domain.NewInternal("request canceled by client", ctx.Err())
+			}
+			return nil, domain.NewGatewayTimeout(fmt.Sprintf(
+				"sandbox %s did not become ready within %s: its runtime never answered, "+
+					"or a post-start step did not finish", sandboxID, budget), waitCtx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// releaseAfterFailedArm returns a Pod to the pool after arming failed or timed
+// out. Uses a background context: the request context is usually already done
+// (that is often why we are here), and leaving the Pod claimed would strand it
+// until the idle-timeout sweep.
+func (s *k8sSandboxService) releaseAfterFailedArm(pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) {
+	if _, err := sandboxpool.ReleaseSandboxPod(context.Background(), s.client, pod, pool,
+		sandboxpool.ReleaseSandboxPodOptions{
+			StopReason:   agentsv1alpha1.SandboxStopReasonFailed,
+			TerminatedAt: time.Now().UTC().Format(time.RFC3339),
+		}); err != nil {
+		klog.ErrorS(err, "Create: failed to release pod after arming failure",
+			"namespace", pod.Namespace, "pod", pod.Name)
+	}
+}
+
+// resolveVaultRules turns the request's per-host rules into credential
+// references, after checking every one against the caller's own vault.
+//
+// Two refusals happen here rather than later, both because the alternative is a
+// sandbox that looks fine and fails somewhere else:
+//
+//   - a pool with no egress sidecar cannot inject anything, so rules on it
+//     would be configuration that silently does nothing;
+//   - an unknown reference would otherwise reach the upstream as a decoy and
+//     come back as an opaque 401 inside the user's own code.
+func (s *k8sSandboxService) resolveVaultRules(
+	ctx context.Context,
+	pool *agentsv1alpha1.SandboxPool,
+	input CreateSandboxInput,
+) (*perSandboxInjection, *domain.AppError) {
+	if len(input.VaultRules) == 0 {
+		return nil, nil
+	}
+	if s.vault == nil {
+		return nil, domain.NewBadRequest("network.rules requires the credential vault, which is not " +
+			"enabled in this AgentBox deployment")
+	}
+	if pool == nil || pool.Spec.NetworkPolicy == nil {
+		return nil, domain.NewBadRequest("this template has no egress sidecar, so injection rules would " +
+			"silently do nothing. Enable networkPolicy on the SandboxEnv first.")
+	}
+
+	names := vaultRefNames(input.VaultRules)
+	refs, appErr := s.vault.ResolveRefs(ctx, input.Namespace, input.User, names)
+	if appErr != nil {
+		return nil, appErr
+	}
+	return &perSandboxInjection{rules: input.VaultRules, refs: refs}, nil
+}
+
+// vaultRefNames extracts referenced entry names from rule header values.
+func vaultRefNames(rules []agentsv1alpha1.InjectionRule) []string {
+	seen := map[string]struct{}{}
+	for i := range rules {
+		for j := range rules[i].Headers {
+			for _, m := range vaultRefPattern.FindAllStringSubmatch(rules[i].Headers[j].Value, -1) {
+				seen[m[1]] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// vaultRefPattern matches the placeholder syntax shared by the SDK and the CRD.
+var vaultRefPattern = regexp.MustCompile(`\$\{e2b\.secrets\.([a-zA-Z0-9_-]+)\}`)

@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
@@ -117,16 +118,39 @@ func toProxyPolicy(np *agentsv1alpha1.SandboxNetworkPolicy, sandboxID string) eg
 // sends the plaintext straight to the sidecar over the exec channel, so a
 // credential never reaches etcd, an annotation, or an API response.
 //
-// Returns ok=false when the Pool declares no injection.
-func buildEgressInjectAnnotation(pool *agentsv1alpha1.SandboxPool) (value string, ok bool, err *domain.AppError) {
-	if pool == nil || pool.Spec.NetworkPolicy == nil || pool.Spec.NetworkPolicy.SecretInjection == nil {
+// perSandbox carries the rules a single create request asked for, already
+// resolved against the caller's vault. Nil when the request carried none.
+type perSandboxInjection struct {
+	rules []agentsv1alpha1.InjectionRule
+	refs  map[string]agentsv1alpha1.SecretKeyRef
+}
+
+// Returns ok=false when neither the Pool nor the request declares injection.
+func buildEgressInjectAnnotation(
+	pool *agentsv1alpha1.SandboxPool,
+	perSandbox *perSandboxInjection,
+) (value string, ok bool, err *domain.AppError) {
+	poolHas := pool != nil && pool.Spec.NetworkPolicy != nil && pool.Spec.NetworkPolicy.SecretInjection != nil
+	reqHas := perSandbox != nil && len(perSandbox.rules) > 0
+	if !poolHas && !reqHas {
 		return "", false, nil
 	}
-	if vErr := agentsv1alpha1.ValidateSecretInjection(pool.Spec.NetworkPolicy); vErr != nil {
-		return "", false, domain.NewBadRequest(fmt.Sprintf("invalid secretInjection on pool %s: %v", pool.Name, vErr))
+	if poolHas {
+		if vErr := agentsv1alpha1.ValidateSecretInjection(pool.Spec.NetworkPolicy); vErr != nil {
+			return "", false, domain.NewBadRequest(fmt.Sprintf("invalid secretInjection on pool %s: %v", pool.Name, vErr))
+		}
 	}
 
-	si := pool.Spec.NetworkPolicy.SecretInjection.DeepCopy()
+	si := &agentsv1alpha1.SecretInjection{}
+	if poolHas {
+		si = pool.Spec.NetworkPolicy.SecretInjection.DeepCopy()
+	}
+
+	if reqHas {
+		if appErr := mergePerSandboxInjection(si, perSandbox); appErr != nil {
+			return "", false, appErr
+		}
+	}
 
 	// Fill in a fresh decoy for every credential that did not pin one, so two
 	// sandboxes never share a generated placeholder and a released pod's decoy
@@ -157,4 +181,45 @@ func generatePlaceholder() (string, error) {
 		return "", err
 	}
 	return agentsv1alpha1.PlaceholderPrefix + hex.EncodeToString(buf), nil
+}
+
+// mergePerSandboxInjection folds a request's rules into the Env-level block.
+//
+// Rules are a union, with the Env's first: a host may carry several rules and
+// all of them apply, in declaration order. Egress filtering, by contrast, is
+// replaced wholesale by a per-sandbox override. The asymmetry is deliberate —
+// a filter is an exclusive constraint, so "only these domains" has to mean
+// exactly that, while a credential is an additive capability and one create
+// request should not be able to quietly cancel what the Env promised every
+// sandbox in it.
+//
+// A name collision between the two levels is refused rather than shadowed.
+// Either resolution order surprises somebody, and the cost of being explicit
+// here is one clear error message.
+func mergePerSandboxInjection(si *agentsv1alpha1.SecretInjection, perSandbox *perSandboxInjection) *domain.AppError {
+	existing := make(map[string]struct{}, len(si.Credentials))
+	for i := range si.Credentials {
+		existing[si.Credentials[i].Name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(perSandbox.refs))
+	for name := range perSandbox.refs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		if _, clash := existing[name]; clash {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"secret %q is both declared on the SandboxEnv and referenced from this request's "+
+					"network.rules. Rename the vault entry, or drop the rule and use the Env's "+
+					"credential.", name))
+		}
+		si.Credentials = append(si.Credentials, agentsv1alpha1.InjectedCredential{
+			Name:      name,
+			ValueFrom: perSandbox.refs[name],
+		})
+	}
+	si.Rules = append(si.Rules, perSandbox.rules...)
+	return nil
 }

@@ -30,11 +30,13 @@ import (
 
 	apimiddleware "github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/metrics"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
+	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
 const shutdownTimeout = 5 * time.Second
@@ -49,6 +51,13 @@ type Config struct {
 	Domain string
 	// ServerVersion is stamped on every response via X-AgentBox-Server-Version.
 	ServerVersion string
+	// LocalClusterID identifies this cluster in federation records, so the
+	// template listing can tell its own Envs from other clusters'.
+	LocalClusterID string
+	// MetricsSelector returns the PromQL label matcher that identifies this
+	// cluster's series in a shared metrics backend, e.g. `cluster="foo"`.
+	// Evaluated per query, because the cluster config it comes from is live.
+	MetricsSelector func() string
 }
 
 // Server is the E2B-compatible HTTP API server.
@@ -64,7 +73,9 @@ type Server struct {
 // avoids duplicate per-pool scheduler goroutines and ensures a single Shutdown path.
 func New(cfg Config, k8sClient client.Client,
 	keyStore apikey.KeyStore, adminKeyMgr *apikey.AdminKeyManager, iamSvc service.IAMService,
-	sandboxSvc service.SandboxService, forwarder *service.CrossClusterForwarder) *Server {
+	sandboxSvc service.SandboxService, forwarder *service.CrossClusterForwarder,
+	fedRegistry *federation.Registry, metricsClient *promclient.Client,
+	vaultSvc service.VaultService) *Server {
 
 	gin.SetMode(gin.ReleaseMode)
 	binding.EnableDecoderDisallowUnknownFields = false // E2B SDK may send extra fields
@@ -79,9 +90,14 @@ func New(cfg Config, k8sClient client.Client,
 	r.Use(apimiddleware.NewServerVersionMiddleware(cfg.ServerVersion))
 
 	svcs := router.Services{
-		Sandbox:   sandboxSvc,
-		APIKey:    service.NewAPIKeyService(keyStore),
-		Forwarder: forwarder,
+		Sandbox:         sandboxSvc,
+		APIKey:          service.NewAPIKeyService(keyStore),
+		Vault:           vaultSvc,
+		Forwarder:       forwarder,
+		Federation:      fedRegistry,
+		LocalClusterID:  cfg.LocalClusterID,
+		Metrics:         metricsClient,
+		MetricsSelector: cfg.MetricsSelector,
 	}
 
 	authMw := middleware.NewE2BAuthMiddleware(adminKeyMgr, keyStore, iamSvc)

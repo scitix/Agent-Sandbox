@@ -55,6 +55,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/imageresolver"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
+	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 	"github.com/scitix/agent-sandbox/pkg/version"
 
 	"k8s.io/client-go/kubernetes"
@@ -110,6 +111,8 @@ func Run(opts Options) {
 		envVolumes                                       string
 		volumeDisplayNameLabels                          string
 		volumeAllowedRuntimeClasses                      string
+		prometheusURL                                    string
+		prometheusToken                                  string
 		tlsOpts                                          []func(*tls.Config)
 	)
 
@@ -157,6 +160,12 @@ func Run(opts Options) {
 			"When empty, JWT auth is disabled and cross-cluster sync is not advertised.")
 	flag.StringVar(&localClusterID, "local-cluster-id", os.Getenv("LOCAL_CLUSTER_ID"),
 		"Identifier of the local cluster. When empty, cross-cluster features are disabled.")
+	flag.StringVar(&prometheusURL, "prometheus-url", os.Getenv("PROMETHEUS_URL"),
+		"Base URL of a Prometheus-compatible query API used to serve per-sandbox metrics "+
+			"(e.g. https://obs.example.com/api/query/metrics). Empty disables the metrics endpoints.")
+	flag.StringVar(&prometheusToken, "prometheus-token", os.Getenv("PROMETHEUS_TOKEN"),
+		"Bearer token for --prometheus-url. Supply it through PROMETHEUS_TOKEN from a Secret rather "+
+			"than on the command line, where it would be visible in the Pod spec and in ps output.")
 	flag.StringVar(&clustersConfigMapName, "clusters-configmap-name", "agentbox-clusters-config",
 		"Name of the ConfigMap containing cross-cluster gateway configuration.")
 	flag.StringVar(&egressProxyImage, "egress-proxy-image", os.Getenv("AGENTBOX_EGRESS_PROXY_IMAGE"),
@@ -512,7 +521,26 @@ func Run(opts Options) {
 	iamSvc := service.NewIAMService(mgr.GetClient())
 
 	digestResolver := imageresolver.NewResolver(mgr.GetClient(), 3*24*time.Hour)
-	hooksRunner := poststarthooks.NewRunner(envoyGatewayBaseURL, clientset, restCfg)
+	hooksRunner := poststarthooks.NewRunner(envoyGatewayBaseURL, clientset, restCfg, mgr.GetClient())
+
+	// The hook runner is what marks a claimed sandbox as armed, so only now is
+	// it safe for Create to wait for that mark. Wiring it here, next to the
+	// runner, keeps the two facts in one place: no runner, no wait.
+	if r, ok := sandboxSvc.(interface{ SetArmWaitEnabled(bool) }); ok {
+		r.SetArmWaitEnabled(true)
+	}
+
+	// One vault instance is shared by the sandbox service (which resolves the
+	// ${e2b.secrets.<name>} references a create request carries), the E2B
+	// /secrets endpoints, and Hub replication. Sharing matters: replication
+	// writes into this instance's storage, and a second instance would read a
+	// different one.
+	vaultSvc := service.NewVaultService(mgr.GetClient())
+	if r, ok := sandboxSvc.(interface {
+		SetVaultService(service.VaultService)
+	}); ok {
+		r.SetVaultService(vaultSvc)
+	}
 
 	// ---- controllers ---------------------------------------------------------
 	// Autoscaler wiring: the Loader reads the K8s cache, the in-process
@@ -606,6 +634,7 @@ func Run(opts Options) {
 		InstanceTypeProvider: itProvider,
 		ServerVersion:        version.Version,
 		FederationRegistry:   fedRegistry,
+		VaultService:         vaultSvc,
 		FederationSource:     fedSource,
 		ImageRegistry:        imageRegistry,
 		APIReader:            mgr.GetAPIReader(),
@@ -625,11 +654,40 @@ func Run(opts Options) {
 	}()
 
 	if e2bBindAddress != "" {
+		// The metrics backend is shared across clusters and identified per
+		// cluster by a PromQL matcher that already travels in the cluster
+		// config, so only the endpoint and its credential come from flags.
+		// Reading the selector through a closure keeps it live: the config is
+		// refreshed from the hub while the process runs.
+		var metricsClient *promclient.Client
+		if prometheusURL != "" {
+			headers := map[string]string{}
+			if prometheusToken != "" {
+				headers["Authorization"] = "Bearer " + prometheusToken
+			}
+			metricsClient = promclient.New(promclient.Config{BaseURL: prometheusURL, Headers: headers})
+			setupLog.Info("sandbox metrics enabled", "endpoint", prometheusURL)
+		} else {
+			setupLog.Info("sandbox metrics disabled (no --prometheus-url configured)")
+		}
+		selectorFn := func() string {
+			if clusterStore == nil || localClusterID == "" {
+				return ""
+			}
+			entry, ok := clusterStore.Get(localClusterID)
+			if !ok {
+				return ""
+			}
+			return entry.Selector
+		}
+
 		e2bServer := e2bcompat.New(e2bcompat.Config{
-			BindAddress:   e2bBindAddress,
-			Domain:        e2bDomain,
-			ServerVersion: version.Version,
-		}, mgr.GetClient(), keyStore, adminKeyMgr, iamSvc, sandboxSvc, ccForwarder)
+			BindAddress:     e2bBindAddress,
+			Domain:          e2bDomain,
+			ServerVersion:   version.Version,
+			LocalClusterID:  localClusterID,
+			MetricsSelector: selectorFn,
+		}, mgr.GetClient(), keyStore, adminKeyMgr, iamSvc, sandboxSvc, ccForwarder, fedRegistry, metricsClient, vaultSvc)
 		go func() { errCh <- e2bServer.Start(ctx) }()
 	}
 

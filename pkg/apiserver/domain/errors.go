@@ -27,6 +27,7 @@ const (
 	ErrCodeTooManyRequests     ErrorCode = 429
 	ErrCodeServiceUnavailable  ErrorCode = 503
 	ErrCodeInternal            ErrorCode = 500
+	ErrCodeGatewayTimeout      ErrorCode = 504
 )
 
 // BusinessErrorCode is a machine-readable business error code carried alongside
@@ -90,6 +91,14 @@ func NewTooManyRequests(msg string, cause error, detail any) *AppError {
 // NewServiceUnavailable constructs a 503 AppError.
 func NewServiceUnavailable(msg string) *AppError {
 	return &AppError{Code: ErrCodeServiceUnavailable, Message: msg}
+}
+
+// NewGatewayTimeout reports that a bounded wait on something downstream (a
+// sandbox runtime coming up, a post-start step finishing) ran out of time.
+// Distinct from Internal so a caller can tell "it did not finish in time" —
+// which is worth retrying — from "it failed".
+func NewGatewayTimeout(msg string, cause error) *AppError {
+	return &AppError{Code: ErrCodeGatewayTimeout, Message: msg, Cause: cause}
 }
 
 // NewUnauthorized constructs a 401 AppError.

@@ -48,6 +48,38 @@ var (
 
 	// SandboxRecycleDuration observes the Stopping→Idle recycle time (terminatedAt → recycledAt).
 	SandboxRecycleDuration *prometheus.HistogramVec
+
+	// SandboxArmDuration observes how long arming a claimed sandbox takes:
+	// waiting for its runtimes to answer, running the post-start hooks, and
+	// pushing the egress policy and credentials. Together with
+	// SandboxClaimDuration it accounts for the whole create latency a caller
+	// observes, which is why it is a separate series rather than folded into
+	// the claim histogram.
+	SandboxArmDuration *prometheus.HistogramVec
+)
+
+// Sandbox arming counter.
+var (
+	// SandboxArmTotal counts arming attempts by outcome.
+	// result: "success" | "timeout" | "error"
+	SandboxArmTotal *prometheus.CounterVec
+)
+
+// E2B compatibility-surface counters.
+var (
+	// E2BUnsupportedTotal counts requests to E2B operations AgentBox does not
+	// serve, by operation and refusal category. It exists to answer which parts
+	// of the E2B surface callers actually reach for, so the next batch of work
+	// is chosen from evidence rather than guesswork.
+	// category: "architectural" | "platform" | "unimplemented"
+	E2BUnsupportedTotal *prometheus.CounterVec
+
+	// VaultOperationTotal counts credential-vault operations by outcome. It
+	// carries the namespace but never the user or the entry name: the counter
+	// is for usage and failure rates, and a per-entry label would turn the
+	// metrics endpoint into a directory of which credentials exist.
+	// op: "list" | "get" | "create" | "update" | "delete"
+	VaultOperationTotal *prometheus.CounterVec
 )
 
 // Sandbox info gauges.
@@ -203,6 +235,30 @@ func init() {
 		Buckets: prometheus.ExponentialBuckets(0.01, 2, 18),
 	}, poolLabels)
 
+	SandboxArmDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "agentbox_sandbox_arm_duration_seconds",
+		Help: "Duration of sandbox arming (runtime readiness wait + post-start hooks + egress policy/credential push) in seconds.",
+		// Arming is dominated by the runtime coming up; sub-second at the fast
+		// end, tens of seconds on a cold image.
+		Buckets: prometheus.ExponentialBuckets(0.05, 2, 14),
+	}, []string{"namespace", "pool"})
+
+	SandboxArmTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_sandbox_arm_total",
+		Help: "Total number of sandbox arming attempts, partitioned by result (success/timeout/error).",
+	}, []string{"namespace", "pool", "result"})
+
+	E2BUnsupportedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_e2b_unsupported_total",
+		Help: "Total number of requests to E2B-compatible operations that AgentBox does not implement, " +
+			"partitioned by operation and refusal category (architectural/platform/unimplemented).",
+	}, []string{"operation", "category"})
+
+	VaultOperationTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "agentbox_vault_operation_total",
+		Help: "Total number of credential-vault operations, partitioned by operation and result.",
+	}, []string{"namespace", "op", "result"})
+
 	SandboxRunningInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "agentbox_sandbox_running_info",
 		Help: "Running sandbox to pod mapping (value always 1). Present only while sandbox is Running. Join with kube metrics via namespace+pod.",
@@ -309,6 +365,10 @@ func init() {
 		PoolReplicasStopping,
 		PoolReplicasFailed,
 		SandboxClaimDuration,
+		SandboxArmDuration,
+		SandboxArmTotal,
+		E2BUnsupportedTotal,
+		VaultOperationTotal,
 		SandboxStartingDuration,
 		SandboxRunningDuration,
 		SandboxRecycleDuration,

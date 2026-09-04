@@ -224,6 +224,200 @@ var APIKeyService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	VaultService_PutEntry_FullMethodName     = "/sandbox.sync.v1.VaultService/PutEntry"
+	VaultService_DeleteEntry_FullMethodName  = "/sandbox.sync.v1.VaultService/DeleteEntry"
+	VaultService_WatchEntries_FullMethodName = "/sandbox.sync.v1.VaultService/WatchEntries"
+)
+
+// VaultServiceClient is the client API for VaultService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type VaultServiceClient interface {
+	// PutEntry creates or rotates an entry. The Hub owns the version counter, so
+	// two Workers writing the same name cannot both believe they produced v2.
+	PutEntry(ctx context.Context, in *PutVaultEntryRequest, opts ...grpc.CallOption) (*PutVaultEntryResponse, error)
+	DeleteEntry(ctx context.Context, in *DeleteVaultEntryRequest, opts ...grpc.CallOption) (*DeleteVaultEntryResponse, error)
+	// WatchEntries emits a Snapshot first, then Upsert/Delete events. The
+	// Snapshot is authoritative: a Worker reconciling against it must drop local
+	// entries the Hub no longer knows about, or a delete that arrived while the
+	// connection was down would never take effect.
+	WatchEntries(ctx context.Context, in *WatchVaultRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VaultEvent], error)
+}
+
+type vaultServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewVaultServiceClient(cc grpc.ClientConnInterface) VaultServiceClient {
+	return &vaultServiceClient{cc}
+}
+
+func (c *vaultServiceClient) PutEntry(ctx context.Context, in *PutVaultEntryRequest, opts ...grpc.CallOption) (*PutVaultEntryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutVaultEntryResponse)
+	err := c.cc.Invoke(ctx, VaultService_PutEntry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vaultServiceClient) DeleteEntry(ctx context.Context, in *DeleteVaultEntryRequest, opts ...grpc.CallOption) (*DeleteVaultEntryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteVaultEntryResponse)
+	err := c.cc.Invoke(ctx, VaultService_DeleteEntry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vaultServiceClient) WatchEntries(ctx context.Context, in *WatchVaultRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VaultEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &VaultService_ServiceDesc.Streams[0], VaultService_WatchEntries_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchVaultRequest, VaultEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VaultService_WatchEntriesClient = grpc.ServerStreamingClient[VaultEvent]
+
+// VaultServiceServer is the server API for VaultService service.
+// All implementations must embed UnimplementedVaultServiceServer
+// for forward compatibility.
+type VaultServiceServer interface {
+	// PutEntry creates or rotates an entry. The Hub owns the version counter, so
+	// two Workers writing the same name cannot both believe they produced v2.
+	PutEntry(context.Context, *PutVaultEntryRequest) (*PutVaultEntryResponse, error)
+	DeleteEntry(context.Context, *DeleteVaultEntryRequest) (*DeleteVaultEntryResponse, error)
+	// WatchEntries emits a Snapshot first, then Upsert/Delete events. The
+	// Snapshot is authoritative: a Worker reconciling against it must drop local
+	// entries the Hub no longer knows about, or a delete that arrived while the
+	// connection was down would never take effect.
+	WatchEntries(*WatchVaultRequest, grpc.ServerStreamingServer[VaultEvent]) error
+	mustEmbedUnimplementedVaultServiceServer()
+}
+
+// UnimplementedVaultServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedVaultServiceServer struct{}
+
+func (UnimplementedVaultServiceServer) PutEntry(context.Context, *PutVaultEntryRequest) (*PutVaultEntryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PutEntry not implemented")
+}
+func (UnimplementedVaultServiceServer) DeleteEntry(context.Context, *DeleteVaultEntryRequest) (*DeleteVaultEntryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteEntry not implemented")
+}
+func (UnimplementedVaultServiceServer) WatchEntries(*WatchVaultRequest, grpc.ServerStreamingServer[VaultEvent]) error {
+	return status.Error(codes.Unimplemented, "method WatchEntries not implemented")
+}
+func (UnimplementedVaultServiceServer) mustEmbedUnimplementedVaultServiceServer() {}
+func (UnimplementedVaultServiceServer) testEmbeddedByValue()                      {}
+
+// UnsafeVaultServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to VaultServiceServer will
+// result in compilation errors.
+type UnsafeVaultServiceServer interface {
+	mustEmbedUnimplementedVaultServiceServer()
+}
+
+func RegisterVaultServiceServer(s grpc.ServiceRegistrar, srv VaultServiceServer) {
+	// If the following call panics, it indicates UnimplementedVaultServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&VaultService_ServiceDesc, srv)
+}
+
+func _VaultService_PutEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutVaultEntryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VaultServiceServer).PutEntry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VaultService_PutEntry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VaultServiceServer).PutEntry(ctx, req.(*PutVaultEntryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VaultService_DeleteEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteVaultEntryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VaultServiceServer).DeleteEntry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VaultService_DeleteEntry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VaultServiceServer).DeleteEntry(ctx, req.(*DeleteVaultEntryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VaultService_WatchEntries_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchVaultRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VaultServiceServer).WatchEntries(m, &grpc.GenericServerStream[WatchVaultRequest, VaultEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VaultService_WatchEntriesServer = grpc.ServerStreamingServer[VaultEvent]
+
+// VaultService_ServiceDesc is the grpc.ServiceDesc for VaultService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var VaultService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "sandbox.sync.v1.VaultService",
+	HandlerType: (*VaultServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "PutEntry",
+			Handler:    _VaultService_PutEntry_Handler,
+		},
+		{
+			MethodName: "DeleteEntry",
+			Handler:    _VaultService_DeleteEntry_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "WatchEntries",
+			Handler:       _VaultService_WatchEntries_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "sandbox/sync/v1/sync.proto",
+}
+
+const (
 	TemplateService_CreateTemplate_FullMethodName = "/sandbox.sync.v1.TemplateService/CreateTemplate"
 	TemplateService_UpdateTemplate_FullMethodName = "/sandbox.sync.v1.TemplateService/UpdateTemplate"
 	TemplateService_DeleteTemplate_FullMethodName = "/sandbox.sync.v1.TemplateService/DeleteTemplate"

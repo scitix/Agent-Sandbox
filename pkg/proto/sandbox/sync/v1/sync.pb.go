@@ -691,6 +691,534 @@ func (*WatchKeysRequest) Descriptor() ([]byte, []int) {
 	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{8}
 }
 
+type VaultEntry struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// user scopes the entry within the namespace. Namespaces are usually a single
+	// user, but the shared one is not, and two users there must not see each
+	// other's credentials.
+	User string `protobuf:"bytes,2,opt,name=user,proto3" json:"user,omitempty"`
+	// name is the canonical (lower-cased) entry name.
+	Name    string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Version int64  `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
+	// metadata_json is the caller's own metadata map, encoded.
+	MetadataJson string                 `protobuf:"bytes,5,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	CreatedAt    *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt    *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// value is the credential itself. Empty in a Delete event.
+	Value         string `protobuf:"bytes,8,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VaultEntry) Reset() {
+	*x = VaultEntry{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VaultEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VaultEntry) ProtoMessage() {}
+
+func (x *VaultEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VaultEntry.ProtoReflect.Descriptor instead.
+func (*VaultEntry) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *VaultEntry) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *VaultEntry) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
+func (x *VaultEntry) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *VaultEntry) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *VaultEntry) GetMetadataJson() string {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return ""
+}
+
+func (x *VaultEntry) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *VaultEntry) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+func (x *VaultEntry) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type PutVaultEntryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entry         *VaultEntry            `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutVaultEntryRequest) Reset() {
+	*x = PutVaultEntryRequest{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutVaultEntryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutVaultEntryRequest) ProtoMessage() {}
+
+func (x *PutVaultEntryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutVaultEntryRequest.ProtoReflect.Descriptor instead.
+func (*PutVaultEntryRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *PutVaultEntryRequest) GetEntry() *VaultEntry {
+	if x != nil {
+		return x.Entry
+	}
+	return nil
+}
+
+type PutVaultEntryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entry         *VaultEntry            `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutVaultEntryResponse) Reset() {
+	*x = PutVaultEntryResponse{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutVaultEntryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutVaultEntryResponse) ProtoMessage() {}
+
+func (x *PutVaultEntryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutVaultEntryResponse.ProtoReflect.Descriptor instead.
+func (*PutVaultEntryResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PutVaultEntryResponse) GetEntry() *VaultEntry {
+	if x != nil {
+		return x.Entry
+	}
+	return nil
+}
+
+type DeleteVaultEntryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	User          string                 `protobuf:"bytes,2,opt,name=user,proto3" json:"user,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteVaultEntryRequest) Reset() {
+	*x = DeleteVaultEntryRequest{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteVaultEntryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteVaultEntryRequest) ProtoMessage() {}
+
+func (x *DeleteVaultEntryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteVaultEntryRequest.ProtoReflect.Descriptor instead.
+func (*DeleteVaultEntryRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *DeleteVaultEntryRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *DeleteVaultEntryRequest) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
+func (x *DeleteVaultEntryRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type DeleteVaultEntryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteVaultEntryResponse) Reset() {
+	*x = DeleteVaultEntryResponse{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteVaultEntryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteVaultEntryResponse) ProtoMessage() {}
+
+func (x *DeleteVaultEntryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteVaultEntryResponse.ProtoReflect.Descriptor instead.
+func (*DeleteVaultEntryResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{13}
+}
+
+type VaultDelete struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	User          string                 `protobuf:"bytes,2,opt,name=user,proto3" json:"user,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VaultDelete) Reset() {
+	*x = VaultDelete{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VaultDelete) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VaultDelete) ProtoMessage() {}
+
+func (x *VaultDelete) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VaultDelete.ProtoReflect.Descriptor instead.
+func (*VaultDelete) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *VaultDelete) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *VaultDelete) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
+func (x *VaultDelete) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type VaultSnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Items         []*VaultEntry          `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VaultSnapshot) Reset() {
+	*x = VaultSnapshot{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VaultSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VaultSnapshot) ProtoMessage() {}
+
+func (x *VaultSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VaultSnapshot.ProtoReflect.Descriptor instead.
+func (*VaultSnapshot) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *VaultSnapshot) GetItems() []*VaultEntry {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type VaultEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*VaultEvent_Snapshot
+	//	*VaultEvent_Upsert
+	//	*VaultEvent_Delete
+	Kind          isVaultEvent_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VaultEvent) Reset() {
+	*x = VaultEvent{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VaultEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VaultEvent) ProtoMessage() {}
+
+func (x *VaultEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VaultEvent.ProtoReflect.Descriptor instead.
+func (*VaultEvent) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *VaultEvent) GetKind() isVaultEvent_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *VaultEvent) GetSnapshot() *VaultSnapshot {
+	if x != nil {
+		if x, ok := x.Kind.(*VaultEvent_Snapshot); ok {
+			return x.Snapshot
+		}
+	}
+	return nil
+}
+
+func (x *VaultEvent) GetUpsert() *VaultEntry {
+	if x != nil {
+		if x, ok := x.Kind.(*VaultEvent_Upsert); ok {
+			return x.Upsert
+		}
+	}
+	return nil
+}
+
+func (x *VaultEvent) GetDelete() *VaultDelete {
+	if x != nil {
+		if x, ok := x.Kind.(*VaultEvent_Delete); ok {
+			return x.Delete
+		}
+	}
+	return nil
+}
+
+type isVaultEvent_Kind interface {
+	isVaultEvent_Kind()
+}
+
+type VaultEvent_Snapshot struct {
+	Snapshot *VaultSnapshot `protobuf:"bytes,1,opt,name=snapshot,proto3,oneof"`
+}
+
+type VaultEvent_Upsert struct {
+	Upsert *VaultEntry `protobuf:"bytes,2,opt,name=upsert,proto3,oneof"`
+}
+
+type VaultEvent_Delete struct {
+	Delete *VaultDelete `protobuf:"bytes,3,opt,name=delete,proto3,oneof"`
+}
+
+func (*VaultEvent_Snapshot) isVaultEvent_Kind() {}
+
+func (*VaultEvent_Upsert) isVaultEvent_Kind() {}
+
+func (*VaultEvent_Delete) isVaultEvent_Kind() {}
+
+type WatchVaultRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchVaultRequest) Reset() {
+	*x = WatchVaultRequest{}
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchVaultRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchVaultRequest) ProtoMessage() {}
+
+func (x *WatchVaultRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchVaultRequest.ProtoReflect.Descriptor instead.
+func (*WatchVaultRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{17}
+}
+
 type CreateTemplateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TemplateJson  []byte                 `protobuf:"bytes,1,opt,name=template_json,json=templateJson,proto3" json:"template_json,omitempty"`
@@ -700,7 +1228,7 @@ type CreateTemplateRequest struct {
 
 func (x *CreateTemplateRequest) Reset() {
 	*x = CreateTemplateRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[9]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -712,7 +1240,7 @@ func (x *CreateTemplateRequest) String() string {
 func (*CreateTemplateRequest) ProtoMessage() {}
 
 func (x *CreateTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[9]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -725,7 +1253,7 @@ func (x *CreateTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTemplateRequest.ProtoReflect.Descriptor instead.
 func (*CreateTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{9}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CreateTemplateRequest) GetTemplateJson() []byte {
@@ -744,7 +1272,7 @@ type CreateTemplateResponse struct {
 
 func (x *CreateTemplateResponse) Reset() {
 	*x = CreateTemplateResponse{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[10]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -756,7 +1284,7 @@ func (x *CreateTemplateResponse) String() string {
 func (*CreateTemplateResponse) ProtoMessage() {}
 
 func (x *CreateTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[10]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +1297,7 @@ func (x *CreateTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTemplateResponse.ProtoReflect.Descriptor instead.
 func (*CreateTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{10}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *CreateTemplateResponse) GetName() string {
@@ -788,7 +1316,7 @@ type UpdateTemplateRequest struct {
 
 func (x *UpdateTemplateRequest) Reset() {
 	*x = UpdateTemplateRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[11]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -800,7 +1328,7 @@ func (x *UpdateTemplateRequest) String() string {
 func (*UpdateTemplateRequest) ProtoMessage() {}
 
 func (x *UpdateTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[11]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -813,7 +1341,7 @@ func (x *UpdateTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTemplateRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{11}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *UpdateTemplateRequest) GetTemplateJson() []byte {
@@ -832,7 +1360,7 @@ type UpdateTemplateResponse struct {
 
 func (x *UpdateTemplateResponse) Reset() {
 	*x = UpdateTemplateResponse{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[12]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -844,7 +1372,7 @@ func (x *UpdateTemplateResponse) String() string {
 func (*UpdateTemplateResponse) ProtoMessage() {}
 
 func (x *UpdateTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[12]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -857,7 +1385,7 @@ func (x *UpdateTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTemplateResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{12}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *UpdateTemplateResponse) GetName() string {
@@ -876,7 +1404,7 @@ type DeleteTemplateRequest struct {
 
 func (x *DeleteTemplateRequest) Reset() {
 	*x = DeleteTemplateRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[13]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -888,7 +1416,7 @@ func (x *DeleteTemplateRequest) String() string {
 func (*DeleteTemplateRequest) ProtoMessage() {}
 
 func (x *DeleteTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[13]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -901,7 +1429,7 @@ func (x *DeleteTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTemplateRequest.ProtoReflect.Descriptor instead.
 func (*DeleteTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{13}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *DeleteTemplateRequest) GetName() string {
@@ -920,7 +1448,7 @@ type DeleteTemplateResponse struct {
 
 func (x *DeleteTemplateResponse) Reset() {
 	*x = DeleteTemplateResponse{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[14]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -932,7 +1460,7 @@ func (x *DeleteTemplateResponse) String() string {
 func (*DeleteTemplateResponse) ProtoMessage() {}
 
 func (x *DeleteTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[14]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -945,7 +1473,7 @@ func (x *DeleteTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTemplateResponse.ProtoReflect.Descriptor instead.
 func (*DeleteTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{14}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *DeleteTemplateResponse) GetName() string {
@@ -965,7 +1493,7 @@ type TemplateUpsert struct {
 
 func (x *TemplateUpsert) Reset() {
 	*x = TemplateUpsert{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[15]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -977,7 +1505,7 @@ func (x *TemplateUpsert) String() string {
 func (*TemplateUpsert) ProtoMessage() {}
 
 func (x *TemplateUpsert) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[15]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -990,7 +1518,7 @@ func (x *TemplateUpsert) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TemplateUpsert.ProtoReflect.Descriptor instead.
 func (*TemplateUpsert) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{15}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TemplateUpsert) GetTemplateJson() []byte {
@@ -1009,7 +1537,7 @@ type TemplateDelete struct {
 
 func (x *TemplateDelete) Reset() {
 	*x = TemplateDelete{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[16]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1021,7 +1549,7 @@ func (x *TemplateDelete) String() string {
 func (*TemplateDelete) ProtoMessage() {}
 
 func (x *TemplateDelete) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[16]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1034,7 +1562,7 @@ func (x *TemplateDelete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TemplateDelete.ProtoReflect.Descriptor instead.
 func (*TemplateDelete) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{16}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TemplateDelete) GetName() string {
@@ -1053,7 +1581,7 @@ type TemplateSnapshot struct {
 
 func (x *TemplateSnapshot) Reset() {
 	*x = TemplateSnapshot{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[17]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1065,7 +1593,7 @@ func (x *TemplateSnapshot) String() string {
 func (*TemplateSnapshot) ProtoMessage() {}
 
 func (x *TemplateSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[17]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1078,7 +1606,7 @@ func (x *TemplateSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TemplateSnapshot.ProtoReflect.Descriptor instead.
 func (*TemplateSnapshot) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{17}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TemplateSnapshot) GetTemplateJsons() [][]byte {
@@ -1102,7 +1630,7 @@ type TemplateEvent struct {
 
 func (x *TemplateEvent) Reset() {
 	*x = TemplateEvent{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[18]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1114,7 +1642,7 @@ func (x *TemplateEvent) String() string {
 func (*TemplateEvent) ProtoMessage() {}
 
 func (x *TemplateEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[18]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1127,7 +1655,7 @@ func (x *TemplateEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TemplateEvent.ProtoReflect.Descriptor instead.
 func (*TemplateEvent) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{18}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TemplateEvent) GetKind() isTemplateEvent_Kind {
@@ -1194,7 +1722,7 @@ type WatchTemplatesRequest struct {
 
 func (x *WatchTemplatesRequest) Reset() {
 	*x = WatchTemplatesRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[19]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1206,7 +1734,7 @@ func (x *WatchTemplatesRequest) String() string {
 func (*WatchTemplatesRequest) ProtoMessage() {}
 
 func (x *WatchTemplatesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[19]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1219,7 +1747,7 @@ func (x *WatchTemplatesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchTemplatesRequest.ProtoReflect.Descriptor instead.
 func (*WatchTemplatesRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{19}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{28}
 }
 
 type HostAlias struct {
@@ -1232,7 +1760,7 @@ type HostAlias struct {
 
 func (x *HostAlias) Reset() {
 	*x = HostAlias{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[20]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1244,7 +1772,7 @@ func (x *HostAlias) String() string {
 func (*HostAlias) ProtoMessage() {}
 
 func (x *HostAlias) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[20]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1257,7 +1785,7 @@ func (x *HostAlias) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostAlias.ProtoReflect.Descriptor instead.
 func (*HostAlias) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{20}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *HostAlias) GetIp() string {
@@ -1285,7 +1813,7 @@ type RegistryEntry struct {
 
 func (x *RegistryEntry) Reset() {
 	*x = RegistryEntry{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[21]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1297,7 +1825,7 @@ func (x *RegistryEntry) String() string {
 func (*RegistryEntry) ProtoMessage() {}
 
 func (x *RegistryEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[21]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1310,7 +1838,7 @@ func (x *RegistryEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegistryEntry.ProtoReflect.Descriptor instead.
 func (*RegistryEntry) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{21}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RegistryEntry) GetHost() string {
@@ -1342,7 +1870,7 @@ type GatewayConfig struct {
 
 func (x *GatewayConfig) Reset() {
 	*x = GatewayConfig{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[22]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1354,7 +1882,7 @@ func (x *GatewayConfig) String() string {
 func (*GatewayConfig) ProtoMessage() {}
 
 func (x *GatewayConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[22]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1367,7 +1895,7 @@ func (x *GatewayConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GatewayConfig.ProtoReflect.Descriptor instead.
 func (*GatewayConfig) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{22}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GatewayConfig) GetNativeUrl() string {
@@ -1437,7 +1965,7 @@ type ClusterEntry struct {
 
 func (x *ClusterEntry) Reset() {
 	*x = ClusterEntry{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[23]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1449,7 +1977,7 @@ func (x *ClusterEntry) String() string {
 func (*ClusterEntry) ProtoMessage() {}
 
 func (x *ClusterEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[23]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1462,7 +1990,7 @@ func (x *ClusterEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterEntry.ProtoReflect.Descriptor instead.
 func (*ClusterEntry) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{23}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ClusterEntry) GetId() string {
@@ -1531,7 +2059,7 @@ type ClusterConfig struct {
 
 func (x *ClusterConfig) Reset() {
 	*x = ClusterConfig{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[24]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1543,7 +2071,7 @@ func (x *ClusterConfig) String() string {
 func (*ClusterConfig) ProtoMessage() {}
 
 func (x *ClusterConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[24]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1556,7 +2084,7 @@ func (x *ClusterConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterConfig.ProtoReflect.Descriptor instead.
 func (*ClusterConfig) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{24}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ClusterConfig) GetClusters() []*ClusterEntry {
@@ -1585,7 +2113,7 @@ type ClusterConfigEvent struct {
 
 func (x *ClusterConfigEvent) Reset() {
 	*x = ClusterConfigEvent{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[25]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1597,7 +2125,7 @@ func (x *ClusterConfigEvent) String() string {
 func (*ClusterConfigEvent) ProtoMessage() {}
 
 func (x *ClusterConfigEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[25]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1610,7 +2138,7 @@ func (x *ClusterConfigEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterConfigEvent.ProtoReflect.Descriptor instead.
 func (*ClusterConfigEvent) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{25}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ClusterConfigEvent) GetSnapshot() *ClusterConfig {
@@ -1628,7 +2156,7 @@ type WatchClusterConfigRequest struct {
 
 func (x *WatchClusterConfigRequest) Reset() {
 	*x = WatchClusterConfigRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[26]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1640,7 +2168,7 @@ func (x *WatchClusterConfigRequest) String() string {
 func (*WatchClusterConfigRequest) ProtoMessage() {}
 
 func (x *WatchClusterConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[26]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1653,7 +2181,7 @@ func (x *WatchClusterConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchClusterConfigRequest.ProtoReflect.Descriptor instead.
 func (*WatchClusterConfigRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{26}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{35}
 }
 
 // EnvCapacity is one cluster's runtime capacity for a single member pool of a
@@ -1692,7 +2220,7 @@ type EnvCapacity struct {
 
 func (x *EnvCapacity) Reset() {
 	*x = EnvCapacity{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[27]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1704,7 +2232,7 @@ func (x *EnvCapacity) String() string {
 func (*EnvCapacity) ProtoMessage() {}
 
 func (x *EnvCapacity) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[27]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1717,7 +2245,7 @@ func (x *EnvCapacity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnvCapacity.ProtoReflect.Descriptor instead.
 func (*EnvCapacity) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{27}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *EnvCapacity) GetClusterId() string {
@@ -1820,7 +2348,7 @@ type ReportFederationRequest struct {
 
 func (x *ReportFederationRequest) Reset() {
 	*x = ReportFederationRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[28]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1832,7 +2360,7 @@ func (x *ReportFederationRequest) String() string {
 func (*ReportFederationRequest) ProtoMessage() {}
 
 func (x *ReportFederationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[28]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1845,7 +2373,7 @@ func (x *ReportFederationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportFederationRequest.ProtoReflect.Descriptor instead.
 func (*ReportFederationRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{28}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ReportFederationRequest) GetItems() []*EnvCapacity {
@@ -1863,7 +2391,7 @@ type ReportFederationResponse struct {
 
 func (x *ReportFederationResponse) Reset() {
 	*x = ReportFederationResponse{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[29]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1875,7 +2403,7 @@ func (x *ReportFederationResponse) String() string {
 func (*ReportFederationResponse) ProtoMessage() {}
 
 func (x *ReportFederationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[29]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1888,7 +2416,7 @@ func (x *ReportFederationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportFederationResponse.ProtoReflect.Descriptor instead.
 func (*ReportFederationResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{29}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{38}
 }
 
 type FederationBroadcast struct {
@@ -1900,7 +2428,7 @@ type FederationBroadcast struct {
 
 func (x *FederationBroadcast) Reset() {
 	*x = FederationBroadcast{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[30]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1912,7 +2440,7 @@ func (x *FederationBroadcast) String() string {
 func (*FederationBroadcast) ProtoMessage() {}
 
 func (x *FederationBroadcast) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[30]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1925,7 +2453,7 @@ func (x *FederationBroadcast) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FederationBroadcast.ProtoReflect.Descriptor instead.
 func (*FederationBroadcast) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{30}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *FederationBroadcast) GetItems() []*EnvCapacity {
@@ -1943,7 +2471,7 @@ type WatchFederationRequest struct {
 
 func (x *WatchFederationRequest) Reset() {
 	*x = WatchFederationRequest{}
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[31]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1955,7 +2483,7 @@ func (x *WatchFederationRequest) String() string {
 func (*WatchFederationRequest) ProtoMessage() {}
 
 func (x *WatchFederationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[31]
+	mi := &file_sandbox_sync_v1_sync_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1968,7 +2496,7 @@ func (x *WatchFederationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchFederationRequest.ProtoReflect.Descriptor instead.
 func (*WatchFederationRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{31}
+	return file_sandbox_sync_v1_sync_proto_rawDescGZIP(), []int{40}
 }
 
 var File_sandbox_sync_v1_sync_proto protoreflect.FileDescriptor
@@ -2031,7 +2559,41 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\tKeyDelete\x12\x1f\n" +
 	"\vsecret_name\x18\x01 \x01(\tR\n" +
 	"secretName\"\x12\n" +
-	"\x10WatchKeysRequest\"<\n" +
+	"\x10WatchKeysRequest\"\x9d\x02\n" +
+	"\n" +
+	"VaultEntry\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04user\x18\x02 \x01(\tR\x04user\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\x04 \x01(\x03R\aversion\x12#\n" +
+	"\rmetadata_json\x18\x05 \x01(\tR\fmetadataJson\x129\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x14\n" +
+	"\x05value\x18\b \x01(\tR\x05value\"I\n" +
+	"\x14PutVaultEntryRequest\x121\n" +
+	"\x05entry\x18\x01 \x01(\v2\x1b.sandbox.sync.v1.VaultEntryR\x05entry\"J\n" +
+	"\x15PutVaultEntryResponse\x121\n" +
+	"\x05entry\x18\x01 \x01(\v2\x1b.sandbox.sync.v1.VaultEntryR\x05entry\"_\n" +
+	"\x17DeleteVaultEntryRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04user\x18\x02 \x01(\tR\x04user\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"\x1a\n" +
+	"\x18DeleteVaultEntryResponse\"S\n" +
+	"\vVaultDelete\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04user\x18\x02 \x01(\tR\x04user\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"B\n" +
+	"\rVaultSnapshot\x121\n" +
+	"\x05items\x18\x01 \x03(\v2\x1b.sandbox.sync.v1.VaultEntryR\x05items\"\xc1\x01\n" +
+	"\n" +
+	"VaultEvent\x12<\n" +
+	"\bsnapshot\x18\x01 \x01(\v2\x1e.sandbox.sync.v1.VaultSnapshotH\x00R\bsnapshot\x125\n" +
+	"\x06upsert\x18\x02 \x01(\v2\x1b.sandbox.sync.v1.VaultEntryH\x00R\x06upsert\x126\n" +
+	"\x06delete\x18\x03 \x01(\v2\x1c.sandbox.sync.v1.VaultDeleteH\x00R\x06deleteB\x06\n" +
+	"\x04kind\"\x13\n" +
+	"\x11WatchVaultRequest\"<\n" +
 	"\x15CreateTemplateRequest\x12#\n" +
 	"\rtemplate_json\x18\x01 \x01(\fR\ftemplateJson\",\n" +
 	"\x16CreateTemplateResponse\x12\x12\n" +
@@ -2130,7 +2692,11 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\rAPIKeyService\x12R\n" +
 	"\tCreateKey\x12!.sandbox.sync.v1.CreateKeyRequest\x1a\".sandbox.sync.v1.CreateKeyResponse\x12R\n" +
 	"\tDeleteKey\x12!.sandbox.sync.v1.DeleteKeyRequest\x1a\".sandbox.sync.v1.DeleteKeyResponse\x12K\n" +
-	"\tWatchKeys\x12!.sandbox.sync.v1.WatchKeysRequest\x1a\x19.sandbox.sync.v1.KeyEvent0\x012\x96\x03\n" +
+	"\tWatchKeys\x12!.sandbox.sync.v1.WatchKeysRequest\x1a\x19.sandbox.sync.v1.KeyEvent0\x012\xa0\x02\n" +
+	"\fVaultService\x12Y\n" +
+	"\bPutEntry\x12%.sandbox.sync.v1.PutVaultEntryRequest\x1a&.sandbox.sync.v1.PutVaultEntryResponse\x12b\n" +
+	"\vDeleteEntry\x12(.sandbox.sync.v1.DeleteVaultEntryRequest\x1a).sandbox.sync.v1.DeleteVaultEntryResponse\x12Q\n" +
+	"\fWatchEntries\x12\".sandbox.sync.v1.WatchVaultRequest\x1a\x1b.sandbox.sync.v1.VaultEvent0\x012\x96\x03\n" +
 	"\x0fTemplateService\x12a\n" +
 	"\x0eCreateTemplate\x12&.sandbox.sync.v1.CreateTemplateRequest\x1a'.sandbox.sync.v1.CreateTemplateResponse\x12a\n" +
 	"\x0eUpdateTemplate\x12&.sandbox.sync.v1.UpdateTemplateRequest\x1a'.sandbox.sync.v1.UpdateTemplateResponse\x12a\n" +
@@ -2154,7 +2720,7 @@ func file_sandbox_sync_v1_sync_proto_rawDescGZIP() []byte {
 	return file_sandbox_sync_v1_sync_proto_rawDescData
 }
 
-var file_sandbox_sync_v1_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_sandbox_sync_v1_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_sandbox_sync_v1_sync_proto_goTypes = []any{
 	(*APIKeyMetadata)(nil),            // 0: sandbox.sync.v1.APIKeyMetadata
 	(*CreateKeyRequest)(nil),          // 1: sandbox.sync.v1.CreateKeyRequest
@@ -2165,86 +2731,109 @@ var file_sandbox_sync_v1_sync_proto_goTypes = []any{
 	(*KeySnapshot)(nil),               // 6: sandbox.sync.v1.KeySnapshot
 	(*KeyDelete)(nil),                 // 7: sandbox.sync.v1.KeyDelete
 	(*WatchKeysRequest)(nil),          // 8: sandbox.sync.v1.WatchKeysRequest
-	(*CreateTemplateRequest)(nil),     // 9: sandbox.sync.v1.CreateTemplateRequest
-	(*CreateTemplateResponse)(nil),    // 10: sandbox.sync.v1.CreateTemplateResponse
-	(*UpdateTemplateRequest)(nil),     // 11: sandbox.sync.v1.UpdateTemplateRequest
-	(*UpdateTemplateResponse)(nil),    // 12: sandbox.sync.v1.UpdateTemplateResponse
-	(*DeleteTemplateRequest)(nil),     // 13: sandbox.sync.v1.DeleteTemplateRequest
-	(*DeleteTemplateResponse)(nil),    // 14: sandbox.sync.v1.DeleteTemplateResponse
-	(*TemplateUpsert)(nil),            // 15: sandbox.sync.v1.TemplateUpsert
-	(*TemplateDelete)(nil),            // 16: sandbox.sync.v1.TemplateDelete
-	(*TemplateSnapshot)(nil),          // 17: sandbox.sync.v1.TemplateSnapshot
-	(*TemplateEvent)(nil),             // 18: sandbox.sync.v1.TemplateEvent
-	(*WatchTemplatesRequest)(nil),     // 19: sandbox.sync.v1.WatchTemplatesRequest
-	(*HostAlias)(nil),                 // 20: sandbox.sync.v1.HostAlias
-	(*RegistryEntry)(nil),             // 21: sandbox.sync.v1.RegistryEntry
-	(*GatewayConfig)(nil),             // 22: sandbox.sync.v1.GatewayConfig
-	(*ClusterEntry)(nil),              // 23: sandbox.sync.v1.ClusterEntry
-	(*ClusterConfig)(nil),             // 24: sandbox.sync.v1.ClusterConfig
-	(*ClusterConfigEvent)(nil),        // 25: sandbox.sync.v1.ClusterConfigEvent
-	(*WatchClusterConfigRequest)(nil), // 26: sandbox.sync.v1.WatchClusterConfigRequest
-	(*EnvCapacity)(nil),               // 27: sandbox.sync.v1.EnvCapacity
-	(*ReportFederationRequest)(nil),   // 28: sandbox.sync.v1.ReportFederationRequest
-	(*ReportFederationResponse)(nil),  // 29: sandbox.sync.v1.ReportFederationResponse
-	(*FederationBroadcast)(nil),       // 30: sandbox.sync.v1.FederationBroadcast
-	(*WatchFederationRequest)(nil),    // 31: sandbox.sync.v1.WatchFederationRequest
-	nil,                               // 32: sandbox.sync.v1.GatewayConfig.HeadersEntry
-	nil,                               // 33: sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
-	nil,                               // 34: sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
-	nil,                               // 35: sandbox.sync.v1.GatewayConfig.DataHeadersEntry
-	nil,                               // 36: sandbox.sync.v1.ClusterEntry.HeadersEntry
-	(*timestamppb.Timestamp)(nil),     // 37: google.protobuf.Timestamp
+	(*VaultEntry)(nil),                // 9: sandbox.sync.v1.VaultEntry
+	(*PutVaultEntryRequest)(nil),      // 10: sandbox.sync.v1.PutVaultEntryRequest
+	(*PutVaultEntryResponse)(nil),     // 11: sandbox.sync.v1.PutVaultEntryResponse
+	(*DeleteVaultEntryRequest)(nil),   // 12: sandbox.sync.v1.DeleteVaultEntryRequest
+	(*DeleteVaultEntryResponse)(nil),  // 13: sandbox.sync.v1.DeleteVaultEntryResponse
+	(*VaultDelete)(nil),               // 14: sandbox.sync.v1.VaultDelete
+	(*VaultSnapshot)(nil),             // 15: sandbox.sync.v1.VaultSnapshot
+	(*VaultEvent)(nil),                // 16: sandbox.sync.v1.VaultEvent
+	(*WatchVaultRequest)(nil),         // 17: sandbox.sync.v1.WatchVaultRequest
+	(*CreateTemplateRequest)(nil),     // 18: sandbox.sync.v1.CreateTemplateRequest
+	(*CreateTemplateResponse)(nil),    // 19: sandbox.sync.v1.CreateTemplateResponse
+	(*UpdateTemplateRequest)(nil),     // 20: sandbox.sync.v1.UpdateTemplateRequest
+	(*UpdateTemplateResponse)(nil),    // 21: sandbox.sync.v1.UpdateTemplateResponse
+	(*DeleteTemplateRequest)(nil),     // 22: sandbox.sync.v1.DeleteTemplateRequest
+	(*DeleteTemplateResponse)(nil),    // 23: sandbox.sync.v1.DeleteTemplateResponse
+	(*TemplateUpsert)(nil),            // 24: sandbox.sync.v1.TemplateUpsert
+	(*TemplateDelete)(nil),            // 25: sandbox.sync.v1.TemplateDelete
+	(*TemplateSnapshot)(nil),          // 26: sandbox.sync.v1.TemplateSnapshot
+	(*TemplateEvent)(nil),             // 27: sandbox.sync.v1.TemplateEvent
+	(*WatchTemplatesRequest)(nil),     // 28: sandbox.sync.v1.WatchTemplatesRequest
+	(*HostAlias)(nil),                 // 29: sandbox.sync.v1.HostAlias
+	(*RegistryEntry)(nil),             // 30: sandbox.sync.v1.RegistryEntry
+	(*GatewayConfig)(nil),             // 31: sandbox.sync.v1.GatewayConfig
+	(*ClusterEntry)(nil),              // 32: sandbox.sync.v1.ClusterEntry
+	(*ClusterConfig)(nil),             // 33: sandbox.sync.v1.ClusterConfig
+	(*ClusterConfigEvent)(nil),        // 34: sandbox.sync.v1.ClusterConfigEvent
+	(*WatchClusterConfigRequest)(nil), // 35: sandbox.sync.v1.WatchClusterConfigRequest
+	(*EnvCapacity)(nil),               // 36: sandbox.sync.v1.EnvCapacity
+	(*ReportFederationRequest)(nil),   // 37: sandbox.sync.v1.ReportFederationRequest
+	(*ReportFederationResponse)(nil),  // 38: sandbox.sync.v1.ReportFederationResponse
+	(*FederationBroadcast)(nil),       // 39: sandbox.sync.v1.FederationBroadcast
+	(*WatchFederationRequest)(nil),    // 40: sandbox.sync.v1.WatchFederationRequest
+	nil,                               // 41: sandbox.sync.v1.GatewayConfig.HeadersEntry
+	nil,                               // 42: sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
+	nil,                               // 43: sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
+	nil,                               // 44: sandbox.sync.v1.GatewayConfig.DataHeadersEntry
+	nil,                               // 45: sandbox.sync.v1.ClusterEntry.HeadersEntry
+	(*timestamppb.Timestamp)(nil),     // 46: google.protobuf.Timestamp
 }
 var file_sandbox_sync_v1_sync_proto_depIdxs = []int32{
-	37, // 0: sandbox.sync.v1.APIKeyMetadata.issued_at:type_name -> google.protobuf.Timestamp
-	37, // 1: sandbox.sync.v1.APIKeyMetadata.expires_at:type_name -> google.protobuf.Timestamp
-	37, // 2: sandbox.sync.v1.CreateKeyRequest.expires_at:type_name -> google.protobuf.Timestamp
-	37, // 3: sandbox.sync.v1.CreateKeyRequest.issued_at:type_name -> google.protobuf.Timestamp
-	37, // 4: sandbox.sync.v1.CreateKeyResponse.issued_at:type_name -> google.protobuf.Timestamp
+	46, // 0: sandbox.sync.v1.APIKeyMetadata.issued_at:type_name -> google.protobuf.Timestamp
+	46, // 1: sandbox.sync.v1.APIKeyMetadata.expires_at:type_name -> google.protobuf.Timestamp
+	46, // 2: sandbox.sync.v1.CreateKeyRequest.expires_at:type_name -> google.protobuf.Timestamp
+	46, // 3: sandbox.sync.v1.CreateKeyRequest.issued_at:type_name -> google.protobuf.Timestamp
+	46, // 4: sandbox.sync.v1.CreateKeyResponse.issued_at:type_name -> google.protobuf.Timestamp
 	6,  // 5: sandbox.sync.v1.KeyEvent.snapshot:type_name -> sandbox.sync.v1.KeySnapshot
 	0,  // 6: sandbox.sync.v1.KeyEvent.upsert:type_name -> sandbox.sync.v1.APIKeyMetadata
 	7,  // 7: sandbox.sync.v1.KeyEvent.delete:type_name -> sandbox.sync.v1.KeyDelete
 	0,  // 8: sandbox.sync.v1.KeySnapshot.items:type_name -> sandbox.sync.v1.APIKeyMetadata
-	17, // 9: sandbox.sync.v1.TemplateEvent.snapshot:type_name -> sandbox.sync.v1.TemplateSnapshot
-	15, // 10: sandbox.sync.v1.TemplateEvent.upsert:type_name -> sandbox.sync.v1.TemplateUpsert
-	16, // 11: sandbox.sync.v1.TemplateEvent.delete:type_name -> sandbox.sync.v1.TemplateDelete
-	32, // 12: sandbox.sync.v1.GatewayConfig.headers:type_name -> sandbox.sync.v1.GatewayConfig.HeadersEntry
-	33, // 13: sandbox.sync.v1.GatewayConfig.native_headers:type_name -> sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
-	34, // 14: sandbox.sync.v1.GatewayConfig.e2b_headers:type_name -> sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
-	35, // 15: sandbox.sync.v1.GatewayConfig.data_headers:type_name -> sandbox.sync.v1.GatewayConfig.DataHeadersEntry
-	36, // 16: sandbox.sync.v1.ClusterEntry.headers:type_name -> sandbox.sync.v1.ClusterEntry.HeadersEntry
-	22, // 17: sandbox.sync.v1.ClusterEntry.gateway:type_name -> sandbox.sync.v1.GatewayConfig
-	21, // 18: sandbox.sync.v1.ClusterEntry.registries:type_name -> sandbox.sync.v1.RegistryEntry
-	23, // 19: sandbox.sync.v1.ClusterConfig.clusters:type_name -> sandbox.sync.v1.ClusterEntry
-	20, // 20: sandbox.sync.v1.ClusterConfig.host_aliases:type_name -> sandbox.sync.v1.HostAlias
-	24, // 21: sandbox.sync.v1.ClusterConfigEvent.snapshot:type_name -> sandbox.sync.v1.ClusterConfig
-	27, // 22: sandbox.sync.v1.ReportFederationRequest.items:type_name -> sandbox.sync.v1.EnvCapacity
-	27, // 23: sandbox.sync.v1.FederationBroadcast.items:type_name -> sandbox.sync.v1.EnvCapacity
-	1,  // 24: sandbox.sync.v1.APIKeyService.CreateKey:input_type -> sandbox.sync.v1.CreateKeyRequest
-	3,  // 25: sandbox.sync.v1.APIKeyService.DeleteKey:input_type -> sandbox.sync.v1.DeleteKeyRequest
-	8,  // 26: sandbox.sync.v1.APIKeyService.WatchKeys:input_type -> sandbox.sync.v1.WatchKeysRequest
-	9,  // 27: sandbox.sync.v1.TemplateService.CreateTemplate:input_type -> sandbox.sync.v1.CreateTemplateRequest
-	11, // 28: sandbox.sync.v1.TemplateService.UpdateTemplate:input_type -> sandbox.sync.v1.UpdateTemplateRequest
-	13, // 29: sandbox.sync.v1.TemplateService.DeleteTemplate:input_type -> sandbox.sync.v1.DeleteTemplateRequest
-	19, // 30: sandbox.sync.v1.TemplateService.WatchTemplates:input_type -> sandbox.sync.v1.WatchTemplatesRequest
-	26, // 31: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:input_type -> sandbox.sync.v1.WatchClusterConfigRequest
-	28, // 32: sandbox.sync.v1.FederationService.ReportFederation:input_type -> sandbox.sync.v1.ReportFederationRequest
-	31, // 33: sandbox.sync.v1.FederationService.WatchFederation:input_type -> sandbox.sync.v1.WatchFederationRequest
-	2,  // 34: sandbox.sync.v1.APIKeyService.CreateKey:output_type -> sandbox.sync.v1.CreateKeyResponse
-	4,  // 35: sandbox.sync.v1.APIKeyService.DeleteKey:output_type -> sandbox.sync.v1.DeleteKeyResponse
-	5,  // 36: sandbox.sync.v1.APIKeyService.WatchKeys:output_type -> sandbox.sync.v1.KeyEvent
-	10, // 37: sandbox.sync.v1.TemplateService.CreateTemplate:output_type -> sandbox.sync.v1.CreateTemplateResponse
-	12, // 38: sandbox.sync.v1.TemplateService.UpdateTemplate:output_type -> sandbox.sync.v1.UpdateTemplateResponse
-	14, // 39: sandbox.sync.v1.TemplateService.DeleteTemplate:output_type -> sandbox.sync.v1.DeleteTemplateResponse
-	18, // 40: sandbox.sync.v1.TemplateService.WatchTemplates:output_type -> sandbox.sync.v1.TemplateEvent
-	25, // 41: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:output_type -> sandbox.sync.v1.ClusterConfigEvent
-	29, // 42: sandbox.sync.v1.FederationService.ReportFederation:output_type -> sandbox.sync.v1.ReportFederationResponse
-	30, // 43: sandbox.sync.v1.FederationService.WatchFederation:output_type -> sandbox.sync.v1.FederationBroadcast
-	34, // [34:44] is the sub-list for method output_type
-	24, // [24:34] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	46, // 9: sandbox.sync.v1.VaultEntry.created_at:type_name -> google.protobuf.Timestamp
+	46, // 10: sandbox.sync.v1.VaultEntry.updated_at:type_name -> google.protobuf.Timestamp
+	9,  // 11: sandbox.sync.v1.PutVaultEntryRequest.entry:type_name -> sandbox.sync.v1.VaultEntry
+	9,  // 12: sandbox.sync.v1.PutVaultEntryResponse.entry:type_name -> sandbox.sync.v1.VaultEntry
+	9,  // 13: sandbox.sync.v1.VaultSnapshot.items:type_name -> sandbox.sync.v1.VaultEntry
+	15, // 14: sandbox.sync.v1.VaultEvent.snapshot:type_name -> sandbox.sync.v1.VaultSnapshot
+	9,  // 15: sandbox.sync.v1.VaultEvent.upsert:type_name -> sandbox.sync.v1.VaultEntry
+	14, // 16: sandbox.sync.v1.VaultEvent.delete:type_name -> sandbox.sync.v1.VaultDelete
+	26, // 17: sandbox.sync.v1.TemplateEvent.snapshot:type_name -> sandbox.sync.v1.TemplateSnapshot
+	24, // 18: sandbox.sync.v1.TemplateEvent.upsert:type_name -> sandbox.sync.v1.TemplateUpsert
+	25, // 19: sandbox.sync.v1.TemplateEvent.delete:type_name -> sandbox.sync.v1.TemplateDelete
+	41, // 20: sandbox.sync.v1.GatewayConfig.headers:type_name -> sandbox.sync.v1.GatewayConfig.HeadersEntry
+	42, // 21: sandbox.sync.v1.GatewayConfig.native_headers:type_name -> sandbox.sync.v1.GatewayConfig.NativeHeadersEntry
+	43, // 22: sandbox.sync.v1.GatewayConfig.e2b_headers:type_name -> sandbox.sync.v1.GatewayConfig.E2bHeadersEntry
+	44, // 23: sandbox.sync.v1.GatewayConfig.data_headers:type_name -> sandbox.sync.v1.GatewayConfig.DataHeadersEntry
+	45, // 24: sandbox.sync.v1.ClusterEntry.headers:type_name -> sandbox.sync.v1.ClusterEntry.HeadersEntry
+	31, // 25: sandbox.sync.v1.ClusterEntry.gateway:type_name -> sandbox.sync.v1.GatewayConfig
+	30, // 26: sandbox.sync.v1.ClusterEntry.registries:type_name -> sandbox.sync.v1.RegistryEntry
+	32, // 27: sandbox.sync.v1.ClusterConfig.clusters:type_name -> sandbox.sync.v1.ClusterEntry
+	29, // 28: sandbox.sync.v1.ClusterConfig.host_aliases:type_name -> sandbox.sync.v1.HostAlias
+	33, // 29: sandbox.sync.v1.ClusterConfigEvent.snapshot:type_name -> sandbox.sync.v1.ClusterConfig
+	36, // 30: sandbox.sync.v1.ReportFederationRequest.items:type_name -> sandbox.sync.v1.EnvCapacity
+	36, // 31: sandbox.sync.v1.FederationBroadcast.items:type_name -> sandbox.sync.v1.EnvCapacity
+	1,  // 32: sandbox.sync.v1.APIKeyService.CreateKey:input_type -> sandbox.sync.v1.CreateKeyRequest
+	3,  // 33: sandbox.sync.v1.APIKeyService.DeleteKey:input_type -> sandbox.sync.v1.DeleteKeyRequest
+	8,  // 34: sandbox.sync.v1.APIKeyService.WatchKeys:input_type -> sandbox.sync.v1.WatchKeysRequest
+	10, // 35: sandbox.sync.v1.VaultService.PutEntry:input_type -> sandbox.sync.v1.PutVaultEntryRequest
+	12, // 36: sandbox.sync.v1.VaultService.DeleteEntry:input_type -> sandbox.sync.v1.DeleteVaultEntryRequest
+	17, // 37: sandbox.sync.v1.VaultService.WatchEntries:input_type -> sandbox.sync.v1.WatchVaultRequest
+	18, // 38: sandbox.sync.v1.TemplateService.CreateTemplate:input_type -> sandbox.sync.v1.CreateTemplateRequest
+	20, // 39: sandbox.sync.v1.TemplateService.UpdateTemplate:input_type -> sandbox.sync.v1.UpdateTemplateRequest
+	22, // 40: sandbox.sync.v1.TemplateService.DeleteTemplate:input_type -> sandbox.sync.v1.DeleteTemplateRequest
+	28, // 41: sandbox.sync.v1.TemplateService.WatchTemplates:input_type -> sandbox.sync.v1.WatchTemplatesRequest
+	35, // 42: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:input_type -> sandbox.sync.v1.WatchClusterConfigRequest
+	37, // 43: sandbox.sync.v1.FederationService.ReportFederation:input_type -> sandbox.sync.v1.ReportFederationRequest
+	40, // 44: sandbox.sync.v1.FederationService.WatchFederation:input_type -> sandbox.sync.v1.WatchFederationRequest
+	2,  // 45: sandbox.sync.v1.APIKeyService.CreateKey:output_type -> sandbox.sync.v1.CreateKeyResponse
+	4,  // 46: sandbox.sync.v1.APIKeyService.DeleteKey:output_type -> sandbox.sync.v1.DeleteKeyResponse
+	5,  // 47: sandbox.sync.v1.APIKeyService.WatchKeys:output_type -> sandbox.sync.v1.KeyEvent
+	11, // 48: sandbox.sync.v1.VaultService.PutEntry:output_type -> sandbox.sync.v1.PutVaultEntryResponse
+	13, // 49: sandbox.sync.v1.VaultService.DeleteEntry:output_type -> sandbox.sync.v1.DeleteVaultEntryResponse
+	16, // 50: sandbox.sync.v1.VaultService.WatchEntries:output_type -> sandbox.sync.v1.VaultEvent
+	19, // 51: sandbox.sync.v1.TemplateService.CreateTemplate:output_type -> sandbox.sync.v1.CreateTemplateResponse
+	21, // 52: sandbox.sync.v1.TemplateService.UpdateTemplate:output_type -> sandbox.sync.v1.UpdateTemplateResponse
+	23, // 53: sandbox.sync.v1.TemplateService.DeleteTemplate:output_type -> sandbox.sync.v1.DeleteTemplateResponse
+	27, // 54: sandbox.sync.v1.TemplateService.WatchTemplates:output_type -> sandbox.sync.v1.TemplateEvent
+	34, // 55: sandbox.sync.v1.ClusterConfigService.WatchClusterConfig:output_type -> sandbox.sync.v1.ClusterConfigEvent
+	38, // 56: sandbox.sync.v1.FederationService.ReportFederation:output_type -> sandbox.sync.v1.ReportFederationResponse
+	39, // 57: sandbox.sync.v1.FederationService.WatchFederation:output_type -> sandbox.sync.v1.FederationBroadcast
+	45, // [45:58] is the sub-list for method output_type
+	32, // [32:45] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_sandbox_sync_v1_sync_proto_init() }
@@ -2257,7 +2846,12 @@ func file_sandbox_sync_v1_sync_proto_init() {
 		(*KeyEvent_Upsert)(nil),
 		(*KeyEvent_Delete)(nil),
 	}
-	file_sandbox_sync_v1_sync_proto_msgTypes[18].OneofWrappers = []any{
+	file_sandbox_sync_v1_sync_proto_msgTypes[16].OneofWrappers = []any{
+		(*VaultEvent_Snapshot)(nil),
+		(*VaultEvent_Upsert)(nil),
+		(*VaultEvent_Delete)(nil),
+	}
+	file_sandbox_sync_v1_sync_proto_msgTypes[27].OneofWrappers = []any{
 		(*TemplateEvent_Snapshot)(nil),
 		(*TemplateEvent_Upsert)(nil),
 		(*TemplateEvent_Delete)(nil),
@@ -2268,9 +2862,9 @@ func file_sandbox_sync_v1_sync_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_sync_v1_sync_proto_rawDesc), len(file_sandbox_sync_v1_sync_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   37,
+			NumMessages:   46,
 			NumExtensions: 0,
-			NumServices:   4,
+			NumServices:   5,
 		},
 		GoTypes:           file_sandbox_sync_v1_sync_proto_goTypes,
 		DependencyIndexes: file_sandbox_sync_v1_sync_proto_depIdxs,

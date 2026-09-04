@@ -138,6 +138,8 @@ type syncServiceImpl struct {
 	// Cross-cluster capacity federation. All nil when federation is not
 	// configured (single-cluster deployments), in which case the report/watch
 	// goroutines are not started.
+	vaultClient       syncv1.VaultServiceClient
+	vaultSink         VaultSink
 	fedRegistry       *federation.Registry
 	fedSource         federation.CapacitySource
 	localClusterID    string
@@ -189,6 +191,7 @@ func (s *syncServiceImpl) OnConnect(conn *grpc.ClientConn) uint64 {
 	id := s.connID
 	s.conn = conn
 	s.keyClient = syncv1.NewAPIKeyServiceClient(conn)
+	s.vaultClient = syncv1.NewVaultServiceClient(conn)
 	s.tmplClient = syncv1.NewTemplateServiceClient(conn)
 	s.configClient = syncv1.NewClusterConfigServiceClient(conn)
 	s.fedClient = syncv1.NewFederationServiceClient(conn)
@@ -205,6 +208,7 @@ func (s *syncServiceImpl) OnConnect(conn *grpc.ClientConn) uint64 {
 	// exit; the outer reconnect loop in handlers/sync.go produces a new
 	// ClientConn (and a new OnConnect) when a fresh WS dial succeeds.
 	go s.runWatchKeys(ctx, id)
+	go s.runWatchVault(ctx, id)
 	go s.runWatchTemplates(ctx, id)
 	go s.runWatchClusterConfig(ctx, id)
 	if fedEnabled {
@@ -227,6 +231,7 @@ func (s *syncServiceImpl) OnDisconnect(connID uint64) {
 	}
 	s.conn = nil
 	s.keyClient = nil
+	s.vaultClient = nil
 	s.tmplClient = nil
 	s.configClient = nil
 	s.fedClient = nil
