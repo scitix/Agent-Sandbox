@@ -1,5 +1,5 @@
 diff --git a/packages/envd/main.go b/packages/envd/main.go
-index 7bb0df1..ac4bb53 100644
+index c98c201..ac4bb53 100644
 --- a/packages/envd/main.go
 +++ b/packages/envd/main.go
 @@ -10,6 +10,7 @@ import (
@@ -47,15 +47,7 @@ index 7bb0df1..ac4bb53 100644
  
  	flag.BoolVar(
  		&versionFlag,
-@@ -187,6 +202,7 @@ func run() error {
- 	defaults := &execcontext.Defaults{
- 		User:    defaultUser,
- 		EnvVars: utils.NewEnvVars(),
-+		IsNotFC: isNotFC,
- 	}
- 	isFCBoolStr := strconv.FormatBool(!isNotFC)
- 	defaults.EnvVars.Store("E2B_SANDBOX", isFCBoolStr)
-@@ -307,6 +323,9 @@ func run() error {
+@@ -308,6 +323,9 @@ func run() error {
  		})
  	}
  	handler := api.HandlerFromMux(service, m)
@@ -65,7 +57,7 @@ index 7bb0df1..ac4bb53 100644
  	middleware := authn.NewMiddleware(permissions.AuthenticateUsername)
  
  	s := &http.Server{
-@@ -523,3 +542,47 @@ func createCgroupManager() (m cgroups.Manager) {
+@@ -524,3 +542,47 @@ func createCgroupManager() (m cgroups.Manager) {
  
  	return mgr
  }

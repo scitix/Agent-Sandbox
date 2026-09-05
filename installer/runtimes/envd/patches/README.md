@@ -11,9 +11,12 @@ unpatched envd: it reintroduces the bug below.
 ## Bumping envd
 
 1. Pick the new commit, set `INFRA_REF` (full SHA) in `build-envd.sh`.
-2. For each patch: `git -C <infra> apply <patch>` against the new ref; if it
-   rejects, re-make the edit by hand and regenerate the patch:
+2. For each patch **in filename order, onto the same tree**: `git -C <infra>
+   apply <patch>` against the new ref; if it rejects, re-make the edit by hand
+   and regenerate the patch:
    `git -C <infra> diff packages/envd/... > patches/000X-....patch`.
+   Regenerating out of order (or from a pristine checkout) produces a patch that
+   duplicates an earlier one's changes and cannot be applied after it.
 3. Rebuild + run the envd unit tests (`go test ./internal/services/process/handler/`).
 
 ## 0001-skip-oom-nice-wrapper-when-not-firecracker.patch
@@ -55,7 +58,13 @@ upstreaming — gating the wrapper on `!isNotFC` is a legitimate change.
 
 ## 0002-await-init-gate.patch
 
-**Base:** envd 0.7.0 (`8a3f69da6f822c2de2b310dd1076d2c309eef919`)
+**Base:** envd 0.7.0 (`8a3f69da6f822c2de2b310dd1076d2c309eef919`), **with 0001
+already applied**.
+
+> Patches are applied in filename order onto one tree, so each is a diff against
+> the result of the ones before it — not against pristine upstream. Regenerate
+> with 0001 applied, or the two will both try to add the same line and the second
+> will fail to find its context.
 
 **Problem.** envd starts listening before the orchestrator has finished setting
 the sandbox up. A sandbox's environment variables, its injected trust-store
