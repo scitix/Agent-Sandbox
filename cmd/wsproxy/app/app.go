@@ -122,6 +122,10 @@ func Run() {
 			ImagesCatalogConfigMap: cfg.ImagesCatalogConfigMap,
 		})
 
+		// Templates edited outside the internal API (kubectl, a restore) reach
+		// the workers through this watch; the API path broadcasts on its own.
+		go sm.WatchTemplateCRs(context.Background(), k8sClient)
+
 		notifySvc := notify.New(notify.Params{
 			Client:           k8sClient,
 			Namespace:        cfg.APIKeyNamespace,
@@ -324,13 +328,17 @@ func startManagedAgentController(cfg *config.Config, hands managedagent.HandsPro
 }
 
 // buildK8sClient creates a controller-runtime client for the in-cluster config.
-func buildK8sClient() client.Client {
+func buildK8sClient() client.WithWatch {
 	s := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(s))
 	utilruntime.Must(agentsv1alpha1.AddToScheme(s))
 
 	cfg := ctrl.GetConfigOrDie()
-	k8sClient, err := client.New(cfg, client.Options{Scheme: s})
+	// WithWatch rather than a plain client: the sync manager watches
+	// SandboxTemplates so an edit made outside the internal API still reaches
+	// the workers. It satisfies client.Client, so every other caller is
+	// unaffected.
+	k8sClient, err := client.NewWithWatch(cfg, client.Options{Scheme: s})
 	if err != nil {
 		log.Fatalf("wsproxy: failed to create k8s client: %v", err)
 	}
