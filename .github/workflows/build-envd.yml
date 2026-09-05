@@ -19,6 +19,10 @@ on:
     branches: [main, develop]
     paths:
       - "installer/runtimes/envd/**"
+      # The workflow pins the upstream ref it builds, so editing it changes the
+      # artifact. Without this, bumping that pin published nothing and the next
+      # unrelated change under installer/runtimes/envd/ shipped the bump instead.
+      - ".github/workflows/build-envd.yml"
   workflow_dispatch:
     inputs:
       infra_ref:
