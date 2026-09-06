@@ -17,6 +17,9 @@ dependencies = [
     "python-dateutil>=2.8.0",
 ]
 
+[project.scripts]
+abx = "agentbox_sdk.cli.main:main"
+
 [project.optional-dependencies]
 dev = [
     "openapi-python-client>=0.21.0",

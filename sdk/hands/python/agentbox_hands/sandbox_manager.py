@@ -39,7 +39,7 @@ import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 # patch_e2b must run before importing Sandbox.
 from agent_sandbox_e2b import patch_e2b
@@ -93,6 +93,52 @@ def _sandbox_env_from_environ() -> Dict[str, str]:
 
 
 SANDBOX_ENV = _sandbox_env_from_environ()
+
+
+# Network policy applied to every sandbox this daemon creates, as a JSON object
+# in the shape the E2B create call takes (`allowOut`, `denyOut`, `rules`).
+#
+# This is the other half of SBX_SANDBOX_ENV, and the two are meant to be read
+# together: the environment carries a DECOY credential the agent can read
+# freely, and the rules here name the host whose outbound requests the
+# platform's egress sidecar rewrites with the real one. The sandbox therefore
+# holds nothing worth stealing — the substitution happens in a sidecar the agent
+# cannot reach, on the way out.
+#
+# Header values must be `${e2b.secrets.<name>}` placeholders resolved from the
+# caller's vault; a literal here would defeat the whole arrangement by putting
+# the credential back in the request the agent can print. The server refuses a
+# literal, so this fails loudly rather than quietly leaking.
+#
+# Malformed values are ignored for the same reason SBX_SANDBOX_ENV's are: the
+# daemon's job is serving tool calls. But note the asymmetry — an ignored
+# network policy means sandboxes come up UNARMED, and their injected calls will
+# fail authentication rather than fail closed. The log line is the only signal,
+# so it names the problem plainly.
+def _sandbox_network_from_environ() -> Optional[Dict[str, Any]]:
+    raw = os.environ.get("SBX_SANDBOX_NETWORK", "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        print(
+            f"[sandbox] ignoring unparseable SBX_SANDBOX_NETWORK ({exc}); "
+            "sandboxes will be created WITHOUT egress rules",
+            flush=True,
+        )
+        return None
+    if not isinstance(parsed, dict):
+        print(
+            "[sandbox] ignoring SBX_SANDBOX_NETWORK: not a JSON object; "
+            "sandboxes will be created WITHOUT egress rules",
+            flush=True,
+        )
+        return None
+    return parsed
+
+
+SANDBOX_NETWORK = _sandbox_network_from_environ()
 
 # Liveness probing for a CACHED sandbox (distinct from the minutes-long cold-start
 # readiness gate in get_or_create). A live sandbox answers its health check in
@@ -650,6 +696,12 @@ class SandboxManager:
                 metadata=self._sandbox_metadata(sid, generation),
                 secure=False,
                 timeout=int(os.environ.get("SBX_TIMEOUT", "3600")),
+                # Omitted entirely when unset rather than passed as None: with
+                # no egress config at all the platform leaves private networks
+                # reachable, which is what a deployment without injection
+                # expects. Passing an empty policy would instead be read as
+                # "filter, and allow nothing".
+                **({"network": SANDBOX_NETWORK} if SANDBOX_NETWORK else {}),
             )
             print(f"[sbxmgr]   sandbox_id={sbx.sandbox_id}", flush=True)
             # Readiness gate: poll is_running() until the pool reports the

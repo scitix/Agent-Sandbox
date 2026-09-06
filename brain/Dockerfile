@@ -140,6 +140,14 @@ COPY --chown=1000:1000 brain/tsconfig.json /home/agents/tsconfig.json
 COPY --chown=1000:1000 brain/gateway /home/agents/gateway
 COPY --chown=1000:1000 brain/entrypoint.sh /home/agents/entrypoint.sh
 
+# The runtime prompt: what this assistant is, and how to drive the platform.
+#
+# Appended to the harness preset rather than replacing it. Its absence is not
+# fatal but it is close to it — the gateway logs "running on the bare preset"
+# and the agent answers as a generic coding assistant that has never heard of
+# `abx`, an Env or a warm pool. The path is the one claude-code.ts reads.
+COPY --chown=1000:1000 brain/AGENTS.md /home/agents/AGENTS.md
+
 # OpenCode's config directory, holding the seven tool overrides.
 #
 # THE FILENAME IS THE OVERRIDE. A tool whose file is named after a built-in
