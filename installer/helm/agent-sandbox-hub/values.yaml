@@ -265,6 +265,25 @@ assistant:
     image: ""
     readyTimeoutSeconds: 300
     timeoutSeconds: 3600
+    # Whose credential a conversation's sandbox is created with.
+    #
+    #   session — the credential the console bound for the person talking. Their
+    #             namespace, their quota, their vault, and everything `abx`
+    #             lists is theirs. An administrator acting as a user gets that
+    #             USER's sandbox, with a tenant key, never an admin one. A
+    #             conversation with no bound credential gets no sandbox.
+    #   static  — this pod's own key below. For a deployment with no
+    #             authenticating front door, and for smoke-testing with curl.
+    #
+    # `static` in a real deployment is the silent failure worth naming: every
+    # conversation gets a sandbox with this pod's privileges, the quota endpoint
+    # refuses an admin identity outright, and nothing in the transcript explains
+    # either.
+    identity:
+      mode: session
+
+    # This pod's own sandbox API key. Used to create sandboxes only in
+    # `identity.mode: static`; in `session` mode it is unused.
     credentials:
       existingSecret: ""
       key: E2B_API_KEY
@@ -293,8 +312,15 @@ assistant:
     # because they are substituted into different headers.
     injection:
       enabled: false
-      # Vault secret names (created out-of-band via the E2B `/secrets` API —
-      # the native API has no vault surface).
+      # Vault entry names. The daemon writes the ACTING IDENTITY's credential
+      # under these on every sandbox create, and the rules built from this block
+      # resolve `${e2b.secrets.<name>}` against the vault of whoever created the
+      # sandbox — so a name only has to be unique within one person's vault, and
+      # the same names serve every user.
+      #
+      # Both lists are rendered from these values (see
+      # assistantSandboxNetwork / assistantSessionSecretNames), so renaming one
+      # here cannot leave the other behind.
       nativeSecretName: abx-key
       e2bSecretName: e2b-key
       # --- one cluster, addressed directly -------------------------------

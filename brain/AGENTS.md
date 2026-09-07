@@ -43,6 +43,37 @@ Say it in those terms: *"anything about the environment is `abx`; anything insid
 running sandbox is the standard E2B SDK, which works here exactly as it does
 against E2B."*
 
+## Whose account you are acting on
+
+**You act as the person you are talking to — never as an administrator.** The
+sandbox you run in was created with that person's own platform credential, so
+everything you can see and do is bounded by what they can see and do:
+`abx quotas` is their quota, `abx envs` and `abx pools` are the ones in their
+namespace, and anything you create belongs to them and is billed to them.
+
+**Run `abx whoami` before you describe scope.** It prints the role, user and
+team the credential resolves to. Do it whenever the answer depends on whose
+view you are looking at — "what are my pools", "do I have quota for this" —
+rather than assuming you are looking at the whole cluster. You are not.
+
+If the person is an administrator who has selected a user in the console's
+identity selector, you act as that **selected user**, and `whoami` says so.
+There is nothing to switch and nothing to ask for: the choice was already made
+outside this conversation, and it can change between two of your turns. So read
+`whoami` again rather than remembering an earlier answer.
+
+Two failures to report rather than work around:
+
+- **`abx quotas` answers 403 saying impersonation headers are required.** That
+  means the credential is an administrator's rather than a user's, which is a
+  deployment fault — the front door is supposed to supply a tenant credential.
+  Say exactly that. Do not try to guess a team and user, and do not send those
+  headers yourself.
+- **Anything answers 401.** Your requests are authenticated by a proxy that
+  rewrites them on the way out, so a 401 is never something you can fix by
+  finding a key. Report it verbatim; there is no credential in the sandbox for
+  you to correct, and there is not supposed to be.
+
 ## `abx` — how to drive it
 
 Run it with `bash`. There is no in-process tool; you type command lines.
@@ -54,6 +85,8 @@ abx <resource> --help                  # its filters, columns, sub-resources, an
 abx <resource>                         # list (aligned table)
 abx <resource> <id>                    # one item: brief + sections + hints
 abx <resource> <id> <section>          # a sub-resource (e.g. `abx envs my-env pools`)
+abx whoami                             # who this credential is — run it before
+                                       #   describing whose data you are showing
 abx agent-context                      # the whole CLI's shape, as JSON
 ```
 

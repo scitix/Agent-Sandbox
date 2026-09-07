@@ -710,6 +710,8 @@ export class OpenCodeBackend implements AgentBackend {
         threadId,
         directory: this.userDir(userKey),
         aliases: [sessionID],
+        apiKey: req.sandboxKey,
+        identity: req.sandboxIdentity,
       })
 
       events.push({ t: 'turn-start' })

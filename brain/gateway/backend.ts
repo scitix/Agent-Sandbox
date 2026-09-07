@@ -177,6 +177,22 @@ export interface RunRequest {
   jobKey?: string
   /** Named subagent to run the turn as (the bot flows: autotriage, …). */
   agent?: string
+  /**
+   * The platform credential this turn's sandbox is created with, and the
+   * identity it belongs to (`<team>/<user>`).
+   *
+   * Per-TURN rather than per-thread: the console lets an administrator act as
+   * another user and change that choice between two messages of the same
+   * conversation. A value cached on the thread would keep operating as whoever
+   * started it.
+   *
+   * The gateway never interprets either one — it hands them to the daemon,
+   * which creates the sandbox with the key and rebuilds the sandbox when the
+   * identity changes. Absent for a caller that manages sandbox credentials
+   * itself (a trusted integration with its own deployment-level key).
+   */
+  sandboxKey?: string
+  sandboxIdentity?: string
   signal: AbortSignal
 }
 

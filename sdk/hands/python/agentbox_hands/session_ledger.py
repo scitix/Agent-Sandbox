@@ -99,7 +99,13 @@ class SessionLedger:
             flush=True,
         )
 
-    def claim_first(self, sid: str, sandbox_id: str, generation: int) -> Optional[bool]:
+    def claim_first(
+        self,
+        sid: str,
+        sandbox_id: str,
+        generation: int,
+        identity: Optional[str] = None,
+    ) -> Optional[bool]:
         """Record that `sid` has a sandbox; report whether it is the session's first.
 
         Returns True on the first sandbox for this session, False on a later one,
@@ -118,6 +124,10 @@ class SessionLedger:
             "sandboxId": sandbox_id,
             "generation": generation,
             "boundAt": time.time(),
+            # Which platform identity the sandbox was created as, so a re-attach
+            # after a restart can refuse one built for somebody else. A name, not
+            # a credential — the key itself is never persisted anywhere.
+            **({"identity": identity} if identity else {}),
         }
         path = self._path(sid)
         with self._lock:

@@ -69,27 +69,42 @@ export function promptWithPage(
 
 /**
  * Tell the sandbox daemon which thread (and therefore which sandbox, cwd and
- * staged attachments) the next tool call belongs to.
+ * staged attachments) the next tool call belongs to, and which platform
+ * identity that sandbox belongs to.
  *
  * Done on every run rather than once at thread creation so a daemon restart
- * self-heals. Failure is swallowed on purpose: the daemon logs it, and a turn
- * must not die because the bind call raced a restart — but note that a MISSING
- * bind degrades three things silently at once (sandbox cwd, attachment flush, UI
- * mode), which is why it is called before any tool can run rather than lazily.
+ * self-heals — and because the identity is a per-turn fact: an administrator can
+ * change who they are acting as between two messages of one conversation.
  *
  * `aliases` are ids the HARNESS will address the daemon by instead of the thread
  * id. OpenCode's tools get OpenCode's session id and cannot translate it, so
  * without the alias that id becomes a second session with a second sandbox: the
  * thread's workspace panel answers `inactive` while the agent works somewhere
  * nobody can see, and attachments staged under the thread id never flush.
+ *
+ * **Failure handling differs by what was being delivered**, which is why this
+ * throws rather than swallowing everything as it once did:
+ *
+ *   - With no `apiKey`, a failed bind is best effort. The daemon logs it, and a
+ *     turn must not die because the call raced a daemon restart; what degrades
+ *     is the cwd, the attachment flush and the UI mode.
+ *   - With an `apiKey`, a failed bind means the daemon does not have this
+ *     turn's identity. Continuing would run the turn against whatever identity
+ *     the session last held — the previous user's, on an identity switch — or
+ *     against no identity at all. Neither is visible to anyone watching the
+ *     conversation, so the turn fails instead.
  */
 export async function bindSandboxIdentity(opts: {
   threadId: string
   directory: string
   aliases?: string[]
+  /** The platform credential this turn's sandbox is created with. */
+  apiKey?: string
+  /** `<team>/<user>` the credential belongs to. */
+  identity?: string
 }): Promise<void> {
   try {
-    await fetch(
+    const res = await fetch(
       `${proxyUrl()}/sessions/${encodeURIComponent(opts.threadId)}/bind`,
       {
         method: 'POST',
@@ -97,11 +112,21 @@ export async function bindSandboxIdentity(opts: {
         body: JSON.stringify({
           directory: opts.directory,
           ...(opts.aliases?.length ? { aliases: opts.aliases } : {}),
+          ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
+          ...(opts.identity ? { identity: opts.identity } : {}),
         }),
       }
     )
-  } catch {
-    // See above: best effort by design.
+    if (opts.apiKey && !res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(
+        `sandbox bind rejected the turn's identity (${res.status}): ${detail.slice(0, 200)}`
+      )
+    }
+  } catch (e) {
+    // A credential that did not arrive is not something to continue past; see
+    // the note above. Without one, the historical best-effort behaviour stands.
+    if (opts.apiKey) throw e
   }
 }
 

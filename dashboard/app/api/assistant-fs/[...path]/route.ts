@@ -17,11 +17,11 @@ function origin(): string {
 type Ctx = { params: Promise<{ path: string[] }> }
 
 export async function GET(request: NextRequest, ctx: Ctx) {
-  return proxyToAssistant(request, (await ctx.params).path, origin())
+  return proxyToAssistant(request, (await ctx.params).path, origin(), false)
 }
 export async function POST(request: NextRequest, ctx: Ctx) {
-  return proxyToAssistant(request, (await ctx.params).path, origin())
+  return proxyToAssistant(request, (await ctx.params).path, origin(), false)
 }
 export async function DELETE(request: NextRequest, ctx: Ctx) {
-  return proxyToAssistant(request, (await ctx.params).path, origin())
+  return proxyToAssistant(request, (await ctx.params).path, origin(), false)
 }

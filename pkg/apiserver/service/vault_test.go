@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -177,6 +178,59 @@ func TestVault_UsersInTheSameNamespaceAreIsolated(t *testing.T) {
 	}
 	if _, appErr := v.Get(ctx, "default", "bob", "openai"); appErr != nil {
 		t.Fatalf("alice's delete must not touch bob's entry: %v", appErr)
+	}
+}
+
+// The vault is WRITE-ONLY for values, and that is load-bearing rather than
+// incidental.
+//
+// The assistant stores a person's own platform credential in their own vault so
+// the egress injection can substitute it into their sandbox's outbound
+// requests. The sandbox acts as that person, so it could call the vault's own
+// API — and if any read path returned a value, the agent inside could read the
+// credential straight back out and the decoy in its environment would be
+// decoration. Nothing today returns one; this test is what keeps it that way,
+// because adding a `Value` field to the item type is a one-line change that
+// looks harmless and breaks the whole arrangement.
+//
+// Enforced against the TYPE, not against one handler: a field that exists gets
+// populated eventually, and every read path projects from this struct.
+func TestVault_ReadPathsNeverExposeAValue(t *testing.T) {
+	v, _ := newTestVault(t)
+	ctx := context.Background()
+
+	const secret = "agbx_the_real_credential"
+	if _, appErr := v.Create(ctx, "default", "alice", VaultCreateInput{
+		Name: "abx-key", Value: secret,
+	}); appErr != nil {
+		t.Fatalf("create: %v", appErr)
+	}
+
+	// No field of the item type may hold it, whatever it is called.
+	for _, f := range reflect.VisibleFields(reflect.TypeFor[VaultItem]()) {
+		switch strings.ToLower(f.Name) {
+		case "value", "secret", "data", "plaintext":
+			t.Fatalf("VaultItem.%s would expose the value on every read path", f.Name)
+		}
+	}
+
+	// And no read path serialises it, by any route.
+	got, appErr := v.Get(ctx, "default", "alice", "abx-key")
+	if appErr != nil {
+		t.Fatalf("get: %v", appErr)
+	}
+	listed, appErr := v.List(ctx, "default", "alice")
+	if appErr != nil {
+		t.Fatalf("list: %v", appErr)
+	}
+	for name, payload := range map[string]any{"get": got, "list": listed} {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", name, err)
+		}
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("%s returned the secret value: %s", name, encoded)
+		}
 	}
 }
 

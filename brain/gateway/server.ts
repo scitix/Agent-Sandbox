@@ -269,6 +269,29 @@ function answersOf(entry: {
  */
 const USER_KEY_HEADER = 'x-agentbox-user'
 
+/**
+ * The platform credential a turn's sandbox is created with, and whose it is.
+ *
+ * Set by the same authenticating hop as USER_KEY_HEADER and trusted for the
+ * same reason: nothing outside the cluster reaches this port, and that hop
+ * strips any inbound copy. A browser cannot supply either one.
+ *
+ * Headers rather than body fields because one of them is a credential — a body
+ * gets logged, echoed in an error, and replayed in a trace; a header on a
+ * loopback hop does not.
+ */
+const SANDBOX_KEY_HEADER = 'x-agentbox-session-key'
+const SANDBOX_IDENTITY_HEADER = 'x-agentbox-identity'
+
+function headerValue(
+  headers: NodeJS.Dict<string | string[]> | undefined,
+  name: string
+): string | undefined {
+  const raw = headers?.[name]
+  const one = Array.isArray(raw) ? raw[0] : raw
+  return typeof one === 'string' && one ? one : undefined
+}
+
 function userKeyOf(
   url: URL,
   body: unknown,
@@ -756,6 +779,8 @@ export function createGateway(opts: GatewayOptions): Server {
         model: body.model,
         jobKey: body.jobKey,
         agent: body.agent,
+        sandboxKey: headerValue(req.headers, SANDBOX_KEY_HEADER),
+        sandboxIdentity: headerValue(req.headers, SANDBOX_IDENTITY_HEADER),
         signal: controller.signal,
       })
       void (async () => {
@@ -1000,6 +1025,8 @@ export function createGateway(opts: GatewayOptions): Server {
         input,
         pageContext: forwarded.pageContext,
         model: forwarded.model,
+        sandboxKey: headerValue(req.headers, SANDBOX_KEY_HEADER),
+        sandboxIdentity: headerValue(req.headers, SANDBOX_IDENTITY_HEADER),
         // Owned by the registry, NOT by this request: that decoupling is what
         // lets a run end for an interrupt without ending the turn.
         signal: controller.signal,

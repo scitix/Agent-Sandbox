@@ -251,7 +251,7 @@ class ReattachTests(unittest.TestCase):
         self.mgr = sandbox_manager.SandboxManager(ledger=self.led)
         self._connect_calls = []
 
-    def arrange(self, sandbox, *, record=True):
+    def arrange(self, sandbox, *, record=True, identity=None):
         """Point the ledger at a sandbox and stub Sandbox.connect to return it.
 
         `sandbox=None` stands for a sandbox the ledger still remembers but that
@@ -259,7 +259,7 @@ class ReattachTests(unittest.TestCase):
         """
         if record:
             self.led.claim_first(
-                "ses_a", sandbox.sandbox_id if sandbox else "sbx_gone", 1
+                "ses_a", sandbox.sandbox_id if sandbox else "sbx_gone", 1, identity
             )
 
         def fake_connect(sandbox_id, **kwargs):
@@ -324,6 +324,37 @@ class ReattachTests(unittest.TestCase):
     def test_a_corrupt_marker_is_not_adopted(self):
         self.arrange(FakeSandbox(marker="{not json"))
         self.assertIsNone(self.mgr._reattach("ses_a"))
+
+    # The marker proves the filesystem is this CONVERSATION's; it says nothing
+    # about whose sandbox it is. A conversation changes identity when an
+    # administrator moves the impersonation selector, so after a restart the
+    # ledger is the only thing that can tell the two apart -- and adopting across
+    # that line resumes another person's sandbox, in their namespace, against
+    # their quota.
+    def test_a_sandbox_created_as_another_identity_is_not_adopted(self):
+        self.arrange(
+            FakeSandbox(marker=self.marker_for("ses_a")), identity="team1/bob"
+        )
+        self.assertIsNone(self.mgr._reattach("ses_a", "agbx_carol", "team1/carol"))
+
+    def test_a_sandbox_created_as_the_same_identity_is_adopted(self):
+        sbx = FakeSandbox(marker=self.marker_for("ses_a"))
+        self.arrange(sbx, identity="team1/bob")
+        entry = self.mgr._reattach("ses_a", "agbx_bob", "team1/bob")
+        self.assertIsNotNone(entry)
+        self.assertIs(entry.sandbox, sbx)
+        self.assertEqual(entry.identity, "team1/bob")
+
+    # Connecting with a different credential than the create used would be
+    # operating on someone else's sandbox -- and in session mode this process may
+    # hold no credential of its own to fall back to.
+    def test_reattach_connects_with_the_session_credential(self):
+        self.arrange(
+            FakeSandbox(marker=self.marker_for("ses_a")), identity="team1/bob"
+        )
+        self.mgr._reattach("ses_a", "agbx_bob", "team1/bob")
+        _, kwargs = self._connect_calls[0]
+        self.assertEqual(kwargs.get("api_key"), "agbx_bob")
 
     def test_marker_write_failure_does_not_raise(self):
         from .session_marker import write_marker

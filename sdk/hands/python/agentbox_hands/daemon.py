@@ -27,10 +27,17 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .sandbox_manager import alias_session, bind_session, manager, resolve_sid
+from .sandbox_manager import (
+    NoSessionIdentity,
+    alias_session,
+    bind_session,
+    manager,
+    resolve_sid,
+)
 
 
 # Working directory inside the sandbox. It is resolved PER SESSION to the
@@ -171,6 +178,26 @@ class BindRequest(BaseModel):
     # an id of its own (OpenCode hands its tools OpenCode's session id). Without
     # them that id is a separate session with a separate sandbox — see _ALIASES.
     aliases: Optional[List[str]] = None
+    # The platform credential this session's sandbox is created with, and who it
+    # belongs to (`<team>/<user>`). Supplied by the hop that authenticated the
+    # caller, on EVERY run — an administrator can change who they are acting as
+    # between two messages of one conversation, and the sandbox has to follow.
+    #
+    # Held in memory for the life of the binding. Never echoed in the response,
+    # never logged, never written to the ledger or the session marker.
+    apiKey: Optional[str] = None
+    identity: Optional[str] = None
+
+
+# A session with no bound identity gets 503 and the reason, not a bare 500.
+#
+# Every tool endpoint below reaches a sandbox through get_or_create, so the
+# refusal can surface from any of them. The agent relays what it is told, and
+# "503: no platform credential is bound to this session" is actionable where
+# "500 Internal Server Error" gets reported to a user as a broken platform.
+@app.exception_handler(NoSessionIdentity)
+def _no_identity(_request: Request, exc: NoSessionIdentity) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.post("/sessions/{sid}/bind")
@@ -181,13 +208,16 @@ def bind(sid: str, req: BindRequest) -> dict:
     OpenCode-shaped loopback lookup, which under another harness fails silently and
     degrades both the working directory and the attachment flush.
     """
-    bind_session(sid, req.directory)
+    bind_session(sid, req.directory, req.apiKey, req.identity)
     for alias in req.aliases or []:
         alias_session(alias, sid)
     return {
         "ok": True,
         "directory": req.directory,
         "aliases": req.aliases or [],
+        # The identity is echoed so the caller can confirm which one took
+        # effect; the credential is not, in either direction.
+        "identity": req.identity,
     }
 
 

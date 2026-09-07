@@ -11,6 +11,7 @@
 //     capabilities, models, threads, and the parked-question listing.
 import { basePathPrefix } from '@/lib/base-path'
 import { getToken } from '@/lib/api/client'
+import { impersonationAtom, store } from '@/lib/atoms'
 import type {
   AgentUsage,
   InteractionRequest,
@@ -157,16 +158,33 @@ export interface TranscriptEntry {
 }
 
 /**
- * The session token, for the BFF in front of the gateway.
+ * The session token and the acting identity, for the BFF in front of the
+ * gateway.
  *
  * Every call goes through that proxy, and the proxy is what authenticates —
  * the gateway itself takes the caller's word for who is asking. So a request
- * without this header is not "unauthenticated to the gateway", it is a 401
- * from the proxy, which is the whole point.
+ * without the token is not "unauthenticated to the gateway", it is a 401 from
+ * the proxy, which is the whole point.
+ *
+ * The impersonation pair is sent for the same reason every other API call
+ * sends it: an admin acting as someone else expects the assistant to act as
+ * that person too — its sandbox is created with that person's key, so without
+ * these headers the conversation would quietly operate as the admin while the
+ * rest of the console shows the selected user's data. The proxy re-derives the
+ * decision from the verified session and discards what is sent here, so this is
+ * a hint about the selector's state, not a grant.
  */
 export function authHeaders(): Record<string, string> {
   const token = getToken()
-  return token ? { authorization: `Bearer ${token}` } : {}
+  const out: Record<string, string> = token
+    ? { authorization: `Bearer ${token}` }
+    : {}
+  const impersonation = store.get(impersonationAtom)
+  if (impersonation?.team && impersonation?.user) {
+    out['x-impersonate-team'] = impersonation.team
+    out['x-impersonate-user'] = impersonation.user
+  }
+  return out
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
@@ -360,10 +378,21 @@ export const gateway = {
     // the proxy accepts HERE ONLY and strips before forwarding, keeping it out
     // of the upstream's access log. The alternative, a fetch reader, would
     // mean writing the reconnect behaviour EventSource already has.
+    // The acting identity travels the same way and for the same reason: the
+    // proxy recomputes `userKey` from it, so a stream opened without it
+    // subscribes to the admin's own threads while their runs go to the selected
+    // user's. The only symptom would be titles that never arrive.
     const token = getToken()
+    const impersonation = store.get(impersonationAtom)
+    const acting =
+      impersonation?.team && impersonation?.user
+        ? `&impersonateTeam=${encodeURIComponent(impersonation.team)}` +
+          `&impersonateUser=${encodeURIComponent(impersonation.user)}`
+        : ''
     const source = new EventSource(
       `${gatewayBaseUrl()}/threads/events?userKey=${encodeURIComponent(userKey)}` +
-        (token ? `&access_token=${encodeURIComponent(token)}` : '')
+        (token ? `&access_token=${encodeURIComponent(token)}` : '') +
+        acting
     )
     source.onmessage = e => {
       try {

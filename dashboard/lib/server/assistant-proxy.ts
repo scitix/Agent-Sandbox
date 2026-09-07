@@ -29,8 +29,25 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { request as undiciRequest } from "undici"
 import { requireAuth } from "@/lib/server/bff-auth"
+import {
+  effectiveIdentity,
+  getOrCreateSessionKey,
+  IMPERSONATE_TEAM_PARAM,
+  IMPERSONATE_USER_PARAM,
+  SessionKeyError,
+  type EffectiveIdentity,
+} from "@/lib/server/assistant-session-key"
 
-/** Hop-by-hop headers, plus the ones carrying the identity we replace. */
+/**
+ * Hop-by-hop headers, plus every header carrying something we derive here
+ * ourselves.
+ *
+ * The last four are the security-relevant ones. The impersonation pair decides
+ * WHOSE key a conversation gets, and the two `x-agentbox-*` headers ARE that
+ * key and that identity — so a value arriving from the browser must not
+ * survive, or a tenant could name someone else and be handed their credential.
+ * They are stripped on the way in and set from the verified session below.
+ */
 const STRIP = new Set([
   "host",
   "connection",
@@ -38,6 +55,10 @@ const STRIP = new Set([
   "transfer-encoding",
   "authorization",
   "cookie",
+  "x-impersonate-team",
+  "x-impersonate-user",
+  "x-agentbox-session-key",
+  "x-agentbox-identity",
 ])
 
 /**
@@ -47,6 +68,10 @@ const STRIP = new Set([
  * workspace, and two teams may each have a `ylli`. Constrained to the
  * character set those servers accept, since a rejected key fails the whole
  * conversation rather than one request.
+ *
+ * Derived from the EFFECTIVE identity, so an admin acting as someone else gets
+ * that person's workspace rather than their own — the same separation the
+ * sandbox itself gets from being created with that person's key.
  */
 export function assistantUserKey(payload: {
   team?: string
@@ -54,6 +79,11 @@ export function assistantUserKey(payload: {
 }): string {
   const raw = [payload.team, payload.user].filter(Boolean).join(".") || "default"
   return raw.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 128)
+}
+
+/** `<team>/<user>`, the form the daemon compares to detect a switch. */
+function identityHeader(id: EffectiveIdentity): string {
+  return `${id.team}/${id.user}`
 }
 
 /** Replace every identity a JSON body claims with the verified one. */
@@ -79,7 +109,17 @@ function rewriteIdentity(raw: Buffer, userKey: string): Buffer {
 export async function proxyToAssistant(
   request: NextRequest,
   path: string[],
-  origin: string
+  origin: string,
+  /**
+   * Whether this upstream creates sandboxes and therefore needs the caller's
+   * platform credential.
+   *
+   * True for the conversation gateway. FALSE for the workspace file API, which
+   * only reads a directory the gateway already made — obtaining a credential it
+   * cannot use would make file browsing fail whenever the hub is unreachable,
+   * for a reason that has nothing to do with files.
+   */
+  needsSandboxKey = true
 ): Promise<Response> {
   // EventSource cannot set headers, so the push channel passes the session as
   // a query parameter instead. Accepted only here, and stripped before the
@@ -88,12 +128,44 @@ export async function proxyToAssistant(
   const queryToken = url.searchParams.get("access_token")
   if (queryToken) url.searchParams.delete("access_token")
 
-  const auth = await requireAuth(
+  const authHeader =
     request.headers.get("Authorization") ??
-      (queryToken ? `Bearer ${queryToken}` : null)
-  )
+    (queryToken ? `Bearer ${queryToken}` : null)
+  const auth = await requireAuth(authHeader)
   if ("error" in auth) return auth.error
-  const userKey = assistantUserKey(auth.payload)
+  // Verified above, so this is the token the hub will accept as this caller.
+  const jwt = authHeader!.slice("Bearer ".length)
+
+  const identity = effectiveIdentity(
+    auth.payload,
+    request.headers,
+    url.searchParams
+  )
+  const userKey = assistantUserKey(identity)
+  // Consumed here like access_token: the upstream derives nothing from them and
+  // logging a selection that was already applied is noise at best.
+  url.searchParams.delete(IMPERSONATE_TEAM_PARAM)
+  url.searchParams.delete(IMPERSONATE_USER_PARAM)
+
+  // The key the conversation's sandbox is created with. Obtained BEFORE
+  // forwarding, and a failure here fails the request: the alternative is
+  // forwarding without it, which the daemon would answer by creating no
+  // sandbox at all — or, worse, by falling back to the deployment's own key and
+  // silently handing an admin-scoped sandbox to whoever asked.
+  let sessionKey: string | undefined
+  if (needsSandboxKey) {
+    try {
+      sessionKey = await getOrCreateSessionKey(jwt, identity)
+    } catch (e) {
+      if (e instanceof SessionKeyError) {
+        return NextResponse.json({ error: e.message }, { status: e.status })
+      }
+      return NextResponse.json(
+        { error: `could not obtain a sandbox API key: ${String(e)}` },
+        { status: 503 }
+      )
+    }
+  }
 
   // Overwrite rather than append: a client-supplied value must not survive.
   if (url.searchParams.has("userKey")) url.searchParams.set("userKey", userKey)
@@ -103,6 +175,8 @@ export async function proxyToAssistant(
   request.headers.forEach((v, k) => {
     if (!STRIP.has(k.toLowerCase())) headers[k] = v
   })
+  if (sessionKey) headers["x-agentbox-session-key"] = sessionKey
+  headers["x-agentbox-identity"] = identityHeader(identity)
 
   let body: Buffer | undefined
   if (request.method !== "GET" && request.method !== "HEAD") {

@@ -471,6 +471,8 @@ export class ClaudeCodeBackend implements AgentBackend {
       await bindSandboxIdentity({
         threadId,
         directory: this.userDir(userKey),
+        apiKey: req.sandboxKey,
+        identity: req.sandboxIdentity,
       })
 
       events.push({ t: 'turn-start' })

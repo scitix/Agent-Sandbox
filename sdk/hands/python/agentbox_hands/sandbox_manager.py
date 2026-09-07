@@ -39,7 +39,7 @@ import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # patch_e2b must run before importing Sandbox.
 from agent_sandbox_e2b import patch_e2b
@@ -140,6 +140,130 @@ def _sandbox_network_from_environ() -> Optional[Dict[str, Any]]:
 
 SANDBOX_NETWORK = _sandbox_network_from_environ()
 
+
+# Whether a sandbox is created with the CALLER's platform credential or with this
+# process's own.
+#
+#   session (default) — every sandbox is created with the credential the gateway
+#                       bound for that session, so it lands in that person's
+#                       namespace, counts against their quota, and the egress
+#                       injection resolves THEIR vault (the platform resolves a
+#                       ${e2b.secrets.*} reference against the identity that
+#                       created the sandbox). A session with no credential gets
+#                       no sandbox.
+#   static          — every sandbox is created with this process's E2B_API_KEY.
+#                       For a deployment with no authenticating front door, and
+#                       for smoke-testing with curl.
+#
+# `session` is the default because the failure mode of the other direction is
+# invisible: an administrator's conversation would silently get a sandbox with
+# the deployment's own privileges, and nothing in the transcript would say so.
+SANDBOX_IDENTITY_MODE = (
+    os.environ.get("SBX_IDENTITY_MODE", "session").strip().lower() or "session"
+)
+
+
+# Vault entry names the egress injection references, e.g. "abx-key,e2b-key".
+#
+# Rendered from the SAME values that build SBX_SANDBOX_NETWORK's rules, because
+# the two must agree: the rules name `${e2b.secrets.<name>}` and this is the list
+# the daemon writes those names under. Two hand-maintained lists drift, and the
+# symptom is a sandbox whose injected requests are unauthenticated — visible only
+# as `substituted=0` in a sidecar log nobody is reading.
+def _session_secret_names() -> List[str]:
+    raw = os.environ.get("SBX_SESSION_SECRET_NAMES", "").strip()
+    return [n.strip() for n in raw.split(",") if n.strip()]
+
+
+SESSION_SECRET_NAMES = _session_secret_names()
+
+
+class NoSessionIdentity(RuntimeError):
+    """A session asked for a sandbox without a platform credential bound to it.
+
+    Its own class because the daemon has to answer with the REASON: the message
+    names the one thing an operator can act on, and a generic 500 would reach the
+    agent as "something broke" and be reported as a platform fault.
+    """
+
+
+def _e2b_api_base() -> str:
+    """Base URL of the E2B-compatible API, for the vault calls below.
+
+    Read from the same variables the SDK reads, so the daemon cannot end up
+    writing a vault on one deployment while creating sandboxes on another.
+    The vault (`/secrets`) exists ONLY on this surface — the native API has no
+    such route — which is why this is resolved separately from AGENTBOX_ENDPOINT.
+    """
+    explicit = os.environ.get("E2B_API_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    domain = os.environ.get("E2B_DOMAIN", "").strip()
+    if not domain:
+        return ""
+    scheme = "https" if os.environ.get("AGBX_HTTPS", "").lower() == "true" else "http"
+    return f"{scheme}://{domain}".rstrip("/")
+
+
+def _arm_vault(api_key: str, sid: str) -> None:
+    """Store `api_key` in ITS OWN owner's vault, under every injected name.
+
+    This is what makes the egress injection resolve to the right person. The
+    platform resolves a `${e2b.secrets.<name>}` reference against the identity
+    that CREATED the sandbox, and the vault is keyed by (namespace, user) — so
+    writing with this key puts the value exactly where the create with the same
+    key will look for it. The names stay constant across identities precisely
+    because the vault is per-identity.
+
+    Best effort with a loud log line. A failure here is not fatal on its own:
+    the create still succeeds and the sandbox still runs, it just cannot
+    authenticate its injected calls. Refusing to create would turn a
+    recoverable, self-describing failure (the agent sees a 401 and reports it)
+    into a conversation that cannot start at all.
+
+    The value is never logged. Only the names are.
+    """
+    if not SESSION_SECRET_NAMES:
+        return
+    base = _e2b_api_base()
+    if not base:
+        print(
+            "[sbxmgr] cannot arm the vault: neither E2B_API_URL nor E2B_DOMAIN "
+            f"is set, so {SESSION_SECRET_NAMES} were not written; injected "
+            "requests from this sandbox will be unauthenticated",
+            flush=True,
+        )
+        return
+
+    def put(url: str, body: dict) -> Optional[int]:
+        """POST `body` to `url`; None on success, else the status (or -1)."""
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={"content-type": "application/json", "X-API-Key": api_key},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10):
+                return None
+        except Exception as err:  # noqa: BLE001 - reported, never fatal
+            return getattr(err, "code", None) or -1
+
+    for name in SESSION_SECRET_NAMES:
+        status = put(f"{base}/secrets", {"name": name, "value": api_key})
+        if status == 409:
+            # Already present, which is the normal case for anyone's second
+            # conversation. The update path is also what re-arms an identity
+            # whose key was rotated.
+            status = put(f"{base}/secrets/{name}", {"value": api_key})
+        if status is not None:
+            print(
+                f"[sbxmgr] vault write of {name!r} for sid={sid} failed "
+                f"({status}); this sandbox's injected requests will be "
+                "unauthenticated",
+                flush=True,
+            )
+
 # Liveness probing for a CACHED sandbox (distinct from the minutes-long cold-start
 # readiness gate in get_or_create). A live sandbox answers its health check in
 # milliseconds, so the per-tool-call probe uses a short request timeout. is_running()
@@ -209,9 +333,40 @@ def resolve_sid(sid: str) -> str:
     return _ALIASES.get(sid, sid)
 
 
-def bind_session(sid: str, directory: str) -> None:
-    """Record a session's identity. Idempotent; last write wins."""
-    _BOUND[sid] = {"directory": directory}
+def bind_session(
+    sid: str,
+    directory: str,
+    api_key: Optional[str] = None,
+    identity: Optional[str] = None,
+) -> None:
+    """Record a session's identity. Idempotent; last write wins.
+
+    `api_key` is the platform credential this session's sandbox is created with,
+    and `identity` names who it belongs to (`<team>/<user>`). Both arrive on
+    EVERY bind because the console lets an administrator change who they are
+    acting as mid-conversation — last write wins is what makes the switch take
+    effect on the next tool call rather than the next conversation.
+
+    The key is held in memory only. It is never written to the ledger, the
+    marker, or a log line: those all outlive the session and one of them is on
+    disk.
+    """
+    entry: Dict[str, str] = {"directory": directory}
+    if api_key:
+        entry["api_key"] = api_key
+    if identity:
+        entry["identity"] = identity
+    _BOUND[sid] = entry
+
+
+def session_api_key(sid: str) -> Optional[str]:
+    """The credential bound to a session, if the caller supplied one."""
+    return (_BOUND.get(resolve_sid(sid)) or {}).get("api_key")
+
+
+def session_identity(sid: str) -> Optional[str]:
+    """`<team>/<user>` a session is acting as, if the caller supplied it."""
+    return (_BOUND.get(resolve_sid(sid)) or {}).get("identity")
 
 
 def unbind_session(sid: str) -> None:
@@ -337,6 +492,11 @@ class SessionEntry:
     # entry (incl. one born from a rebuild) starts False, so the next bind
     # re-creates the dir in the new sandbox.
     workspace_ready: bool = False
+    # `<team>/<user>` this sandbox was created as. Compared on every tool call:
+    # a sandbox belongs to the identity that created it (its namespace, quota and
+    # vault), so a session whose identity changed must not keep using it. None
+    # for a deployment running in `static` identity mode.
+    identity: Optional[str] = None
     _notice_lock: threading.Lock = field(
         default_factory=threading.Lock, repr=False, compare=False
     )
@@ -551,7 +711,12 @@ class SandboxManager:
                     f"attachment '{name}' could not be prepared in the sandbox: {e}"
                 )
 
-    def _reattach(self, sid: str) -> Optional[SessionEntry]:
+    def _reattach(
+        self,
+        sid: str,
+        api_key: Optional[str] = None,
+        identity: Optional[str] = None,
+    ) -> Optional[SessionEntry]:
         """Re-adopt the sandbox the ledger says this session had, if it is still there.
 
         Called when this process has no memory of a session — after a restart, or on
@@ -567,7 +732,12 @@ class SandboxManager:
             once the sandbox is gone, returning a handle that only fails later;
           * the marker inside it names this session — the id could have been reused,
             or the sandbox replaced, and a filesystem that is not the one the
-            conversation left is the failure this cannot be allowed to cause.
+            conversation left is the failure this cannot be allowed to cause;
+          * the ledger says it was created as the identity now asking. The marker
+            proves the filesystem is this conversation's, not whose it is — and a
+            conversation can change identity when an administrator moves the
+            impersonation selector. Adopting across that boundary would resume
+            somebody else's sandbox with their namespace and quota.
 
         Any of them failing returns None, and the caller builds a fresh sandbox and
         announces it. That is the pre-existing behaviour, so the worst outcome here
@@ -577,8 +747,24 @@ class SandboxManager:
         sandbox_id = (record or {}).get("sandboxId")
         if not sandbox_id:
             return None
+        if (record or {}).get("identity") != identity:
+            print(
+                f"[sbxmgr] {sandbox_id} was created as "
+                f"{(record or {}).get('identity')!r}, not {identity!r}; "
+                f"building sid={sid} a sandbox for the identity now asking",
+                flush=True,
+            )
+            return None
         try:
-            sbx = Sandbox.connect(sandbox_id, timeout=SBX_REATTACH_TIMEOUT)
+            # Connected with the SAME credential it was created with: a handle
+            # obtained with a different identity would be operating on someone
+            # else's sandbox, and in session mode this process may hold no
+            # credential of its own at all.
+            sbx = Sandbox.connect(
+                sandbox_id,
+                timeout=SBX_REATTACH_TIMEOUT,
+                **({"api_key": api_key} if api_key else {}),
+            )
         except Exception as err:  # noqa: BLE001 - any failure means "build a new one"
             print(
                 f"[sbxmgr] cannot re-attach sid={sid} to {sandbox_id}: {err}",
@@ -586,7 +772,7 @@ class SandboxManager:
             )
             return None
 
-        entry = SessionEntry(sid=sid, sandbox=sbx)
+        entry = SessionEntry(sid=sid, sandbox=sbx, identity=identity)
         if not self._alive(entry):
             print(
                 f"[sbxmgr] re-attached sid={sid} to {sandbox_id} but it is not "
@@ -648,10 +834,38 @@ class SandboxManager:
         # Resolve FIRST: every id below (the lock, the cache key, the staging dir
         # ensure_attachments reads) has to be the same one the browser uses.
         sid = resolve_sid(sid)
+        api_key = session_api_key(sid)
+        identity = session_identity(sid)
+        if SANDBOX_IDENTITY_MODE == "session" and not api_key:
+            # No credential means no sandbox. The alternative is creating one
+            # with this process's own key, which works — and quietly gives the
+            # conversation the deployment's privileges instead of the caller's,
+            # with nothing in the transcript to say so.
+            raise NoSessionIdentity(
+                "no platform credential is bound to this session, so a sandbox "
+                "cannot be created for it. The front door supplies one on every "
+                "run; if you are driving this daemon directly, set "
+                "SBX_IDENTITY_MODE=static to use the deployment's own key."
+            )
         slock = self._get_session_lock(sid)
         with slock:
             with self._lock:
                 entry = self._sessions.get(sid)
+            if entry is not None and entry.identity != identity:
+                # The person this conversation acts as has changed — an
+                # administrator moved the impersonation selector. The cached
+                # sandbox belongs to the PREVIOUS identity: its namespace, its
+                # quota, its vault. Reusing it would keep operating as someone
+                # the caller is no longer acting as, and nothing about the
+                # conversation would look different.
+                print(
+                    f"[sbxmgr] sid={sid} switched identity "
+                    f"({entry.identity!r} -> {identity!r}); discarding its "
+                    f"sandbox and building one for the new identity",
+                    flush=True,
+                )
+                self._evict(sid, entry)
+                entry = None
             if entry is not None:
                 if self._alive(entry):
                     self.ensure_workspace(sid, entry)
@@ -670,7 +884,7 @@ class SandboxManager:
                 # Nothing in memory for this session. Before building, check whether
                 # the sandbox it already had is still running — this process may
                 # simply have restarted underneath a live conversation.
-                adopted = self._reattach(sid)
+                adopted = self._reattach(sid, api_key, identity)
                 if adopted is not None:
                     with self._lock:
                         self._sessions[sid] = adopted
@@ -690,12 +904,22 @@ class SandboxManager:
                 f"(envs={sorted(envs)}) ...",
                 flush=True,
             )
+            # Armed BEFORE the create, because the platform resolves the
+            # injection's ${e2b.secrets.*} references while serving it — a vault
+            # written afterwards would arrive too late for this sandbox.
+            if api_key:
+                _arm_vault(api_key, sid)
             sbx = Sandbox.create(
                 template=self._template(),
                 envs=envs,
                 metadata=self._sandbox_metadata(sid, generation),
                 secure=False,
                 timeout=int(os.environ.get("SBX_TIMEOUT", "3600")),
+                # The identity the sandbox belongs to. It decides the namespace
+                # it lands in, the quota it counts against, and whose vault the
+                # egress injection resolves — so this one argument is what makes
+                # the sandbox the CALLER's rather than this deployment's.
+                **({"api_key": api_key} if api_key else {}),
                 # Omitted entirely when unset rather than passed as None: with
                 # no egress config at all the platform leaves private networks
                 # reachable, which is what a deployment without injection
@@ -757,7 +981,7 @@ class SandboxManager:
                     f"sandbox {sbx.sandbox_id} seed failed after 3 attempts: {last_err}"
                 ) from last_err
 
-            entry = SessionEntry(sid=sid, sandbox=sbx)
+            entry = SessionEntry(sid=sid, sandbox=sbx, identity=identity)
             # Stamp the sandbox with the session that now owns it, so a later
             # re-attach can tell this filesystem apart from a reused id.
             write_marker(sbx, sid, sbx.sandbox_id, generation)
@@ -766,7 +990,9 @@ class SandboxManager:
             # the sandbox exists: it records a binding, and recording one for a
             # create that then fails its readiness gate would make the retry look
             # like a replacement.
-            first = self._ledger.claim_first(sid, sbx.sandbox_id, generation)
+            first = self._ledger.claim_first(
+                sid, sbx.sandbox_id, generation, identity
+            )
             if first is True:
                 self._count("first")
             else:

@@ -17,7 +17,7 @@
 
 import { useEffect, useState, type FC } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
-import { authAtom } from "@/lib/atoms"
+import { actingIdentityAtom } from "@/lib/atoms"
 import {
   atomAssistantOpen,
   atomAssistantUserKey,
@@ -30,7 +30,7 @@ const PANEL_WIDTH = "min(38rem, 42vw)"
 
 export const AssistantSidePanel: FC = () => {
   const open = useAtomValue(atomAssistantOpen)
-  const auth = useAtomValue(authAtom)
+  const acting = useAtomValue(actingIdentityAtom)
   const setUserKey = useSetAtom(atomAssistantUserKey)
   // Once mounted it stays: unmounting takes the in-memory thread and any open
   // question with it, and a closed panel costs nothing but a hidden element.
@@ -42,11 +42,13 @@ export const AssistantSidePanel: FC = () => {
   if (open && !everOpened) setEverOpened(true)
 
   // Mirrored for the UI only. The gateway's idea of who is asking comes from
-  // the BFF, which overwrites it from a verified session.
+  // the BFF, which overwrites it from a verified session. The ACTING identity,
+  // so a selected user's workspace is what shows — matching the sandbox, which
+  // is created with that user's key.
   useEffect(() => {
-    const key = [auth?.team, auth?.user].filter(Boolean).join(".")
+    const key = [acting.team, acting.user].filter(Boolean).join(".")
     setUserKey(key || undefined)
-  }, [auth?.team, auth?.user, setUserKey])
+  }, [acting.team, acting.user, setUserKey])
 
   if (!everOpened) return null
 

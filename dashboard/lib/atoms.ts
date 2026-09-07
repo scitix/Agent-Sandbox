@@ -135,6 +135,23 @@ export const isImpersonatingAtom = atom((get) => {
   return !!(imp?.team && imp?.user)
 })
 
+/**
+ * Who the console is acting as: the selected identity when impersonating,
+ * otherwise the session's own.
+ *
+ * The BFF derives the same pair from the verified session and ignores whatever
+ * the browser claims, so this is for display and for keys the UI builds — never
+ * an authorisation input. Reading it instead of `authAtom` keeps what is shown
+ * (the assistant's workspace path, for instance) equal to what the server
+ * actually operates on.
+ */
+export const actingIdentityAtom = atom((get) => {
+  const imp = get(impersonationAtom)
+  if (imp?.team && imp?.user) return { team: imp.team, user: imp.user }
+  const auth = get(authAtom)
+  return { team: auth?.team ?? "", user: auth?.user ?? "" }
+})
+
 // ── Changelog / version tracking ─────────────────────────────────────────────
 
 /**

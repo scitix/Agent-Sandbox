@@ -10,7 +10,7 @@ Grammar, three tokens deep:
     abx <resource> <id> <section>       a sub-resource list
     abx envs create --name N --template T
     abx pools create --env E --instance-type IT --replicas N
-    abx auth whoami
+    abx whoami                          who this key authenticates as
     abx agent-context                   the whole CLI's shape, as JSON
 
 Every result trails `view:` / `sections:` / `hint:`, so a caller can chain
@@ -220,7 +220,7 @@ def root_help() -> str:
     out += [
         "",
         "Other commands:",
-        "  auth whoami     who this key authenticates as",
+        "  whoami          who this key authenticates as (= auth whoami)",
         "  agent-context   the whole CLI's shape, as JSON",
         "",
         "Global flags:",
@@ -685,6 +685,15 @@ def _cl(ctx: Context) -> str:
     return f" --cluster {ctx.cluster}" if ctx.cluster else ""
 
 
+_WHOAMI_HELP = """abx whoami (= abx auth whoami)
+— who this key authenticates as.
+
+Prints the role, user and team the credential resolves to. Everything else the
+CLI shows is scoped to that identity: `quotas` is your quota, `envs` and `pools`
+are the ones in your namespace. Run it first when you need to know whose view
+you are looking at."""
+
+
 def run_whoami(ctx: Context, values: dict[str, Any]) -> Result:
     payload = ctx.get_json("/auth/whoami")
     if _fmt(values) == "json":
@@ -767,6 +776,14 @@ def run(argv: Sequence[str]) -> Result:
     if first == "agent-context":
         return Result(agent_context())
 
+    # Both spellings. `abx whoami` is what a person reaches for and what the
+    # runtime prompt tells the agent to run; `abx auth whoami` groups it with a
+    # namespace that may grow other subcommands.
+    if first == "whoami":
+        if want_help:
+            return Result(_WHOAMI_HELP)
+        return run_whoami(_build_ctx(values), values)
+
     if first == "auth":
         sub = positionals[1] if len(positionals) > 1 else "whoami"
         if sub != "whoami":
@@ -774,7 +791,7 @@ def run(argv: Sequence[str]) -> Result:
                 f'unknown auth subcommand "{sub}". Only `whoami` exists.'
             )
         if want_help:
-            return Result("abx auth whoami — who this key authenticates as.")
+            return Result(_WHOAMI_HELP)
         return run_whoami(_build_ctx(values), values)
 
     kind = kind_of_token(first)

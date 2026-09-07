@@ -201,3 +201,36 @@ own credential.
 {{- toJson (dict "allowOut" $allow "rules" $rules) -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+The vault entries the rules above reference, as a comma-separated list.
+
+The daemon writes the acting identity's credential under exactly these names,
+and the rules resolve `${e2b.secrets.<name>}` against the vault of whoever
+created the sandbox — so the two lists have to be the same list. Rendered from
+the same values for that reason: maintained separately they drift, and the
+symptom of a drift is a sandbox whose injected requests carry no credential,
+visible only as `substituted=0` in a sidecar log.
+
+The BFF-mode entry is included even though its header is a Bearer JWT: what the
+daemon has to put there is still the acting identity's platform credential, and
+the console's BFF accepts one in that position.
+*/}}
+{{- define "agent-sandbox-hub.assistantSessionSecretNames" -}}
+{{- $s := (.Values.assistant | default dict).sandbox | default dict -}}
+{{- $inj := $s.injection | default dict -}}
+{{- if not $inj.enabled -}}
+{{- "" -}}
+{{- else -}}
+{{- $names := list -}}
+{{- if $inj.bffEndpoint -}}
+{{- $names = append $names ($inj.bffSecretName | default "abx-jwt") -}}
+{{- else if $inj.nativeHost -}}
+{{- $names = append $names ($inj.nativeSecretName | default "abx-key") -}}
+{{- end -}}
+{{- if $inj.e2bHost -}}
+{{- $names = append $names ($inj.e2bSecretName | default "e2b-key") -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}
+{{- end }}

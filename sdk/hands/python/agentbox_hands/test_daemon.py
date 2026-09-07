@@ -229,6 +229,54 @@ class BindSessionTest(unittest.TestCase):
             {"directory": "/home/agents/u/bob"},
         )
 
+    def test_bind_route_records_the_platform_credential(self):
+        client = TestClient(daemon.app)
+        res = client.post(
+            "/sessions/ses_bind/bind",
+            json={
+                "directory": "/home/agents/u/team1.bob",
+                "apiKey": "agbx_bobs_key",
+                "identity": "team1/bob",
+            },
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(sandbox_manager.session_api_key("ses_bind"), "agbx_bobs_key")
+        self.assertEqual(sandbox_manager.session_identity("ses_bind"), "team1/bob")
+
+    def test_the_credential_is_not_echoed_back(self):
+        # The response is the one place a credential could leak back out to a
+        # caller that already has it -- and into whatever logs that hop keeps.
+        client = TestClient(daemon.app)
+        res = client.post(
+            "/sessions/ses_bind/bind",
+            json={
+                "directory": "/home/agents/u/team1.bob",
+                "apiKey": "agbx_bobs_key",
+                "identity": "team1/bob",
+            },
+        )
+        self.assertNotIn("agbx_bobs_key", res.text)
+        self.assertEqual(res.json().get("identity"), "team1/bob")
+
+    def test_rebinding_replaces_the_credential(self):
+        # An administrator moving the impersonation selector rebinds the same
+        # session with a different identity; the previous key must not linger.
+        sandbox_manager.bind_session(
+            "ses_bind", "/home/agents/u/team1.bob", "agbx_bob", "team1/bob"
+        )
+        sandbox_manager.bind_session(
+            "ses_bind", "/home/agents/u/team1.carol", "agbx_carol", "team1/carol"
+        )
+        self.assertEqual(sandbox_manager.session_api_key("ses_bind"), "agbx_carol")
+        self.assertEqual(sandbox_manager.session_identity("ses_bind"), "team1/carol")
+
+    def test_a_bind_without_a_credential_leaves_none(self):
+        # The static-mode and open-source paths bind no key at all; asking for one
+        # must answer None rather than raise or invent a value.
+        sandbox_manager.bind_session("ses_bind", "/home/agents/u/alice")
+        self.assertIsNone(sandbox_manager.session_api_key("ses_bind"))
+        self.assertIsNone(sandbox_manager.session_identity("ses_bind"))
+
 
 class SandboxEnvTests(unittest.TestCase):
     """What a deployment can put in a sandbox's environment, and what it cannot.
@@ -272,6 +320,109 @@ class SandboxEnvTests(unittest.TestCase):
             first["A"] = "tampered"
             first["B"] = "added"
             self.assertEqual(sandbox_manager._sandbox_envs("ses_y"), {"A": "1"})
+
+
+class _RefusingSandbox:
+    """Stands in for the e2b SDK: proves the build was REACHED, without one.
+
+    Every one of these tests is about the decision taken before the create call,
+    so the create itself only has to be identifiable when it happens.
+    """
+
+    @staticmethod
+    def create(**_kwargs):
+        raise RuntimeError("reached the create call")
+
+
+class SessionIdentityTests(unittest.TestCase):
+    """A sandbox belongs to the identity that created it.
+
+    The platform derives a sandbox's namespace, its quota and — through the egress
+    injection's ${e2b.secrets.*} references — which vault it reads, all from the
+    credential the create was made with. So the identity is not decoration: reusing
+    a sandbox across an identity change means continuing to operate as whoever the
+    caller is no longer acting as, with nothing about the conversation looking any
+    different. That is the failure these tests exist for.
+    """
+
+    SID = "th_identity"
+
+    def setUp(self):
+        sandbox_manager.unbind_session(self.SID)
+        self._mgr = sandbox_manager.SandboxManager()
+
+    def tearDown(self):
+        sandbox_manager.unbind_session(self.SID)
+
+    def test_session_mode_refuses_a_session_with_no_credential(self):
+        # Creating one with this process's own key would work, and would quietly
+        # hand the conversation the deployment's privileges instead of the
+        # caller's -- so it is refused loudly instead.
+        sandbox_manager.bind_session(self.SID, "/home/agents/u/alice")
+        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"):
+            with self.assertRaises(sandbox_manager.NoSessionIdentity) as caught:
+                self._mgr.get_or_create(self.SID)
+        self.assertIn("no platform credential", str(caught.exception))
+
+    def test_static_mode_still_serves_a_session_with_no_credential(self):
+        # The escape hatch for a deployment with no authenticating front door.
+        # It must get past the gate above -- it fails later, on the SDK call,
+        # which is what proves the gate let it through.
+        sandbox_manager.bind_session(self.SID, "/home/agents/u/alice")
+        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "static"):
+            with self.assertRaises(Exception) as caught:
+                self._mgr.get_or_create(self.SID)
+        self.assertNotIn("no platform credential", str(caught.exception))
+
+    def test_the_refusal_reaches_the_caller_as_503_with_its_reason(self):
+        # A bare RuntimeError would be a generic 500, and the agent relays what
+        # it is told -- so the one actionable sentence has to survive the HTTP
+        # layer or a misconfiguration gets reported as "the platform is broken".
+        sandbox_manager.bind_session(self.SID, "/home/agents/u/alice")
+        client = TestClient(daemon.app, raise_server_exceptions=False)
+        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"):
+            res = client.post(f"/sessions/{self.SID}/info")
+        self.assertEqual(res.status_code, 503)
+        self.assertIn("no platform credential", res.text)
+
+    def test_a_changed_identity_discards_the_cached_sandbox(self):
+        # The one that matters: an administrator moves the impersonation selector
+        # mid-conversation. The cached entry is bob's sandbox; carol must not get it.
+        cached = sandbox_manager.SessionEntry(
+            sid=self.SID, sandbox=object(), identity="team1/bob"
+        )
+        self._mgr._sessions[self.SID] = cached
+        evicted = []
+        sandbox_manager.bind_session(
+            self.SID, "/home/agents/u/team1.carol", "agbx_carol", "team1/carol"
+        )
+        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"), \
+             mock.patch.object(
+                 self._mgr, "_evict", lambda sid, e: evicted.append(e)
+             ), \
+             mock.patch.object(self._mgr, "_reattach", lambda *a, **k: None), \
+             mock.patch.object(sandbox_manager, "Sandbox", _RefusingSandbox):
+            with self.assertRaises(RuntimeError):
+                self._mgr.get_or_create(self.SID)
+        self.assertEqual(
+            evicted, [cached], "carol's turn reused the sandbox created as bob"
+        )
+
+    def test_an_unchanged_identity_keeps_the_cached_sandbox(self):
+        # The other half: the check must not throw away a live sandbox on every
+        # single tool call, which would make every turn cold-start.
+        cached = sandbox_manager.SessionEntry(
+            sid=self.SID, sandbox=object(), identity="team1/bob"
+        )
+        self._mgr._sessions[self.SID] = cached
+        sandbox_manager.bind_session(
+            self.SID, "/home/agents/u/team1.bob", "agbx_bob", "team1/bob"
+        )
+        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"), \
+             mock.patch.object(self._mgr, "_alive", lambda e: True), \
+             mock.patch.object(self._mgr, "ensure_workspace", lambda *a: None), \
+             mock.patch.object(self._mgr, "ensure_attachments", lambda *a: None):
+            self.assertIs(self._mgr.get_or_create(self.SID), cached)
 
 
 class AliasTests(unittest.TestCase):
