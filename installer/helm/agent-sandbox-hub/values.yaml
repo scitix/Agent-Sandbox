@@ -425,9 +425,14 @@ assistant:
       # the native API has no vault surface).
       nativeSecretName: abx-key
       e2bSecretName: e2b-key
+      # --- one cluster, addressed directly -------------------------------
       # Hosts, as the sandbox resolves them. These must be routable names: the
       # sidecar never intercepts loopback, and 127.0.0.0/8 sits in a deny tier
       # no policy field can open.
+      #
+      # This shape answers for ONE cluster: the management routes carry no
+      # cluster parameter and nothing behind them forwards. Use it when the
+      # assistant only ever manages the cluster it claims sandboxes from.
       nativeHost: ""
       e2bHost: ""
       # Allowed but not injected — envd traffic carries its own credential.
@@ -435,6 +440,30 @@ assistant:
       # Shape-valid so a client-side format check passes, and obviously fake so
       # a leak is recognisable.
       decoy: "agbx_decoy_0000000000000000000000000000000000000000000000000000000000000"
+
+      # --- every cluster, through the dashboard ---------------------------
+      # The alternative, and the better one where the assistant must manage
+      # more than the cluster it runs sandboxes on.
+      #
+      # The dashboard's BFF is addressed per cluster in its PATH and proxies to
+      # that cluster's API using the registry and host aliases the hub already
+      # holds — so it answers for EVERY registered cluster from one address,
+      # and the sandbox needs no route to any cluster gateway itself. Set the
+      # full URL template including the `{cluster}` placeholder, e.g.
+      #   https://console.example.com/agentbox/api/clusters/{cluster}
+      #
+      # It takes `Authorization: Bearer <session JWT>` rather than an API key,
+      # which is fine for injection: the token lives a week and a sandbox lives
+      # an hour, so the value pushed at arm time cannot expire underneath it.
+      # Set both this and its vault entry, and leave nativeHost empty.
+      bffEndpoint: ""
+      bffSecretName: abx-jwt
+      # The host to allow out, when it differs from the endpoint's own host
+      # (it usually does not). Derived from bffEndpoint when empty.
+      bffHost: ""
+      # A decoy of JWT shape, so a client that inspects it before sending does
+      # not reject it out of hand.
+      bffDecoy: "eyJhbGciOiJIUzI1NiJ9.decoy.decoy"
 
   # Conversation history. An emptyDir loses every thread on restart.
   #

@@ -215,7 +215,14 @@ the other either hands the agent a useless token (no rules) or a real one
 {{- $inj := $s.injection | default dict -}}
 {{- $env := dict -}}
 {{- if $inj.enabled -}}
-{{- if $inj.nativeHost -}}
+{{- if $inj.bffEndpoint -}}
+{{- /* Routes by cluster in its path, so `abx --cluster X` reaches X through
+       this one address. Bearer, not an API key: this is the dashboard's own
+       session credential. */ -}}
+{{- $_ := set $env "AGENTBOX_ENDPOINT" $inj.bffEndpoint -}}
+{{- $_ := set $env "AGENTBOX_AUTH_SCHEME" "bearer" -}}
+{{- $_ := set $env "AGENTBOX_API_KEY" ($inj.bffDecoy | default "") -}}
+{{- else if $inj.nativeHost -}}
 {{- $_ := set $env "AGENTBOX_ENDPOINT" (printf "http://%s" $inj.nativeHost) -}}
 {{- $_ := set $env "AGENTBOX_API_KEY" ($inj.decoy | default "") -}}
 {{- end -}}
@@ -257,7 +264,18 @@ own credential.
 {{- else -}}
 {{- $allow := list -}}
 {{- $rules := dict -}}
-{{- if $inj.nativeHost -}}
+{{- if $inj.bffEndpoint -}}
+{{- /* One host and one rule for every cluster — the address routes, so the
+       sandbox needs no reachability to any cluster gateway. Derive the host
+       from the endpoint when it was not given separately. */ -}}
+{{- $host := $inj.bffHost -}}
+{{- if not $host -}}
+{{- $host = regexReplaceAll "^https?://([^/]+).*$" $inj.bffEndpoint "${1}" -}}
+{{- end -}}
+{{- $allow = append $allow $host -}}
+{{- $hdr := dict "Authorization" (printf "Bearer ${e2b.secrets.%s}" ($inj.bffSecretName | default "abx-jwt")) -}}
+{{- $_ := set $rules $host (list (dict "transform" (dict "headers" $hdr))) -}}
+{{- else if $inj.nativeHost -}}
 {{- $allow = append $allow $inj.nativeHost -}}
 {{- $hdr := dict "AGENTBOX-API-KEY" (printf "${e2b.secrets.%s}" ($inj.nativeSecretName | default "abx-key")) -}}
 {{- $_ := set $rules $inj.nativeHost (list (dict "transform" (dict "headers" $hdr))) -}}

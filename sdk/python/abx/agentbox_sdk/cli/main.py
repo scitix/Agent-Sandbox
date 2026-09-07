@@ -54,6 +54,12 @@ API_KEY = Param("apiKey", "string", "AgentBox API key.", aliases=("k",))
 CLUSTER = Param("cluster", "string", "Cluster id this command addresses.")
 AS_TEAM = Param("asTeam", "string", "Act as this team (admin keys only).")
 AS_USER = Param("asUser", "string", "Act as this user (admin keys only).")
+AUTH_SCHEME = Param(
+    "authScheme",
+    "string",
+    "How to present the credential: api-key (a cluster's own API, the default) "
+    "or bearer (the dashboard BFF, which routes to every cluster).",
+)
 HOST_HEADER = Param(
     "hostHeader",
     "string",
@@ -106,7 +112,16 @@ MIN_REPLICAS = Param("minReplicas", "int", "Scale-down floor.")
 MAX_REPLICAS = Param("maxReplicas", "int", "Scale-up ceiling.")
 QUOTA = Param("quota", "string", "Quota URL to charge the reservation against.")
 
-GLOBAL = (HELP, ENDPOINT, API_KEY, CLUSTER, AS_TEAM, AS_USER, HOST_HEADER)
+GLOBAL = (
+    HELP,
+    ENDPOINT,
+    API_KEY,
+    CLUSTER,
+    AS_TEAM,
+    AS_USER,
+    AUTH_SCHEME,
+    HOST_HEADER,
+)
 LIST_PARAMS = (
     *GLOBAL,
     FILTER,
@@ -698,6 +713,10 @@ def _build_ctx(values: dict[str, Any]) -> Context:
         or None,
         impersonate_user=str(values.get("asUser") or env_default("ABX_AS_USER"))
         or None,
+        auth_scheme=(
+            str(values.get("authScheme") or env_default("AGENTBOX_AUTH_SCHEME"))
+            or "api-key"
+        ),
         ui_mode=env_default("ABX_UI_MODE", fallback="url"),
         web_base=env_default("ABX_WEB_BASE") or None,
         host_header=str(

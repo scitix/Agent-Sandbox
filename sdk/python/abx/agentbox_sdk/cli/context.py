@@ -49,6 +49,11 @@ class Context:
     cluster: str | None = None
     impersonate_team: str | None = None
     impersonate_user: str | None = None
+    # "api-key" sends AGENTBOX-API-KEY and addresses a cluster's own API
+    # directly. "bearer" sends Authorization: Bearer and is what the dashboard
+    # BFF takes — that surface routes per cluster, so it is the one endpoint
+    # that can answer for every cluster at once.
+    auth_scheme: str = "api-key"
     ui_mode: str = "url"
     web_base: str | None = None
     # Explicit Host override, for an endpoint addressed by IP behind a
@@ -61,17 +66,41 @@ class Context:
     _local_cluster: Any = field(default_factory=lambda: _UNRESOLVED, repr=False)
 
     @property
+    def routes_by_path(self) -> bool:
+        """
+        Does the endpoint carry the cluster in its PATH?
+
+        The dashboard BFF is addressed as
+        `.../api/clusters/{cluster}/v1/...`, so a `{cluster}` placeholder in
+        the endpoint means the target genuinely routes — every registered
+        cluster is reachable through this one address, and the
+        "endpoint serves one cluster" rule does not apply.
+        """
+        return "{cluster}" in self.endpoint
+
+    @property
     def base_url(self) -> str:
-        return self.endpoint.rstrip("/") + "/v1"
+        endpoint = self.endpoint
+        if self.routes_by_path:
+            if not self.cluster:
+                raise ApiError(
+                    "this endpoint routes by cluster and needs one: pass "
+                    "--cluster, or set ABX_CLUSTER"
+                )
+            endpoint = endpoint.replace("{cluster}", self.cluster)
+        return endpoint.rstrip("/") + "/v1"
 
     def headers(self) -> dict[str, str]:
         import agentbox_sdk
 
         h = {
-            "AGENTBOX-API-KEY": self.api_key,
             "X-AgentBox-Client-Version": agentbox_sdk.__version__,
             "Accept": "application/json",
         }
+        if self.auth_scheme == "bearer":
+            h["Authorization"] = f"Bearer {self.api_key}"
+        else:
+            h["AGENTBOX-API-KEY"] = self.api_key
         # Admin keys carry no tenant, and several reads (quotas above all)
         # refuse to guess one. Passing the pair through is what lets one admin
         # key answer for a named team without minting a key per tenant.
@@ -204,6 +233,10 @@ def assert_cluster_served(ctx: Context) -> None:
     driving a sandbox elsewhere works from a single endpoint.
     """
     if not ctx.cluster:
+        return
+    if ctx.routes_by_path:
+        # The address itself names the cluster, so the request goes where it
+        # says. Nothing to reconcile.
         return
     served = ctx.local_cluster_id()
     if served is None or served == ctx.cluster:
