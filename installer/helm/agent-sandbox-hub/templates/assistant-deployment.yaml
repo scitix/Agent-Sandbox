@@ -32,7 +32,13 @@ spec:
       labels:
         {{- include "agent-sandbox-hub.assistantSelectorLabels" . | nindent 8 }}
       annotations:
-        checksum/assistant-secret: {{ include (print $.Template.BasePath "/assistant-secret.yaml") . | sha256sum }}
+        {{- /* Rolls the pod when the credential changes, which env from a
+               secretKeyRef does NOT do on its own — it is resolved at pod start,
+               so a rotated Secret is invisible until something restarts.
+               Prefixed and truncated because the bare 64-char digest reads as a
+               generic API key to secret scanners, and this file is committed
+               rendered; 64 bits is ample for "did this change". */}}
+        checksum/assistant-secret: sha256-{{ include (print $.Template.BasePath "/assistant-secret.yaml") . | sha256sum | trunc 16 }}
     spec:
       {{- with $a.image.pullSecrets }}
       imagePullSecrets:
