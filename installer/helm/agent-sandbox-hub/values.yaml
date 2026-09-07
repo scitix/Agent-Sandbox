@@ -314,3 +314,146 @@ managedAgent:
     # vanity domain in front).
     baseURL: ""
     annotations: {}
+
+# ---------------------------------------------------------------------------
+# The platform assistant.
+#
+# One Deployment: a conversation gateway plus the Claude Agent SDK running
+# in-process. Users talk to it and it drives the platform on their behalf by
+# running the `abx` CLI and the E2B SDK inside a sandbox.
+#
+# It is NOT exposed through an Ingress, deliberately. The gateway authenticates
+# nothing — it takes the caller's word for `userKey` — so reachability IS
+# authorization. The dashboard's BFF reaches it in-cluster and injects the
+# identity from the session it already verified; a public route would let
+# anyone open a thread as anyone.
+# ---------------------------------------------------------------------------
+assistant:
+  enabled: false
+
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+
+  # The harness a conversation starts under. Every configured harness is
+  # served; this only picks the default.
+  backend: claude-code
+
+  # OpenCode is withdrawn by default. Measured against 1.18.16 its tool
+  # overrides register ALONGSIDE the built-ins rather than replacing them, and
+  # if the built-in wins the agent's shell runs on this pod instead of in the
+  # sandbox. Claude Code's confinement rests on a different mechanism.
+  opencode:
+    enabled: false
+    port: 4096
+
+  claudeCode:
+    # An Anthropic-FORMAT endpoint, not necessarily Anthropic's. Leave empty
+    # only if you really mean api.anthropic.com.
+    baseURL: ""
+    # The SDK cannot enumerate models from a third-party endpoint, so the list
+    # is declared rather than discovered.
+    models: []
+    defaultModel: ""
+    smallModel: ""
+    # low | medium | high | xhigh | max
+    effort: medium
+    credentials:
+      existingSecret: ""
+      key: ANTHROPIC_AUTH_TOKEN
+
+  # Inline model key, rendered into this release's Secret. `claudeCode.
+  # credentials.existingSecret` takes precedence.
+  #
+  # Only lent to Claude Code when claudeCode.baseURL is set, and that gate is
+  # not a detail: with no baseURL the harness talks to api.anthropic.com, so
+  # lending it a gateway key issued by someone else sends a credential to the
+  # wrong vendor and buys a 401 for it.
+  modelApiKey: ""
+
+  # Where the assistant's own sandboxes come from.
+  sandbox:
+    # The worker cluster's E2B-compatible API, and its data-plane gateway.
+    # `domain` must carry the ingress path too — omitting it is the usual cause
+    # of "the sandbox exists but no port answers".
+    apiURL: ""
+    domain: ""
+    # Must match the data plane's ACTUAL protocol. A mismatch surfaces as the
+    # SDK never connecting, with an error that does not mention the scheme.
+    https: true
+    # The SandboxEnv the assistant claims from. It must have the egress gateway
+    # enabled (`overrides.gateway.enabled`), or every create carrying injection
+    # rules is refused rather than silently unenforced.
+    envName: ""
+    # The sandbox image: `abx` plus the E2B SDK. Omitting it starts sandboxes
+    # from the pool's default image, which come up healthy and then cannot run
+    # anything the assistant needs.
+    image: ""
+    readyTimeoutSeconds: 300
+    timeoutSeconds: 3600
+    credentials:
+      existingSecret: ""
+      key: E2B_API_KEY
+    # Inline sandbox API key, rendered into this release's Secret.
+    apiKey: ""
+
+    # Extra environment for every sandbox, merged after the injection decoys
+    # below. Never put a credential here: it reaches the sandbox's own
+    # environment, where the agent can read it.
+    extraEnv: {}
+
+    # Outbound credential injection.
+    #
+    # The agent inside the sandbox holds only `decoy`; the egress sidecar
+    # replaces the header on the way out with the real value from the caller's
+    # vault. Nothing worth stealing is ever in the sandbox.
+    #
+    # RULES ARE PER HOST **AND** PER HEADER, and this is the mistake to avoid:
+    # the CLI talks to the native API with AGENTBOX-API-KEY while the E2B SDK
+    # talks to the E2B API with X-API-Key. Declaring only the first yields an
+    # assistant that can list environments but cannot start a sandbox, failing
+    # with "401 invalid api key" — which reads as a bad credential rather than
+    # as a host the rules never covered.
+    #
+    # The two vault entries may hold the same key; they are separate names
+    # because they are substituted into different headers.
+    injection:
+      enabled: false
+      # Vault secret names (created out-of-band via the E2B `/secrets` API —
+      # the native API has no vault surface).
+      nativeSecretName: abx-key
+      e2bSecretName: e2b-key
+      # Hosts, as the sandbox resolves them. These must be routable names: the
+      # sidecar never intercepts loopback, and 127.0.0.0/8 sits in a deny tier
+      # no policy field can open.
+      nativeHost: ""
+      e2bHost: ""
+      # Allowed but not injected — envd traffic carries its own credential.
+      dataHost: ""
+      # Shape-valid so a client-side format check passes, and obviously fake so
+      # a leak is recognisable.
+      decoy: "agbx_decoy_0000000000000000000000000000000000000000000000000000000000000"
+
+  # Conversation history. An emptyDir loses every thread on restart.
+  #
+  # All three state owners resolve under ONE mount on purpose: a subPath per
+  # owner is created root-owned by kubelet, leaving the pod unable to write its
+  # own state. Losing the thread map specifically is the worst of the three —
+  # the transcripts survive and nothing can name them any more, so every
+  # conversation comes back empty.
+  persistence:
+    enabled: false
+    existingClaim: ""
+    storageClass: ""
+    size: 5Gi
+
+  # The assistant reaches a worker cluster's API, which may be behind a
+  # host-routed ingress this cluster's DNS does not resolve.
+  hostAliases: []
+
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}

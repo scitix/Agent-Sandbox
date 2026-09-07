@@ -1,0 +1,24 @@
+{{- $a := .Values.assistant | default dict }}
+{{- $p := $a.persistence | default dict }}
+{{- if and $a.enabled $p.enabled (not $p.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "%s-data" (include "agent-sandbox-hub.assistantFullname" .) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: assistant
+  annotations:
+    # The conversations outlive the release: a helm uninstall that took the
+    # history with it is not a recoverable mistake.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $p.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size | default "5Gi" }}
+{{- end }}

@@ -1,0 +1,237 @@
+{{- $a := .Values.assistant | default dict }}
+{{- if $a.enabled }}
+{{- $cc := $a.claudeCode | default dict }}
+{{- $s := $a.sandbox | default dict }}
+{{- $inj := $s.injection | default dict }}
+{{- $secretName := include "agent-sandbox-hub.assistantSecretName" . }}
+{{- /* One persistent directory, one subdirectory per owner. Each owner's path
+       is rendered as the environment variable that owner READS: deriving a path,
+       preparing it, and leaving the variable unset means the owner falls back to
+       its own default on the container filesystem, keeps working, and loses
+       everything on the next restart. */}}
+{{- $stateDir := "/home/agents/state" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-sandbox-hub.assistantFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: assistant
+spec:
+  # The gateway's thread map is a single JSON file and each harness keeps its own
+  # local transcript store; neither survives a second replica.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "agent-sandbox-hub.assistantSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agent-sandbox-hub.assistantSelectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/assistant-secret: {{ include (print $.Template.BasePath "/assistant-secret.yaml") . | sha256sum }}
+    spec:
+      {{- with $a.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $a.hostAliases }}
+      # A worker cluster's API may sit behind a host-routed ingress this
+      # cluster's DNS does not resolve; the dashboard's own cluster registry
+      # carries the same list for the same reason.
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        # 1000 is not cosmetic: the image's state directories are owned by it,
+        # so a different id means an unwritable volume and no history.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: brain
+          image: "{{ required "assistant.image.repository is required when assistant.enabled" $a.image.repository }}:{{ $a.image.tag | default "latest" }}"
+          imagePullPolicy: {{ $a.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: gw
+              containerPort: 4099
+            # Attachment staging and the workspace file browser — the one other
+            # port a browser reaches directly.
+            - name: fs
+              containerPort: 8766
+          env:
+            - name: ASSISTANT_BACKEND
+              value: {{ $a.backend | default "claude-code" | quote }}
+            {{- /* One variable for two decisions — the entrypoint launches
+                   `opencode serve` from it and the gateway reports the harness
+                   withdrawn from it — so the picker cannot offer a harness whose
+                   server nobody started. */}}
+            - name: ASSISTANT_OC_ENABLED
+              value: {{ ternary "1" "0" (($a.opencode | default dict).enabled | default false) | quote }}
+            - name: OPENCODE_INTERNAL_PORT
+              value: {{ ($a.opencode | default dict).port | default 4096 | quote }}
+            {{- with $cc.baseURL }}
+            - name: ANTHROPIC_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if ($cc.credentials | default dict).existingSecret }}
+            - name: ANTHROPIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ($cc.credentials).existingSecret }}
+                  key: {{ ($cc.credentials).key | default "ANTHROPIC_AUTH_TOKEN" }}
+            {{- else if and $a.modelApiKey $cc.baseURL }}
+            {{- /* GATED ON baseURL. With none, this harness talks to
+                   api.anthropic.com, so lending it a gateway key issued by
+                   another vendor sends the credential to the wrong place and
+                   buys a 401. With no token at all the gateway reports the
+                   harness "not configured" and never calls out — the correct
+                   state for a deployment that has pointed it nowhere. */}}
+            - name: ANTHROPIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: MODEL_API_KEY
+            {{- end }}
+            {{- with $cc.models }}
+            - name: ASSISTANT_CC_MODELS
+              value: {{ toJson . | quote }}
+            {{- end }}
+            {{- with $cc.defaultModel }}
+            - name: ASSISTANT_CC_DEFAULT_MODEL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $cc.smallModel }}
+            - name: ANTHROPIC_DEFAULT_HAIKU_MODEL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: ASSISTANT_CC_EFFORT
+              value: {{ $cc.effort | default "medium" | quote }}
+            {{- if ($s.credentials | default dict).existingSecret }}
+            - name: E2B_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ($s.credentials).existingSecret }}
+                  key: {{ ($s.credentials).key | default "E2B_API_KEY" }}
+            {{- else if $s.apiKey }}
+            - name: E2B_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: E2B_API_KEY
+            {{- end }}
+            {{- with $s.apiURL }}
+            - name: E2B_API_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $s.domain }}
+            - name: E2B_DOMAIN
+              value: {{ . | quote }}
+            {{- end }}
+            - name: AGBX_HTTPS
+              value: {{ ternary "true" "false" ($s.https | default false) | quote }}
+            {{- with $s.envName }}
+            - name: AGBX_ENV_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $s.image }}
+            {{- /* Structured as repository:tag by the values so a CI system can
+                   auto-bump it. This is NOT a Pod container image — it is handed
+                   to the E2B SDK as a template argument — so register it as a
+                   managed image for this service or the scan reports "image name
+                   not found". */}}
+            - name: SBX_IMAGE
+              value: {{ . | quote }}
+            {{- end }}
+            - name: SBX_READY_TIMEOUT
+              value: {{ $s.readyTimeoutSeconds | default 300 | quote }}
+            - name: SBX_TIMEOUT
+              value: {{ $s.timeoutSeconds | default 3600 | quote }}
+            {{- $sbxEnv := include "agent-sandbox-hub.assistantSandboxEnv" . }}
+            {{- if ne $sbxEnv "{}" }}
+            # The decoy the agent may read. Its partner is the rule set below;
+            # read the two together.
+            - name: SBX_SANDBOX_ENV
+              value: {{ $sbxEnv | quote }}
+            {{- end }}
+            {{- $sbxNet := include "agent-sandbox-hub.assistantSandboxNetwork" . }}
+            {{- if $sbxNet }}
+            # Per host AND per header. See the injection block in values.yaml
+            # for why declaring only one host is the mistake to avoid.
+            - name: SBX_SANDBOX_NETWORK
+              value: {{ $sbxNet | quote }}
+            {{- end }}
+            - name: AGENTBOX_STATE_DIR
+              value: {{ $stateDir | quote }}
+            - name: OPENCODE_DB
+              value: {{ printf "%s/opencode/opencode.db" $stateDir | quote }}
+            - name: CLAUDE_CONFIG_DIR
+              value: {{ printf "%s/claude" $stateDir | quote }}
+            {{- /* Its own directory, not a child of CLAUDE_CONFIG_DIR: every
+                   backend's history list is built from this map, so a pod that
+                   persisted the harness data dir and not this one came back with
+                   the transcripts intact and nothing able to name them. */}}
+            - name: ASSISTANT_THREAD_STORE
+              value: {{ printf "%s/gateway/threads.json" $stateDir | quote }}
+          # The gateway preflights every configured harness BEFORE it binds, so
+          # this window is the preflight budget and /healthz answering means the
+          # API is up.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: gw
+            periodSeconds: 2
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: gw
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: gw
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- with $a.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: state
+              mountPath: {{ $stateDir }}
+      {{- with $a.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $a.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $a.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: state
+          {{- if ($a.persistence | default dict).enabled }}
+          persistentVolumeClaim:
+            claimName: {{ ($a.persistence).existingClaim | default (printf "%s-data" (include "agent-sandbox-hub.assistantFullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

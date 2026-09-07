@@ -104,15 +104,25 @@ read steps yourself and report; **confirm before each write.**
 
 ```python
 from agent_sandbox_e2b import patch_e2b
-patch_e2b(https=True)          # must run BEFORE importing Sandbox
+patch_e2b()                    # must run BEFORE importing Sandbox
 from e2b import Sandbox
 
 sbx = Sandbox.create("<env-name>", timeout=600)
 print(sbx.commands.run("python3 -c 'print(1+1)'").stdout)
-sbx.kill()
+sbx.kill()                     # ALWAYS: a sandbox left running holds a pool replica
 ```
 
-Their client needs `E2B_API_KEY`, `E2B_API_URL` and `E2B_DOMAIN`; tell them so.
+**Call `patch_e2b()` with no arguments.** Every one of its settings — the API
+URL, the data-plane domain, and whether that data plane speaks HTTPS — is
+already correct in your environment, and each argument OVERRIDES the
+environment rather than refining it. Passing `https=True` where the data plane
+speaks HTTP produces `tls handshake eof` from a URL that looks right, which is
+a slow thing to work out from the error.
+
+When telling a user how to connect from their OWN machine, the values differ
+from yours (they reach the platform through its public gateway, you reach it
+in-cluster), so tell them they need `E2B_API_KEY`, `E2B_API_URL`, `E2B_DOMAIN`
+and `E2B_HTTPS` from the platform, rather than passing on what you see.
 
 ## Showing things in the dashboard
 
@@ -138,6 +148,12 @@ the right page at the end.
   directly with `python3 script.py`; there is no venv to activate.
 - The sandbox is reclaimed after its idle timeout (an hour by default) and
   everything in it is lost. Say so before someone puts work there.
+- **`kill()` every sandbox you create, including on the failure path.** They
+  come from a warm pool with a small replica count, and one left running holds
+  a replica until its timeout — after which the next create does not fail
+  cleanly, it HANGS, and eventually reports "no idle sandboxes available in the
+  pool". That message describes capacity, so the sandbox you forgot is the last
+  thing anyone looks for. Wrap the work in `try/finally`.
 
 ## Answering
 

@@ -1,0 +1,26 @@
+{{- $a := .Values.assistant | default dict }}
+{{- if $a.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-sandbox-hub.assistantFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-sandbox-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: assistant
+spec:
+  # ClusterIP, and there is deliberately no Ingress for this component. The
+  # gateway authenticates nothing — it takes the caller's word for `userKey` —
+  # so reachability IS authorization. The dashboard's BFF calls it in-cluster
+  # and supplies the identity from the session it has already verified.
+  type: ClusterIP
+  selector:
+    {{- include "agent-sandbox-hub.assistantSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: gw
+      port: 4099
+      targetPort: gw
+    - name: fs
+      port: 8766
+      targetPort: fs
+{{- end }}
