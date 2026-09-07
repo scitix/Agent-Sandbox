@@ -29,6 +29,10 @@ import httpx
 
 _DEFAULT_TIMEOUT = 30.0
 
+# Sentinel: distinguishes "not looked up yet" from "looked up, and the endpoint
+# does not report one".
+_UNRESOLVED = object()
+
 
 class ApiError(RuntimeError):
     """An error the server reported, carrying its own wording."""
@@ -54,6 +58,7 @@ class Context:
     host_header: str | None = None
     timeout: float = _DEFAULT_TIMEOUT
     _client: Any = field(default=None, repr=False)
+    _local_cluster: Any = field(default_factory=lambda: _UNRESOLVED, repr=False)
 
     @property
     def base_url(self) -> str:
@@ -87,6 +92,30 @@ class Context:
                 follow_redirects=False,
             )
         return self._client
+
+    def local_cluster_id(self) -> str | None:
+        """
+        The cluster this endpoint answers for, or None when it does not say.
+
+        Resolved once per invocation. None is deliberately NOT treated as a
+        mismatch: an endpoint that reports no local cluster predates the field,
+        and refusing every --cluster against it would be worse than trusting
+        the caller.
+        """
+        if self._local_cluster is _UNRESOLVED:
+            self._local_cluster = None
+            try:
+                payload = self.get_json("/clusters")
+            except ApiError:
+                return None
+            entries = (
+                payload.get("clusters") if isinstance(payload, dict) else None
+            )
+            for c in entries or []:
+                if isinstance(c, dict) and c.get("local"):
+                    self._local_cluster = str(c.get("id") or "") or None
+                    break
+        return self._local_cluster
 
     def get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """
@@ -151,6 +180,41 @@ def items_of(payload: Any, *keys: str) -> list[dict[str, Any]]:
         if isinstance(v, list):
             return v
     return []
+
+
+class ClusterMismatch(ApiError):
+    """`--cluster` named a cluster this endpoint does not serve."""
+
+
+def assert_cluster_served(ctx: Context) -> None:
+    """
+    Refuse a --cluster that this endpoint cannot answer for.
+
+    The management surface (envs, pools, templates, quotas, instance types) is
+    PER CLUSTER: there is no cluster parameter on those routes and no
+    forwarding behind them, so an endpoint answers for its own cluster and
+    nothing else. Without this check the flag is decoration — the rows come
+    from the local cluster and the header, the `view:` target and every hint
+    carry the name of a different one. That is worse than a refusal: it is
+    confidently mislabelled data, and whoever reads it (a person or an agent)
+    reports the wrong cluster's environments as the one they asked for.
+
+    Sandbox operations are the exception and do NOT come through here: the E2B
+    surface forwards `cluster::env` to the owning cluster, so creating and
+    driving a sandbox elsewhere works from a single endpoint.
+    """
+    if not ctx.cluster:
+        return
+    served = ctx.local_cluster_id()
+    if served is None or served == ctx.cluster:
+        return
+    raise ClusterMismatch(
+        f'this endpoint serves cluster "{served}", not "{ctx.cluster}". '
+        "Environment, pool, template and quota calls are per cluster — point "
+        f"--endpoint at {ctx.cluster}'s own API, or drop --cluster to act on "
+        f'"{served}". (Sandboxes are different: the E2B SDK reaches another '
+        "cluster with `cluster::env`.)"
+    )
 
 
 def env_default(*names: str, fallback: str = "") -> str:

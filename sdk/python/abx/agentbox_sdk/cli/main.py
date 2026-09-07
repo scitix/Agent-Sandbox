@@ -27,7 +27,12 @@ from typing import Any
 import agentbox_sdk.cli.kinds  # noqa: F401  (registers every resource)
 from agentbox_sdk.cli import dispatch as D
 from agentbox_sdk.cli import render as R
-from agentbox_sdk.cli.context import ApiError, Context, env_default
+from agentbox_sdk.cli.context import (
+    ApiError,
+    Context,
+    assert_cluster_served,
+    env_default,
+)
 from agentbox_sdk.cli.parser import (
     Param,
     UsageError,
@@ -773,6 +778,9 @@ def run(argv: Sequence[str]) -> Result:
         return Result(kind_help(ctx, kind))
 
     ctx = _build_ctx(values)
+    # Before any read or write: a --cluster this endpoint cannot answer for is
+    # refused rather than silently answered from the local one.
+    assert_cluster_served(ctx)
 
     if verb == "create":
         if kind.kind == "env":

@@ -73,6 +73,13 @@ Rules that matter:
 - **`sections:`** lists a detail's sub-resources. `abx envs <name> pools` is the
   one you will use most.
 - Most commands need `--cluster <id>`; get the list from `abx clusters`.
+- **`abx` only manages the cluster its endpoint serves.** Environments, pools,
+  templates and quotas have no cross-cluster route, so `--cluster` naming a
+  different one is REFUSED rather than answered from the local one. Sandboxes
+  are the exception: `Sandbox.create("<cluster>::<env>")` reaches another
+  cluster's env from here, because the E2B surface forwards it. So "list the
+  envs on cluster X" needs X's own endpoint, while "run something on cluster X"
+  does not.
 - Before piping a large payload into `jq`, ask for `--schema` first: it describes
   the shape (jq paths + types) so the expression is right the first time.
 - Reads are tenant-scoped. If a command answers *"requires user and team
