@@ -1727,5 +1727,6 @@
   "assistant.suggest.runCode": "Start a sandbox in my environment and run some Python in it",
   "table.unknownColumn": "Unknown column",
   "workspace.previewExpired": "The sandbox was reclaimed, so this file is gone",
-  "workspace.previewError": "Could not read this file"
+  "workspace.previewError": "Could not read this file",
+  "nav.assistant": "Assistant"
 }

@@ -1727,5 +1727,6 @@
   "assistant.suggest.runCode": "在我的环境里起一个沙箱，跑一段 Python",
   "table.unknownColumn": "未知列",
   "workspace.previewExpired": "沙箱已被回收，该文件已不存在",
-  "workspace.previewError": "无法读取该文件"
+  "workspace.previewError": "无法读取该文件",
+  "nav.assistant": "助手"
 }

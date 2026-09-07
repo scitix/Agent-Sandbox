@@ -23,6 +23,7 @@ import { isValidLocale, type Locale } from "@/lib/i18n/config"
 
 export type DashboardPage =
   | "overview"
+  | "assistant"
   | "sandboxes"
   | "envs"
   | "templates"
@@ -57,6 +58,12 @@ function localePrefix(locale?: Locale): string {
  *     would be decoration that invites the reader to believe agents are
  *     per-cluster. (An agent's *Hands* still name a worker cluster — that lives
  *     in `spec.hands`, not in the URL.)
+ *
+ * The assistant is deliberately NOT here. It is served once per deployment, so
+ * by the second reason it looks like it belongs — but what it ACTS on is per
+ * cluster, and the cluster in the route is what puts it in the `<page/>` marker
+ * the agent receives. "What sandboxes are running?" then resolves against the
+ * cluster the user is looking at instead of asking them which one they meant.
  */
 export const STANDALONE_PAGES = ["overview", "admin", "managed-agents"] as const satisfies
   readonly DashboardPage[]

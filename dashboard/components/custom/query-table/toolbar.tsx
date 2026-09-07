@@ -28,8 +28,21 @@ import { DataTableFacetedFilterProps } from "./faceted-filter"
 import { DataTableFilters } from "./filters"
 import { DataTableViewOptions } from "./view-options"
 import { useTranslation } from "@/lib/i18n"
+import { TableAskAIButton } from "@/components/assistant-ui/ask-ai"
 
 export type DataTableToolbarConfig = {
+  /**
+   * What this table is, for the assistant. Supplying it is what shows the Ask
+   * AI button: a table that has not said what it is has nothing to describe
+   * itself as, and an unlabelled attachment is worse than no attachment.
+   */
+  askAiTitle?: string
+  /**
+   * Stable ASCII base for the attachment's file name, so the agent sees a
+   * meaningful path even when the title is localized.
+   */
+  askAiSlug?: string
+
   filterOptions?: readonly DataTableFacetedFilterProps[]
   getHeader?: (key: string) => string
   filterInput?: undefined
@@ -53,6 +66,7 @@ export function DataTableToolbar<TData>({
 }: DataTableToolbarProps<TData>) {
   const { t } = useTranslation()
   const { filterOptions, getHeader, globalSearch, hiddenColumns } = config
+  const { askAiTitle, askAiSlug } = config
   const [searchInput, setSearchInput] = useState(table.getState().globalFilter || "")
 
   // Debounce function with 500ms delay
@@ -135,7 +149,19 @@ export function DataTableToolbar<TData>({
           )}
         </div>
       </div>
-      <div className="shrink-0">
+      <div className="flex shrink-0 items-center gap-1">
+        {/* Hands the filtered, visible rows to the assistant as an attachment
+            rather than as pasted text: a table is structured, and the agent can
+            grep a file it holds instead of carrying the whole thing in context.
+            Rendered only when a title is supplied, so a table that has not said
+            what it is does not offer to describe itself. */}
+        {askAiTitle ? (
+          <TableAskAIButton
+            table={table}
+            title={askAiTitle}
+            {...(askAiSlug ? { slug: askAiSlug } : {})}
+          />
+        ) : null}
         <DataTableViewOptions
           table={table}
           getHeader={getHeader || ((key: string) => key)}

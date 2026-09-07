@@ -98,7 +98,7 @@ export const navSectionDefs: NavSectionDef[] = [
   {
     groupKey: "nav.agent",
     items: [
-      { labelKey: "nav.managedAgents", page: "managed-agents", icon: Bot },
+      { labelKey: "nav.assistant", page: "assistant", icon: Bot },
       // The vault sits with the agents rather than under Team: it is what an
       // agent's outbound calls draw on, and it is scoped per user, not per team.
       { labelKey: "nav.vault", page: "vault", icon: Vault },

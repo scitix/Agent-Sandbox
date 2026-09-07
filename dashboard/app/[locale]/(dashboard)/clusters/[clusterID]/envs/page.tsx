@@ -138,7 +138,11 @@ export default function EnvsPage() {
           idFn={(row) => row.name}
           queryOptions={queryOptions}
           multipleHandlers={multipleHandlers}
-          toolbarConfig={{ globalSearch: { placeholder: t("envs.searchAll") } }}
+          toolbarConfig={{
+            globalSearch: { placeholder: t("envs.searchAll") },
+            askAiTitle: t("nav.envs"),
+            askAiSlug: `${clusterID}-envs`,
+          }}
           externalState={tableState}
           className="table-layout-fixed h-full"
         >

@@ -39,7 +39,13 @@ export default function DashboardHomePage() {
     if (!hydrated) return
     if (!auth) return // AuthGuard in layout will handle redirect to /login
     const clusterID = auth.clusterID ?? "default"
-    if (isAdmin) {
+    // The assistant is the front door: a first-time user has nothing to look
+    // at on a dashboard yet, and the one thing they need is to be told where
+    // to start. Falls back to the previous destination when it is switched
+    // off, so a deployment without an assistant lands where it always did.
+    if (process.env.NEXT_PUBLIC_ASSISTANT_ENABLED !== "false") {
+      router.replace(clusterPath(clusterID, "assistant", locale))
+    } else if (isAdmin) {
       router.replace(clusterPath(clusterID, "sandboxes", locale))
     } else {
       router.replace(clusterPath(clusterID, "overview", locale))

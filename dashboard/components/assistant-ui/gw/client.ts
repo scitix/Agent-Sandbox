@@ -21,7 +21,7 @@ import type {
 export function gatewayBaseUrl(): string {
   return (
     process.env.NEXT_PUBLIC_ASSISTANT_GW_BASE_URL ||
-    `${basePathPrefix()}assistant`.replace(/\/{2,}/g, '/')
+    `${basePathPrefix()}api/assistant`.replace(/\/{2,}/g, '/')
   )
 }
 

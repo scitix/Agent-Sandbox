@@ -138,6 +138,8 @@ export default function SandboxesPage() {
   ]
 
   const toolbarConfig: DataTableToolbarConfig = {
+    askAiTitle: t("nav.sandboxes"),
+    askAiSlug: `${clusterID}-sandboxes`,
     globalSearch: { placeholder: t("common.searchAll") },
     filterOptions: [
       {
