@@ -403,7 +403,7 @@ const fooClone = createFormClone<FormValues>({
 Three rules worth knowing:
 
 - **The payload is form values, not the resource spec.** That is what makes an import a plain `reset()` needing no inverse of the payload builders, and it bounds the secret surface to what the form-values type can express.
-- **A form holding secrets MUST set `stripSecrets`.** Exported files get attached to tickets and checked into repos. `lib/utils/env-clone.ts` blanks `injectionCredentialRows[].value` and `imagePullSecretRows[].password`; `lib/utils/managed-agent-clone.ts` blanks its four API-key fields. Both have unit tests asserting no secret survives serialization — add one alongside any new spec that strips.
+- **A form holding secrets MUST set `stripSecrets`.** Exported files get attached to tickets and checked into repos. `lib/utils/env-clone.ts` blanks `injectionCredentialRows[].value` and `imagePullSecretRows[].password`, and has a unit test asserting no secret survives serialization — add one alongside any new spec that strips.
 - **Import is create-only** (`canImport={!isEdit}`). Replacing a live resource's whole configuration from a file is a different, riskier operation than seeding a new one.
 
-Runtime-dependent behaviour goes in the spec factory rather than a module constant — see `managedAgentClone(knownClusterIDs)`, which clears cluster ids this deployment does not know via the `sanitize` hook.
+Runtime-dependent behaviour goes in the spec factory rather than a module constant, via the `sanitize` hook — a spec that must drop values this deployment cannot resolve (cluster ids it does not know, for instance) needs the live list at construction time.

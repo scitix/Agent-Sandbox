@@ -19,7 +19,6 @@
 // Kept free of React so it can be unit-tested and reused by the clone
 // (import/export) path, which needs the schema to validate a file and the
 // defaults to fill the gaps an older export leaves — the same split as
-// lib/utils/managed-agent-form.ts.
 
 import { z } from "zod"
 

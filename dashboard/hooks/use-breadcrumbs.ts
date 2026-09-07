@@ -47,7 +47,6 @@ const SEGMENT_LABEL_KEY: Partial<Record<string, TranslationKey>> = {
   templates: "nav.templates",
   images: "nav.images",
   datasets: "nav.datasets",
-  "managed-agents": "nav.managedAgents",
   assistant: "nav.assistant",
   general: "nav.general",
   "api-keys": "nav.apiKeys",

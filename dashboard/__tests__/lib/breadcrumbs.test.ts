@@ -49,29 +49,6 @@ describe("breadcrumbsFor", () => {
   // the page segment, so a standalone page with sub-routes fell through to the
   // /clusters/{id}/ matcher, missed, and returned no crumbs at all — which also
   // blanks the page title.
-  it("keeps crumbs on a standalone page's detail sub-route", () => {
-    const crumbs = breadcrumbsFor("/managed-agents/navix/runtime", "foo", "en", t)
-    expect(crumbs).toEqual([
-      { label: "nav.managedAgents", href: "/managed-agents", isCurrent: false },
-      { label: "navix", href: "/managed-agents/navix", isCurrent: false },
-      { label: "runtime", href: undefined, isCurrent: true },
-    ])
-  })
-
-  it("carries the locale prefix into the crumb links", () => {
-    const crumbs = breadcrumbsFor("/zh-Hans/managed-agents/navix/hands", "foo", "zh-Hans", t)
-    expect(crumbs.map((c) => c.href)).toEqual([
-      "/zh-Hans/managed-agents",
-      "/zh-Hans/managed-agents/navix",
-      undefined,
-    ])
-  })
-
-  it("decodes a name that needed escaping in the URL", () => {
-    const crumbs = breadcrumbsFor("/managed-agents/a%2Fb", "foo", "en", t)
-    expect(crumbs.at(-1)?.label).toBe("a/b")
-  })
-
   it("returns nothing for the bare cluster redirect path", () => {
     expect(breadcrumbsFor("/clusters/foo", "foo", "en", t)).toEqual([])
     expect(breadcrumbsFor("/clusters/foo/", "foo", "en", t)).toEqual([])

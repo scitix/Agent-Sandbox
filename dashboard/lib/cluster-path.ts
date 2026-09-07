@@ -29,7 +29,6 @@ export type DashboardPage =
   | "templates"
   | "images"
   | "datasets"
-  | "managed-agents"
   | "vault"
   | "admin"
   | "general"
@@ -52,12 +51,6 @@ function localePrefix(locale?: Locale): string {
  *
  *   - It aggregates across clusters and carries its own in-page scope selector
  *     (`useClusterScopeSearchParams`): `overview`, `admin`.
- *   - The resource itself is control-plane-only and exists once per deployment:
- *     `managed-agents`. ManagedAgent CRs live on the master cluster and are
- *     served by ws-proxy, not by any worker's API, so a cluster in the route
- *     would be decoration that invites the reader to believe agents are
- *     per-cluster. (An agent's *Hands* still name a worker cluster — that lives
- *     in `spec.hands`, not in the URL.)
  *
  * The assistant is deliberately NOT here. It is served once per deployment, so
  * by the second reason it looks like it belongs — but what it ACTS on is per
@@ -65,7 +58,7 @@ function localePrefix(locale?: Locale): string {
  * the agent receives. "What sandboxes are running?" then resolves against the
  * cluster the user is looking at instead of asking them which one they meant.
  */
-export const STANDALONE_PAGES = ["overview", "admin", "managed-agents"] as const satisfies
+export const STANDALONE_PAGES = ["overview", "admin"] as const satisfies
   readonly DashboardPage[]
 
 const STANDALONE_PAGE_SET: ReadonlySet<DashboardPage> = new Set(STANDALONE_PAGES)

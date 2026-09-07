@@ -20,7 +20,6 @@ rules:
   resources:
   - pods
   - secrets
-  - services
   verbs:
   - create
   - delete
@@ -63,7 +62,6 @@ rules:
 - apiGroups:
   - agents.navix.sh
   resources:
-  - managedagents
   - sandboxenvs
   - sandboxpools
   - sandboxtemplates
@@ -78,7 +76,6 @@ rules:
 - apiGroups:
   - agents.navix.sh
   resources:
-  - managedagents/finalizers
   - sandboxenvs/finalizers
   - sandboxpools/finalizers
   - sandboxtemplates/finalizers
@@ -87,7 +84,6 @@ rules:
 - apiGroups:
   - agents.navix.sh
   resources:
-  - managedagents/status
   - sandboxenvs/status
   - sandboxpools/status
   - sandboxtemplates/status
@@ -95,15 +91,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch

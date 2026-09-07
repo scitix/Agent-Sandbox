@@ -15,7 +15,7 @@ spec:
       labels:
         {{- include "agent-sandbox-hub.proxySelectorLabels" . | nindent 8 }}
     spec:
-      {{- if or .Values.globalApiKey.enabled .Values.managedAgent.enabled }}
+      {{- if .Values.globalApiKey.enabled }}
       serviceAccountName: {{ include "agent-sandbox-hub.proxyFullname" . }}
       {{- end }}
       containers:
@@ -29,7 +29,7 @@ spec:
             - containerPort: 9004
               protocol: TCP
             {{- end }}
-          {{- if or .Values.globalApiKey.enabled .Values.managedAgent.enabled }}
+          {{- if .Values.globalApiKey.enabled }}
           env:
           {{- end }}
           {{- if .Values.globalApiKey.enabled }}
@@ -52,96 +52,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "agent-sandbox-hub.fullname" . }}-secret
                   key: FEISHU_WEBHOOK_URL
-          {{- end }}
-          {{- end }}
-          {{- if .Values.managedAgent.enabled }}
-            - name: AGENTBOX_MANAGED_AGENT_ENABLED
-              value: "1"
-            - name: AGENTBOX_MANAGED_AGENT_NAMESPACE
-              value: {{ .Values.managedAgent.namespace | default .Release.Namespace | quote }}
-          {{- with .Values.managedAgent.brain.image }}
-          {{- if .repository }}
-            - name: AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE
-              value: {{ .repository | quote }}
-            - name: AGENTBOX_MANAGED_AGENT_BRAIN_IMAGE_TAG
-              value: {{ .tag | quote }}
-          {{- if .pullSecrets }}
-            - name: AGENTBOX_MANAGED_AGENT_BRAIN_PULL_SECRETS
-              value: {{ join "," .pullSecrets | quote }}
-          {{- end }}
-          {{- end }}
-          {{- end }}
-          {{- with .Values.managedAgent.hands.default }}
-          {{- if .apiURL }}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_API_URL
-              value: {{ .apiURL | quote }}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_DOMAIN
-              value: {{ .domain | quote }}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_HTTPS
-              value: {{ .https | quote }}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_ENV_NAME
-              value: {{ .envName | quote }}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_IMAGE
-              value: {{ .image | quote }}
-          {{- if .scalingGroup }}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_SCALING_GROUP
-              value: {{ .scalingGroup | quote }}
-          {{- end }}
-          {{- end }}
-          {{- end }}
-          {{- with include "agent-sandbox-hub.managedAgentSandboxSecretName" . }}
-          {{- /*
-            The NAME of the Secret, not its contents: what reads the key is the
-            Brain pod in the agents' namespace, so ws-proxy only ever renders the
-            reference. Passing the value here would put the platform's sandbox
-            credential in a second pod for no reason.
-          */}}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_SECRET_NAME
-              value: {{ . | quote }}
-          {{- end }}
-          {{- with include "agent-sandbox-hub.managedAgentSandboxSecretKey" . }}
-            - name: AGENTBOX_MANAGED_AGENT_HANDS_SECRET_KEY
-              value: {{ . | quote }}
-          {{- end }}
-          {{- with .Values.managedAgent.modelProvider }}
-          {{- if .baseURL }}
-            - name: AGENTBOX_MANAGED_AGENT_MODEL_BASE_URL
-              value: {{ .baseURL | quote }}
-          {{- end }}
-          {{- if .models }}
-            - name: AGENTBOX_MANAGED_AGENT_MODELS
-              value: {{ join "," .models | quote }}
-          {{- end }}
-          {{- if .defaultModel }}
-            - name: AGENTBOX_MANAGED_AGENT_MODEL_DEFAULT
-              value: {{ .defaultModel | quote }}
-          {{- end }}
-          {{- if .smallModel }}
-            - name: AGENTBOX_MANAGED_AGENT_MODEL_SMALL
-              value: {{ .smallModel | quote }}
-          {{- end }}
-          {{- end }}
-          {{- with include "agent-sandbox-hub.managedAgentModelSecretName" . }}
-          {{- /* The NAME only, for the same reason as the sandbox credential. */}}
-            - name: AGENTBOX_MANAGED_AGENT_MODEL_SECRET_NAME
-              value: {{ . | quote }}
-          {{- end }}
-          {{- with include "agent-sandbox-hub.managedAgentModelSecretKey" . }}
-            - name: AGENTBOX_MANAGED_AGENT_MODEL_SECRET_KEY
-              value: {{ . | quote }}
-          {{- end }}
-          {{- if .Values.managedAgent.publish.enabled }}
-            - name: WSPROXY_MANAGED_AGENT_GATEWAY_ADDR
-              value: ":{{ .Values.managedAgent.publish.port }}"
-            - name: WSPROXY_MANAGED_AGENT_PROXY_SERVICE
-              value: "{{ include "agent-sandbox-hub.proxyFullname" . }}.{{ .Release.Namespace }}:{{ .Values.managedAgent.publish.port }}"
-            - name: WSPROXY_MANAGED_AGENT_PUBLIC_BASE_URL
-              value: {{ .Values.managedAgent.publish.baseURL | default (printf "https://%s%s/api/managed-agents" .Values.ingress.host (.Values.basePath | default "" | trimSuffix "/")) | quote }}
-          {{- else }}
-            # Empty disables the listener: an agent is not reachable from
-            # outside merely because the controller runs.
-            - name: WSPROXY_MANAGED_AGENT_GATEWAY_ADDR
-              value: ""
           {{- end }}
           {{- end }}
           {{- if .Values.globalApiKey.enabled }}

@@ -134,7 +134,7 @@ describe("rejections", () => {
 
   it("rejects another resource's export", () => {
     const parsed = fromEnvCloneJson(
-      JSON.stringify({ kind: "ManagedAgentFormExport", version: 1, values: {} }),
+      JSON.stringify({ kind: "SomeOtherFormExport", version: 1, values: {} }),
     )
     expect(parsed.ok).toBe(false)
     if (parsed.ok) return

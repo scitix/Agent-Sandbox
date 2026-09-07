@@ -24,7 +24,6 @@ export * from "./template"
 export * from "./apikey"
 export * from "./global-apikey"
 export * from "./global-template"
-export * from "./managed-agent"
 export * from "./stats"
 export * from "./prometheus"
 export * from "./platform-users"
@@ -55,6 +54,5 @@ export function useInvalidate() {
     templates: () => void qc.invalidateQueries({ queryKey: ["get", "/sandbox-templates"] }),
     apiKeys: () => void qc.invalidateQueries({ queryKey: ["get", "/admin/api-keys"] }),
     globalApiKeys: () => void qc.invalidateQueries({ queryKey: ["get", "/api-keys"] }),
-    managedAgents: () => void qc.invalidateQueries({ queryKey: ["managed-agents"] }),
   }
 }

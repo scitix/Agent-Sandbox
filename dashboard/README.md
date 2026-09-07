@@ -85,8 +85,8 @@ and `DEX_REDIRECT_URI` must also be set.
 
 ### Access log (BFF proxy routes)
 
-Every proxy route (`/api/clusters/*`, `/api/clusters/*/e2b/*`, `/api/hub/*`,
-`/api/managed-agents/*`) writes one line per request to stdout — status, latency,
+Every proxy route (`/api/clusters/*`, `/api/clusters/*/e2b/*`, `/api/hub/*`)
+writes one line per request to stdout — status, latency,
 client IP, method, route, and **the upstream URL that was actually dialled**
 (plus the `Host` override, when cluster config supplies one) and the caller:
 

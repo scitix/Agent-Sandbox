@@ -63,7 +63,7 @@ HUB_CRD_DST = (
 # CRDs that belong to the control plane and must NOT ship with the worker chart.
 # The worker chart installs on every cluster; a control-plane CRD there would
 # invite a second reconciler for objects only the hub owns.
-HUB_ONLY_CRDS = ("managedagents",)
+HUB_ONLY_CRDS: tuple[str, ...] = ()
 
 # CRDs the hub needs on top of HUB_ONLY_CRDS. SandboxTemplate is shared: the hub
 # syncs templates outward to workers, so it needs the schema locally too.

@@ -152,6 +152,13 @@ type FederationReader interface {
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxpools/status,verbs=get
 // +kubebuilder:rbac:groups=agents.navix.sh,resources=sandboxtemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// PersistentVolumeClaim reads belong to this controller: an Env may mount
+// already-existing claims from its namespace, and both the mount validation
+// (apiserver/service/env_volumes.go) and GET /v1/volumes read them live. The
+// marker previously lived on a controller that has been removed; generated
+// RBAC is scanned repo-wide rather than per binary, so it was only ever this
+// one grant and deleting it silently 403s both of those paths.
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
 
 // Reconcile is the entry point of the controller-runtime reconcile loop.
 //
