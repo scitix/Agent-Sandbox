@@ -1,4 +1,5 @@
 import { ASSISTANT_FS_BASE_URL } from '@/components/assistant-ui/runtime-provider'
+import { authHeaders } from '@/components/assistant-ui/gw/client'
 
 // Read-only client for the agent's sandbox workspace, served by the same
 // workspace-fs endpoint as attachment staging (see runtime-provider). The two
@@ -30,7 +31,7 @@ export async function listWorkspace(
 ): Promise<ListWorkspaceResult> {
   const res = await fetch(`${ASSISTANT_FS_BASE_URL}/list`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ sessionID, dir, path }),
   })
   if (!res.ok) throw new Error(`list failed: ${res.status}`)
@@ -52,7 +53,7 @@ export async function readWorkspaceFile(
 ): Promise<ReadWorkspaceFileResult> {
   const res = await fetch(`${ASSISTANT_FS_BASE_URL}/read-file`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ sessionID, dir, path, mode }),
   })
   if (!res.ok) {

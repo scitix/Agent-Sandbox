@@ -25,6 +25,7 @@ import { PanelLeft } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { LiveBadge } from "@/components/live-badge"
 import { ClusterSwitcher } from "@/components/cluster-switcher"
+import { HeaderAskAIButton } from "@/components/assistant-ui/ask-ai/header-ask-ai-button"
 import { Button } from "@/components/ui/button"
 import {
   Breadcrumb,
@@ -110,6 +111,7 @@ export function PageHeader() {
       <div className="flex shrink-0 items-center gap-3" hidden={isMobile}>
         {!hideClusterSwitcher && <ClusterSwitcher compact />}
         <LiveBadge />
+        <HeaderAskAIButton />
       </div>
     </div>
   )

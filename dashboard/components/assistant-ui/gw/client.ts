@@ -10,6 +10,7 @@
 //     protocol's runtime reduces it. What is left here is the REST around it —
 //     capabilities, models, threads, and the parked-question listing.
 import { basePathPrefix } from '@/lib/base-path'
+import { getToken } from '@/lib/api/client'
 import type {
   AgentUsage,
   InteractionRequest,
@@ -155,10 +156,27 @@ export interface TranscriptEntry {
   costUsd?: number
 }
 
+/**
+ * The session token, for the BFF in front of the gateway.
+ *
+ * Every call goes through that proxy, and the proxy is what authenticates —
+ * the gateway itself takes the caller's word for who is asking. So a request
+ * without this header is not "unauthenticated to the gateway", it is a 401
+ * from the proxy, which is the whole point.
+ */
+export function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { authorization: `Bearer ${token}` } : {}
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${gatewayBaseUrl()}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    headers: {
+      'content-type': 'application/json',
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
@@ -337,8 +355,15 @@ export const gateway = {
    * the entire behaviour we would otherwise have to write.
    */
   watchThreads(userKey: string, onEvent: (e: ThreadEvent) => void): () => void {
+    // EventSource cannot set a header, and this stream still has to reach an
+    // authenticating proxy — so the session travels as a query parameter that
+    // the proxy accepts HERE ONLY and strips before forwarding, keeping it out
+    // of the upstream's access log. The alternative, a fetch reader, would
+    // mean writing the reconnect behaviour EventSource already has.
+    const token = getToken()
     const source = new EventSource(
-      `${gatewayBaseUrl()}/threads/events?userKey=${encodeURIComponent(userKey)}`
+      `${gatewayBaseUrl()}/threads/events?userKey=${encodeURIComponent(userKey)}` +
+        (token ? `&access_token=${encodeURIComponent(token)}` : '')
     )
     source.onmessage = e => {
       try {

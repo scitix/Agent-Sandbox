@@ -14,7 +14,7 @@ import {
   useAssistantSessionStore,
 } from '@/components/assistant-ui/backend-port'
 import { CompactionToolUI } from '@/components/assistant-ui/compaction'
-import { gatewayBaseUrl } from '@/components/assistant-ui/gw/client'
+import { authHeaders, gatewayBaseUrl } from '@/components/assistant-ui/gw/client'
 import { WorkspaceAutoOpenBridge } from '@/components/assistant-ui/workspace-auto-open'
 import {
   basePath,
@@ -97,7 +97,7 @@ export function sessionDirectory(userKey?: string): string {
 // answers the SPA's index.html to a POST instead of failing loudly.
 export const ASSISTANT_FS_BASE_URL =
   process.env.NEXT_PUBLIC_ASSISTANT_FS_BASE_URL ||
-  `${basePathPrefix()}assistant-fs`.replace(/\/{2,}/g, '/')
+  `${basePathPrefix()}api/assistant-fs`.replace(/\/{2,}/g, '/')
 
 // Read a staged attachment's content back from the assistant pod (the exact bytes
 // the user uploaded) for download/preview of a sent message (proposal 0055).
@@ -109,7 +109,7 @@ export async function readStagedAttachment(
   const userKey = getDefaultStore().get(atomAssistantUserKey)
   const res = await fetch(`${ASSISTANT_FS_BASE_URL}/attach-read`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
       sessionID,
       dir: sessionDirectory(userKey),
@@ -152,7 +152,7 @@ export async function classifyTopic(
   try {
     const res = await fetch(`${gatewayBaseUrl()}/classify`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({
         context,
         newInput,
@@ -356,7 +356,7 @@ class SandboxTextAttachmentAdapter implements AttachmentAdapter {
           const content = await file.text()
           const res = await fetch(`${ASSISTANT_FS_BASE_URL}/attach`, {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: { 'content-type': 'application/json', ...authHeaders() },
             body: JSON.stringify({
               sessionID,
               dir: sessionDirectory(userKey),

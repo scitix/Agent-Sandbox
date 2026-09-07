@@ -80,7 +80,7 @@ export interface AppConfig {
   }
 }
 
-export type AssistantPageView = 'config' | 'auto-diagnose'
+export type AssistantPageView = 'config'
 
 /**
  * Which of those is open, or null for the conversation.

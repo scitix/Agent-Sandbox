@@ -21,7 +21,6 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
   BarChart3,
-  Bot,
   Box,
   Boxes,
   ExternalLink,
@@ -38,6 +37,7 @@ import {
   ReceiptTextIcon,
   Settings,
   Sun,
+  Sparkles,
   Vault,
 } from "lucide-react"
 import { useTheme } from "next-themes"
@@ -82,6 +82,7 @@ export const navSectionDefs: NavSectionDef[] = [
   {
     groupKey: "nav.main",
     items: [
+      { labelKey: "nav.assistant", page: "assistant", icon: Sparkles },
       { labelKey: "nav.overview", page: "overview", icon: LayoutDashboard },
       { labelKey: "nav.sandboxes", page: "sandboxes", icon: Box },
     ],
@@ -98,7 +99,6 @@ export const navSectionDefs: NavSectionDef[] = [
   {
     groupKey: "nav.agent",
     items: [
-      { labelKey: "nav.assistant", page: "assistant", icon: Bot },
       // The vault sits with the agents rather than under Team: it is what an
       // agent's outbound calls draw on, and it is scoped per user, not per team.
       { labelKey: "nav.vault", page: "vault", icon: Vault },

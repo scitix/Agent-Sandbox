@@ -1728,5 +1728,6 @@
   "table.unknownColumn": "未知列",
   "workspace.previewExpired": "沙箱已被回收，该文件已不存在",
   "workspace.previewError": "无法读取该文件",
-  "nav.assistant": "助手"
+  "nav.assistant": "助手",
+  "assistant.askHere": "就这个页面问助手"
 }

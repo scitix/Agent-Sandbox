@@ -21,6 +21,7 @@ import { useRouter } from "next/navigation"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
+import { AssistantSidePanel } from "@/components/assistant-ui/assistant-side-panel"
 import { ErrorReportDialog } from "@/components/error-report-dialog"
 import { ChangelogDialog } from "@/components/changelog/changelog-dialog"
 import { useAtomValue } from "jotai"
@@ -77,8 +78,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     <SidebarProvider>
       <AppSidebar onOpenCommand={() => setOpen(true)} />
       <SidebarInset className="relative flex min-h-svh w-full flex-1 flex-col">
-        <main className="@container/main absolute inset-0 flex flex-col overflow-hidden p-0">
-          {children}
+        <main className="@container/main absolute inset-0 flex flex-row overflow-hidden p-0">
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {children}
+          </div>
+          {/* Beside the page rather than over it: the point of asking from a
+              table is to keep looking at the table. Mounted in the shell so a
+              run survives navigation and so the header's button works
+              everywhere. */}
+          <AssistantSidePanel />
         </main>
       </SidebarInset>
       <CommandPalette open={open} onOpenChange={setOpen} />

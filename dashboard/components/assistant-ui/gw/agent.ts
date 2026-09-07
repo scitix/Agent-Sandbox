@@ -37,6 +37,7 @@
 // re-issued as an attach.
 import { HttpAgent } from '@ag-ui/client'
 import type { HttpAgentConfig, RunAgentInput } from '@ag-ui/client'
+import { authHeaders } from '@/components/assistant-ui/gw/client'
 
 /** The per-send context the browser knows and the protocol has no field for. */
 export interface GatewayAgentContext {
@@ -101,7 +102,15 @@ export class GatewayAgent extends HttpAgent {
         })(),
       },
     }
-    return { ...base, body: JSON.stringify(body) }
+    // The run goes through the same authenticating proxy as the REST calls, so
+    // it needs the same header. Read per request rather than captured at
+    // construction: this agent lives for the host's lifetime and would
+    // otherwise keep sending a token from a previous session.
+    return {
+      ...base,
+      headers: { ...(base.headers ?? {}), ...authHeaders() },
+      body: JSON.stringify(body),
+    }
   }
 
   /**

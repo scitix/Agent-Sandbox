@@ -1728,5 +1728,6 @@
   "table.unknownColumn": "Unknown column",
   "workspace.previewExpired": "The sandbox was reclaimed, so this file is gone",
   "workspace.previewError": "Could not read this file",
-  "nav.assistant": "Assistant"
+  "nav.assistant": "Assistant",
+  "assistant.askHere": "Ask the assistant about this page"
 }

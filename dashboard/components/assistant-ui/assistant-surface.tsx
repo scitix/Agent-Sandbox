@@ -1,30 +1,35 @@
 "use client"
 
 /**
- * ONE assistant. Two places it is mounted.
+ * ONE assistant. Two places it is mounted, three columns when there is room.
  *
  * The dedicated page and the right-hand panel are the same component, and the
  * difference is stated once as a `mode` — because when they were two shells
- * around the same thread in the implementation this is modelled on, they
- * drifted: different headers, different actions, a landing on one and not the
- * other.
+ * around the same thread in the implementation this follows, they drifted:
+ * different headers, different actions, a landing on one and not the other.
  *
- *   * `page` owns the conversation menu (a resizable column) and the landing,
- *     because it has the room.
- *   * `panel` has neither. Its menu button NAVIGATES to the page — the panel is
- *     the page with everything closed, so "open the menu" means "go where it
- *     fits".
+ *   * `page` owns the conversation menu and the workspace, both resizable
+ *     columns, because it has the room.
+ *   * `panel` has neither. Its menu and folder buttons NAVIGATE to the page
+ *     with that column open — the panel is the page with everything closed, so
+ *     "open the workspace" means "go where it fits".
  *
- * "Has the room" is measured rather than assumed: below MENU_BREAKPOINT the
- * menu stops being a column and becomes a sheet, the same trade the app's own
- * sidebar makes on a phone. Measured on THIS element, not the window, because
- * the panel spends the width before the assistant sees any of it.
+ * "Has the room" is measured, not assumed: below MENU_BREAKPOINT the menu
+ * becomes a sheet, the same trade the app's own sidebar makes on a phone. And
+ * it is measured on THIS element rather than the window, because the panel
+ * spends the width before the assistant ever sees it.
  */
 
-import { useEffect, useState, type FC, type ReactNode } from "react"
+import { useState, type FC } from "react"
 import { useRouter } from "next/navigation"
-import { useAtom, useSetAtom } from "jotai"
-import { PanelLeftClose, PanelLeftOpen, Plus, X } from "lucide-react"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import {
+  FolderClosed,
+  FolderOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
+  X,
+} from "lucide-react"
 import {
   ResizableHandle,
   ResizablePanel,
@@ -40,16 +45,19 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import {
   atomAssistantMenuOpen,
   atomAssistantOpen,
+  atomAssistantPage,
+  atomWorkspaceOpen,
 } from "@/lib/assistant/store"
 import { Thread } from "@/components/assistant-ui/thread"
+import { AssistantMenu } from "@/components/assistant-ui/assistant-menu"
+import { AssistantSettings } from "@/components/assistant-ui/assistant-settings"
+import { WorkspacePanel } from "@/components/assistant-ui/workspace-panel"
 import {
   AssistantLanding,
   type LandingActionSpec,
 } from "@/components/assistant-ui/assistant-landing"
-import {
-  SessionHistoryList,
-  useHasSessionHistory,
-} from "@/components/assistant-ui/session-history"
+import { useHasSessionHistory } from "@/components/assistant-ui/session-history"
+import { useSessionActions } from "@/components/assistant-ui/session-controls"
 import {
   useAssistantLoadState,
   useAssistantSessionStore,
@@ -65,6 +73,9 @@ import {
  */
 const MENU_BREAKPOINT = 900
 
+/** Below this, the workspace column would leave the conversation unreadable. */
+const WORKSPACE_BREAKPOINT = 1200
+
 export interface AssistantSurfaceProps {
   mode: "page" | "panel"
   landingActions?: LandingActionSpec[]
@@ -76,8 +87,8 @@ export interface AssistantSurfaceProps {
  * The toggle is tri-state; this is where the untouched case gets its answer,
  * and the answer is the history: a user with no conversations has nothing to
  * put in a menu, so the page opens as a single column and the menu appears on
- * its own once there IS something to list. A user who collapsed it keeps it
- * collapsed for the rest of the visit.
+ * its own once there IS something to list. Once the user has decided, their
+ * choice wins for the rest of the visit.
  */
 function useMenuOpen(): [boolean, (open: boolean) => void] {
   const [choice, setChoice] = useAtom(atomAssistantMenuOpen)
@@ -95,120 +106,106 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
   const loadState = useAssistantLoadState()
   const sessions = useAssistantSessionStore()
   const [menuOpen, setMenuOpen] = useMenuOpen()
+  const [workspaceOpen, setWorkspaceOpen] = useAtom(atomWorkspaceOpen)
+  const [page, setPage] = useAtom(atomAssistantPage)
   const setAssistantOpen = useSetAtom(atomAssistantOpen)
   const [rootRef, width] = useElementWidth()
   const [sheetOpen, setSheetOpen] = useState(false)
 
   const compact = width != null && width < MENU_BREAKPOINT
-  const showMenuColumn = mode === "page" && menuOpen && !compact && !!sessions
+  const narrow = width != null && width < WORKSPACE_BREAKPOINT
+  const showMenu = mode === "page" && menuOpen && !compact && !!sessions
+  const showWorkspace = mode === "page" && workspaceOpen && !narrow
+  const view = mode === "page" ? page : null
 
-  // From the panel, the menu is a place rather than a toggle: it does not fit
-  // in a third of the width, so the button goes where it does.
-  const openMenu = () => {
-    if (mode === "panel") {
-      setMenuOpen(true)
-      setAssistantOpen(false)
-      router.push(`/${locale}/assistant`)
-      return
-    }
-    if (compact) setSheetOpen(true)
-    else setMenuOpen(true)
+  // From the panel, a column is a PLACE rather than a toggle: neither fits in a
+  // third of the width, so the button goes where it does.
+  const goToPage = (open: "menu" | "workspace") => {
+    if (open === "menu") setMenuOpen(true)
+    else setWorkspaceOpen(true)
+    setAssistantOpen(false)
+    router.push(`/${locale}/assistant`)
   }
 
   if (loadState === "loading") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+      <div className="text-muted-foreground flex min-h-0 flex-1 items-center justify-center gap-2 text-sm">
         <Spinner className="size-4" />
         {t("assistant.initializingSession")}
       </div>
     )
   }
 
-  const header = (
-    <div className="flex h-11 shrink-0 items-center gap-1 border-b px-2">
-      {!showMenuColumn ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          onClick={openMenu}
-          aria-label={t("assistant.menu.expand")}
-        >
-          <PanelLeftOpen className="size-4" />
-        </Button>
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          onClick={() => setMenuOpen(false)}
-          aria-label={t("assistant.menu.collapse")}
-        >
-          <PanelLeftClose className="size-4" />
-        </Button>
-      )}
-      <span className="truncate text-sm font-medium">
-        {t("assistant.title")}
-      </span>
-      <div className="ml-auto flex items-center gap-1">
-        {sessions ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={() => void sessions.create()}
-            aria-label={t("assistant.newSession")}
-          >
-            <Plus className="size-4" />
-          </Button>
-        ) : null}
-        {mode === "panel" ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={() => setAssistantOpen(false)}
-            aria-label={t("assistant.close")}
-          >
-            <X className="size-4" />
-          </Button>
-        ) : null}
-      </div>
-    </div>
-  )
-
   const conversation = (
     <div
       className={cn(
-        // The conversation is the panel: it keeps its own fill whether or not
-        // the menu is out, so collapsing the menu does not repaint what you
-        // are reading.
+        // The conversation is the panel: it keeps its own fill whether or not a
+        // column is out, so collapsing one does not repaint what you are
+        // reading.
         "bg-card relative flex min-h-0 min-w-0 flex-1 flex-col",
-        showMenuColumn && "overflow-hidden rounded-xl border"
+        // The floating look — a card inset with a hairline, rather than a hard
+        // seam against the frame. Only when something is beside it; alone it
+        // fills the frame and no border is drawn at all.
+        (showMenu || showWorkspace) && "overflow-hidden rounded-xl border"
       )}
     >
-      {header}
-      <Thread
-        landing={
-          mode === "page" ? (
-            <AssistantLanding
-              {...(landingActions ? { landingActions } : {})}
-            />
-          ) : undefined
-        }
+      <SurfaceHeader
+        mode={mode}
+        menuOut={showMenu}
+        workspaceOut={showWorkspace}
+        onToggleMenu={() => {
+          if (mode === "panel") return goToPage("menu")
+          if (compact) setSheetOpen(true)
+          else setMenuOpen(!showMenu)
+        }}
+        onToggleWorkspace={() => {
+          if (mode === "panel") return goToPage("workspace")
+          setWorkspaceOpen(!showWorkspace)
+        }}
+        onClose={() => setAssistantOpen(false)}
       />
+      {view === "config" ? (
+        <AssistantSettings onClose={() => setPage(null)} />
+      ) : (
+        <Thread
+          landing={
+            mode === "page" ? (
+              <AssistantLanding
+                {...(landingActions ? { landingActions } : {})}
+              />
+            ) : undefined
+          }
+        />
+      )}
     </div>
   )
 
   return (
-    <div ref={rootRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {showMenuColumn ? (
+    <div
+      ref={rootRef}
+      className="bg-muted/30 flex min-h-0 min-w-0 flex-1 flex-col"
+    >
+      {showMenu || showWorkspace ? (
         <ResizablePanelGroup className="min-h-0 flex-1">
-          <ResizablePanel defaultSize="20%" minSize="14%" maxSize="34%">
-            <MenuColumn />
-          </ResizablePanel>
-          <ResizableHandle />
-          <ResizablePanel>{conversation}</ResizablePanel>
+          {showMenu ? (
+            <>
+              <ResizablePanel defaultSize="20%" minSize="14%" maxSize="34%">
+                <MenuColumn />
+              </ResizablePanel>
+              <ResizableHandle />
+            </>
+          ) : null}
+          <ResizablePanel minSize="30%">{conversation}</ResizablePanel>
+          {showWorkspace ? (
+            <>
+              <ResizableHandle />
+              <ResizablePanel defaultSize="26%" minSize="18%" maxSize="45%">
+                <div className="flex h-full min-h-0 flex-col p-1 pl-0">
+                  <WorkspacePanel />
+                </div>
+              </ResizablePanel>
+            </>
+          ) : null}
         </ResizablePanelGroup>
       ) : (
         conversation
@@ -227,17 +224,108 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
   )
 }
 
-const MenuColumn: FC<{ onOpenChat?: () => void }> = ({ onOpenChat }) => (
-  <div className="flex h-full min-h-0 flex-col">
-    <SessionHistoryList {...(onOpenChat ? { onOpenChat } : {})} />
-  </div>
-)
+/** The conversation menu, in a column or in the sheet. */
+const MenuColumn: FC<{ onOpenChat?: () => void }> = ({ onOpenChat }) => {
+  const [, setMenuOpen] = useMenuOpen()
+  const setPage = useSetAtom(atomAssistantPage)
+  const { newSession, newSessionBusy } = useSurfaceSessionActions()
+  const page = useAtomValue(atomAssistantPage)
+  return (
+    <AssistantMenu
+      onCollapse={() => setMenuOpen(false)}
+      onNewSession={newSession}
+      newSessionBusy={newSessionBusy}
+      page={page}
+      onOpenPage={setPage}
+      onOpenChat={() => {
+        setPage(null)
+        onOpenChat?.()
+      }}
+    />
+  )
+}
 
-/** Closes the panel when the route changes, so it never follows a navigation. */
-export const AssistantPanelRouteGuard: FC<{ children: ReactNode }> = ({
-  children,
+/**
+ * New-session, wrapped so the menu does not need to know which of the two
+ * sources can create one.
+ *
+ * `useSessionActions` reads thread state and therefore only works inside the
+ * runtime; the port's store is what the menu can always reach. Preferring the
+ * former keeps the "already on an empty session" guard, which is the only
+ * thing stopping a double click from spawning two blank conversations.
+ */
+function useSurfaceSessionActions() {
+  const sessions = useAssistantSessionStore()
+  const actions = useSessionActions()
+  return {
+    newSession: () => {
+      if (actions?.newSession) return actions.newSession()
+      void sessions?.create()
+    },
+    newSessionBusy: actions?.newBusy ?? false,
+  }
+}
+
+const SurfaceHeader: FC<{
+  mode: "page" | "panel"
+  menuOut: boolean
+  workspaceOut: boolean
+  onToggleMenu: () => void
+  onToggleWorkspace: () => void
+  onClose: () => void
+}> = ({
+  mode,
+  menuOut,
+  workspaceOut,
+  onToggleMenu,
+  onToggleWorkspace,
+  onClose,
 }) => {
-  const setOpen = useSetAtom(atomAssistantOpen)
-  useEffect(() => () => setOpen(false), [setOpen])
-  return <>{children}</>
+  const { t } = useTranslation()
+  return (
+    <div className="flex h-11 shrink-0 items-center gap-1 border-b px-2">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        onClick={onToggleMenu}
+        aria-label={menuOut ? t("assistant.menu.collapse") : t("assistant.menu.expand")}
+      >
+        {menuOut ? (
+          <PanelLeftClose className="size-4" />
+        ) : (
+          <PanelLeftOpen className="size-4" />
+        )}
+      </Button>
+      <span className="truncate text-sm font-medium">
+        {t("assistant.title")}
+      </span>
+      <div className="ml-auto flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={onToggleWorkspace}
+          aria-label={t("workspace.title")}
+        >
+          {workspaceOut ? (
+            <FolderOpen className="size-4" />
+          ) : (
+            <FolderClosed className="size-4" />
+          )}
+        </Button>
+        {mode === "panel" ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={onClose}
+            aria-label={t("assistant.close")}
+          >
+            <X className="size-4" />
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  )
 }
