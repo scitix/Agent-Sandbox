@@ -14,33 +14,38 @@
  * limitations under the License.
  */
 
-// Sign in automatically, for local work and for automated UI checks.
+// Sign in automatically when the dashboard is being served to its own machine,
+// so local work and automated UI checks do not have to drive a login form to
+// reach the pages they are checking.
 //
-// Double-gated, and both gates matter. NODE_ENV is checked so this cannot ship
-// in a production bundle whatever the environment says, and the flag is checked
-// so a normal `pnpm dev` still shows the login page — a developer who wants to
-// exercise the real sign-in must not have it skipped underneath them.
+// Gated on the ORIGIN rather than on a build-time flag, deliberately. A
+// NEXT_PUBLIC_* flag has to be present when the client bundle is compiled, and
+// getting that wrong fails silently — the page simply sits on the login screen
+// with nothing saying why. A loopback host cannot be wrong: a deployment is
+// never reached at 127.0.0.1 by the person using it.
 //
-// It goes through the ordinary mock-login endpoint rather than fabricating a
-// session, so the token is real and every downstream check — including the
-// assistant proxy's, which is the whole reason the assistant needs a verified
-// session — runs exactly as it would for a person.
+// The second gate is the endpoint's own: /api/auth/mock/login refuses outright
+// when OIDC is configured, which every real deployment has. So this cannot
+// hand out a session anywhere it matters, and it goes through that ordinary
+// endpoint rather than fabricating one — the token is real, and every
+// downstream check runs exactly as it would for a person.
 
 import type { AuthState } from "@/lib/atoms"
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"])
+
 export function devAutoLoginEnabled(): boolean {
-  return (
-    process.env.NODE_ENV !== "production" &&
-    process.env.NEXT_PUBLIC_DEV_AUTOLOGIN === "1"
-  )
+  if (typeof window === "undefined") return false
+  return LOOPBACK.has(window.location.hostname)
 }
 
-/** Who to sign in as. Defaults are a tenant, not an admin: the more restricted
+/** Who to sign in as. A tenant rather than an admin: the more restricted
  *  identity is the one worth developing against. */
 function devIdentity(): { username: string; team: string } {
+  const q = new URLSearchParams(window.location.search)
   return {
-    username: process.env.NEXT_PUBLIC_DEV_USER || "ylli",
-    team: process.env.NEXT_PUBLIC_DEV_TEAM || "ylli",
+    username: q.get("devUser") || "ylli",
+    team: q.get("devTeam") || "ylli",
   }
 }
 

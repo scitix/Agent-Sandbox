@@ -159,7 +159,12 @@ export const atomAssistantBackend = atom(
   get =>
     get(atomAssistantBackendOverride) ??
     get(atomLocalAppConfig).assistantBackend ??
-    'opencode',
+    // claude-code, not opencode: OpenCode is withdrawn here (its tool
+    // overrides register alongside the built-ins rather than replacing them,
+    // which would run the agent's shell on the pod). A default naming a
+    // harness the gateway does not serve shows the wrong name in the picker
+    // while every reply comes from the other one.
+    'claude-code',
   (_get, set, next: string | null) => {
     set(atomAssistantBackendOverride, next)
     if (typeof localStorage === 'undefined') return

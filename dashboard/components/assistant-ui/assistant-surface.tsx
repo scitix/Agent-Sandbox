@@ -56,10 +56,7 @@ import { Thread } from "@/components/assistant-ui/thread"
 import { AssistantMenu } from "@/components/assistant-ui/assistant-menu"
 import { AssistantSettings } from "@/components/assistant-ui/assistant-settings"
 import { WorkspacePanel } from "@/components/assistant-ui/workspace-panel"
-import {
-  AssistantLanding,
-  type LandingActionSpec,
-} from "@/components/assistant-ui/assistant-landing"
+import type { LandingActionSpec } from "@/components/assistant-ui/assistant-landing"
 import { useHasSessionHistory } from "@/components/assistant-ui/session-history"
 import { useSessionActions } from "@/components/assistant-ui/session-controls"
 import {
@@ -100,10 +97,7 @@ function useMenuOpen(): [boolean, (open: boolean) => void] {
   return [choice ?? hasHistory, setChoice]
 }
 
-export const AssistantSurface: FC<AssistantSurfaceProps> = ({
-  mode,
-  landingActions,
-}) => {
+export const AssistantSurface: FC<AssistantSurfaceProps> = ({ mode }) => {
   const { t } = useTranslation()
   const locale = useLocale()
   const router = useRouter()
@@ -156,7 +150,7 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
         // The conversation is the panel: it keeps its own fill whether or not a
         // column is out, so collapsing one does not repaint what you are
         // reading.
-        "bg-card relative flex min-h-0 min-w-0 flex-1 flex-col",
+        "bg-card relative flex h-full min-h-0 min-w-0 flex-1 flex-col",
         // The floating look — a card inset with a hairline, rather than a hard
         // seam against the frame. Only when something is beside it; alone it
         // fills the frame and no border is drawn at all.
@@ -181,15 +175,11 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
       {view === "config" ? (
         <AssistantSettings onClose={() => setPage(null)} />
       ) : (
-        <Thread
-          landing={
-            mode === "page" ? (
-              <AssistantLanding
-                {...(landingActions ? { landingActions } : {})}
-              />
-            ) : undefined
-          }
-        />
+        /* No `landing`: the empty state is the centred greeting, which now
+           carries the suggestions. A landing switches the thread into its
+           scrolling flow layout, which only pays off with a status board to
+           fill it. */
+        <Thread />
       )}
     </div>
   )
@@ -203,17 +193,29 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
         <ResizablePanelGroup className="min-h-0 flex-1">
           {showMenu ? (
             <>
-              <ResizablePanel defaultSize="20%" minSize="14%" maxSize="34%">
+              <ResizablePanel
+                defaultSize="20%"
+                minSize="14%"
+                maxSize="34%"
+                className="flex min-w-0 flex-col"
+              >
                 <MenuColumn />
               </ResizablePanel>
               <ResizableHandle />
             </>
           ) : null}
-          <ResizablePanel minSize="30%">{conversation}</ResizablePanel>
+          <ResizablePanel minSize="30%" className="flex min-w-0 flex-col">
+            {conversation}
+          </ResizablePanel>
           {showWorkspace ? (
             <>
               <ResizableHandle />
-              <ResizablePanel defaultSize="26%" minSize="18%" maxSize="45%">
+              <ResizablePanel
+                defaultSize="26%"
+                minSize="18%"
+                maxSize="45%"
+                className="flex min-w-0 flex-col"
+              >
                 <div className="flex h-full min-h-0 flex-col p-1 pl-0">
                   <WorkspacePanel />
                 </div>
