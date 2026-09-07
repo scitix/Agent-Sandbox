@@ -22,9 +22,10 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { AssistantSidePanel } from "@/components/assistant-ui/assistant-side-panel"
+import { devAutoLogin, devAutoLoginEnabled } from "@/lib/dev-auth"
 import { ErrorReportDialog } from "@/components/error-report-dialog"
 import { ChangelogDialog } from "@/components/changelog/changelog-dialog"
-import { useAtomValue } from "jotai"
+import { useAtomValue, useSetAtom } from "jotai"
 import { authAtom } from "@/lib/atoms"
 import { loginPath } from "@/lib/cluster-path"
 import { basePath } from "@/lib/api/client"
@@ -44,9 +45,25 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     setHydrated(true)
   }, [])
 
+  // Local and CI runs can sign themselves in, so a UI check does not have to
+  // drive a login form to reach the pages it is checking.
+  const setAuth = useSetAtom(authAtom)
+  useEffect(() => {
+    if (!hydrated || auth !== null || !devAutoLoginEnabled()) return
+    let cancelled = false
+    void devAutoLogin().then(a => {
+      if (!cancelled && a) setAuth(a)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [hydrated, auth, setAuth])
+
   useEffect(() => {
     if (!hydrated) return // Wait for hydration before checking auth
     if (auth === null) {
+      // The dev sign-in is in flight; redirecting would race it.
+      if (devAutoLoginEnabled()) return
       const fullPath = window.location.pathname + window.location.search
       const appPath =
         basePath && fullPath.startsWith(basePath) ? fullPath.slice(basePath.length) : fullPath

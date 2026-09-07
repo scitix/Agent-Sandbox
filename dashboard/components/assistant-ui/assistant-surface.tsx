@@ -41,6 +41,10 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/lib/i18n"
 import { useLocale } from "@/hooks/use-locale"
+import { clusterPath } from "@/lib/cluster-path"
+import { authAtom } from "@/lib/atoms"
+import { usePathname } from "next/navigation"
+import { clusterFromPath } from "@/lib/assistant/current-page"
 import { useElementWidth } from "@/hooks/use-element-width"
 import {
   atomAssistantMenuOpen,
@@ -109,6 +113,11 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
   const [workspaceOpen, setWorkspaceOpen] = useAtom(atomWorkspaceOpen)
   const [page, setPage] = useAtom(atomAssistantPage)
   const setAssistantOpen = useSetAtom(atomAssistantOpen)
+  // The route names the cluster when we are already inside one; the session's
+  // cluster is the fallback for the cluster-less entry point.
+  const pathname = usePathname()
+  const auth = useAtomValue(authAtom)
+  const cluster = clusterFromPath(pathname) ?? auth?.clusterID
   const [rootRef, width] = useElementWidth()
   const [sheetOpen, setSheetOpen] = useState(false)
 
@@ -124,7 +133,12 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
     if (open === "menu") setMenuOpen(true)
     else setWorkspaceOpen(true)
     setAssistantOpen(false)
-    router.push(`/${locale}/assistant`)
+    // clusterPath, not an interpolated locale: the default locale is
+    // deliberately absent from URLs here, and the i18n middleware rewrites a
+    // path that lacks one by PREPENDING it. Hand it `/en/...` and it does not
+    // recognise its own prefix, so it prepends again — and again — until the
+    // rewrite header overflows and every page answers 431.
+    router.push(clusterPath(cluster ?? "default", "assistant", locale))
   }
 
   if (loadState === "loading") {
