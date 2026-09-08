@@ -37,6 +37,14 @@ image:
 # Note: this value is informational for the Helm chart (used in Ingress path
 # and health-probe paths). The actual basePath is baked into the image at
 # build time via the NEXT_BASE_PATH Docker ARG.
+# The console's own public address, published to every Worker so that a write a
+# Worker refuses can name the page a person opens to approve it.
+#
+# Normally left empty: it is derived from `ingress.host` + `basePath` below,
+# which this chart already states. Set it only when something this chart cannot
+# see fronts the console — an external gateway, a vanity domain.
+consoleBaseURL: ""
+
 basePath: ""
 
 # Environment variables

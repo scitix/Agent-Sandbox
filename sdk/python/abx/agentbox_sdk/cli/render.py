@@ -207,22 +207,28 @@ def approval_block(approval: Any) -> list[str]:
     """The trailer a refused write prints.
 
     Same shape as every other trailer — a label, then two-space-indented lines —
-    so an agent that has parsed one has parsed this one. It pairs an `approval:`
-    block naming what is being asked and where to go, with the `hint:` block
-    AGENTS.md already tells the agent to follow verbatim.
+    so an agent that has parsed one has parsed this one.
 
-    The hint is `approvals wait`, not "run the command again": waiting is what
-    the agent should do, and the wait command tells it when to retry. Telling it
-    to retry immediately produces a second refusal and a loop.
+    The hint deliberately splits into two turns, and the order is the whole
+    point. `approvals wait` BLOCKS, and a tool result only reaches the person
+    when the command exits: an agent that runs it in the same turn as the
+    refusal shows them nothing until it times out, by which time the link it was
+    holding has expired. So the instruction is to surface the link and stop, and
+    to wait only once they say they have acted on it.
     """
     lines = ["approval:", "  " + (approval.summary or approval.operation)]
     if approval.url:
         lines.append("  " + approval.url)
+    else:
+        lines.append("  (no console link configured; approve via the API)")
     scope = "once" if approval.once_only else "once, or for this whole session"
     lines.append(f"  ({scope})")
     lines += [
         "hint:",
-        f"  abx approvals wait {approval.id}"
-        "  # blocks until it is decided, then run the same command again",
+        "  # Show the link above and END YOUR TURN. Do NOT run the",
+        "  # command below yet: it blocks, and nothing you print reaches",
+        "  # the user until it returns. Run it once they have approved:",
+        f"  abx approvals wait {approval.id}",
+        "  # …then run the original command again.",
     ]
     return lines

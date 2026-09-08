@@ -66,6 +66,17 @@ spec:
               value: {{ .Values.globalApiKey.maxKeysPerUser | quote }}
             - name: AGENTBOX_APIKEY_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            {{- /* Where a person goes to act on something a Worker refused.
+                   Derived from the ingress host and basePath rather than asked
+                   for separately, because this chart already knows both — and a
+                   third place to state the same address is a third place for it
+                   to drift. Republished to every Worker on the cluster-config
+                   snapshot; empty simply omits the link from a refusal. */}}
+            {{- $console := include "agent-sandbox-hub.consoleBaseURL" . }}
+            {{- if $console }}
+            - name: AGENTBOX_CONSOLE_BASE_URL
+              value: {{ $console | quote }}
+            {{- end }}
             - name: AGENTBOX_IMAGES_CATALOG_CONFIGMAP
               value: {{ include "agent-sandbox-hub.imagesCatalogConfigMapName" . | quote }}
             - name: AGENTBOX_ADMIN_KEY

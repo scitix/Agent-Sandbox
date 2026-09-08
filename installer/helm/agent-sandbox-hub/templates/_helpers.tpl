@@ -234,3 +234,28 @@ the console's BFF accepts one in that position.
 {{- join "," $names -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+The console's own public address, e.g. "https://console.example.com/agentbox".
+
+Assembled from the ingress this chart already declares rather than accepted as a
+separate value: the host and the base path are both stated here once, and asking
+for the whole URL again would let the two drift with no symptom until someone
+follows a link that 404s.
+
+Explicit `consoleBaseURL` still wins, for a deployment fronted by something this
+chart cannot see (an external gateway, a vanity domain). Empty when there is no
+ingress and no override — a refusal then carries no link, which is better than
+one that leads nowhere.
+*/}}
+{{- define "agent-sandbox-hub.consoleBaseURL" -}}
+{{- if .Values.consoleBaseURL -}}
+{{- .Values.consoleBaseURL | trimSuffix "/" -}}
+{{- else if (.Values.ingress).host -}}
+{{- $scheme := "https" -}}
+{{- if eq (toString ((.Values.ingress).tls | default true)) "false" -}}
+{{- $scheme = "http" -}}
+{{- end -}}
+{{- printf "%s://%s%s" $scheme (.Values.ingress).host (.Values.basePath | default "" | trimSuffix "/") -}}
+{{- end -}}
+{{- end }}
