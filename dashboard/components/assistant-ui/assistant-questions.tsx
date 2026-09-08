@@ -111,7 +111,7 @@ function InterruptQuestionList({ cards }: { cards: Card[] }) {
  * `unknown`-typed protocol field, and a surprise shape must render nothing rather
  * than throw inside the thread.
  */
-function readCard(interrupt: AgUiInterrupt): Card | null {
+export function readCard(interrupt: AgUiInterrupt): Card | null {
   const meta = interrupt.metadata as
     | { agentbox?: unknown; navix?: unknown }
     | undefined
