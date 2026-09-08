@@ -63,6 +63,7 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import {
   atomAssistantMenuOpen,
   atomAssistantOpen,
+  atomAssistantCurrentSessionId,
   atomAssistantPage,
   atomAssistantPendingAutoSend,
   atomWorkspaceOpen,
@@ -414,9 +415,8 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
               // Inset only when something is beside it — the padding is what
               // lets the card read as floating, and a card alone in the frame
               // has nothing to float above.
-              (showMenu || showWorkspace) && "py-2",
-              showMenu && "pl-0",
-              !showWorkspace && "pr-2"
+              (showMenu || showWorkspace) && "py-2 pr-2",
+              showMenu && "pl-0"
             )}
           >
             {conversation}
@@ -430,9 +430,7 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
                 maxSize="45%"
                 className="flex min-w-0 flex-col"
               >
-                <div className="flex h-full min-h-0 flex-col py-2 pl-0 pr-2">
-                  <WorkspacePanel />
-                </div>
+                <WorkspacePanel />
               </ResizablePanel>
             </>
           ) : null}
@@ -534,6 +532,8 @@ const SurfaceHeader: FC<{
   onClose,
 }) => {
   const { t } = useTranslation()
+  // The agent's scratch directory only exists once a tool has run in it.
+  const hasSession = !!useAtomValue(atomAssistantCurrentSessionId)
 
   // The panel says what it is and how to shut it, and nothing else. Its actions
   // sit on their own row below, because in a column this narrow a title flanked
@@ -583,40 +583,45 @@ const SurfaceHeader: FC<{
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-1 px-2">
-      {/* The SAME glyph the menu's own header carries. Two icons that swap on
-          state read as two different controls when the button also moves
-          between two places — collapsing the menu made this button appear here
-          wearing a face the user had not seen. One glyph, one control, and its
-          position is what tells you which side of the toggle you are on. */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-full"
-        onClick={onToggleMenu}
-        aria-label={
-          menuOut ? t("assistant.menu.collapse") : t("assistant.menu.expand")
-        }
-      >
-        <AlignLeftIcon className="size-4" />
-      </Button>
+      {/* ONE toggle on screen at a time, and it lives on whichever side the
+          menu currently is. Open, the menu carries it in its own header; closed,
+          it reappears here. Showing both put two identical glyphs a few pixels
+          apart, which reads as two controls that must do different things. */}
+      {menuOut ? null : (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 rounded-full"
+          onClick={onToggleMenu}
+          aria-label={t("assistant.menu.expand")}
+        >
+          <AlignLeftIcon className="size-4" />
+        </Button>
+      )}
       {/* Which CONVERSATION, not which screen. The app header above already
           draws the breadcrumb, so repeating "Assistant" here labelled the same
           thing twice and left the row otherwise empty; the conversation's own
           name is the one thing this strip knows that the breadcrumb does not. */}
       <ConversationTitle />
-      <Button
-        variant="ghost"
-        size="icon"
-        className="ml-auto size-7 rounded-full"
-        onClick={onToggleWorkspace}
-        aria-label={t("workspace.title")}
-      >
-        {workspaceOut ? (
-          <FolderOpen className="size-4" />
-        ) : (
-          <FolderClosed className="size-4" />
-        )}
-      </Button>
+      {/* A workspace only exists once the agent has run a tool, and until then
+          the button's whole effect is to open a panel explaining that there is
+          nothing to see. Hiding it means the folder appearing IS the signal
+          that there is now something in it. */}
+      {hasSession ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="ml-auto size-7 rounded-full"
+          onClick={onToggleWorkspace}
+          aria-label={t("workspace.title")}
+        >
+          {workspaceOut ? (
+            <FolderOpen className="size-4" />
+          ) : (
+            <FolderClosed className="size-4" />
+          )}
+        </Button>
+      ) : null}
     </div>
   )
 }

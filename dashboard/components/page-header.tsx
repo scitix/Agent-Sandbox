@@ -65,7 +65,11 @@ export function PageHeader() {
   }, [statsData, setRunningCount])
 
   return (
-    <div className="border-border flex h-13 shrink-0 items-center justify-between border-b px-6">
+    // The app's chrome, on the chrome colour. Only the work area below takes
+    // the recessed canvas — a header sharing it would put the page's one
+    // recessed shade behind the breadcrumb as well, and the rail beside it is
+    // already white.
+    <div className="border-border bg-card flex h-13 shrink-0 items-center justify-between border-b px-6">
       <div className="flex min-w-0 items-center gap-2">
         {isMobile && (
           <Button

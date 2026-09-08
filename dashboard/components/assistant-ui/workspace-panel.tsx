@@ -161,16 +161,17 @@ export function WorkspacePanel() {
     // have to give up columns as it narrows. The window's width says nothing
     // about how wide THIS is — a `sm:` breakpoint here would keep showing every
     // column on a 4K screen while the panel itself was dragged down to 240px.
-    <div className="@container/workspace bg-card flex h-full min-h-0 flex-col overflow-hidden rounded-xl border">
-      {/* A panel, like the conversation beside it — same fill, same radius, same
-          hairline. It used to take the canvas colour with a card-coloured header
-          strip, which inverted the layering: the recessed shade was on the
-          outside and the raised one on the inside, so the column read as a hole
-          in the page rather than as a thing on it.
+    <div className="@container/workspace bg-background flex h-full min-h-0 flex-col">
+      {/* Chrome, not a panel — the mirror of the session menu on the other side.
+          Both sit on the canvas with no fill and no border of their own, so the
+          conversation is the ONE raised thing on screen and the eye has one
+          place to land. Giving this column a card of its own put two panels
+          either side of the one that matters.
 
-          `h-11` matches the conversation's own header row, so the two line up
-          across the seam. */}
-      <header className="flex h-11 shrink-0 items-center gap-1 border-b px-3">
+          `h-11` matches the conversation's header row so the two line up across
+          the seam, and the gutters match the menu's rather than the tighter
+          `px-3` a bordered box needed to stay off its own edge. */}
+      <header className="flex h-11 shrink-0 items-center gap-1 px-4">
         <HardDriveIcon className="size-4" />
         <span className="text-[13px] font-medium">{t('workspace.title')}</span>
         <div className="flex-1" />
@@ -207,7 +208,7 @@ export function WorkspacePanel() {
 
       {/* Breadcrumb — only meaningful once we have a live listing */}
       {status === 'ok' && (
-        <div className="text-muted-foreground flex flex-wrap items-center gap-0.5 border-b px-3 py-2 text-xs">
+        <div className="text-muted-foreground flex flex-wrap items-center gap-0.5 px-4 pb-2 text-xs">
           <button
             type="button"
             className="hover:text-foreground max-w-[10rem] truncate"
@@ -250,7 +251,7 @@ export function WorkspacePanel() {
           this footer was a second paragraph of grey text under the first, and
           the warning it carries is about files that do not exist yet. */}
       {status === 'ok' && (
-        <p className="text-muted-foreground/80 border-t px-3 py-2 text-[11px]">
+        <p className="text-muted-foreground/80 px-4 py-2.5 text-[11px]">
           {t('workspace.ephemeralHint')}
         </p>
       )}
