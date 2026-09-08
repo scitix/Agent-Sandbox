@@ -113,3 +113,45 @@ def test_a_refusal_without_a_console_link_still_renders():
     text = "\n".join(R.approval_block(_approval_of(payload)))
     assert "http" not in text
     assert "abx approvals wait" in text
+
+
+# ── the hint adapts to what the host can do ──────────────────────────────────
+#
+# Everything ABOVE `hint:` is one contract: an agent that parses the block gets
+# the same fields wherever it runs. The hint is the part that differs, because
+# "how do I reach a person from here" differs — a terminal has a link and a
+# person who will come back; a hosted conversation has the person already
+# looking at it.
+
+
+def test_the_terminal_hint_is_the_two_turn_dance(monkeypatch):
+    monkeypatch.delenv("AGENTBOX_APPROVAL_TOOL", raising=False)
+    text = "\n".join(
+        R.approval_block(_approval_of(REFUSAL), "abx envs create --name t1")
+    )
+    assert "abx approvals wait apr_deadbeef" in text
+    assert "END YOUR TURN" in text
+
+
+def test_a_host_that_can_ask_is_told_to_ask_and_told_what_with(monkeypatch):
+    """The command is echoed, not left to the agent's memory.
+
+    A once-approval is matched against the exact request that raised it, so a
+    tool handed a paraphrase of the command is refused a second time — which
+    reads to everyone as the approve button not having worked.
+    """
+    monkeypatch.setenv("AGENTBOX_APPROVAL_TOOL", "request_approval")
+    text = "\n".join(
+        R.approval_block(_approval_of(REFUSAL), "abx envs create --name t1")
+    )
+    assert "request_approval: abx envs create --name t1" in text
+    # Not sent to the page: the buttons are closer than the link.
+    assert "abx approvals wait" not in text
+
+
+def test_the_block_above_the_hint_does_not_depend_on_the_host(monkeypatch):
+    monkeypatch.delenv("AGENTBOX_APPROVAL_TOOL", raising=False)
+    plain = R.approval_block(_approval_of(REFUSAL), "abx envs create")
+    monkeypatch.setenv("AGENTBOX_APPROVAL_TOOL", "request_approval")
+    hosted = R.approval_block(_approval_of(REFUSAL), "abx envs create")
+    assert plain[: plain.index("hint:")] == hosted[: hosted.index("hint:")]

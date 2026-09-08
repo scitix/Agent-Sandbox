@@ -62,6 +62,11 @@ import {
   type Usage,
   sandboxCtxFor,
 } from '../backend.ts'
+import {
+  APPROVAL_MCP_SERVER,
+  APPROVAL_TOOL,
+  approvalMcpServer,
+} from '../approval-tool.ts'
 import type { InteractionRegistry } from '../interactions.ts'
 import {
   bindSandboxIdentity,
@@ -513,7 +518,7 @@ export class ClaudeCodeBackend implements AgentBackend {
             : {}),
           // AskUserQuestion is how the agent asks; the sandbox toolset is how it
           // does IO. Everything else stays off.
-          ...this.toolOptions(threadId),
+          ...this.toolOptions(threadId, events, controller.signal),
           ...(req.agent ? { agent: req.agent } : {}),
           toolConfig: { askUserQuestion: { previewFormat: 'html' } },
           canUseTool: this.canUseTool(threadId, events, req.signal),
@@ -586,9 +591,40 @@ export class ClaudeCodeBackend implements AgentBackend {
    * scenario-scoped grant is meant to withhold it from. That is why the tools an
    * earlier version stitched in here were removed rather than renamed, and why
    * adding one back is a bigger change than it looks.
+   *
+   * `request_approval` is here anyway, and the reason is the question that rule
+   * is really asking: does this GRANT anything? It does not. It can only ask a
+   * person to permit a call the platform has already refused, and it is inert
+   * against a credential the platform does not gate. Every agent this
+   * deployment serves acts on the platform through one gate, so every one of
+   * them needs the same way to ask — withholding it from an agent would not
+   * make that agent safer, only unable to explain why it is stuck.
    */
-  private toolOptions(threadId: string) {
-    return withAskUserQuestion(sandboxToolOptions(sandboxCtxFor(threadId)))
+  private toolOptions(
+    threadId: string,
+    events: AsyncQueue<AgentEvent>,
+    signal: AbortSignal
+  ) {
+    const opts = withAskUserQuestion(sandboxToolOptions(sandboxCtxFor(threadId)))
+    return {
+      ...opts,
+      mcpServers: {
+        ...opts.mcpServers,
+        [APPROVAL_MCP_SERVER]: approvalMcpServer({
+          threadId,
+          events,
+          interactions: this.interactions,
+          signal,
+          ...(process.env.ABX_CLUSTER
+            ? { cluster: process.env.ABX_CLUSTER }
+            : {}),
+        }),
+      },
+      allowedTools: [
+        ...opts.allowedTools,
+        `mcp__${APPROVAL_MCP_SERVER}__${APPROVAL_TOOL}`,
+      ],
+    }
   }
 
   /** Environment for the CLI subprocess. Replaces, not merges, so credentials

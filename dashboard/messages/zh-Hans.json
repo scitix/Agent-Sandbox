@@ -1523,5 +1523,7 @@
   "apiKeys.mode.unrestricted": "不受限",
   "apiKeys.mode.unrestrictedHint": "你自己的凭证。你能做的它都能做，不用问。",
   "apiKeys.mode.agent": "Agent",
-  "apiKeys.mode.agentHint": "给无人值守的东西用。沙箱照常，改动平台要等你批。"
+  "apiKeys.mode.agentHint": "给无人值守的东西用。沙箱照常，改动平台要等你批。",
+  "assistant.approval.title": "需要审批",
+  "assistant.approval.sessionHint": "本次对话剩余时间内，同样的操作一并允许"
 }

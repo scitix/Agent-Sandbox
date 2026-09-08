@@ -230,6 +230,12 @@ function toInterrupt(parked: ParkedInteraction): Interrupt {
         kind: parked.request.kind,
         createdAt: parked.createdAt,
         questions: parked.request.questions,
+        // Only an approval request carries this, and the card needs every field
+        // of it to record a decision. Spread conditionally so a plain question's
+        // metadata keeps the shape it has always had.
+        ...(parked.request.approval
+          ? { approval: parked.request.approval }
+          : {}),
       },
     },
   }

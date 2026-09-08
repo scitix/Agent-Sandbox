@@ -26,6 +26,7 @@
 import { describe, expect, it } from "vitest"
 import type { AgUiInterrupt } from "@assistant-ui/react-ag-ui"
 import { readCard } from "@/components/assistant-ui/assistant-questions"
+import { transcriptToMessages } from "@/components/assistant-ui/gw/transcript"
 
 /** The shape `toInterrupt` in the gateway actually sends. */
 function interrupt(metadata: unknown): AgUiInterrupt {
@@ -80,5 +81,118 @@ describe("readCard", () => {
     )
     expect(card?.request.questions).toHaveLength(1)
     expect(card?.request.questions?.[0]?.options).toEqual([{ label: "yes" }])
+  })
+})
+
+// ── approval cards ───────────────────────────────────────────────────────────
+//
+// An approval card is a question card carrying the ids the browser needs to
+// record a decision. The failure mode is the same shape as the one above and
+// just as quiet: drop the block anywhere along the way and the card still
+// renders, still resolves the interrupt, and the agent still retries — into a
+// second refusal, because nobody ever told the platform anything.
+
+const APPROVAL = {
+  approvalId: "apr_931d62ab185ac98d",
+  cluster: "foo",
+  operation: "env.create",
+  summary: "Create an environment (t1)",
+  onceOnly: false,
+  command: "abx envs create --name t1",
+}
+
+const DECISION = [
+  {
+    key: "decision",
+    question: "Create an environment (t1)",
+    header: "env.create",
+    options: [
+      { label: "approve_once" },
+      { label: "approve_session" },
+      { label: "deny" },
+    ],
+  },
+]
+
+describe("readCard: approvals", () => {
+  it("carries the approval through", () => {
+    const card = readCard(
+      interrupt({
+        agentbox: { kind: "permission", questions: DECISION, approval: APPROVAL },
+      })
+    )
+    expect(card?.approval).toEqual(APPROVAL)
+  })
+
+  it("renders as a plain question when there is no approval block", () => {
+    const card = readCard(
+      interrupt({ agentbox: { kind: "question", questions: QUESTIONS } })
+    )
+    expect(card?.approval).toBeUndefined()
+  })
+
+  it.each([
+    ["no id", { ...APPROVAL, approvalId: "" }],
+    ["no cluster", { ...APPROVAL, cluster: undefined }],
+    ["not an object", "apr_1"],
+  ])(
+    "ignores an approval with %s rather than offering a button that records nothing",
+    (_why, approval) => {
+      const card = readCard(
+        interrupt({
+          agentbox: { kind: "permission", questions: DECISION, approval },
+        })
+      )
+      // Still a card — the interrupt must remain answerable either way.
+      expect(card).not.toBeNull()
+      expect(card?.approval).toBeUndefined()
+    }
+  )
+
+  it("keeps onceOnly, which is what hides the wider scope", () => {
+    const card = readCard(
+      interrupt({
+        agentbox: {
+          kind: "permission",
+          questions: DECISION,
+          approval: { ...APPROVAL, onceOnly: true },
+        },
+      })
+    )
+    expect(card?.approval?.onceOnly).toBe(true)
+  })
+})
+
+describe("a reloaded page keeps the approval buttons", () => {
+  it("round-trips the approval from GET /interactions back into a card", () => {
+    // What hydration does: a parked request is mapped by `asInterrupt` rather
+    // than the gateway's `toInterrupt`, and those are two separate functions.
+    // A block that survives the live stream but not this path loses its buttons
+    // exactly when the person comes back to press them.
+    const messages = transcriptToMessages(
+      [
+        {
+          uuid: "m1",
+          role: "assistant",
+          timestamp: new Date().toISOString(),
+          parts: [{ type: "text", text: "I need permission for that." }],
+        } as never,
+      ],
+      [
+        {
+          requestId: "int_1",
+          kind: "permission",
+          questions: DECISION,
+          approval: APPROVAL,
+        },
+      ]
+    )
+    const interrupts = (
+      messages.at(-1)?.metadata?.custom as {
+        agui?: { interrupts?: AgUiInterrupt[] }
+      }
+    )?.agui?.interrupts
+    expect(interrupts).toHaveLength(1)
+    expect(readCard(interrupts![0])?.approval).toEqual(APPROVAL)
   })
 })

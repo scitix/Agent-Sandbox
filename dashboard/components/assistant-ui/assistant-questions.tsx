@@ -21,8 +21,10 @@ import {
 import type { AgUiInterrupt, AgUiResumeEntry } from '@assistant-ui/react-ag-ui'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/lib/i18n'
+import { useDecideApproval, type ApprovalScope } from '@/lib/queries/approval'
 import { cn } from '@/lib/utils'
 import { useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 // Renders the agent's question / permission requests as selectable cards.
 // Without this a question blocks the run forever.
@@ -59,7 +61,28 @@ interface Card {
    *  gateway keys answers by the question text as the agent phrased it; an
    *  index-keyed map would mis-assign as soon as the agent reorders them. */
   keys: string[]
+  /** Present when the gate is holding a platform write. */
+  approval?: ApprovalAsk
 }
+
+/** A held platform write, as the gateway describes it. Mirrors `ApprovalAsk` in
+ *  the gateway's `agent-events.ts`; re-declared rather than imported because
+ *  this side re-parses it defensively from an `unknown` protocol field. */
+interface ApprovalAsk {
+  approvalId: string
+  cluster: string
+  operation: string
+  summary: string
+  onceOnly: boolean
+  command?: string
+}
+
+/** The tokens the gateway's tool understands. Never display text: the labels
+ *  below are translated, and a locale must not be able to change what the agent
+ *  does with the answer. */
+const DECISION_APPROVE_ONCE = 'approve_once'
+const DECISION_APPROVE_SESSION = 'approve_session'
+const DECISION_DENY = 'deny'
 
 function InterruptQuestionList({ cards }: { cards: Card[] }) {
   const submit = useAgUiSubmitInterruptResponses()
@@ -100,14 +123,22 @@ function InterruptQuestionList({ cards }: { cards: Card[] }) {
 
   return (
     <div className="flex flex-col gap-2">
-      {cards.map(card => (
-        <QuestionCard
-          key={card.id}
-          request={card.request}
-          onReply={answers => flush({ ...answered, [card.id]: answers })}
-          onReject={() => flush({ ...answered, [card.id]: [] })}
-        />
-      ))}
+      {cards.map(card =>
+        card.approval ? (
+          <ApprovalCard
+            key={card.id}
+            approval={card.approval}
+            onDecided={token => flush({ ...answered, [card.id]: [[token]] })}
+          />
+        ) : (
+          <QuestionCard
+            key={card.id}
+            request={card.request}
+            onReply={answers => flush({ ...answered, [card.id]: answers })}
+            onReject={() => flush({ ...answered, [card.id]: [] })}
+          />
+        )
+      )}
     </div>
   )
 }
@@ -170,7 +201,36 @@ export function readCard(interrupt: AgUiInterrupt): Card | null {
     })
   }
   if (!questions.length) return null
-  return { id: interrupt.id, request: { questions }, keys }
+  const approval = readApproval((payload as { approval?: unknown }).approval)
+  return {
+    id: interrupt.id,
+    request: { questions },
+    keys,
+    ...(approval ? { approval } : {}),
+  }
+}
+
+/**
+ * The approval block, or nothing.
+ *
+ * A partial one is treated as absent rather than repaired: without the id and
+ * the cluster there is nowhere to send the decision, and a card that renders
+ * approve buttons which cannot record anything is worse than the plain question
+ * card this falls back to — that one at least resolves the interrupt.
+ */
+function readApproval(raw: unknown): ApprovalAsk | null {
+  if (!raw || typeof raw !== 'object') return null
+  const a = raw as Record<string, unknown>
+  if (typeof a.approvalId !== 'string' || !a.approvalId) return null
+  if (typeof a.cluster !== 'string' || !a.cluster) return null
+  return {
+    approvalId: a.approvalId,
+    cluster: a.cluster,
+    operation: typeof a.operation === 'string' ? a.operation : '',
+    summary: typeof a.summary === 'string' ? a.summary : '',
+    onceOnly: a.onceOnly === true,
+    ...(typeof a.command === 'string' ? { command: a.command } : {}),
+  }
 }
 
 /** What the card actually reads. Shared by every backend, since the gateway
@@ -307,6 +367,113 @@ function QuestionCard({
         )}
         <Button size="sm" variant="ghost" className="h-7" onClick={onReject}>
           {t('common.cancel')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A platform write the gate is holding, decided in the conversation.
+ *
+ * The decision is recorded on the PLATFORM first and the interrupt resolved only
+ * after that succeeds. The order is the whole point: the gateway's tool re-runs
+ * the command as soon as the interrupt settles, and a settle that raced ahead of
+ * the grant would have it refused a second time — which reads to everyone
+ * involved as the approve button not working.
+ *
+ * Recorded with the signed-in person's own session, never the agent's
+ * credential. That is not a detail of this component, it is what the gate is
+ * for: it refuses a decision made with the same unattended credential that
+ * asked, so the browser is the only party that can say yes.
+ */
+function ApprovalCard({
+  approval,
+  onDecided,
+}: {
+  approval: ApprovalAsk
+  onDecided: (token: string) => void
+}) {
+  const { t } = useTranslation()
+  const decide = useDecideApproval(approval.cluster)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const send = (
+    decision: 'approve' | 'deny',
+    scope: ApprovalScope,
+    token: string
+  ) => {
+    setBusy(token)
+    decide.mutate(
+      { id: approval.approvalId, decision, scope },
+      {
+        onSuccess: () => {
+          toast.success(
+            decision === 'approve'
+              ? t('approvals.toast.approved')
+              : t('approvals.toast.denied')
+          )
+          onDecided(token)
+        },
+        onError: () => {
+          // Left unresolved on purpose. The agent is still parked, so the person
+          // can press the button again — resolving it here would hand the agent
+          // an approval that was never recorded.
+          setBusy(null)
+          toast.error(t('approvals.toast.failed'))
+        },
+      }
+    )
+  }
+
+  return (
+    <div className="bg-muted/40 rounded-md border p-3 text-sm">
+      <div className="text-muted-foreground text-xs font-medium uppercase">
+        {t('assistant.approval.title')}
+      </div>
+      <div className="mb-1.5 font-medium">
+        {approval.summary || approval.operation}
+      </div>
+      {approval.command && (
+        <div className="bg-background text-muted-foreground mb-2 overflow-x-auto rounded-md border px-2.5 py-1.5 font-mono text-xs">
+          {approval.command}
+        </div>
+      )}
+      <div className="flex flex-col gap-1.5">
+        <button
+          type="button"
+          disabled={!!busy}
+          onClick={() => send('approve', 'once', DECISION_APPROVE_ONCE)}
+          className="hover:bg-accent rounded-md border px-2.5 py-1.5 text-left transition-colors disabled:opacity-50"
+        >
+          <div className="font-medium">{t('approvals.action.once')}</div>
+        </button>
+        {/* Destructive and credential-minting operations are never granted more
+            widely than one call, and the platform would refuse the wider scope
+            anyway — offering a button that 400s is worse than offering none. */}
+        {!approval.onceOnly && (
+          <button
+            type="button"
+            disabled={!!busy}
+            onClick={() => send('approve', 'session', DECISION_APPROVE_SESSION)}
+            className="hover:bg-accent rounded-md border px-2.5 py-1.5 text-left transition-colors disabled:opacity-50"
+          >
+            <div className="font-medium">{t('approvals.action.session')}</div>
+            <div className="text-muted-foreground text-xs">
+              {t('assistant.approval.sessionHint')}
+            </div>
+          </button>
+        )}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7"
+          disabled={!!busy}
+          onClick={() => send('deny', 'once', DECISION_DENY)}
+        >
+          {t('approvals.action.deny')}
         </Button>
       </div>
     </div>

@@ -1523,5 +1523,7 @@
   "apiKeys.mode.unrestricted": "Unrestricted",
   "apiKeys.mode.unrestrictedHint": "Your own credential. Does everything you can do, without asking.",
   "apiKeys.mode.agent": "Agent",
-  "apiKeys.mode.agentHint": "For something that acts unattended. Sandboxes work as normal; platform changes wait for your approval."
+  "apiKeys.mode.agentHint": "For something that acts unattended. Sandboxes work as normal; platform changes wait for your approval.",
+  "assistant.approval.title": "Approval required",
+  "assistant.approval.sessionHint": "Also allow the same call for the rest of this conversation"
 }

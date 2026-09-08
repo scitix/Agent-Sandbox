@@ -34,6 +34,7 @@ without guessing ids. See render.footer.
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 import time
 from collections.abc import Sequence
@@ -967,7 +968,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # permitted, and a person can unblock it in seconds. Exit 3, distinct
         # from the generic API error, so a caller scripting around this can tell
         # "wait and retry" from "this will never work".
-        text = "\n".join([f"error: {e}", *R.approval_block(e.approval)])
+        # The command as invoked, so a host that can act on the refusal is
+        # handed the exact string to re-run. Reconstructed with shlex rather
+        # than " ".join: an argument with a space in it (a summary, a label)
+        # would otherwise come back as two.
+        invoked = "abx " + " ".join(shlex.quote(a) for a in args)
+        text = "\n".join(
+            [f"error: {e}", *R.approval_block(e.approval, invoked)]
+        )
         code = 3
     except ApiError as e:
         # Relayed verbatim: the server's wording is what the caller can act on.

@@ -57,10 +57,38 @@ export interface InteractionQuestion {
   options: InteractionOption[]
 }
 
+/**
+ * A platform write the gate is holding, and what the person may grant.
+ *
+ * Carried alongside the questions rather than encoded into them because the
+ * browser has to ACT on it: the decision is recorded by the platform, with the
+ * signed-in person's own session, and only then is the interrupt resolved. An
+ * agent cannot record it — the gate refuses a decision made with the same
+ * unattended credential that asked — so the ids have to reach the browser
+ * intact rather than being reconstructed from a label.
+ */
+export interface ApprovalAsk {
+  /** The pending request's id (`apr_…`), as the platform issued it. */
+  approvalId: string
+  /** Which cluster's API holds it; the browser posts the decision there. */
+  cluster: string
+  /** Machine name of the gated operation, e.g. `env.create`. */
+  operation: string
+  /** One line naming what would happen, as the platform phrased it. */
+  summary: string
+  /** True when the platform will only ever grant this one call — destructive
+   *  and credential-minting operations are never granted session-wide. */
+  onceOnly: boolean
+  /** The command that was refused, echoed so the card can show it. */
+  command?: string
+}
+
 export interface InteractionRequest {
   requestId: string
   kind: 'question' | 'permission'
   questions: InteractionQuestion[]
+  /** Set only on `permission` requests raised by the approval gate. */
+  approval?: ApprovalAsk
 }
 
 export type AgentEvent =

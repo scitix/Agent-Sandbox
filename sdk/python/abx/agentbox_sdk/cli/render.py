@@ -26,6 +26,8 @@ Two rules the rest of the CLI depends on:
 
 from __future__ import annotations
 
+import os
+
 import csv
 import io
 import json
@@ -203,18 +205,33 @@ def footer(
     return out
 
 
-def approval_block(approval: Any) -> list[str]:
+# Set by a host that can put the decision in front of the person itself — the
+# platform assistant names its own tool here. Empty (the ordinary case: someone's
+# own terminal) means the only way to reach a person is the printed link.
+_APPROVAL_TOOL_ENV = "AGENTBOX_APPROVAL_TOOL"
+
+
+def approval_block(approval: Any, command: str = "") -> list[str]:
     """The trailer a refused write prints.
 
     Same shape as every other trailer — a label, then two-space-indented lines —
     so an agent that has parsed one has parsed this one.
 
-    The hint deliberately splits into two turns, and the order is the whole
-    point. `approvals wait` BLOCKS, and a tool result only reaches the person
-    when the command exits: an agent that runs it in the same turn as the
+    The `hint:` half differs by host, because "how do I reach a person" does.
+    Everything above it is identical, so a host that reads the block rather than
+    the hint sees one contract.
+
+    In a terminal the hint deliberately splits into two turns, and the order is
+    the whole point. `approvals wait` BLOCKS, and a tool result only reaches the
+    person when the command exits: an agent that runs it in the same turn as the
     refusal shows them nothing until it times out, by which time the link it was
     holding has expired. So the instruction is to surface the link and stop, and
     to wait only once they say they have acted on it.
+
+    Where a tool is named, none of that applies — the agent hands the command
+    over and the decision appears in the conversation the person is already
+    looking at. Telling it to print the link there would be worse than useless:
+    it would send them away from the buttons.
     """
     lines = ["approval:", "  " + (approval.summary or approval.operation)]
     if approval.url:
@@ -223,6 +240,20 @@ def approval_block(approval: Any) -> list[str]:
         lines.append("  (no console link configured; approve via the API)")
     scope = "once" if approval.once_only else "once, or for this whole session"
     lines.append(f"  ({scope})")
+
+    tool = os.environ.get(_APPROVAL_TOOL_ENV, "").strip()
+    if tool:
+        lines += [
+            "hint:",
+            f"  # Call the {tool} tool with this exact command. It asks the",
+            "  # person here in the conversation, waits, and runs it for you.",
+            "  # Do NOT print the link above, and do NOT run the command again",
+            "  # yourself afterwards.",
+        ]
+        if command:
+            lines.append(f"  {tool}: {command}")
+        return lines
+
     lines += [
         "hint:",
         "  # Show the link above and END YOUR TURN. Do NOT run the",

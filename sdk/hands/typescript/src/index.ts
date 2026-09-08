@@ -51,6 +51,10 @@ export {
   shouldOffload,
 } from './core/offload.ts'
 
-export { proxyUrl, withNotice } from './core/proxy.ts'
+// `sandboxCall` is the raw daemon call the toolset is built on. Exported for
+// callers that must run something in a session's sandbox WITHOUT it being a
+// tool the model chose — the approval flow re-runs a refused command on the
+// person's behalf, which is not a decision the model gets to make twice.
+export { call as sandboxCall, proxyUrl, withNotice } from './core/proxy.ts'
 
 export { type ParamsSpec, toSchemaShape } from './core/params.ts'

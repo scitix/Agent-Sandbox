@@ -59,6 +59,9 @@ export interface PersistableInterrupt {
   requestId: string
   kind: 'question' | 'permission'
   questions: unknown
+  /** Present on approval requests. `unknown` because this is server-shaped data
+   *  the card re-parses defensively; it is only carried through here. */
+  approval?: unknown
 }
 
 /** The per-turn model / token / cost facts, or nothing when the record carries
@@ -194,6 +197,12 @@ function asInterrupt(request: PersistableInterrupt): AgUiInterrupt {
   return {
     id: request.requestId,
     reason: request.kind === 'permission' ? 'confirmation' : 'input_required',
-    metadata: { agentbox: { kind: request.kind, questions: request.questions } },
+    metadata: {
+      agentbox: {
+        kind: request.kind,
+        questions: request.questions,
+        ...(request.approval ? { approval: request.approval } : {}),
+      },
+    },
   }
 }
