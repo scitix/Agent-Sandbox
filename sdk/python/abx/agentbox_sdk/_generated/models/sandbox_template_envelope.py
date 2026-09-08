@@ -50,7 +50,7 @@ class SandboxTemplateEnvelope:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_template import SandboxTemplate
+        from ..models.sandbox_template import SandboxTemplate # noqa: PLC0415
         template = self.template.to_dict()
 
 
@@ -66,7 +66,7 @@ class SandboxTemplateEnvelope:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_template import SandboxTemplate
+        from ..models.sandbox_template import SandboxTemplate # noqa: PLC0415
         d = dict(src_dict)
         template = SandboxTemplate.from_dict(d.pop("template"))
 

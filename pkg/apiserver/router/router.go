@@ -105,6 +105,7 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 		InstanceTypeProvider: svcs.InstanceTypeProvider,
 		VolumesEnabled:       svcs.VolumesEnabled,
 		Volume:               svcs.Volume,
+		Approvals:            svcs.Approvals,
 	})
 
 	strictHandler := gen.NewStrictHandler(srv, nil)

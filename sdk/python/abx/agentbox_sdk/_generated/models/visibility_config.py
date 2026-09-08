@@ -51,7 +51,7 @@ class VisibilityConfig:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.visibility_rule import VisibilityRule
+        from ..models.visibility_rule import VisibilityRule # noqa: PLC0415
         rules: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.rules, Unset):
             rules = []
@@ -75,7 +75,7 @@ class VisibilityConfig:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.visibility_rule import VisibilityRule
+        from ..models.visibility_rule import VisibilityRule # noqa: PLC0415
         d = dict(src_dict)
         _rules = d.pop("rules", UNSET)
         rules: list[VisibilityRule] | Unset = UNSET

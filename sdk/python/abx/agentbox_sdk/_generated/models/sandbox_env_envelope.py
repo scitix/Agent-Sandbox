@@ -50,7 +50,7 @@ class SandboxEnvEnvelope:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_env import SandboxEnv
+        from ..models.sandbox_env import SandboxEnv # noqa: PLC0415
         env = self.env.to_dict()
 
 
@@ -66,7 +66,7 @@ class SandboxEnvEnvelope:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_env import SandboxEnv
+        from ..models.sandbox_env import SandboxEnv # noqa: PLC0415
         d = dict(src_dict)
         env = SandboxEnv.from_dict(d.pop("env"))
 

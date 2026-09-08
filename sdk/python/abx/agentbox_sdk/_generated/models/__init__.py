@@ -15,6 +15,15 @@
 """ Contains all the data models used in inputs/outputs """
 
 from .api_key_item import APIKeyItem
+from .approval_decision_request import ApprovalDecisionRequest
+from .approval_decision_request_decision import ApprovalDecisionRequestDecision
+from .approval_decision_request_scope import ApprovalDecisionRequestScope
+from .approval_grant import ApprovalGrant
+from .approval_grant_scope import ApprovalGrantScope
+from .approval_principal import ApprovalPrincipal
+from .approval_request import ApprovalRequest
+from .approval_request_scope import ApprovalRequestScope
+from .approval_request_status import ApprovalRequestStatus
 from .cluster_summary import ClusterSummary
 from .create_api_key_request import CreateAPIKeyRequest
 from .create_api_key_result import CreateAPIKeyResult
@@ -64,6 +73,7 @@ from .gateway_spec import GatewaySpec
 from .image_pull_secret_input import ImagePullSecretInput
 from .instance_type_item import InstanceTypeItem
 from .instance_type_item_extensions import InstanceTypeItemExtensions
+from .list_approvals_result import ListApprovalsResult
 from .list_clusters_result import ListClustersResult
 from .list_env_autoscaling_groups_result import ListEnvAutoscalingGroupsResult
 from .list_env_events_result import ListEnvEventsResult
@@ -155,6 +165,15 @@ from .who_am_i_result import WhoAmIResult
 
 __all__ = (
     "APIKeyItem",
+    "ApprovalDecisionRequest",
+    "ApprovalDecisionRequestDecision",
+    "ApprovalDecisionRequestScope",
+    "ApprovalGrant",
+    "ApprovalGrantScope",
+    "ApprovalPrincipal",
+    "ApprovalRequest",
+    "ApprovalRequestScope",
+    "ApprovalRequestStatus",
     "ClusterSummary",
     "CreateAPIKeyRequest",
     "CreateAPIKeyResult",
@@ -204,6 +223,7 @@ __all__ = (
     "ImagePullSecretInput",
     "InstanceTypeItem",
     "InstanceTypeItemExtensions",
+    "ListApprovalsResult",
     "ListClustersResult",
     "ListEnvAutoscalingGroupsResult",
     "ListEnvEventsResult",

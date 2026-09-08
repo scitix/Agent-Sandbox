@@ -58,7 +58,7 @@ class EnvClusterStatus:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_observed_member import EnvObservedMember
+        from ..models.env_observed_member import EnvObservedMember # noqa: PLC0415
         cluster_id = self.cluster_id
 
         is_local = self.is_local
@@ -95,7 +95,7 @@ class EnvClusterStatus:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_observed_member import EnvObservedMember
+        from ..models.env_observed_member import EnvObservedMember # noqa: PLC0415
         d = dict(src_dict)
         cluster_id = d.pop("clusterID")
 

@@ -34,6 +34,7 @@ import (
 
 	"github.com/scitix/agent-sandbox/cmd/sandbox/app/extconfig"
 	"github.com/scitix/agent-sandbox/pkg/apiserver"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/approval"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envscheduler"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
@@ -119,6 +120,7 @@ func Run(opts Options) {
 		logServiceToken                                  string
 		logServiceAppID                                  string
 		logServiceProject                                string
+		consoleBaseURL                                   string
 		tlsOpts                                          []func(*tls.Config)
 	)
 
@@ -212,6 +214,12 @@ func Run(opts Options) {
 			"sandboxes (overrides.volumes, GET /volumes). This is a kill switch, not a UI hint: "+
 			"while off, a non-empty overrides.volumes is rejected with 400. The operator never "+
 			"creates or deletes a claim. Accepts true/false/1/0/yes/no; empty means false.")
+	flag.StringVar(&consoleBaseURL, "console-base-url",
+		os.Getenv("AGENTBOX_CONSOLE_BASE_URL"),
+		"Base URL of the dashboard, e.g. \"https://console.example.com/agentbox\". Used to build "+
+			"the link an approval refusal carries, so a person can go and decide. Empty omits the "+
+			"link: the CLI can still poll for the outcome, and a link that leads nowhere is worse "+
+			"than none.")
 	flag.StringVar(&volumeDisplayNameLabels, "volume-display-name-labels",
 		os.Getenv("AGENTBOX_VOLUME_DISPLAY_NAME_LABELS"),
 		"Comma-separated, ordered list of PersistentVolumeClaim label keys consulted to derive a "+
@@ -461,6 +469,11 @@ func Run(opts Options) {
 		}
 	}()
 
+	// The approval gate's state. Started here so its collector shares the
+	// process lifetime, and passed to the API server, which registers the gate
+	// only because this is non-nil.
+	approvalStore := approval.NewStore(ctx.Done())
+
 	sandboxSvc := service.NewSandboxService(
 		mgr.GetClient(), clientset, restCfg, sandboxStore, envoyGatewayBaseURL, localClusterID, extprocClient, clusterStore,
 	)
@@ -667,6 +680,8 @@ func Run(opts Options) {
 		ImageRegistry:        imageRegistry,
 		APIReader:            mgr.GetAPIReader(),
 		VolumeConfig:         volumeCfg,
+		ApprovalStore:        approvalStore,
+		ConsoleBaseURL:       consoleBaseURL,
 	}, mgr.GetClient(), clientset, sandboxStore, pluginManager, envoyGatewayBaseURL, sandboxSvc)
 
 	numProcesses := 2

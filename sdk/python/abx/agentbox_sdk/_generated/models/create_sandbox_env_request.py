@@ -68,10 +68,10 @@ class CreateSandboxEnvRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
-        from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
-        from ..models.env_overrides import EnvOverrides
-        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
+        from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations # noqa: PLC0415
+        from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels # noqa: PLC0415
+        from ..models.env_overrides import EnvOverrides # noqa: PLC0415
+        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef # noqa: PLC0415
         name = self.name
 
         template_ref = self.template_ref.to_dict()
@@ -115,10 +115,10 @@ class CreateSandboxEnvRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
-        from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
-        from ..models.env_overrides import EnvOverrides
-        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
+        from ..models.create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations # noqa: PLC0415
+        from ..models.create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels # noqa: PLC0415
+        from ..models.env_overrides import EnvOverrides # noqa: PLC0415
+        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef # noqa: PLC0415
         d = dict(src_dict)
         name = d.pop("name")
 

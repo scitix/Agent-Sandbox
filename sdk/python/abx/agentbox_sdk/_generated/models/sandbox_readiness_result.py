@@ -59,7 +59,7 @@ class SandboxReadinessResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_readiness_result_endpoints import SandboxReadinessResultEndpoints
+        from ..models.sandbox_readiness_result_endpoints import SandboxReadinessResultEndpoints # noqa: PLC0415
         sandbox_id = self.sandbox_id
 
         ready = self.ready
@@ -84,7 +84,7 @@ class SandboxReadinessResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_readiness_result_endpoints import SandboxReadinessResultEndpoints
+        from ..models.sandbox_readiness_result_endpoints import SandboxReadinessResultEndpoints # noqa: PLC0415
         d = dict(src_dict)
         sandbox_id = d.pop("sandboxId")
 

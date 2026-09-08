@@ -63,8 +63,8 @@ class UpdateEnvAutoscalingGroupRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.pool_scale_down_policy import PoolScaleDownPolicy
-        from ..models.pool_scale_up_policy import PoolScaleUpPolicy
+        from ..models.pool_scale_down_policy import PoolScaleDownPolicy # noqa: PLC0415
+        from ..models.pool_scale_up_policy import PoolScaleUpPolicy # noqa: PLC0415
         enabled = self.enabled
 
         min_replicas = self.min_replicas
@@ -101,8 +101,8 @@ class UpdateEnvAutoscalingGroupRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.pool_scale_down_policy import PoolScaleDownPolicy
-        from ..models.pool_scale_up_policy import PoolScaleUpPolicy
+        from ..models.pool_scale_down_policy import PoolScaleDownPolicy # noqa: PLC0415
+        from ..models.pool_scale_up_policy import PoolScaleUpPolicy # noqa: PLC0415
         d = dict(src_dict)
         enabled = d.pop("enabled", UNSET)
 

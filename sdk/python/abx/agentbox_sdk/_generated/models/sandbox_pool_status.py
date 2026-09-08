@@ -84,7 +84,7 @@ class SandboxPoolStatus:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.pool_auto_scaling_status import PoolAutoScalingStatus
+        from ..models.pool_auto_scaling_status import PoolAutoScalingStatus # noqa: PLC0415
         phase: str | Unset = UNSET
         if not isinstance(self.phase, Unset):
             phase = self.phase.value
@@ -150,7 +150,7 @@ class SandboxPoolStatus:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.pool_auto_scaling_status import PoolAutoScalingStatus
+        from ..models.pool_auto_scaling_status import PoolAutoScalingStatus # noqa: PLC0415
         d = dict(src_dict)
         _phase = d.pop("phase", UNSET)
         phase: SandboxPoolStatusPhase | Unset

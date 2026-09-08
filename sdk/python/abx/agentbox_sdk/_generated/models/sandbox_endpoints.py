@@ -48,7 +48,7 @@ class SandboxEndpoints:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_endpoint import SandboxEndpoint
+        from ..models.sandbox_endpoint import SandboxEndpoint # noqa: PLC0415
         
         field_dict: dict[str, Any] = {}
         for prop_name, prop in self.additional_properties.items():
@@ -61,7 +61,7 @@ class SandboxEndpoints:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_endpoint import SandboxEndpoint
+        from ..models.sandbox_endpoint import SandboxEndpoint # noqa: PLC0415
         d = dict(src_dict)
         sandbox_endpoints = cls(
         )

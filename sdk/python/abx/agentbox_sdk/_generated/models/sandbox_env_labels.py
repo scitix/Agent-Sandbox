@@ -34,8 +34,7 @@ T = TypeVar("T", bound="SandboxEnvLabels")
 
 @_attrs_define
 class SandboxEnvLabels:
-    """ 
-     """
+    
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

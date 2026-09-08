@@ -534,6 +534,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What is waiting on you, and what you have already allowed
+         * @description Scoped to the caller's team+user, not to a key: the person deciding owns
+         *     every key they hold, and this list is read by a human.
+         */
+        get: operations["ListApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approvals/{approvalId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where one approval request has got to
+         * @description The endpoint a blocked client polls. Expiry is reported as a status
+         *     rather than as a 404, because a caller waiting on a request that timed
+         *     out deserves to be told which of the two happened.
+         */
+        get: operations["GetApproval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approvals/{approvalId}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve or deny a pending request
+         * @description Console sessions only. A credential must not be able to approve its own
+         *     writes — that would make the gate a formality the agent walks through by
+         *     itself.
+         */
+        post: operations["DecideApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approvals/grants/{grantId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Withdraw a standing permission */
+        delete: operations["RevokeApprovalGrant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api-keys": {
         parameters: {
             query?: never;
@@ -2069,6 +2151,70 @@ export interface components {
         };
         /** @description List of API key objects. Returned in full — the endpoint does not paginate. */
         ListAPIKeysResult: components["schemas"]["APIKeyItem"][];
+        ApprovalPrincipal: {
+            team: string;
+            user: string;
+            /** @description Which credential asked. A key-scoped grant belongs to this key alone, so deleting the key must take its grants with it. */
+            keyId?: string;
+        };
+        ApprovalRequest: {
+            id: string;
+            principal: components["schemas"]["ApprovalPrincipal"];
+            /** @description Absent when the caller sent no session header. Such a request can only ever be approved for one call. */
+            sessionId?: string;
+            /** @description What is being asked for, e.g. `env.create`. A grant is written against this, not against a route. */
+            operation: string;
+            /** @description True for destructive and credential-minting calls, which refuse the session and key scopes. */
+            onceOnly: boolean;
+            method: string;
+            path: string;
+            /** @description What the person is being asked, naming the thing acted on. */
+            summary: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** @enum {string} */
+            status: "pending" | "approved" | "denied" | "expired";
+            /**
+             * @description How far the decision reached. Set once decided.
+             * @enum {string}
+             */
+            scope?: "once" | "session" | "key";
+            decidedBy?: string;
+            /** Format: date-time */
+            decidedAt?: string;
+        };
+        ApprovalGrant: {
+            id: string;
+            principal: components["schemas"]["ApprovalPrincipal"];
+            /** @enum {string} */
+            scope: "session" | "key";
+            sessionId?: string;
+            operation: string;
+            /** Format: date-time */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description Absent for a key-scoped grant, which ends only when revoked.
+             */
+            expiresAt?: string;
+            grantedBy: string;
+        };
+        ListApprovalsResult: {
+            pending: components["schemas"]["ApprovalRequest"][];
+            grants: components["schemas"]["ApprovalGrant"][];
+        };
+        ApprovalDecisionRequest: {
+            /** @enum {string} */
+            decision: "approve" | "deny";
+            /**
+             * @description Ignored when denying. `session` needs the request to carry a session id; both wider scopes are refused for a once-only operation.
+             * @default once
+             * @enum {string}
+             */
+            scope: "once" | "session" | "key";
+        };
         /** @description Resource accounting for a single quota, keyed by resource name (e.g. cpu, memory, nvidia.com/gpu, sci.c22-2). */
         QuotaResources: {
             /** @description Total capacity allocated to this quota. */
@@ -4509,6 +4655,139 @@ export interface operations {
             };
             /** @description Service Unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ListApprovals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListApprovalsResult"];
+                };
+            };
+        };
+    };
+    GetApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approvalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalRequest"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    DecideApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approvalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalRequest"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    RevokeApprovalGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                grantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

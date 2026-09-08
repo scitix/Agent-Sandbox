@@ -66,8 +66,8 @@ class Quota:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.quota_metadata import QuotaMetadata
-        from ..models.quota_resources import QuotaResources
+        from ..models.quota_metadata import QuotaMetadata # noqa: PLC0415
+        from ..models.quota_resources import QuotaResources # noqa: PLC0415
         id = self.id
 
         name = self.name
@@ -106,8 +106,8 @@ class Quota:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.quota_metadata import QuotaMetadata
-        from ..models.quota_resources import QuotaResources
+        from ..models.quota_metadata import QuotaMetadata # noqa: PLC0415
+        from ..models.quota_resources import QuotaResources # noqa: PLC0415
         d = dict(src_dict)
         id = d.pop("id")
 

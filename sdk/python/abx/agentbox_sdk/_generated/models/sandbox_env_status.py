@@ -66,9 +66,9 @@ class SandboxEnvStatus:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_cluster_status import EnvClusterStatus
-        from ..models.env_condition import EnvCondition
-        from ..models.env_scaling_group_status import EnvScalingGroupStatus
+        from ..models.env_cluster_status import EnvClusterStatus # noqa: PLC0415
+        from ..models.env_condition import EnvCondition # noqa: PLC0415
+        from ..models.env_scaling_group_status import EnvScalingGroupStatus # noqa: PLC0415
         conditions: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.conditions, Unset):
             conditions = []
@@ -130,9 +130,9 @@ class SandboxEnvStatus:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_cluster_status import EnvClusterStatus
-        from ..models.env_condition import EnvCondition
-        from ..models.env_scaling_group_status import EnvScalingGroupStatus
+        from ..models.env_cluster_status import EnvClusterStatus # noqa: PLC0415
+        from ..models.env_condition import EnvCondition # noqa: PLC0415
+        from ..models.env_scaling_group_status import EnvScalingGroupStatus # noqa: PLC0415
         d = dict(src_dict)
         _conditions = d.pop("conditions", UNSET)
         conditions: list[EnvCondition] | Unset = UNSET

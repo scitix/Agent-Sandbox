@@ -52,7 +52,7 @@ class RuntimeReadinessProbe:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.runtime_readiness_probe_http_get import RuntimeReadinessProbeHttpGet
+        from ..models.runtime_readiness_probe_http_get import RuntimeReadinessProbeHttpGet # noqa: PLC0415
         http_get: dict[str, Any] | Unset = UNSET
         if not isinstance(self.http_get, Unset):
             http_get = self.http_get.to_dict()
@@ -71,7 +71,7 @@ class RuntimeReadinessProbe:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.runtime_readiness_probe_http_get import RuntimeReadinessProbeHttpGet
+        from ..models.runtime_readiness_probe_http_get import RuntimeReadinessProbeHttpGet # noqa: PLC0415
         d = dict(src_dict)
         _http_get = d.pop("httpGet", UNSET)
         http_get: RuntimeReadinessProbeHttpGet | Unset

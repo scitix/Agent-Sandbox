@@ -67,7 +67,7 @@ class VolumeItem:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.volume_item_labels import VolumeItemLabels
+        from ..models.volume_item_labels import VolumeItemLabels # noqa: PLC0415
         claim_name = self.claim_name
 
         phase = self.phase
@@ -112,7 +112,7 @@ class VolumeItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.volume_item_labels import VolumeItemLabels
+        from ..models.volume_item_labels import VolumeItemLabels # noqa: PLC0415
         d = dict(src_dict)
         claim_name = d.pop("claimName")
 

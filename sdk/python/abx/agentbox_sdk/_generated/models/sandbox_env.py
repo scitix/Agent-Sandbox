@@ -90,9 +90,9 @@ class SandboxEnv:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_env_labels import SandboxEnvLabels
-        from ..models.sandbox_env_spec import SandboxEnvSpec
-        from ..models.sandbox_env_status import SandboxEnvStatus
+        from ..models.sandbox_env_labels import SandboxEnvLabels # noqa: PLC0415
+        from ..models.sandbox_env_spec import SandboxEnvSpec # noqa: PLC0415
+        from ..models.sandbox_env_status import SandboxEnvStatus # noqa: PLC0415
         name = self.name
 
         namespace = self.namespace
@@ -144,9 +144,9 @@ class SandboxEnv:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_env_labels import SandboxEnvLabels
-        from ..models.sandbox_env_spec import SandboxEnvSpec
-        from ..models.sandbox_env_status import SandboxEnvStatus
+        from ..models.sandbox_env_labels import SandboxEnvLabels # noqa: PLC0415
+        from ..models.sandbox_env_spec import SandboxEnvSpec # noqa: PLC0415
+        from ..models.sandbox_env_status import SandboxEnvStatus # noqa: PLC0415
         d = dict(src_dict)
         name = d.pop("name")
 

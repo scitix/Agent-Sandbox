@@ -50,7 +50,7 @@ class EnvAutoscalingGroupEnvelope:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_autoscaling_group import EnvAutoscalingGroup
+        from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
         group = self.group.to_dict()
 
 
@@ -66,7 +66,7 @@ class EnvAutoscalingGroupEnvelope:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_autoscaling_group import EnvAutoscalingGroup
+        from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
         d = dict(src_dict)
         group = EnvAutoscalingGroup.from_dict(d.pop("group"))
 

@@ -129,10 +129,10 @@ class Sandbox:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_container_images import SandboxContainerImages
-        from ..models.sandbox_endpoints import SandboxEndpoints
-        from ..models.sandbox_metadata import SandboxMetadata
-        from ..models.sandbox_status_detail import SandboxStatusDetail
+        from ..models.sandbox_container_images import SandboxContainerImages # noqa: PLC0415
+        from ..models.sandbox_endpoints import SandboxEndpoints # noqa: PLC0415
+        from ..models.sandbox_metadata import SandboxMetadata # noqa: PLC0415
+        from ..models.sandbox_status_detail import SandboxStatusDetail # noqa: PLC0415
         sandbox_id = self.sandbox_id
 
         namespace = self.namespace
@@ -253,10 +253,10 @@ class Sandbox:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_container_images import SandboxContainerImages
-        from ..models.sandbox_endpoints import SandboxEndpoints
-        from ..models.sandbox_metadata import SandboxMetadata
-        from ..models.sandbox_status_detail import SandboxStatusDetail
+        from ..models.sandbox_container_images import SandboxContainerImages # noqa: PLC0415
+        from ..models.sandbox_endpoints import SandboxEndpoints # noqa: PLC0415
+        from ..models.sandbox_metadata import SandboxMetadata # noqa: PLC0415
+        from ..models.sandbox_status_detail import SandboxStatusDetail # noqa: PLC0415
         d = dict(src_dict)
         sandbox_id = d.pop("sandboxId")
 

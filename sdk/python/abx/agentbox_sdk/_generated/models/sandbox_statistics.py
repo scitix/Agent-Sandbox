@@ -55,8 +55,8 @@ class SandboxStatistics:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_statistics_by_namespace import SandboxStatisticsByNamespace
-        from ..models.sandbox_statistics_by_status import SandboxStatisticsByStatus
+        from ..models.sandbox_statistics_by_namespace import SandboxStatisticsByNamespace # noqa: PLC0415
+        from ..models.sandbox_statistics_by_status import SandboxStatisticsByStatus # noqa: PLC0415
         total = self.total
 
         by_status = self.by_status.to_dict()
@@ -78,8 +78,8 @@ class SandboxStatistics:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_statistics_by_namespace import SandboxStatisticsByNamespace
-        from ..models.sandbox_statistics_by_status import SandboxStatisticsByStatus
+        from ..models.sandbox_statistics_by_namespace import SandboxStatisticsByNamespace # noqa: PLC0415
+        from ..models.sandbox_statistics_by_status import SandboxStatisticsByStatus # noqa: PLC0415
         d = dict(src_dict)
         total = d.pop("total")
 

@@ -62,8 +62,8 @@ class SandboxTemplateSpec:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.runtime import Runtime
-        from ..models.visibility_config import VisibilityConfig
+        from ..models.runtime import Runtime # noqa: PLC0415
+        from ..models.visibility_config import VisibilityConfig # noqa: PLC0415
         version = self.version
 
         description = self.description
@@ -109,8 +109,8 @@ class SandboxTemplateSpec:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.runtime import Runtime
-        from ..models.visibility_config import VisibilityConfig
+        from ..models.runtime import Runtime # noqa: PLC0415
+        from ..models.visibility_config import VisibilityConfig # noqa: PLC0415
         d = dict(src_dict)
         version = d.pop("version", UNSET)
 

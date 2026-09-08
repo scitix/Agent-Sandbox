@@ -61,10 +61,10 @@ class QuotaResources:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.quota_resources_free import QuotaResourcesFree
-        from ..models.quota_resources_reserved import QuotaResourcesReserved
-        from ..models.quota_resources_total import QuotaResourcesTotal
-        from ..models.quota_resources_used import QuotaResourcesUsed
+        from ..models.quota_resources_free import QuotaResourcesFree # noqa: PLC0415
+        from ..models.quota_resources_reserved import QuotaResourcesReserved # noqa: PLC0415
+        from ..models.quota_resources_total import QuotaResourcesTotal # noqa: PLC0415
+        from ..models.quota_resources_used import QuotaResourcesUsed # noqa: PLC0415
         total: dict[str, Any] | Unset = UNSET
         if not isinstance(self.total, Unset):
             total = self.total.to_dict()
@@ -101,10 +101,10 @@ class QuotaResources:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.quota_resources_free import QuotaResourcesFree
-        from ..models.quota_resources_reserved import QuotaResourcesReserved
-        from ..models.quota_resources_total import QuotaResourcesTotal
-        from ..models.quota_resources_used import QuotaResourcesUsed
+        from ..models.quota_resources_free import QuotaResourcesFree # noqa: PLC0415
+        from ..models.quota_resources_reserved import QuotaResourcesReserved # noqa: PLC0415
+        from ..models.quota_resources_total import QuotaResourcesTotal # noqa: PLC0415
+        from ..models.quota_resources_used import QuotaResourcesUsed # noqa: PLC0415
         d = dict(src_dict)
         _total = d.pop("total", UNSET)
         total: QuotaResourcesTotal | Unset

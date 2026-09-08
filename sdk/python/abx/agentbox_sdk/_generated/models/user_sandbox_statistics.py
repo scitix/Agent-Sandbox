@@ -54,7 +54,7 @@ class UserSandboxStatistics:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.user_sandbox_statistics_by_status import UserSandboxStatisticsByStatus
+        from ..models.user_sandbox_statistics_by_status import UserSandboxStatisticsByStatus # noqa: PLC0415
         namespace = self.namespace
 
         total = self.total
@@ -76,7 +76,7 @@ class UserSandboxStatistics:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.user_sandbox_statistics_by_status import UserSandboxStatisticsByStatus
+        from ..models.user_sandbox_statistics_by_status import UserSandboxStatisticsByStatus # noqa: PLC0415
         d = dict(src_dict)
         namespace = d.pop("namespace")
 

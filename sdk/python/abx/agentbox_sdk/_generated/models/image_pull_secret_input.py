@@ -50,7 +50,7 @@ class ImagePullSecretInput:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.registry_credential import RegistryCredential
+        from ..models.registry_credential import RegistryCredential # noqa: PLC0415
         registries = []
         for registries_item_data in self.registries:
             registries_item = registries_item_data.to_dict()
@@ -71,7 +71,7 @@ class ImagePullSecretInput:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.registry_credential import RegistryCredential
+        from ..models.registry_credential import RegistryCredential # noqa: PLC0415
         d = dict(src_dict)
         registries = []
         _registries = d.pop("registries")

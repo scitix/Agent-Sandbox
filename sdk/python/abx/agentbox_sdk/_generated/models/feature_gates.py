@@ -46,7 +46,7 @@ class FeatureGates:
                 wired in. Example: True.
             volumes (bool | Unset): True when mounting existing PersistentVolumeClaims into sandboxes is enabled (the
                 volumes panel in the Env upsert sheet, `/volumes` listing endpoint). When false the server also rejects a non-
-                empty `overrides.volumes`, so this is a kill switch and not only a UI hint.
+                empty `overrides.volumes`, so this is a kill switch and not only a UI hint. Example: False.
      """
 
     quota: bool

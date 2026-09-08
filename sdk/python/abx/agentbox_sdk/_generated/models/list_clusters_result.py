@@ -51,7 +51,7 @@ class ListClustersResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.cluster_summary import ClusterSummary
+        from ..models.cluster_summary import ClusterSummary # noqa: PLC0415
         clusters = []
         for clusters_item_data in self.clusters:
             clusters_item = clusters_item_data.to_dict()
@@ -72,7 +72,7 @@ class ListClustersResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.cluster_summary import ClusterSummary
+        from ..models.cluster_summary import ClusterSummary # noqa: PLC0415
         d = dict(src_dict)
         clusters = []
         _clusters = d.pop("clusters")

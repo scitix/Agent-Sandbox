@@ -56,7 +56,7 @@ class ListSandboxPoolsResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_pool_summary import SandboxPoolSummary
+        from ..models.sandbox_pool_summary import SandboxPoolSummary # noqa: PLC0415
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
@@ -86,7 +86,7 @@ class ListSandboxPoolsResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_pool_summary import SandboxPoolSummary
+        from ..models.sandbox_pool_summary import SandboxPoolSummary # noqa: PLC0415
         d = dict(src_dict)
         items = []
         _items = d.pop("items")

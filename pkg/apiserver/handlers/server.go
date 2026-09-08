@@ -34,6 +34,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/approval"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
@@ -56,6 +57,9 @@ const adminUser = "admin"
 
 // Services bundles all service interfaces needed by the handler Server.
 type Services struct {
+	// Approvals backs the /v1/approvals routes and is the same store the gate
+	// middleware writes to. Nil disables both.
+	Approvals       *approval.Store
 	Sandbox         service.SandboxService
 	SandboxEnv      service.SandboxEnvService
 	SandboxTemplate service.SandboxTemplateService
@@ -112,6 +116,10 @@ type Server struct {
 	// Unlike the provider-backed gates this is a plain flag: the feature has no
 	// pluggable backend, it either is or is not permitted on this deployment.
 	volumesEnabled bool
+	// approvals backs the /v1/approvals routes. Nil on a deployment with no
+	// gate, which the handlers report as "nothing pending" rather than as an
+	// error — an empty board is what the console should draw there.
+	approvals *approval.Store
 }
 
 // NewServer creates a new handler Server.
@@ -138,6 +146,7 @@ func NewServer(svcs Services) *Server {
 		instanceTypeProvider: itp,
 		volumesEnabled:       svcs.VolumesEnabled,
 		volume:               svcs.Volume,
+		approvals:            svcs.Approvals,
 	}
 }
 

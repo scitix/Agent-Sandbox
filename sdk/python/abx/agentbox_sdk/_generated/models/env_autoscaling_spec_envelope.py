@@ -51,7 +51,7 @@ class EnvAutoscalingSpecEnvelope:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
+        from ..models.env_autoscaling_spec import EnvAutoscalingSpec # noqa: PLC0415
         spec = self.spec.to_dict()
 
 
@@ -67,7 +67,7 @@ class EnvAutoscalingSpecEnvelope:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
+        from ..models.env_autoscaling_spec import EnvAutoscalingSpec # noqa: PLC0415
         d = dict(src_dict)
         spec = EnvAutoscalingSpec.from_dict(d.pop("spec"))
 

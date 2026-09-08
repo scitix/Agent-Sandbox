@@ -61,7 +61,7 @@ class Runtime:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.runtime_readiness_probe import RuntimeReadinessProbe
+        from ..models.runtime_readiness_probe import RuntimeReadinessProbe # noqa: PLC0415
         name = self.name
 
         port = self.port
@@ -99,7 +99,7 @@ class Runtime:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.runtime_readiness_probe import RuntimeReadinessProbe
+        from ..models.runtime_readiness_probe import RuntimeReadinessProbe # noqa: PLC0415
         d = dict(src_dict)
         name = d.pop("name")
 

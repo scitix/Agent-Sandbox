@@ -50,7 +50,7 @@ class ListSandboxEnvsResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_env_summary import SandboxEnvSummary
+        from ..models.sandbox_env_summary import SandboxEnvSummary # noqa: PLC0415
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
@@ -71,7 +71,7 @@ class ListSandboxEnvsResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_env_summary import SandboxEnvSummary
+        from ..models.sandbox_env_summary import SandboxEnvSummary # noqa: PLC0415
         d = dict(src_dict)
         items = []
         _items = d.pop("items")

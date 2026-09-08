@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from enum import Enum
+from enum import StrEnum
 
-class SandboxLogsResultSource(str, Enum):
+class SandboxLogsResultSource(StrEnum):
     CACHED = "cached"
     LIVE = "live"
     RUNTIME = "runtime"

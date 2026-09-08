@@ -70,11 +70,11 @@ class SandboxEnvSpec:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
-        from ..models.env_cluster_spec import EnvClusterSpec
-        from ..models.env_overrides import EnvOverrides
-        from ..models.sandbox_env_defaults import SandboxEnvDefaults
-        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
+        from ..models.env_autoscaling_spec import EnvAutoscalingSpec # noqa: PLC0415
+        from ..models.env_cluster_spec import EnvClusterSpec # noqa: PLC0415
+        from ..models.env_overrides import EnvOverrides # noqa: PLC0415
+        from ..models.sandbox_env_defaults import SandboxEnvDefaults # noqa: PLC0415
+        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef # noqa: PLC0415
         template_ref = self.template_ref.to_dict()
 
         mode = self.mode.value
@@ -122,11 +122,11 @@ class SandboxEnvSpec:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_autoscaling_spec import EnvAutoscalingSpec
-        from ..models.env_cluster_spec import EnvClusterSpec
-        from ..models.env_overrides import EnvOverrides
-        from ..models.sandbox_env_defaults import SandboxEnvDefaults
-        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef
+        from ..models.env_autoscaling_spec import EnvAutoscalingSpec # noqa: PLC0415
+        from ..models.env_cluster_spec import EnvClusterSpec # noqa: PLC0415
+        from ..models.env_overrides import EnvOverrides # noqa: PLC0415
+        from ..models.sandbox_env_defaults import SandboxEnvDefaults # noqa: PLC0415
+        from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef # noqa: PLC0415
         d = dict(src_dict)
         template_ref = SandboxEnvTemplateRef.from_dict(d.pop("templateRef"))
 

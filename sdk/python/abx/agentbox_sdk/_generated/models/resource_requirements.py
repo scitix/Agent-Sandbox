@@ -57,8 +57,8 @@ class ResourceRequirements:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.resource_requirements_limits import ResourceRequirementsLimits
-        from ..models.resource_requirements_requests import ResourceRequirementsRequests
+        from ..models.resource_requirements_limits import ResourceRequirementsLimits # noqa: PLC0415
+        from ..models.resource_requirements_requests import ResourceRequirementsRequests # noqa: PLC0415
         requests: dict[str, Any] | Unset = UNSET
         if not isinstance(self.requests, Unset):
             requests = self.requests.to_dict()
@@ -83,8 +83,8 @@ class ResourceRequirements:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.resource_requirements_limits import ResourceRequirementsLimits
-        from ..models.resource_requirements_requests import ResourceRequirementsRequests
+        from ..models.resource_requirements_limits import ResourceRequirementsLimits # noqa: PLC0415
+        from ..models.resource_requirements_requests import ResourceRequirementsRequests # noqa: PLC0415
         d = dict(src_dict)
         _requests = d.pop("requests", UNSET)
         requests: ResourceRequirementsRequests | Unset

@@ -62,7 +62,7 @@ class UpdateSandboxEnvRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_overrides import EnvOverrides
+        from ..models.env_overrides import EnvOverrides # noqa: PLC0415
         overrides: dict[str, Any] | Unset = UNSET
         if not isinstance(self.overrides, Unset):
             overrides = self.overrides.to_dict()
@@ -81,7 +81,7 @@ class UpdateSandboxEnvRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_overrides import EnvOverrides
+        from ..models.env_overrides import EnvOverrides # noqa: PLC0415
         d = dict(src_dict)
         _overrides = d.pop("overrides", UNSET)
         overrides: EnvOverrides | Unset

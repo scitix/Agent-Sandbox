@@ -72,7 +72,7 @@ class SandboxLogsResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_log_entry import SandboxLogEntry
+        from ..models.sandbox_log_entry import SandboxLogEntry # noqa: PLC0415
         sandbox_id = self.sandbox_id
 
         namespace = self.namespace
@@ -123,7 +123,7 @@ class SandboxLogsResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_log_entry import SandboxLogEntry
+        from ..models.sandbox_log_entry import SandboxLogEntry # noqa: PLC0415
         d = dict(src_dict)
         sandbox_id = d.pop("sandboxId")
 

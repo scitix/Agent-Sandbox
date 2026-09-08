@@ -34,8 +34,7 @@ T = TypeVar("T", bound="CreateSandboxEnvRequestAnnotations")
 
 @_attrs_define
 class CreateSandboxEnvRequestAnnotations:
-    """ 
-     """
+    
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

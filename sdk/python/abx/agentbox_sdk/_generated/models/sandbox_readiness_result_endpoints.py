@@ -48,7 +48,7 @@ class SandboxReadinessResultEndpoints:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_readiness_result_endpoints_additional_property import SandboxReadinessResultEndpointsAdditionalProperty
+        from ..models.sandbox_readiness_result_endpoints_additional_property import SandboxReadinessResultEndpointsAdditionalProperty # noqa: PLC0415
         
         field_dict: dict[str, Any] = {}
         for prop_name, prop in self.additional_properties.items():
@@ -61,7 +61,7 @@ class SandboxReadinessResultEndpoints:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_readiness_result_endpoints_additional_property import SandboxReadinessResultEndpointsAdditionalProperty
+        from ..models.sandbox_readiness_result_endpoints_additional_property import SandboxReadinessResultEndpointsAdditionalProperty # noqa: PLC0415
         d = dict(src_dict)
         sandbox_readiness_result_endpoints = cls(
         )

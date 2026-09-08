@@ -80,10 +80,10 @@ class CreateSandboxRequest:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.create_sandbox_request_annotations import CreateSandboxRequestAnnotations
-        from ..models.create_sandbox_request_container_images import CreateSandboxRequestContainerImages
-        from ..models.create_sandbox_request_labels import CreateSandboxRequestLabels
-        from ..models.create_sandbox_request_metadata import CreateSandboxRequestMetadata
+        from ..models.create_sandbox_request_annotations import CreateSandboxRequestAnnotations # noqa: PLC0415
+        from ..models.create_sandbox_request_container_images import CreateSandboxRequestContainerImages # noqa: PLC0415
+        from ..models.create_sandbox_request_labels import CreateSandboxRequestLabels # noqa: PLC0415
+        from ..models.create_sandbox_request_metadata import CreateSandboxRequestMetadata # noqa: PLC0415
         pool_name = self.pool_name
 
         image = self.image
@@ -135,10 +135,10 @@ class CreateSandboxRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.create_sandbox_request_annotations import CreateSandboxRequestAnnotations
-        from ..models.create_sandbox_request_container_images import CreateSandboxRequestContainerImages
-        from ..models.create_sandbox_request_labels import CreateSandboxRequestLabels
-        from ..models.create_sandbox_request_metadata import CreateSandboxRequestMetadata
+        from ..models.create_sandbox_request_annotations import CreateSandboxRequestAnnotations # noqa: PLC0415
+        from ..models.create_sandbox_request_container_images import CreateSandboxRequestContainerImages # noqa: PLC0415
+        from ..models.create_sandbox_request_labels import CreateSandboxRequestLabels # noqa: PLC0415
+        from ..models.create_sandbox_request_metadata import CreateSandboxRequestMetadata # noqa: PLC0415
         d = dict(src_dict)
         pool_name = d.pop("poolName")
 

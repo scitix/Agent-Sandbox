@@ -55,7 +55,7 @@ class EnvAutoscalingSpec:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_autoscaling_group import EnvAutoscalingGroup
+        from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
         groups: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.groups, Unset):
             groups = []
@@ -79,7 +79,7 @@ class EnvAutoscalingSpec:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_autoscaling_group import EnvAutoscalingGroup
+        from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
         d = dict(src_dict)
         _groups = d.pop("groups", UNSET)
         groups: list[EnvAutoscalingGroup] | Unset = UNSET

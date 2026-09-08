@@ -89,9 +89,9 @@ class SandboxPool:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.pool_template_overrides import PoolTemplateOverrides
-        from ..models.sandbox_pool_spec import SandboxPoolSpec
-        from ..models.sandbox_pool_status import SandboxPoolStatus
+        from ..models.pool_template_overrides import PoolTemplateOverrides # noqa: PLC0415
+        from ..models.sandbox_pool_spec import SandboxPoolSpec # noqa: PLC0415
+        from ..models.sandbox_pool_status import SandboxPoolStatus # noqa: PLC0415
         name = self.name
 
         namespace = self.namespace
@@ -160,9 +160,9 @@ class SandboxPool:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.pool_template_overrides import PoolTemplateOverrides
-        from ..models.sandbox_pool_spec import SandboxPoolSpec
-        from ..models.sandbox_pool_status import SandboxPoolStatus
+        from ..models.pool_template_overrides import PoolTemplateOverrides # noqa: PLC0415
+        from ..models.sandbox_pool_spec import SandboxPoolSpec # noqa: PLC0415
+        from ..models.sandbox_pool_status import SandboxPoolStatus # noqa: PLC0415
         d = dict(src_dict)
         name = d.pop("name")
 

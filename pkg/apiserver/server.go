@@ -28,6 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/scitix/agent-sandbox/pkg/apiserver/approval"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
@@ -87,6 +88,14 @@ type Config struct {
 	// by GET /v1/instancetypes and inspected by the /v1/feature-gates
 	// endpoint. When nil, a Noop provider is used (feature disabled).
 	InstanceTypeProvider instancetypeplugin.Provider
+	// ApprovalStore holds writes made with an unattended credential until a
+	// person approves them. Nil leaves the gate unregistered — which is what a
+	// deployment that has marked no key as unattended gets in any case.
+	ApprovalStore *approval.Store
+	// ConsoleBaseURL is where the refusal's link points, e.g.
+	// "https://console.example.com/agentbox". Empty omits the link; the CLI can
+	// still poll, and a link to nowhere is worse than none.
+	ConsoleBaseURL string
 	// ServerVersion is the build-time version string stamped on every response
 	// via X-AgentBox-Server-Version. Set from pkg/version.Version in app.go.
 	ServerVersion string
@@ -231,6 +240,9 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		VolumesEnabled:       cfg.VolumeConfig.Enabled,
 		Volume:               service.NewVolumeService(volumeReader, cfg.VolumeConfig),
 		ServerVersion:        cfg.ServerVersion,
+		Approvals:            cfg.ApprovalStore,
+		ConsoleBaseURL:       cfg.ConsoleBaseURL,
+		ClusterID:            cfg.LocalClusterID,
 	}
 
 	authMw := middleware.NewAuthenticateMiddleware(cfg.AdminKeyManager, cfg.KeyStore, cfg.Secret, svcs.IAM)

@@ -55,7 +55,7 @@ class EnvClusterSpec:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_cluster_member import EnvClusterMember
+        from ..models.env_cluster_member import EnvClusterMember # noqa: PLC0415
         cluster_id = self.cluster_id
 
         members: list[dict[str, Any]] | Unset = UNSET
@@ -82,7 +82,7 @@ class EnvClusterSpec:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_cluster_member import EnvClusterMember
+        from ..models.env_cluster_member import EnvClusterMember # noqa: PLC0415
         d = dict(src_dict)
         cluster_id = d.pop("clusterID")
 

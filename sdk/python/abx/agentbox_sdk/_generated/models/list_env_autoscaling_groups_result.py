@@ -52,7 +52,7 @@ class ListEnvAutoscalingGroupsResult:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.env_autoscaling_group import EnvAutoscalingGroup
+        from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
@@ -76,7 +76,7 @@ class ListEnvAutoscalingGroupsResult:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.env_autoscaling_group import EnvAutoscalingGroup
+        from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
         d = dict(src_dict)
         items = []
         _items = d.pop("items")

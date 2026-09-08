@@ -68,8 +68,8 @@ class InstanceTypeItem:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.instance_type_item_extensions import InstanceTypeItemExtensions
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.instance_type_item_extensions import InstanceTypeItemExtensions # noqa: PLC0415
+        from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
         name = self.name
 
         base_resources = self.base_resources.to_dict()
@@ -110,8 +110,8 @@ class InstanceTypeItem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.instance_type_item_extensions import InstanceTypeItemExtensions
-        from ..models.resource_requirements import ResourceRequirements
+        from ..models.instance_type_item_extensions import InstanceTypeItemExtensions # noqa: PLC0415
+        from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
         d = dict(src_dict)
         name = d.pop("name")
 

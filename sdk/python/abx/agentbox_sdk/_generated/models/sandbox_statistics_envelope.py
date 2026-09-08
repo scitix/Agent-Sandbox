@@ -50,7 +50,7 @@ class SandboxStatisticsEnvelope:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.sandbox_statistics import SandboxStatistics
+        from ..models.sandbox_statistics import SandboxStatistics # noqa: PLC0415
         statistics = self.statistics.to_dict()
 
 
@@ -66,7 +66,7 @@ class SandboxStatisticsEnvelope:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sandbox_statistics import SandboxStatistics
+        from ..models.sandbox_statistics import SandboxStatistics # noqa: PLC0415
         d = dict(src_dict)
         statistics = SandboxStatistics.from_dict(d.pop("statistics"))
 

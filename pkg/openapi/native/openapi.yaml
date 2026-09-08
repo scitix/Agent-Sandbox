@@ -34,6 +34,13 @@ tags:
     description: >
       Caller identity and authentication. Use `GET /auth/whoami` to verify your
       API key and discover your role (tenant / admin).
+  - name: approvals
+    x-displayName: Approvals
+    description: >
+      The gate that holds a write made with an unattended credential until a
+      person says yes. A refused call answers `428` naming an approval id; these
+      routes are where that id is polled and decided. Deciding requires a
+      console session — a credential must not be able to approve its own writes.
   - name: sandboxes
     x-displayName: Sandboxes
     description: >
@@ -2151,6 +2158,94 @@ components:
         $ref: "#/components/schemas/APIKeyItem"
 
     # =========================================================
+    # Approvals
+    # =========================================================
+    ApprovalPrincipal:
+      type: object
+      required: [team, user]
+      properties:
+        team: { type: string }
+        user: { type: string }
+        keyId:
+          type: string
+          description: "Which credential asked. A key-scoped grant belongs to this key alone, so deleting the key must take its grants with it."
+    ApprovalRequest:
+      type: object
+      required: [id, principal, operation, onceOnly, method, path, summary, createdAt, expiresAt, status]
+      properties:
+        id: { type: string }
+        principal:
+          $ref: "#/components/schemas/ApprovalPrincipal"
+        sessionId:
+          type: string
+          description: "Absent when the caller sent no session header. Such a request can only ever be approved for one call."
+        operation:
+          type: string
+          description: "What is being asked for, e.g. `env.create`. A grant is written against this, not against a route."
+        onceOnly:
+          type: boolean
+          description: "True for destructive and credential-minting calls, which refuse the session and key scopes."
+        method: { type: string }
+        path: { type: string }
+        summary:
+          type: string
+          description: "What the person is being asked, naming the thing acted on."
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [pending, approved, denied, expired]
+        scope:
+          type: string
+          enum: [once, session, key]
+          description: "How far the decision reached. Set once decided."
+        decidedBy: { type: string }
+        decidedAt: { type: string, format: date-time }
+    ApprovalGrant:
+      type: object
+      required: [id, principal, scope, operation, createdAt, grantedBy]
+      properties:
+        id: { type: string }
+        principal:
+          $ref: "#/components/schemas/ApprovalPrincipal"
+        scope:
+          type: string
+          enum: [session, key]
+        sessionId: { type: string }
+        operation: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt:
+          type: string
+          format: date-time
+          description: "Absent for a key-scoped grant, which ends only when revoked."
+        grantedBy: { type: string }
+    ListApprovalsResult:
+      type: object
+      required: [pending, grants]
+      properties:
+        pending:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalRequest"
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalGrant"
+    ApprovalDecisionRequest:
+      type: object
+      required: [decision]
+      additionalProperties: false
+      properties:
+        decision:
+          type: string
+          enum: [approve, deny]
+        scope:
+          type: string
+          enum: [once, session, key]
+          default: once
+          description: "Ignored when denying. `session` needs the request to carry a session id; both wider scopes are refused for a once-only operation."
+
+    # =========================================================
     # Quota
     # =========================================================
     QuotaResources:
@@ -4103,6 +4198,124 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # =========================================================
+  # Approvals
+  #
+  # The gate that holds a write made with an unattended credential until a
+  # person says yes. Only these three routes decide anything; every other route
+  # merely gets refused with a 428 naming an approval id.
+  # =========================================================
+  /approvals:
+    get:
+      operationId: ListApprovals
+      x-since: "0.0.0"
+      summary: What is waiting on you, and what you have already allowed
+      description: |
+        Scoped to the caller's team+user, not to a key: the person deciding owns
+        every key they hold, and this list is read by a human.
+      tags: [approvals]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListApprovalsResult"
+  /approvals/{approvalId}:
+    get:
+      operationId: GetApproval
+      x-since: "0.0.0"
+      summary: Where one approval request has got to
+      description: |
+        The endpoint a blocked client polls. Expiry is reported as a status
+        rather than as a 404, because a caller waiting on a request that timed
+        out deserves to be told which of the two happened.
+      tags: [approvals]
+      parameters:
+        - name: approvalId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRequest"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /approvals/{approvalId}/decision:
+    post:
+      operationId: DecideApproval
+      x-since: "0.0.0"
+      summary: Approve or deny a pending request
+      description: |
+        Console sessions only. A credential must not be able to approve its own
+        writes — that would make the gate a formality the agent walks through by
+        itself.
+      tags: [approvals]
+      parameters:
+        - name: approvalId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecisionRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRequest"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /approvals/grants/{grantId}:
+    delete:
+      operationId: RevokeApprovalGrant
+      x-since: "0.0.0"
+      summary: Withdraw a standing permission
+      tags: [approvals]
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Revoked
+        "404":
+          description: Not Found
           content:
             application/json:
               schema:
