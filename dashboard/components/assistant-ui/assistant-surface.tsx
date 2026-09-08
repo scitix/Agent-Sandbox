@@ -33,6 +33,7 @@ import {
   FolderClosed,
   FolderOpen,
   KeyIcon,
+  SquarePenIcon,
   X,
 } from "lucide-react"
 import {
@@ -75,7 +76,11 @@ import {
   useComposerPrefill,
   type LandingActionSpec,
 } from "@/components/assistant-ui/assistant-landing"
-import { useHasSessionHistory } from "@/components/assistant-ui/session-history"
+import {
+  sessionLabel,
+  useCurrentSession,
+  useHasSessionHistory,
+} from "@/components/assistant-ui/session-history"
 import { useSessionActions } from "@/components/assistant-ui/session-controls"
 import {
   useAssistantLoadState,
@@ -306,6 +311,7 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
   const cluster = clusterFromPath(pathname) ?? auth?.clusterID
   const [rootRef, width] = useElementWidth()
   const [sheetOpen, setSheetOpen] = useState(false)
+  const { newSession } = useSurfaceSessionActions()
 
   const compact = width != null && width < MENU_BREAKPOINT
   const narrow = width != null && width < WORKSPACE_BREAKPOINT
@@ -364,6 +370,7 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
           if (mode === "panel") return goToPage("workspace")
           setWorkspaceOpen(!showWorkspace)
         }}
+        onNewSession={newSession}
         onClose={() => setAssistantOpen(false)}
       />
       {view === "config" ? (
@@ -490,10 +497,30 @@ function useSurfaceSessionActions() {
   }
 }
 
+/**
+ * The conversation's own name, centred in the page header row.
+ *
+ * Absent on an unnamed conversation rather than filled with a placeholder: a
+ * new conversation has no title until the gateway names it from the first
+ * exchange, and "Untitled" sitting there for those few seconds is a label that
+ * says nothing and then changes.
+ */
+const ConversationTitle: FC = () => {
+  const { session } = useCurrentSession()
+  const title = session ? sessionLabel(session, "") : ""
+  if (!title) return null
+  return (
+    <span className="text-muted-foreground min-w-0 truncate px-1 text-[13px]">
+      {title}
+    </span>
+  )
+}
+
 const SurfaceHeader: FC<{
   mode: "page" | "panel"
   menuOut: boolean
   workspaceOut: boolean
+  onNewSession: () => void
   onToggleMenu: () => void
   onToggleWorkspace: () => void
   onClose: () => void
@@ -501,22 +528,61 @@ const SurfaceHeader: FC<{
   mode,
   menuOut,
   workspaceOut,
+  onNewSession,
   onToggleMenu,
   onToggleWorkspace,
   onClose,
 }) => {
   const { t } = useTranslation()
+
+  // The panel says what it is and how to shut it, and nothing else. Its actions
+  // sit on their own row below, because in a column this narrow a title flanked
+  // by four icon buttons has no room left to be a title — and because those
+  // actions do not act HERE: each one goes to the page, where the column it
+  // opens actually fits.
+  if (mode === "panel") {
+    return (
+      <>
+        <div className="flex h-11 shrink-0 items-center gap-1 border-b px-3">
+          <span className="truncate text-sm font-medium">
+            {t("assistant.title")}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto size-7 rounded-full"
+            onClick={onClose}
+            aria-label={t("assistant.close")}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+        <div className="flex shrink-0 items-center gap-1 px-2 pt-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 rounded-full"
+            onClick={onToggleMenu}
+            aria-label={t("assistant.sessions")}
+          >
+            <AlignLeftIcon className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 rounded-full"
+            onClick={onNewSession}
+            aria-label={t("assistant.newSession")}
+          >
+            <SquarePenIcon className="size-4" />
+          </Button>
+        </div>
+      </>
+    )
+  }
+
   return (
-    <div
-      className={cn(
-        "flex h-11 shrink-0 items-center gap-1 px-2",
-        // On the page the card's own edge already separates this row from the
-        // conversation, and the app header sits above it — a rule here would be
-        // the third horizontal line in 60px. The panel has neither, so it keeps
-        // one.
-        mode === "panel" && "border-b"
-      )}
-    >
+    <div className="flex h-11 shrink-0 items-center gap-1 px-2">
       {/* The SAME glyph the menu's own header carries. Two icons that swap on
           state read as two different controls when the button also moves
           between two places — collapsing the menu made this button appear here
@@ -533,40 +599,24 @@ const SurfaceHeader: FC<{
       >
         <AlignLeftIcon className="size-4" />
       </Button>
-      {/* Page mode already has the word above it, in the breadcrumb the app
-          header draws. Repeating it here labelled the same screen twice and
-          spent the row on nothing. */}
-      {mode === "panel" ? (
-        <span className="truncate text-sm font-medium">
-          {t("assistant.title")}
-        </span>
-      ) : null}
-      <div className="ml-auto flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          onClick={onToggleWorkspace}
-          aria-label={t("workspace.title")}
-        >
-          {workspaceOut ? (
-            <FolderOpen className="size-4" />
-          ) : (
-            <FolderClosed className="size-4" />
-          )}
-        </Button>
-        {mode === "panel" ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={onClose}
-            aria-label={t("assistant.close")}
-          >
-            <X className="size-4" />
-          </Button>
-        ) : null}
-      </div>
+      {/* Which CONVERSATION, not which screen. The app header above already
+          draws the breadcrumb, so repeating "Assistant" here labelled the same
+          thing twice and left the row otherwise empty; the conversation's own
+          name is the one thing this strip knows that the breadcrumb does not. */}
+      <ConversationTitle />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="ml-auto size-7 rounded-full"
+        onClick={onToggleWorkspace}
+        aria-label={t("workspace.title")}
+      >
+        {workspaceOut ? (
+          <FolderOpen className="size-4" />
+        ) : (
+          <FolderClosed className="size-4" />
+        )}
+      </Button>
     </div>
   )
 }

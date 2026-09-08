@@ -161,10 +161,16 @@ export function WorkspacePanel() {
     // have to give up columns as it narrows. The window's width says nothing
     // about how wide THIS is — a `sm:` breakpoint here would keep showing every
     // column on a 4K screen while the panel itself was dragged down to 240px.
-    <div className="@container/workspace bg-background flex h-full min-h-0 flex-col">
-      {/* Panel fill and height matched to the app's top bar it sits flush
-          against, so the two form one continuous strip. */}
-      <header className="h-13 bg-card flex shrink-0 items-center gap-1 border-b px-3">
+    <div className="@container/workspace bg-card flex h-full min-h-0 flex-col overflow-hidden rounded-xl border">
+      {/* A panel, like the conversation beside it — same fill, same radius, same
+          hairline. It used to take the canvas colour with a card-coloured header
+          strip, which inverted the layering: the recessed shade was on the
+          outside and the raised one on the inside, so the column read as a hole
+          in the page rather than as a thing on it.
+
+          `h-11` matches the conversation's own header row, so the two line up
+          across the seam. */}
+      <header className="flex h-11 shrink-0 items-center gap-1 border-b px-3">
         <HardDriveIcon className="size-4" />
         <span className="text-[13px] font-medium">{t('workspace.title')}</span>
         <div className="flex-1" />
@@ -240,9 +246,14 @@ export function WorkspacePanel() {
         />
       </div>
 
-      <p className="text-muted-foreground border-t px-3 py-2 text-xs">
-        {t('workspace.ephemeralHint')}
-      </p>
+      {/* Only where there is something to lose. On an inactive or errored panel
+          this footer was a second paragraph of grey text under the first, and
+          the warning it carries is about files that do not exist yet. */}
+      {status === 'ok' && (
+        <p className="text-muted-foreground/80 border-t px-3 py-2 text-[11px]">
+          {t('workspace.ephemeralHint')}
+        </p>
+      )}
 
       <FilePreviewSheet
         source={preview}
@@ -267,13 +278,28 @@ function CenteredState({
   return (
     <div
       className={cn(
-        'flex h-full flex-col items-center justify-center gap-2 px-6 text-center',
+        'flex h-full flex-col items-center justify-center gap-3 px-8 text-center',
         tone === 'destructive' ? 'text-destructive' : 'text-muted-foreground'
       )}
     >
-      <FolderOpenIcon className="size-10 opacity-30" />
-      <p className="text-sm font-medium">{title}</p>
-      {body && <p className="text-xs">{body}</p>}
+      {/* The glyph sits on a recessed disc rather than floating at 30% opacity.
+          A large faded icon on a bare panel reads as something that failed to
+          load; a small solid one in a well reads as a placeholder, which is
+          what this is. */}
+      <span
+        className={cn(
+          'flex size-11 items-center justify-center rounded-full',
+          tone === 'destructive' ? 'bg-destructive/10' : 'bg-muted'
+        )}
+      >
+        <FolderOpenIcon className="size-5" />
+      </span>
+      <div className="flex flex-col gap-1">
+        <p className="text-foreground text-[13px] font-medium">{title}</p>
+        {body && (
+          <p className="max-w-[16rem] text-xs leading-relaxed">{body}</p>
+        )}
+      </div>
       {action}
     </div>
   )

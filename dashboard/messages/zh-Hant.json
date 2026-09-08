@@ -1478,6 +1478,8 @@
   "assistant.status.type.sandboxes": "沙箱",
   "assistant.status.type.pools": "預熱池",
   "assistant.status.type.templates": "範本",
+  "assistant.status.template.noDescription": "這個範本沒寫描述",
+  "assistant.status.template.prompt": "講講 `{{name}}` 這個範本給沙箱帶來了什麼：基礎映像檔、帶的執行環境，以及它最適合跑什麼。",
   "assistant.status.envsReady.label": "就緒的環境",
   "assistant.status.envsReady.description": "看看這些環境都被配成了跑什麼",
   "assistant.status.envsReady.prompt": "彙總我這些就緒的環境：各自用的哪個範本、池子多大、是為什麼樣的活準備的。",
@@ -1492,8 +1494,5 @@
   "assistant.status.poolsIdle.prompt": "把空閒的池容量按環境和池子拆開，並告訴我這個配額和我實際的用量對不對得上。",
   "assistant.status.poolsUnavailable.label": "不可用的池位",
   "assistant.status.poolsUnavailable.description": "查一下這部分容量為什麼領不出來",
-  "assistant.status.poolsUnavailable.prompt": "說明這些池位為什麼不可用，是排程、映像檔還是配額的問題。",
-  "assistant.status.templates.label": "範本",
-  "assistant.status.templates.description": "比一比這些範本給沙箱帶來了什麼",
-  "assistant.status.templates.prompt": "對比我可以用的沙箱範本：基礎映像檔、帶的執行環境，以及各自最適合幹什麼。"
+  "assistant.status.poolsUnavailable.prompt": "說明這些池位為什麼不可用，是排程、映像檔還是配額的問題。"
 }

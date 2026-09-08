@@ -21,9 +21,9 @@
  * `rounded-xl` and friends already point at these variables, so re-pointing the
  * variables re-skins every component.
  *
- * Three surface layers, in both themes:
+ * Three surface layers:
  *
- *   rail (--sidebar)  <  canvas (--background)  <  panel (--card)
+ *   canvas (--background)  <  rail (--sidebar) = panel (--card)
  *
  * The canvas is what makes a panel read as a panel. With canvas and panel both
  * pure white a card can only be told from its surroundings by its border, so
@@ -31,9 +31,10 @@
  * page ends up fenced into boxes. Given a layer difference the border becomes
  * optional, and most of them can go.
  *
- * The rail is DARK in both themes — a fixed brand anchor rather than a
- * theme-derived shade. See the `[data-slot='sidebar-inner']` block below for
- * how its subtree gets a matching palette without per-element classes.
+ * Only the BODY takes the canvas. The navigation rail sits with the panels on
+ * white, so the app reads as chrome around one recessed work area rather than
+ * as three competing shades; the rail's separation comes from its edge, not
+ * from a fill. In dark mode the same relationship holds one step darker.
  */
 :root {
   --background: oklch(0.9755 0.0045 258.32); /* canvas the panels float on */
@@ -78,17 +79,14 @@
    * chips) and `rounded-xl` → 12.6px (cards, panels, table frames).
    */
   --radius: 0.5625rem;
-  --sidebar: oklch(0.2472 0.0164 264.21); /* rail */
-  --sidebar-foreground: oklch(1 0 0);
-  /* Brand orange survives the dark rail (it is a light-on-dark hue to begin
-     with), so the rail keeps the product's accent rather than falling back to
-     white the way a dark-navy brand would have to. */
+  --sidebar: oklch(1 0 0); /* rail — with the panels, not below them */
+  --sidebar-foreground: oklch(0.2472 0.0164 264.21);
   --sidebar-primary: oklch(0.7758 0.1517 54.76);
-  --sidebar-primary-foreground: oklch(0.2472 0.0164 264.21);
-  --sidebar-accent: oklch(1 0 0 / 12%);
-  --sidebar-accent-foreground: oklch(1 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(1 0 0 / 28%);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.964 0.0029 264.54);
+  --sidebar-accent-foreground: oklch(0.2472 0.0164 264.21);
+  --sidebar-border: oklch(0.9256 0.0068 277.16);
+  --sidebar-ring: oklch(0.7758 0.1517 54.76);
   --brand: oklch(0.7758 0.1517 54.76);
   --brand-foreground: oklch(0.985 0 0);
   --success: oklch(0.72 0.19 142);
@@ -125,14 +123,14 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.1818 0.0088 264.33); /* rail stays the darkest layer */
-  --sidebar-foreground: oklch(1 0 0);
+  --sidebar: oklch(0.2472 0.0164 264.21); /* rail — level with the panels */
+  --sidebar-foreground: oklch(0.93 0 0);
   --sidebar-primary: oklch(0.7758 0.1517 54.76);
-  --sidebar-primary-foreground: oklch(0.1818 0.0088 264.33);
-  --sidebar-accent: oklch(1 0 0 / 12%);
-  --sidebar-accent-foreground: oklch(1 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(1 0 0 / 28%);
+  --sidebar-primary-foreground: oklch(0.13 0 0);
+  --sidebar-accent: oklch(0.2681 0.016 264.26);
+  --sidebar-accent-foreground: oklch(0.93 0 0);
+  --sidebar-border: oklch(0.3076 0.016 259.8);
+  --sidebar-ring: oklch(0.7758 0.1517 54.76);
   --brand: oklch(0.7758 0.1517 54.76);
   --brand-foreground: oklch(0.13 0 0);
   --success: oklch(0.72 0.19 142);
@@ -142,16 +140,16 @@
 }
 
 /*
- * The navigation rail is dark under BOTH themes, so its children cannot inherit
- * the page's neutrals — `text-muted-foreground` would render mid-grey on
- * near-black and disappear, `bg-card` would paint white inside the rail.
+ * The rail is NOT the recessed layer — the body is. Utilities written inside it
+ * still name the page's neutrals (`bg-background` on a nav container, say), and
+ * those would paint the canvas grey inside a white rail, putting a second shade
+ * where the design has one surface.
  *
- * Rather than sprinkle `text-sidebar-*` variants across every child, re-declare
- * the neutral tokens for the rail's subtree. Custom properties substitute
- * lazily, so every already-written utility (`border`, `bg-card`, `text-primary`,
- * `hover:bg-accent`, …) re-resolves against the dark surface with no markup
- * change. Portalled children — tooltips, dropdown menus, the ⌘K dialog — render
- * outside this subtree and correctly keep the page palette.
+ * Re-declaring `--background` for the rail's subtree fixes that at the token
+ * layer rather than at each call site: custom properties substitute lazily, so
+ * every already-written utility re-resolves against the rail's own fill with no
+ * markup change. Portalled children — tooltips, dropdown menus, the ⌘K dialog —
+ * render outside this subtree and correctly keep the page palette.
  */
 [data-slot="sidebar-inner"],
 [data-slot="sidebar"][data-mobile="true"] {
@@ -159,17 +157,10 @@
   --foreground: var(--sidebar-foreground);
   --card: var(--sidebar);
   --card-foreground: var(--sidebar-foreground);
-  --popover: oklch(0.2681 0.016 264.26);
-  --popover-foreground: var(--sidebar-foreground);
-  --muted: oklch(1 0 0 / 8%);
-  --muted-foreground: oklch(0.76 0.012 260);
   --accent: var(--sidebar-accent);
   --accent-foreground: var(--sidebar-accent-foreground);
-  --secondary: oklch(1 0 0 / 10%);
-  --secondary-foreground: var(--sidebar-foreground);
   --border: var(--sidebar-border);
   --input: var(--sidebar-border);
-  --ring: var(--sidebar-ring);
 }
 
 @theme inline {
@@ -245,6 +236,38 @@
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
+  }
+
+  /*
+   * Scrollbars: thin, unpainted track, thumb only.
+   *
+   * The platform default paints a grey gutter down the edge of every scroller,
+   * and this UI has a lot of them — the conversation, the session list, the
+   * workspace tree, every table. Each one drew a vertical rule the design does
+   * not have, and next to a 1px hairline border it reads as a second, heavier
+   * one. Leaving the track transparent means the scrollbar only exists where
+   * there is a thumb to show.
+   *
+   * `bg-clip-padding` with a transparent border is what insets the thumb from
+   * the edge without a track to inset it against.
+   */
+  ::-webkit-scrollbar {
+    @apply size-2.5;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-accent rounded-full border border-solid border-transparent bg-clip-padding;
+  }
+
+  /* Firefox has no thumb/track pseudo-elements; these two properties are the
+     whole API, and they have to name a colour pair rather than inherit one. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent) transparent;
   }
 }
 

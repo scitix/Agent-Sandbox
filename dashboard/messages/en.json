@@ -1478,6 +1478,8 @@
   "assistant.status.type.sandboxes": "Sandboxes",
   "assistant.status.type.pools": "Warm pools",
   "assistant.status.type.templates": "Templates",
+  "assistant.status.template.noDescription": "No description on this template",
+  "assistant.status.template.prompt": "Tell me what the `{{name}}` template gives a sandbox — its base image, the runtimes it carries, and what it is best suited to running.",
   "assistant.status.envsReady.label": "ready environments",
   "assistant.status.envsReady.description": "Review what these environments are set up to run",
   "assistant.status.envsReady.prompt": "Summarise my ready environments: what template each one uses, its pool sizing, and what kind of work it is set up for.",
@@ -1492,8 +1494,5 @@
   "assistant.status.poolsIdle.prompt": "Break the idle pool capacity down by environment and pool, and tell me whether the sizing matches how much I actually use.",
   "assistant.status.poolsUnavailable.label": "unavailable pool slots",
   "assistant.status.poolsUnavailable.description": "Work out why this capacity cannot be claimed",
-  "assistant.status.poolsUnavailable.prompt": "Explain why these pool slots are unavailable, and whether it is a scheduling, image or quota problem.",
-  "assistant.status.templates.label": "templates",
-  "assistant.status.templates.description": "Compare what these templates give a sandbox",
-  "assistant.status.templates.prompt": "Compare the sandbox templates available to me: their base image, the runtimes they carry, and what each is best suited to."
+  "assistant.status.poolsUnavailable.prompt": "Explain why these pool slots are unavailable, and whether it is a scheduling, image or quota problem."
 }

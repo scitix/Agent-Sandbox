@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState, type FC } from "react"
+import { usePathname } from "next/navigation"
 import { useAtomValue, useSetAtom } from "jotai"
 import { actingIdentityAtom } from "@/lib/atoms"
 import {
@@ -29,9 +30,26 @@ import { AssistantSurface } from "@/components/assistant-ui/assistant-surface"
 const PANEL_WIDTH = "min(38rem, 42vw)"
 
 export const AssistantSidePanel: FC = () => {
-  const open = useAtomValue(atomAssistantOpen)
+  const rawOpen = useAtomValue(atomAssistantOpen)
   const acting = useAtomValue(actingIdentityAtom)
   const setUserKey = useSetAtom(atomAssistantUserKey)
+  const setOpen = useSetAtom(atomAssistantOpen)
+  const pathname = usePathname()
+  // On the assistant's own page the panel is the same assistant, twice — two
+  // greetings, two composers, two conversations that do not know about each
+  // other. Suppressed here rather than by hiding the button that opens it,
+  // because the flag also gets set by things that are not that button: a status
+  // card queues a prompt and opens the panel on its way to a list page, and
+  // arriving BACK on the assistant page must not bring it with you.
+  const onAssistantPage = /(^|\/)assistant\/?$/.test(pathname)
+  const open = rawOpen && !onAssistantPage
+
+  // Reset the flag rather than only ignoring it: leaving it set means the panel
+  // springs open the moment the user navigates to any other page, having been
+  // told to open by something they did on this one.
+  useEffect(() => {
+    if (onAssistantPage && rawOpen) setOpen(false)
+  }, [onAssistantPage, rawOpen, setOpen])
   // Once mounted it stays: unmounting takes the in-memory thread and any open
   // question with it, and a closed panel costs nothing but a hidden element.
   //

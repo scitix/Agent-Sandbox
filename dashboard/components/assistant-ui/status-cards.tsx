@@ -46,15 +46,30 @@ type BucketCopy =
   | "sandboxesRunning"
   | "poolsIdle"
   | "poolsUnavailable"
-  | "templates"
 
-/** One card: a live count and which wordings describe it. */
-export interface StatusBucket {
-  /** Unique within its group. */
-  key: string
-  copy: BucketCopy
-  count: number
-}
+/**
+ * A card is one of two things, and the difference is what its headline means.
+ *
+ * A `count` card answers "how many", and its wordings come from the dictionary.
+ * An `item` card IS one of the things — a template, named — so its title and
+ * description are that record's own text and cannot be translated; only the
+ * frame around them can. Three cards reading "3 templates", "2 environments",
+ * "1 pool" tell you the shape of the deployment; three cards naming the
+ * templates tell you what you can actually run, which on a landing screen is
+ * the more useful of the two.
+ */
+export type StatusBucket =
+  | { kind: "count"; key: string; copy: BucketCopy; count: number }
+  | {
+      kind: "item"
+      key: string
+      /** The short identifying figure that stands in for a count. */
+      figure: string
+      title: string
+      description: string
+      /** Already interpolated — the record's name is inside it. */
+      prompt: string
+    }
 
 /**
  * The card face's colour scheme. Named rather than free-form Tailwind so a board
@@ -102,10 +117,15 @@ interface StatusGroupSpec {
   typeLabelKey: TranslationKey
   accent: StatusAccent
   page: DashboardPage
-  buckets: () => UseQueryOptions<unknown, Error, StatusBucket[], readonly unknown[]>
+  /** `t` is passed in because an item card's strings are resolved here, and a
+   *  query's `select` must not close over a locale it captured once. */
+  buckets: (
+    t: (k: TranslationKey, v?: Record<string, string>) => string
+  ) => UseQueryOptions<unknown, Error, StatusBucket[], readonly unknown[]>
 }
 
 const bucket = (key: string, count: number, copy: BucketCopy): StatusBucket => ({
+  kind: "count",
   key,
   count,
   copy,
@@ -115,7 +135,8 @@ const copyKey = (copy: BucketCopy, part: "label" | "description" | "prompt") =>
   `assistant.status.${copy}.${part}` as TranslationKey
 
 /** Buckets with nothing in them never become cards. */
-const nonEmpty = (items: StatusBucket[]) => items.filter(b => b.count > 0)
+const nonEmpty = (items: StatusBucket[]) =>
+  items.filter(b => b.kind !== "count" || b.count > 0)
 
 /**
  * Environments and pools come from ONE request.
@@ -180,15 +201,48 @@ function sandboxBucketsQuery() {
   } as unknown as UseQueryOptions<unknown, Error, StatusBucket[], readonly unknown[]>
 }
 
-function templateBucketsQuery() {
+/**
+ * One card per template, not one card counting them.
+ *
+ * "3 templates" is a fact about the deployment; the names and what each one
+ * carries is the thing a person opening this page is actually deciding between.
+ * The version goes in the figure slot because it is the one short string a
+ * template has that identifies a particular build of it.
+ *
+ * Capped: a deployment with thirty templates would push the suggestions off the
+ * screen and turn a landing into a catalogue. The list page is the catalogue.
+ */
+const TEMPLATE_CARDS = 6
+
+function templateBucketsQuery(
+  t: (k: TranslationKey, v?: Record<string, string>) => string
+) {
   const base = templatesQueryOptions()
   return {
     ...base,
     select: (data: unknown) => {
-      const items = (data as { items?: unknown[] })?.items ?? []
-      return nonEmpty([bucket("all", items.length, "templates")])
+      const items =
+        (data as { items?: TemplateLike[] })?.items?.slice(0, TEMPLATE_CARDS) ??
+        []
+      return items.map(
+        (tpl): StatusBucket => ({
+          kind: "item",
+          key: tpl.name,
+          figure: tpl.version || "—",
+          title: tpl.name,
+          description:
+            tpl.description || t("assistant.status.template.noDescription"),
+          prompt: t("assistant.status.template.prompt", { name: tpl.name }),
+        })
+      )
     },
   } as unknown as UseQueryOptions<unknown, Error, StatusBucket[], readonly unknown[]>
+}
+
+interface TemplateLike {
+  name: string
+  version?: string
+  description?: string
 }
 
 interface EnvLike {
@@ -272,7 +326,7 @@ function StatusGroup({
   onAsk: (ask: StatusAsk) => void
 }) {
   const { t } = useTranslation()
-  const { data, isLoading } = useQuery(spec.buckets())
+  const { data, isLoading } = useQuery(spec.buckets(t))
   if (isLoading) return <Skeleton className="h-56 rounded-2xl" />
   return (
     <>
@@ -282,7 +336,11 @@ function StatusGroup({
           spec={spec}
           bucket={b}
           onClick={() =>
-            onAsk({ page: spec.page, prompt: t(copyKey(b.copy, "prompt")) })
+            onAsk({
+              page: spec.page,
+              prompt:
+                b.kind === "item" ? b.prompt : t(copyKey(b.copy, "prompt")),
+            })
           }
         />
       ))}
@@ -321,13 +379,20 @@ function StatusCard({
             screenshot would be. */}
         <div className="bg-card/85 flex w-full flex-col gap-2.5 rounded-t-xl px-4 pb-4 pt-3.5 shadow-sm backdrop-blur-sm">
           <div className="flex items-baseline gap-2">
+            {/* A count is a number and sets in the number face; a version is a
+                string that would look wrong there and, at four or five
+                characters, would crowd the type label out of the row. Same
+                slot, two sizes. */}
             <span
               className={cn(
-                "text-2xl font-medium leading-none tracking-[-0.02em] tabular-nums",
+                "font-medium leading-none tracking-[-0.02em]",
+                bucket.kind === "count"
+                  ? "text-2xl tabular-nums"
+                  : "truncate text-base",
                 accent.text
               )}
             >
-              {bucket.count}
+              {bucket.kind === "count" ? bucket.count : bucket.figure}
             </span>
             <span className="text-muted-foreground min-w-0 truncate text-[11px]">
               {t(spec.typeLabelKey)}
@@ -346,15 +411,20 @@ function StatusCard({
       <div className="flex flex-1 flex-col gap-1.5 px-1.5 pb-1.5">
         {/* "3 environments not ready" — the measure word is the locale's
             business, so the count and the noun are one interpolated string
-            rather than two spans the layout would have to space by hand. */}
+            rather than two spans the layout would have to space by hand. An
+            item card's title is the record's own name and is not composed. */}
         <div className="truncate text-[15px] font-medium">
-          {t("assistant.status.cardTitle", {
-            count: String(bucket.count),
-            label: t(copyKey(bucket.copy, "label")),
-          })}
+          {bucket.kind === "item"
+            ? bucket.title
+            : t("assistant.status.cardTitle", {
+                count: String(bucket.count),
+                label: t(copyKey(bucket.copy, "label")),
+              })}
         </div>
         <p className="text-muted-foreground line-clamp-2 text-[13px] leading-snug">
-          {t(copyKey(bucket.copy, "description"))}
+          {bucket.kind === "item"
+            ? bucket.description
+            : t(copyKey(bucket.copy, "description"))}
         </p>
       </div>
     </button>

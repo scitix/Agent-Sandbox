@@ -9,6 +9,7 @@
  */
 
 import type { FC } from "react"
+import { usePathname } from "next/navigation"
 import { useAtom } from "jotai"
 import { Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,10 @@ import { atomAssistantOpen } from "@/lib/assistant/store"
 export const HeaderAskAIButton: FC = () => {
   const { t } = useTranslation()
   const [open, setOpen] = useAtom(atomAssistantOpen)
+  const pathname = usePathname()
+  // The page IS the assistant. The panel is suppressed there, so leaving the
+  // button would offer an action with no effect — worse than not offering it.
+  if (/(^|\/)assistant\/?$/.test(pathname)) return null
   return (
     <Tooltip>
       <TooltipTrigger

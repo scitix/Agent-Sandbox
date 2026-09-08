@@ -1478,6 +1478,8 @@
   "assistant.status.type.sandboxes": "沙箱",
   "assistant.status.type.pools": "预热池",
   "assistant.status.type.templates": "模板",
+  "assistant.status.template.noDescription": "这个模板没写描述",
+  "assistant.status.template.prompt": "讲讲 `{{name}}` 这个模板给沙箱带来了什么：基础镜像、带的运行时，以及它最适合跑什么。",
   "assistant.status.envsReady.label": "就绪的环境",
   "assistant.status.envsReady.description": "看看这些环境都被配成了跑什么",
   "assistant.status.envsReady.prompt": "汇总我这些就绪的环境：各自用的哪个模板、池子多大、是为什么样的活准备的。",
@@ -1492,8 +1494,5 @@
   "assistant.status.poolsIdle.prompt": "把空闲的池容量按环境和池子拆开，并告诉我这个配额和我实际的用量对不对得上。",
   "assistant.status.poolsUnavailable.label": "不可用的池位",
   "assistant.status.poolsUnavailable.description": "查一下这部分容量为什么领不出来",
-  "assistant.status.poolsUnavailable.prompt": "说明这些池位为什么不可用，是调度、镜像还是配额的问题。",
-  "assistant.status.templates.label": "模板",
-  "assistant.status.templates.description": "比一比这些模板给沙箱带来了什么",
-  "assistant.status.templates.prompt": "对比我可以用的沙箱模板：基础镜像、带的运行时，以及各自最适合干什么。"
+  "assistant.status.poolsUnavailable.prompt": "说明这些池位为什么不可用，是调度、镜像还是配额的问题。"
 }
