@@ -21,13 +21,18 @@
  */
 
 import { useState, type FC } from "react"
+import { createPortal } from "react-dom"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import { MCP } from "@lobehub/icons"
 import {
+  AlignLeftIcon,
+  CheckIcon,
+  CopyIcon,
   FolderClosed,
   FolderOpen,
-  PanelLeftClose,
-  PanelLeftOpen,
+  KeyIcon,
   X,
 } from "lucide-react"
 import {
@@ -36,13 +41,21 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
 import { Button } from "@/components/ui/button"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/lib/i18n"
 import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
-import { authAtom } from "@/lib/atoms"
+import { authAtom, clustersAtom } from "@/lib/atoms"
+import { mcpGuide } from "@/components/assistant-ui/mcp-guide"
+import { MarkdownContent } from "@/components/assistant-ui/markdown-text"
 import { usePathname } from "next/navigation"
 import { clusterFromPath } from "@/lib/assistant/current-page"
 import { useElementWidth } from "@/hooks/use-element-width"
@@ -50,13 +63,18 @@ import {
   atomAssistantMenuOpen,
   atomAssistantOpen,
   atomAssistantPage,
+  atomAssistantPendingAutoSend,
   atomWorkspaceOpen,
 } from "@/lib/assistant/store"
 import { Thread } from "@/components/assistant-ui/thread"
 import { AssistantMenu } from "@/components/assistant-ui/assistant-menu"
 import { AssistantSettings } from "@/components/assistant-ui/assistant-settings"
 import { WorkspacePanel } from "@/components/assistant-ui/workspace-panel"
-import type { LandingActionSpec } from "@/components/assistant-ui/assistant-landing"
+import {
+  AssistantLanding,
+  useComposerPrefill,
+  type LandingActionSpec,
+} from "@/components/assistant-ui/assistant-landing"
 import { useHasSessionHistory } from "@/components/assistant-ui/session-history"
 import { useSessionActions } from "@/components/assistant-ui/session-controls"
 import {
@@ -82,6 +100,177 @@ export interface AssistantSurfaceProps {
   landingActions?: LandingActionSpec[]
 }
 
+/** How long the copy button holds its "copied" face. */
+const COPIED_FEEDBACK_MS = 1500
+
+/**
+ * "Use AgentBox from your own tools" — a floating entry into the walkthrough.
+ *
+ * Portalled to `document.body`, and it has to be: the dashboard's main column
+ * declares `@container`, `container-type` implies layout containment, and a
+ * contained ancestor becomes the containing block for `position: fixed`
+ * descendants. Rendered in place, the button would pin itself to the corner of
+ * the conversation column and travel with it.
+ *
+ * Page mode only. In the panel the conversation is already a third of the width
+ * and a bubble over it would cover the thing it is offering to explain.
+ */
+function McpEntry({ cluster }: { cluster: string }) {
+  const { t } = useTranslation()
+  const locale = useLocale()
+  const { clusters } = useAtomValue(clustersAtom)
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const entry = clusters.find(c => c.id === cluster)
+  const guide = mcpGuide(
+    { e2bURL: entry?.gateway?.e2bURL, dataURL: entry?.gateway?.dataURL },
+    locale
+  )
+
+  const copyAll = () => {
+    void navigator.clipboard.writeText(guide).then(() => {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS)
+    })
+  }
+
+  // There is no `document` while this renders on the server, and `createPortal`
+  // has no server form to fall back on. Nothing is lost by sitting the pass out:
+  // the portal's content never occupies this position in the tree, so the markup
+  // React hydrates against is the same either way.
+  if (typeof document === "undefined") return null
+
+  return createPortal(
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label={t("assistant.mcp.title")}
+            // Below the z-index dialogs and sheets take (50), so anything modal
+            // covers it rather than being punched through by a help bubble.
+            className="bg-primary hover:bg-primary/90 fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-full py-1.5 pe-3.5 ps-1.5 text-xs font-medium text-white shadow-lg transition-colors"
+          >
+            {/* The mark takes the button's own colour out of a white disc, so
+                the entry reads as the protocol's badge rather than as a
+                monochrome glyph that disappears into the fill — and, in dark
+                mode, went black. */}
+            <span className="text-primary flex size-6 items-center justify-center rounded-full bg-white">
+              <MCP size={14} />
+            </span>
+            {t("assistant.mcp.label")}
+          </button>
+        }
+      />
+      <PopoverContent
+        side="top"
+        align="end"
+        className="flex max-h-[70vh] w-[30rem] flex-col gap-0 p-0"
+      >
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
+          <PopoverTitle className="text-[13px]">
+            {t("assistant.mcp.title")}
+          </PopoverTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-me-2 size-7 shrink-0 rounded-full"
+            aria-label={t("common.close")}
+            onClick={() => setOpen(false)}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        {/* Nothing floats over the document: a button pinned inside a scroller
+            scrolls with it, and pinning it outside means wrapping the scroller
+            in a second box that breaks the scroll it was supposed to leave
+            alone. The copy action lives in the footer instead, next to the
+            other thing you can do from here. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          <MarkdownContent content={guide} />
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2 border-t p-3">
+          <Button variant="secondary" className="gap-1.5" onClick={copyAll}>
+            {copied ? (
+              <CheckIcon className="size-4" />
+            ) : (
+              <CopyIcon className="size-4" />
+            )}
+            {copied ? t("common.copied") : t("assistant.mcp.copyAll")}
+          </Button>
+          <Button
+            className="flex-1 gap-1.5"
+            render={
+              <Link
+                href={clusterPath(cluster, "api-keys", locale)}
+                onClick={() => setOpen(false)}
+              >
+                <KeyIcon className="size-4" />
+                {t("assistant.mcp.apiKey")}
+              </Link>
+            }
+          />
+        </div>
+      </PopoverContent>
+    </Popover>,
+    document.body
+  )
+}
+
+/**
+ * The conversation, plus the landing it shows while empty.
+ *
+ * The landing is a PAGE-mode thing. The panel is a third of the width, the
+ * status board needs three tiles across before it is a board rather than a
+ * column, and the suggestion pills would wrap to one per line — so the panel
+ * keeps the centred greeting and nothing else.
+ *
+ * A suggestion pre-fills. A status card SENDS, and navigates on the way: the
+ * number it quotes lives on a list page, and the answer is worth reading beside
+ * the rows it is about. That asymmetry is deliberate — a pill is words you are
+ * expected to edit, a card is a question that is already complete.
+ */
+function ThreadWithLanding({
+  mode,
+  landingActions,
+}: {
+  mode: "page" | "panel"
+  landingActions?: LandingActionSpec[]
+}) {
+  const router = useRouter()
+  const locale = useLocale()
+  const pathname = usePathname()
+  const auth = useAtomValue(authAtom)
+  const cluster = clusterFromPath(pathname) ?? auth?.clusterID
+  const prefill = useComposerPrefill()
+  const setAutoSend = useSetAtom(atomAssistantPendingAutoSend)
+  const setAssistantOpen = useSetAtom(atomAssistantOpen)
+
+  if (mode !== "page" || !cluster) return <Thread />
+
+  return (
+    <Thread
+      landing={
+        <AssistantLanding
+          actions={landingActions}
+          onPick={prefill}
+          onAsk={ask => {
+            // Queued rather than sent here: this component is about to be
+            // unmounted by the navigation below, and the panel that picks the
+            // conversation up on the destination page is the one that can send.
+            setAutoSend(ask.prompt)
+            setAssistantOpen(true)
+            router.push(clusterPath(cluster, ask.page, locale))
+          }}
+        />
+      }
+    />
+  )
+}
+
 /**
  * Whether the menu is out, and how to change that.
  *
@@ -97,7 +286,10 @@ function useMenuOpen(): [boolean, (open: boolean) => void] {
   return [choice ?? hasHistory, setChoice]
 }
 
-export const AssistantSurface: FC<AssistantSurfaceProps> = ({ mode }) => {
+export const AssistantSurface: FC<AssistantSurfaceProps> = ({
+  mode,
+  landingActions,
+}) => {
   const { t } = useTranslation()
   const locale = useLocale()
   const router = useRouter()
@@ -149,7 +341,9 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({ mode }) => {
       className={cn(
         // The conversation is the panel: it keeps its own fill whether or not a
         // column is out, so collapsing one does not repaint what you are
-        // reading.
+        // reading. Against the canvas the fill alone is what separates it —
+        // which is why the border below is a hairline on the edge of a real
+        // surface change rather than a fence drawn to invent one.
         "bg-card relative flex h-full min-h-0 min-w-0 flex-1 flex-col",
         // The floating look — a card inset with a hairline, rather than a hard
         // seam against the frame. Only when something is beside it; alone it
@@ -175,11 +369,7 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({ mode }) => {
       {view === "config" ? (
         <AssistantSettings onClose={() => setPage(null)} />
       ) : (
-        /* No `landing`: the empty state is the centred greeting, which now
-           carries the suggestions. A landing switches the thread into its
-           scrolling flow layout, which only pays off with a status board to
-           fill it. */
-        <Thread />
+        <ThreadWithLanding mode={mode} landingActions={landingActions} />
       )}
     </div>
   )
@@ -187,7 +377,10 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({ mode }) => {
   return (
     <div
       ref={rootRef}
-      className="bg-muted/30 flex min-h-0 min-w-0 flex-1 flex-col"
+      // The canvas the panels float on. It was a translucent muted wash back
+      // when canvas and panel were the same white and something had to stand in
+      // for the missing layer; the token now carries that difference itself.
+      className="bg-background flex min-h-0 min-w-0 flex-1 flex-col"
     >
       {showMenu || showWorkspace ? (
         <ResizablePanelGroup className="min-h-0 flex-1">
@@ -201,22 +394,36 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({ mode }) => {
               >
                 <MenuColumn />
               </ResizablePanel>
-              <ResizableHandle />
+              {/* Invisible on purpose: the gap between the menu and the card IS
+                  the seam, and a painted divider on top of it draws a second
+                  one. The handle keeps its hit area either way. */}
+              <ResizableHandle className="bg-transparent" />
             </>
           ) : null}
-          <ResizablePanel minSize="30%" className="flex min-w-0 flex-col">
+          <ResizablePanel
+            minSize="30%"
+            className={cn(
+              "flex min-w-0 flex-col",
+              // Inset only when something is beside it — the padding is what
+              // lets the card read as floating, and a card alone in the frame
+              // has nothing to float above.
+              (showMenu || showWorkspace) && "py-2",
+              showMenu && "pl-0",
+              !showWorkspace && "pr-2"
+            )}
+          >
             {conversation}
           </ResizablePanel>
           {showWorkspace ? (
             <>
-              <ResizableHandle />
+              <ResizableHandle className="bg-transparent" />
               <ResizablePanel
                 defaultSize="26%"
                 minSize="18%"
                 maxSize="45%"
                 className="flex min-w-0 flex-col"
               >
-                <div className="flex h-full min-h-0 flex-col p-1 pl-0">
+                <div className="flex h-full min-h-0 flex-col py-2 pl-0 pr-2">
                   <WorkspacePanel />
                 </div>
               </ResizablePanel>
@@ -236,6 +443,7 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({ mode }) => {
           </SheetContent>
         </Sheet>
       ) : null}
+      {mode === "page" && cluster ? <McpEntry cluster={cluster} /> : null}
     </div>
   )
 }
@@ -299,23 +507,40 @@ const SurfaceHeader: FC<{
 }) => {
   const { t } = useTranslation()
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 border-b px-2">
+    <div
+      className={cn(
+        "flex h-11 shrink-0 items-center gap-1 px-2",
+        // On the page the card's own edge already separates this row from the
+        // conversation, and the app header sits above it — a rule here would be
+        // the third horizontal line in 60px. The panel has neither, so it keeps
+        // one.
+        mode === "panel" && "border-b"
+      )}
+    >
+      {/* The SAME glyph the menu's own header carries. Two icons that swap on
+          state read as two different controls when the button also moves
+          between two places — collapsing the menu made this button appear here
+          wearing a face the user had not seen. One glyph, one control, and its
+          position is what tells you which side of the toggle you are on. */}
       <Button
         variant="ghost"
         size="icon"
-        className="size-7"
+        className="size-7 rounded-full"
         onClick={onToggleMenu}
-        aria-label={menuOut ? t("assistant.menu.collapse") : t("assistant.menu.expand")}
+        aria-label={
+          menuOut ? t("assistant.menu.collapse") : t("assistant.menu.expand")
+        }
       >
-        {menuOut ? (
-          <PanelLeftClose className="size-4" />
-        ) : (
-          <PanelLeftOpen className="size-4" />
-        )}
+        <AlignLeftIcon className="size-4" />
       </Button>
-      <span className="truncate text-sm font-medium">
-        {t("assistant.title")}
-      </span>
+      {/* Page mode already has the word above it, in the breadcrumb the app
+          header draws. Repeating it here labelled the same screen twice and
+          spent the row on nothing. */}
+      {mode === "panel" ? (
+        <span className="truncate text-sm font-medium">
+          {t("assistant.title")}
+        </span>
+      ) : null}
       <div className="ml-auto flex items-center gap-1">
         <Button
           variant="ghost"
