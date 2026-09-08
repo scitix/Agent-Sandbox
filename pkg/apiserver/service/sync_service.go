@@ -396,13 +396,14 @@ func (s *syncServiceImpl) applyKeyUpsert(ctx context.Context, m *syncv1.APIKeyMe
 		return nil
 	}
 	meta := apikey.KeyMetadata{
-		Namespace:   m.Namespace,
-		Role:        m.Role,
-		User:        m.User,
-		Team:        m.Team,
-		QuotaURL:    m.QuotaUrl,
-		Description: m.Description,
-		RawToken:    m.RawToken,
+		Namespace:       m.Namespace,
+		Role:            m.Role,
+		User:            m.User,
+		Team:            m.Team,
+		QuotaURL:        m.QuotaUrl,
+		Description:     m.Description,
+		RawToken:        m.RawToken,
+		RequireApproval: m.RequireApproval,
 	}
 	if m.IssuedAt != nil {
 		meta.IssuedAt = m.IssuedAt.AsTime()

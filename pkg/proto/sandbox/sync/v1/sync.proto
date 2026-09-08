@@ -76,6 +76,12 @@ message APIKeyMetadata {
   // a Worker may need to reconstruct the recoverable value. Empty for legacy
   // keys created before plaintext storage was introduced.
   string raw_token = 12;
+
+  // Whether this key acts with nobody watching, so its writes are held until a
+  // person approves them. Keys are minted on the Hub and the gate runs on the
+  // Worker, so a flag that did not travel here would be a flag that never took
+  // effect — set on the Hub, absent everywhere it is read.
+  bool require_approval = 13;
 }
 
 message CreateKeyRequest {

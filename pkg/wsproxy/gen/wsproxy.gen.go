@@ -21,6 +21,24 @@ const (
 	ManagerTokenAuthScopes = "ManagerTokenAuth.Scopes"
 )
 
+// Defines values for CreateAPIKeyRequestMode.
+const (
+	Agent        CreateAPIKeyRequestMode = "agent"
+	Unrestricted CreateAPIKeyRequestMode = "unrestricted"
+)
+
+// Valid indicates whether the value is a known member of the CreateAPIKeyRequestMode enum.
+func (e CreateAPIKeyRequestMode) Valid() bool {
+	switch e {
+	case Agent:
+		return true
+	case Unrestricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DailyReportTriggerResultResult.
 const (
 	DailyReportTriggerResultResultFailure DailyReportTriggerResultResult = "failure"
@@ -101,6 +119,13 @@ type CreateAPIKeyRequest struct {
 	// IssuedAt Import mode: original issuedAt timestamp.
 	IssuedAt *time.Time `json:"issuedAt,omitempty"`
 
+	// Mode What this key is for. `agent` marks it as acting while nobody is
+	// watching, so its platform writes are held until a person approves
+	// them. The sandbox surface is unaffected either way — it is the same
+	// key the E2B SDK uses, and the gate sits only on the platform
+	// operations `abx` performs.
+	Mode *CreateAPIKeyRequestMode `json:"mode,omitempty"`
+
 	// Namespace Import mode: original namespace.
 	Namespace *string `json:"namespace,omitempty"`
 
@@ -113,6 +138,13 @@ type CreateAPIKeyRequest struct {
 	// User Import mode: original user.
 	User *string `json:"user,omitempty"`
 }
+
+// CreateAPIKeyRequestMode What this key is for. `agent` marks it as acting while nobody is
+// watching, so its platform writes are held until a person approves
+// them. The sandbox surface is unaffected either way — it is the same
+// key the E2B SDK uses, and the gate sits only on the platform
+// operations `abx` performs.
+type CreateAPIKeyRequestMode string
 
 // CreateAPIKeyResult defines model for CreateAPIKeyResult.
 type CreateAPIKeyResult = externalRef0.CreateAPIKeyResult

@@ -434,6 +434,11 @@ export interface components {
             detail?: unknown;
         };
         APIKeyItem: {
+            /**
+             * @description What this key is for. Absent on keys issued before the field existed, which read as `unrestricted`.
+             * @enum {string}
+             */
+            mode?: "unrestricted" | "agent";
             /** @description Unique identifier for this API key. */
             keyId: string;
             /** @description Username associated with the key. */
@@ -487,6 +492,16 @@ export interface components {
         ListAPIKeysResult: components["schemas"]["APIKeyItem"][];
         CreateAPIKeyRequest: {
             description?: string;
+            /**
+             * @description What this key is for. `agent` marks it as acting while nobody is
+             *     watching, so its platform writes are held until a person approves
+             *     them. The sandbox surface is unaffected either way — it is the same
+             *     key the E2B SDK uses, and the gate sits only on the platform
+             *     operations `abx` performs.
+             * @default unrestricted
+             * @enum {string}
+             */
+            mode: "unrestricted" | "agent";
             /** Format: date-time */
             expiresAt?: string;
             /** @description Import mode: pre-computed token hash. */

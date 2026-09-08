@@ -98,17 +98,22 @@ function CreateApiKeyDialog({
   const { t } = useTranslation()
   const [description, setDescription] = useState("")
   const [expiresAt, setExpiresAt] = useState<Date | undefined>(undefined)
+  // Unrestricted by default: an agent key is a deliberate choice, and defaulting
+  // the other way would start gating writes for people who never asked.
+  const [mode, setMode] = useState<"unrestricted" | "agent">("unrestricted")
 
   const handleCreate = () => {
     createKey(
       {
         description: description || undefined,
         expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
+        mode,
       },
       {
         onSuccess: (result) => {
           setDescription("")
           setExpiresAt(undefined)
+          setMode("unrestricted")
           onOpenChange(false)
           onKeyCreated({
             apiKey: result.apiKey,
@@ -149,6 +154,42 @@ function CreateApiKeyDialog({
               placeholder="e.g. production ML pipeline key"
               className="border-border bg-background h-9 font-mono text-sm"
             />
+          </Field>
+
+          {/* What the key is for.
+              Two cards rather than a dropdown: the difference between them is a
+              sentence, not a word, and a person choosing this once needs to
+              read that sentence. */}
+          <Field>
+            <FieldLabel className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
+              {t("apiKeys.form.mode")}
+            </FieldLabel>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(["unrestricted", "agent"] as const).map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={cn(
+                    "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors",
+                    mode === m
+                      ? "border-primary bg-primary/5"
+                      : "hover:border-primary/40"
+                  )}
+                >
+                  <span className="text-[13px] font-medium">
+                    {t(m === "agent" ? "apiKeys.mode.agent" : "apiKeys.mode.unrestricted")}
+                  </span>
+                  <span className="text-muted-foreground text-xs leading-snug">
+                    {t(
+                      m === "agent"
+                        ? "apiKeys.mode.agentHint"
+                        : "apiKeys.mode.unrestrictedHint"
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
           </Field>
 
           {/* Expires At */}
@@ -374,6 +415,14 @@ export default function ApiKeysPage() {
                           {t("status.local")}
                         </Badge>
                       )}
+                      {/* Only the gated mode is badged. Marking both would put a
+                          label on every row and stop the one that matters from
+                          standing out. */}
+                      {key.mode === "agent" ? (
+                        <Badge className="font-mono text-xs">
+                          {t("apiKeys.mode.agent")}
+                        </Badge>
+                      ) : null}
                     </div>
 
                     {/* Row 2: team / user */}

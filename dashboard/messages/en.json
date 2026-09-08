@@ -1518,5 +1518,10 @@
   "approvals.toast.approved": "Approved.",
   "approvals.toast.denied": "Denied.",
   "approvals.toast.revoked": "Revoked.",
-  "approvals.toast.failed": "That did not go through."
+  "approvals.toast.failed": "That did not go through.",
+  "apiKeys.form.mode": "What this key is for",
+  "apiKeys.mode.unrestricted": "Unrestricted",
+  "apiKeys.mode.unrestrictedHint": "Your own credential. Does everything you can do, without asking.",
+  "apiKeys.mode.agent": "Agent",
+  "apiKeys.mode.agentHint": "For something that acts unattended. Sandboxes work as normal; platform changes wait for your approval."
 }

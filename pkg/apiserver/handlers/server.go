@@ -1328,6 +1328,9 @@ func (s *Server) SelfCreateAPIKey(ctx context.Context, req gen.SelfCreateAPIKeyR
 		User:        auth.User,
 		Team:        auth.Team,
 		Description: derefString(req.Body.Description),
+		// Absent means unrestricted — the behaviour every key had before the
+		// field existed, so an old client keeps issuing what it always did.
+		RequireApproval: req.Body.Mode != nil && *req.Body.Mode == gen.SelfCreateAPIKeyRequestModeAgent,
 	}
 	if req.Body.ExpiresAt != nil {
 		if !req.Body.ExpiresAt.After(time.Now()) {
@@ -1476,6 +1479,14 @@ func apiKeyItemsToGen(items []service.APIKeyItem) []gen.APIKeyItem {
 		if item.RawToken != "" {
 			r.RawToken = ptr.To(item.RawToken)
 		}
+		// Always stated, including for the unrestricted case: a console showing
+		// a badge only on gated keys cannot tell "not gated" from "issued before
+		// this existed", and both read as no badge.
+		mode := gen.APIKeyItemModeUnrestricted
+		if item.RequireApproval {
+			mode = gen.APIKeyItemModeAgent
+		}
+		r.Mode = &mode
 		out = append(out, r)
 	}
 	return out

@@ -132,6 +132,8 @@ func (s *k8sAPIKeyService) Create(ctx context.Context, input CreateAPIKeyInput) 
 		Role:        apikey.RoleTenant,
 		IssuedAt:    time.Now().UTC(),
 		ExpiresAt:   input.ExpiresAt,
+
+		RequireApproval: input.RequireApproval,
 	}
 
 	rawToken, keyID, err := s.store.Create(ctx, meta)
@@ -347,6 +349,8 @@ func keyMetadataFromAPIKey(m apikey.KeyMetadata) KeyMetadata {
 		ExpiresAt:   m.ExpiresAt,
 		SyncSource:  m.SyncSource,
 		RawToken:    m.RawToken,
+
+		RequireApproval: m.RequireApproval,
 	}
 }
 

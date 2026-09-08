@@ -38,6 +38,9 @@ func metaToProto(meta apikey.KeyMetadata) *syncv1.APIKeyMetadata {
 		QuotaUrl:    meta.QuotaURL,
 		Description: meta.Description,
 		RawToken:    meta.RawToken,
+		// Without this the mode chosen at issue time stops at the Hub: the gate
+		// runs on the Worker and would never see it.
+		RequireApproval: meta.RequireApproval,
 	}
 	if !meta.IssuedAt.IsZero() {
 		out.IssuedAt = timestamppb.New(meta.IssuedAt.UTC())

@@ -55,6 +55,16 @@ components:
       properties:
         description:
           type: string
+        mode:
+          type: string
+          enum: [unrestricted, agent]
+          default: unrestricted
+          description: |
+            What this key is for. `agent` marks it as acting while nobody is
+            watching, so its platform writes are held until a person approves
+            them. The sandbox surface is unaffected either way — it is the same
+            key the E2B SDK uses, and the gate sits only on the platform
+            operations `abx` performs.
         expiresAt:
           type: string
           format: date-time

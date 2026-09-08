@@ -127,6 +127,9 @@ func (s *Server) CreateApiKey(
 		Description: derefStr(body.Description),
 		IssuedAt:    time.Now().UTC(),
 		ExpiresAt:   expiresAt,
+		// Absent means unrestricted — what every key was before this existed,
+		// so an older client keeps issuing exactly what it always did.
+		RequireApproval: body.Mode != nil && *body.Mode == wsproxygen.Agent,
 	}
 
 	rawToken, keyID, err := deps.KeyStore.Create(ctx, meta)
@@ -249,6 +252,13 @@ func keyMetasToGenItems(metas []apikey.KeyMetadata) []nativegen.APIKeyItem {
 		if m.RawToken != "" {
 			item.RawToken = &m.RawToken
 		}
+		// Stated for both modes: a console that badges only the gated ones
+		// cannot tell "not gated" from "issued before this field existed".
+		mode := nativegen.APIKeyItemModeUnrestricted
+		if m.RequireApproval {
+			mode = nativegen.APIKeyItemModeAgent
+		}
+		item.Mode = &mode
 		items = append(items, item)
 	}
 	return items

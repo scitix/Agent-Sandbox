@@ -22,6 +22,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.api_key_item_mode import APIKeyItemMode
 from ..types import UNSET, Unset
 from typing import cast
 import datetime
@@ -42,6 +43,8 @@ class APIKeyItem:
             key_id (str): Unique identifier for this API key.
             role (str): Role granted by this key (e.g. tenant, admin).
             issued_at (datetime.datetime): RFC 3339 timestamp when the key was created.
+            mode (APIKeyItemMode | Unset): What this key is for. Absent on keys issued before the field existed, which read
+                as `unrestricted`.
             user (str | Unset): Username associated with the key.
             team (str | Unset): Team associated with the key.
             description (str | Unset): Human-readable description of the key.
@@ -56,6 +59,7 @@ class APIKeyItem:
     key_id: str
     role: str
     issued_at: datetime.datetime
+    mode: APIKeyItemMode | Unset = UNSET
     user: str | Unset = UNSET
     team: str | Unset = UNSET
     description: str | Unset = UNSET
@@ -74,6 +78,11 @@ class APIKeyItem:
         role = self.role
 
         issued_at = self.issued_at.isoformat()
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
 
         user = self.user
 
@@ -97,6 +106,8 @@ class APIKeyItem:
             "role": role,
             "issuedAt": issued_at,
         })
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if user is not UNSET:
             field_dict["user"] = user
         if team is not UNSET:
@@ -126,6 +137,16 @@ class APIKeyItem:
 
 
 
+        _mode = d.pop("mode", UNSET)
+        mode: APIKeyItemMode | Unset
+        if isinstance(_mode,  Unset):
+            mode = UNSET
+        else:
+            mode = APIKeyItemMode(_mode)
+
+
+
+
         user = d.pop("user", UNSET)
 
         team = d.pop("team", UNSET)
@@ -150,6 +171,7 @@ class APIKeyItem:
             key_id=key_id,
             role=role,
             issued_at=issued_at,
+            mode=mode,
             user=user,
             team=team,
             description=description,

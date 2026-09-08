@@ -35,6 +35,9 @@ type KeyMetadata struct {
 	// RawToken is the full raw API key recovered from storage. Empty for legacy keys
 	// that pre-date plaintext storage. Exposed via API to authorised callers for recovery.
 	RawToken string
+	// RequireApproval is the "agent" mode: this key acts unattended, so its
+	// platform writes are held until a person approves them.
+	RequireApproval bool
 }
 
 // CreateAPIKeyInput carries parameters for issuing a new API key.
@@ -44,6 +47,10 @@ type CreateAPIKeyInput struct {
 	Team        string
 	Description string
 	ExpiresAt   time.Time // zero means no expiry
+	// RequireApproval marks the key as acting unattended, so its platform
+	// writes are held until a person approves them. This is the "agent" mode a
+	// caller picks at issue time.
+	RequireApproval bool
 	// Import mode fields (admin-only).
 	// When TokenHash is non-empty the key is imported using the given hash
 	// (via CreateFromHash) instead of generating a new random token.

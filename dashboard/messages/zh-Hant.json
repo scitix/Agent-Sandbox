@@ -1518,5 +1518,10 @@
   "approvals.toast.approved": "已批准。",
   "approvals.toast.denied": "已拒絕。",
   "approvals.toast.revoked": "已撤銷。",
-  "approvals.toast.failed": "沒有成功。"
+  "approvals.toast.failed": "沒有成功。",
+  "apiKeys.form.mode": "這把 key 用來做什麼",
+  "apiKeys.mode.unrestricted": "不受限",
+  "apiKeys.mode.unrestrictedHint": "你自己的憑證。你能做的它都能做，不用問。",
+  "apiKeys.mode.agent": "Agent",
+  "apiKeys.mode.agentHint": "給無人值守的東西用。沙箱照常，改動平台要等你批。"
 }

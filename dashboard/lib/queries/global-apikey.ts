@@ -47,11 +47,21 @@ export function globalApiKeysQueryOptions() {
 export function useCreateGlobalApiKey() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (body: { description?: string; expiresAt?: string }) => {
+    mutationFn: async (body: {
+      description?: string
+      expiresAt?: string
+      /** `agent` holds this key's platform writes until a person approves
+       *  them. Absent means unrestricted, which is what every key was before
+       *  the field existed. */
+      mode?: "unrestricted" | "agent"
+    }) => {
       const { data, error } = await getHubFetchClient().POST("/v1/api-keys", {
         body: {
           description: body.description,
           expiresAt: body.expiresAt,
+          // The generated body requires it; the server treats an absent one
+          // the same way, but the type cannot see that.
+          mode: body.mode ?? "unrestricted",
         },
       })
       if (error) throw error

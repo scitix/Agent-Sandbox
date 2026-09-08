@@ -22,6 +22,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.self_create_api_key_request_mode import SelfCreateAPIKeyRequestMode
 from ..types import UNSET, Unset
 from typing import cast
 import datetime
@@ -42,10 +43,26 @@ class SelfCreateAPIKeyRequest:
         Attributes:
             description (str | Unset): Optional human-readable description for this key (e.g. its intended use).
             expires_at (datetime.datetime | Unset): Optional RFC 3339 expiry timestamp. Omit for a non-expiring key.
+            mode (SelfCreateAPIKeyRequestMode | Unset): What this key is for, and therefore what it may do unattended.
+
+                * `unrestricted` — a person's own credential. Behaves exactly as
+                  every key did before this field existed.
+                * `agent` — handed to something that acts while nobody is watching.
+                  Its platform WRITES (create an environment, add a pool, delete
+                  anything) are held until a person approves them, and the refusal
+                  names an approval to act on.
+
+                The sandbox surface is unaffected in both modes: an agent-mode key
+                starts sandboxes, runs commands and moves files exactly as an
+                unrestricted one does. It is the same key the E2B SDK uses, and the
+                gate deliberately does not sit on that path — only on the platform
+                operations `abx` performs.
+                 Default: SelfCreateAPIKeyRequestMode.UNRESTRICTED.
      """
 
     description: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
+    mode: SelfCreateAPIKeyRequestMode | Unset = SelfCreateAPIKeyRequestMode.UNRESTRICTED
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -59,6 +76,11 @@ class SelfCreateAPIKeyRequest:
         if not isinstance(self.expires_at, Unset):
             expires_at = self.expires_at.isoformat()
 
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -68,6 +90,8 @@ class SelfCreateAPIKeyRequest:
             field_dict["description"] = description
         if expires_at is not UNSET:
             field_dict["expiresAt"] = expires_at
+        if mode is not UNSET:
+            field_dict["mode"] = mode
 
         return field_dict
 
@@ -88,9 +112,20 @@ class SelfCreateAPIKeyRequest:
 
 
 
+        _mode = d.pop("mode", UNSET)
+        mode: SelfCreateAPIKeyRequestMode | Unset
+        if isinstance(_mode,  Unset):
+            mode = UNSET
+        else:
+            mode = SelfCreateAPIKeyRequestMode(_mode)
+
+
+
+
         self_create_api_key_request = cls(
             description=description,
             expires_at=expires_at,
+            mode=mode,
         )
 
 

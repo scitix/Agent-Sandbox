@@ -2062,6 +2062,25 @@ export interface components {
              * @description Optional RFC 3339 expiry timestamp. Omit for a non-expiring key.
              */
             expiresAt?: string;
+            /**
+             * @description What this key is for, and therefore what it may do unattended.
+             *
+             *     * `unrestricted` — a person's own credential. Behaves exactly as
+             *       every key did before this field existed.
+             *     * `agent` — handed to something that acts while nobody is watching.
+             *       Its platform WRITES (create an environment, add a pool, delete
+             *       anything) are held until a person approves them, and the refusal
+             *       names an approval to act on.
+             *
+             *     The sandbox surface is unaffected in both modes: an agent-mode key
+             *     starts sandboxes, runs commands and moves files exactly as an
+             *     unrestricted one does. It is the same key the E2B SDK uses, and the
+             *     gate deliberately does not sit on that path — only on the platform
+             *     operations `abx` performs.
+             * @default unrestricted
+             * @enum {string}
+             */
+            mode: "unrestricted" | "agent";
         };
         CreateAPIKeyRequest: {
             /** @description Kubernetes namespace to associate the key with. */
@@ -2112,6 +2131,11 @@ export interface components {
             expiresAt?: string;
         };
         APIKeyItem: {
+            /**
+             * @description What this key is for. Absent on keys issued before the field existed, which read as `unrestricted`.
+             * @enum {string}
+             */
+            mode?: "unrestricted" | "agent";
             /** @description Unique identifier for this API key. */
             keyId: string;
             /** @description Username associated with the key. */

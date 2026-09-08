@@ -15,6 +15,7 @@
 """ Contains all the data models used in inputs/outputs """
 
 from .api_key_item import APIKeyItem
+from .api_key_item_mode import APIKeyItemMode
 from .approval_decision_request import ApprovalDecisionRequest
 from .approval_decision_request_decision import ApprovalDecisionRequestDecision
 from .approval_decision_request_scope import ApprovalDecisionRequestScope
@@ -147,6 +148,7 @@ from .sandbox_template_spec import SandboxTemplateSpec
 from .sandbox_template_status import SandboxTemplateStatus
 from .sandbox_template_summary import SandboxTemplateSummary
 from .self_create_api_key_request import SelfCreateAPIKeyRequest
+from .self_create_api_key_request_mode import SelfCreateAPIKeyRequestMode
 from .set_sandbox_timeout_request import SetSandboxTimeoutRequest
 from .teams_result import TeamsResult
 from .update_env_autoscaling_group_request import UpdateEnvAutoscalingGroupRequest
@@ -165,6 +167,7 @@ from .who_am_i_result import WhoAmIResult
 
 __all__ = (
     "APIKeyItem",
+    "APIKeyItemMode",
     "ApprovalDecisionRequest",
     "ApprovalDecisionRequestDecision",
     "ApprovalDecisionRequestScope",
@@ -297,6 +300,7 @@ __all__ = (
     "SandboxTemplateStatus",
     "SandboxTemplateSummary",
     "SelfCreateAPIKeyRequest",
+    "SelfCreateAPIKeyRequestMode",
     "SetSandboxTimeoutRequest",
     "TeamsResult",
     "UpdateEnvAutoscalingGroupRequest",

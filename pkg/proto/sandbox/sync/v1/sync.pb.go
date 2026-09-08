@@ -62,9 +62,14 @@ type APIKeyMetadata struct {
 	// Plaintext token kept on the Hub side for promote / import scenarios where
 	// a Worker may need to reconstruct the recoverable value. Empty for legacy
 	// keys created before plaintext storage was introduced.
-	RawToken      string `protobuf:"bytes,12,opt,name=raw_token,json=rawToken,proto3" json:"raw_token,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RawToken string `protobuf:"bytes,12,opt,name=raw_token,json=rawToken,proto3" json:"raw_token,omitempty"`
+	// Whether this key acts with nobody watching, so its writes are held until a
+	// person approves them. Keys are minted on the Hub and the gate runs on the
+	// Worker, so a flag that did not travel here would be a flag that never took
+	// effect — set on the Hub, absent everywhere it is read.
+	RequireApproval bool `protobuf:"varint,13,opt,name=require_approval,json=requireApproval,proto3" json:"require_approval,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *APIKeyMetadata) Reset() {
@@ -179,6 +184,13 @@ func (x *APIKeyMetadata) GetRawToken() string {
 		return x.RawToken
 	}
 	return ""
+}
+
+func (x *APIKeyMetadata) GetRequireApproval() bool {
+	if x != nil {
+		return x.RequireApproval
+	}
+	return false
 }
 
 type CreateKeyRequest struct {
@@ -2568,7 +2580,7 @@ var File_sandbox_sync_v1_sync_proto protoreflect.FileDescriptor
 
 const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\n" +
-	"\x1asandbox/sync/v1/sync.proto\x12\x0fsandbox.sync.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9b\x03\n" +
+	"\x1asandbox/sync/v1/sync.proto\x12\x0fsandbox.sync.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc6\x03\n" +
 	"\x0eAPIKeyMetadata\x12\x1d\n" +
 	"\n" +
 	"token_hash\x18\x01 \x01(\tR\ttokenHash\x12\x1f\n" +
@@ -2586,7 +2598,8 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x129\n" +
 	"\n" +
 	"expires_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x1b\n" +
-	"\traw_token\x18\f \x01(\tR\brawToken\"\xfc\x02\n" +
+	"\traw_token\x18\f \x01(\tR\brawToken\x12)\n" +
+	"\x10require_approval\x18\r \x01(\bR\x0frequireApproval\"\xfc\x02\n" +
 	"\x10CreateKeyRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04user\x18\x02 \x01(\tR\x04user\x12\x12\n" +
