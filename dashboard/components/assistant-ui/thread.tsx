@@ -1194,13 +1194,13 @@ const MessageContextSection: FC<{
 // id (`useAgUiState`). Not as message metadata — the AG-UI runtime builds that
 // itself and leaves no seam for ours.
 // REPLAYED: on a thread switch we hydrate messages ourselves, so there the same
-// figures are stamped into `metadata.custom.navix` (see the gateway runtime's
+// figures are stamped into `metadata.custom.agentbox` (see the gateway runtime's
 // `transcriptToMessages`). Reading only one of the two loses the model name and
 // token counts either live or after a reload.
 //
 // `metadata.timing` stays the library's: it measures the stream we just watched,
 // which is something only the runtime can know.
-interface NavixMessageStats {
+interface AgentMessageStats {
   model?: string
   costUsd?: number
   usage?: {
@@ -1224,7 +1224,7 @@ function useMessageStats(): MessageStats {
   const createdAt = useAuiState(s => s.message.createdAt)
   const messageId = useAuiState(s => s.message.id)
   const custom = useAuiState(s => s.message.metadata.custom) as
-    | { navix?: NavixMessageStats }
+    | { agentbox?: AgentMessageStats }
     | undefined
   const durationMs = useAuiState(
     s => s.message.metadata.timing?.totalStreamTime
@@ -1232,10 +1232,10 @@ function useMessageStats(): MessageStats {
   // Safe outside an AG-UI runtime: the hook falls back to undefined rather than
   // requiring the provider.
   const live = useAgUiState<{
-    stats?: Record<string, NavixMessageStats>
+    stats?: Record<string, AgentMessageStats>
   }>()?.stats?.[messageId]
 
-  const stats = live ?? custom?.navix
+  const stats = live ?? custom?.agentbox
   return {
     createdAt,
     model: stats?.model,

@@ -144,7 +144,7 @@ export function transcriptToMessages(
       // invalid Date, so the row shows no time rather than a false one. (Date.now()
       // would be worse than 0: "just now" looks right.)
       createdAt: new Date(entry.timestamp ? Date.parse(entry.timestamp) : NaN),
-      ...(stats ? { metadata: { custom: { navix: stats } } } : {}),
+      ...(stats ? { metadata: { custom: { agentbox: stats } } } : {}),
     })
   })
 
@@ -173,11 +173,11 @@ export function transcriptToMessages(
 }
 
 /** Mirror of the gateway's own mapping (see `toInterrupt` in gateway/server.ts):
- *  both sides have to agree, because the card reads `metadata.navix`. */
+ *  both sides have to agree, because the card reads `metadata.agentbox`. */
 function asInterrupt(request: PersistableInterrupt): AgUiInterrupt {
   return {
     id: request.requestId,
     reason: request.kind === 'permission' ? 'confirmation' : 'input_required',
-    metadata: { navix: { kind: request.kind, questions: request.questions } },
+    metadata: { agentbox: { kind: request.kind, questions: request.questions } },
   }
 }

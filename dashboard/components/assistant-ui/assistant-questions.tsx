@@ -23,7 +23,7 @@ import { useCallback, useMemo, useState } from 'react'
 //     the others.
 //   * The payload the gateway needs — the labelled options and the answer-map key
 //     for each question — has no home in the protocol's `Interrupt`, so it rides in
-//     `metadata.navix`. That is untrusted shaped-by-the-server data here, hence the
+//     `metadata.agentbox`. That is untrusted shaped-by-the-server data here, hence the
 //     defensive read below rather than a cast.
 export function AssistantQuestions() {
   const interrupts = useAgUiInterrupts()
@@ -97,16 +97,27 @@ function InterruptQuestionList({ cards }: { cards: Card[] }) {
 }
 
 /**
- * `metadata.navix` → a renderable card.
+ * `metadata.agentbox` → a renderable card.
+ *
+ * The namespace has to match `toInterrupt` in the gateway exactly. It did not:
+ * the gateway sends `agentbox` and this read `navix`, inherited from the
+ * implementation this was forked from. Nothing errored — `readCard` returned
+ * null, the list came out empty and rendered nothing, so a run that had
+ * correctly stopped to ask a question looked like a run that had simply carried
+ * on. The `navix` key is still accepted so a card minted by a pod that has not
+ * rolled yet is not lost mid-conversation.
  *
  * Defensive on purpose: this is server-shaped data reaching a component through an
  * `unknown`-typed protocol field, and a surprise shape must render nothing rather
  * than throw inside the thread.
  */
 function readCard(interrupt: AgUiInterrupt): Card | null {
-  const navix = (interrupt.metadata as { navix?: unknown } | undefined)?.navix
-  if (!navix || typeof navix !== 'object') return null
-  const raw = (navix as { questions?: unknown }).questions
+  const meta = interrupt.metadata as
+    | { agentbox?: unknown; navix?: unknown }
+    | undefined
+  const payload = meta?.agentbox ?? meta?.navix
+  if (!payload || typeof payload !== 'object') return null
+  const raw = (payload as { questions?: unknown }).questions
   if (!Array.isArray(raw)) return null
   const keys: string[] = []
   const questions: NonNullable<RenderableQuestionRequest['questions']> = []
