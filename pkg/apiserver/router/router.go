@@ -16,11 +16,14 @@ package router
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/scitix/agent-sandbox/pkg/apiserver/approval"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/handlers"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
@@ -45,6 +48,18 @@ type Services struct {
 	// When SyncToken is empty the endpoint is disabled.
 	Sync      service.SyncService
 	SyncToken string
+	// Approvals holds writes made with an unattended credential until a human
+	// says yes. Nil disables the gate entirely, which is what a deployment that
+	// has not opted any key into it gets anyway.
+	Approvals *approval.Store
+	// ConsoleBaseURL is where a person goes to decide, e.g.
+	// "https://console.example.com/agentbox". Empty omits the link from the
+	// refusal — the CLI can still poll, and a link to nowhere is worse than
+	// none.
+	ConsoleBaseURL string
+	// ClusterID names this cluster in the console's approval URL, which is
+	// per-cluster because the approval is.
+	ClusterID string
 	// Forwarder enables cross-cluster forwarding at the handler layer.
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	// When Forwarder is nil, cross-cluster requests are rejected.
@@ -112,12 +127,29 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 	// the AdminKeyAuthScopes context key set by oapi-codegen wrappers.
 	// gen.MiddlewareFunc is func(*gin.Context); gin.HandlerFunc is also func(*gin.Context),
 	// so they are the same underlying type — explicit cast is needed to satisfy the compiler.
+	apiMiddlewares := []gen.MiddlewareFunc{
+		gen.MiddlewareFunc(authMiddleware),
+		gen.MiddlewareFunc(middleware.NewVersionCheckMiddleware()),
+	}
+	// The approval gate runs LAST of the three, and both of its neighbours are
+	// load-bearing: it needs the principal auth established, and it needs the
+	// route template the generated wrapper has already matched. Registered here
+	// rather than on the engine for the same reason — an engine-level middleware
+	// sees no `c.FullPath()` for a route it is not part of.
+	//
+	// Deliberately NOT registered on the E2B-compatible surface. See the note on
+	// `gated` in pkg/apiserver/approval/catalog.go: that surface is a
+	// third-party contract real E2B client code runs against unchanged.
+	if svcs.Approvals != nil {
+		apiMiddlewares = append(apiMiddlewares, gen.MiddlewareFunc(approval.New(
+			svcs.Approvals,
+			approvalIdentity,
+			approvalConsoleURL(svcs.ConsoleBaseURL, svcs.ClusterID),
+		)))
+	}
 	gen.RegisterHandlersWithOptions(r, strictHandler, gen.GinServerOptions{
-		BaseURL: "/v1",
-		Middlewares: []gen.MiddlewareFunc{
-			gen.MiddlewareFunc(authMiddleware),
-			gen.MiddlewareFunc(middleware.NewVersionCheckMiddleware()),
-		},
+		BaseURL:     "/v1",
+		Middlewares: apiMiddlewares,
 	})
 
 	// WebSocket terminal endpoint (outside oapi-codegen, requires HTTP Upgrade).
@@ -137,5 +169,37 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 	// Only registered when both SyncService and SyncToken are configured.
 	if svcs.Sync != nil && svcs.SyncToken != "" {
 		r.GET("/v1/ws/sync", handlers.SyncWSHandler(svcs.Sync, svcs.SyncToken))
+	}
+}
+
+// approvalIdentity says who is asking, and whether they are the kind of caller
+// that gets asked.
+//
+// Everything hangs off the credential rather than the person: a console session
+// is exempt because the click that produced it IS the approval, and an admin
+// key is exempt because an admin key is not something handed to an agent. What
+// remains is a tenant key someone has explicitly marked as acting unattended.
+func approvalIdentity(c *gin.Context) approval.Identity {
+	auth := middleware.AuthFromContext(c)
+	return approval.Identity{
+		Gated: auth.AuthMethod == "apikey" && auth.Unattended,
+		Principal: approval.Principal{
+			Team:  auth.Team,
+			User:  auth.User,
+			KeyID: auth.KeyID,
+		},
+	}
+}
+
+// approvalConsoleURL builds the deep link a refusal carries. Returns nil when
+// the deployment has no console configured, which omits the link rather than
+// pointing at nothing.
+func approvalConsoleURL(base, clusterID string) approval.ConsoleURLFunc {
+	if base == "" || clusterID == "" {
+		return nil
+	}
+	trimmed := strings.TrimSuffix(base, "/")
+	return func(id string) string {
+		return trimmed + "/clusters/" + clusterID + "/approvals?id=" + url.QueryEscape(id)
 	}
 }

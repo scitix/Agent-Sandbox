@@ -92,6 +92,17 @@ type KeyMetadata struct {
 	// data field. Populated only for keys created after plaintext storage was
 	// introduced. Empty for legacy keys. MUST NOT be exposed in JSON — json:"-".
 	RawToken string `json:"-"`
+	// RequireApproval marks a key that acts with nobody watching, so its writes
+	// are held until a human approves them.
+	//
+	// It lives on the KEY rather than on the person because the same person is
+	// both: they click in the console (where the click is the approval) and
+	// they hand a key to an agent (where nobody is looking). Nothing about the
+	// holder can distinguish those two; the credential can.
+	//
+	// Absent on every existing key, which reads as false — the gate is opt-in,
+	// so shipping it changes nothing until a key is marked.
+	RequireApproval bool `json:"requireApproval,omitempty"`
 }
 
 // KeyStore defines the operations for managing opaque API keys backed by
@@ -219,6 +230,11 @@ func (s *SecretKeyStore) Create(ctx context.Context, meta KeyMetadata) (rawToken
 		"quotaURL":    []byte(meta.QuotaURL),
 		"description": []byte(meta.Description),
 		"issuedAt":    []byte(meta.IssuedAt.UTC().Format(time.RFC3339)),
+	}
+	// Written only when true, so an unmarked key's Secret is byte-identical to
+	// what it was before this field existed.
+	if meta.RequireApproval {
+		data["requireApproval"] = []byte("true")
 	}
 	if !meta.ExpiresAt.IsZero() {
 		data["expiresAt"] = []byte(meta.ExpiresAt.UTC().Format(time.RFC3339))
@@ -437,6 +453,11 @@ func (s *SecretKeyStore) CreateFromHash(ctx context.Context, meta KeyMetadata, t
 		"description": []byte(meta.Description),
 		"issuedAt":    []byte(meta.IssuedAt.UTC().Format(time.RFC3339)),
 	}
+	// Written only when true, so an unmarked key's Secret is byte-identical to
+	// what it was before this field existed.
+	if meta.RequireApproval {
+		data["requireApproval"] = []byte("true")
+	}
 	if !meta.ExpiresAt.IsZero() {
 		data["expiresAt"] = []byte(meta.ExpiresAt.UTC().Format(time.RFC3339))
 	}
@@ -564,6 +585,9 @@ func metadataFromSecret(secret *corev1.Secret) (*KeyMetadata, error) {
 		TokenHash:   string(secret.Data["token"]),
 		RawToken:    string(secret.Data["apikey"]),
 		SyncSource:  secret.Labels[LabelSyncSource],
+		// Absent reads as false: every key that predates the approval gate is
+		// unmarked, and an unmarked key is not gated.
+		RequireApproval: string(secret.Data["requireApproval"]) == "true",
 	}
 	if meta.Role == "" {
 		meta.Role = RoleTenant

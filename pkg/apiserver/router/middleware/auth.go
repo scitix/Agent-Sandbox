@@ -257,6 +257,8 @@ func NewAuthenticateMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore api
 			User:       meta.User,
 			Team:       meta.Team,
 			AuthMethod: "apikey",
+			KeyID:      meta.KeyID,
+			Unattended: meta.RequireApproval,
 		})
 
 		// If this route requires admin access (AdminKeyAuth security scheme),

@@ -27,4 +27,16 @@ type AuthInfo struct {
 	Email string
 	// Name is the user's display name (populated from JWT claims).
 	Name string
+	// KeyID names the API key this request came in on, empty for JWT callers.
+	//
+	// Present because a permission can belong to a CREDENTIAL rather than to
+	// the person holding it: "this agent's key may create environments" has to
+	// stop meaning anything the moment that key is deleted, which requires
+	// knowing which key asked.
+	KeyID string
+	// Unattended marks a credential that acts with nobody watching, and is
+	// therefore subject to the approval gate. It is a property of the key, not
+	// of the caller's identity: the same person is exempt in the console — where
+	// their click IS the approval — and gated through an agent.
+	Unattended bool
 }
