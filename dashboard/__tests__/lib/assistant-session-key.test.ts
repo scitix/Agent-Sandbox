@@ -122,17 +122,74 @@ describe("getOrCreateSessionKey", () => {
     return { ok: true, status: 200, json: async () => body, text: async () => "" }
   }
 
+  /**
+   * The hub's list response, in the shape it actually sends: a BARE ARRAY.
+   *
+   * Every test here once passed an `{items}` envelope, which no version of the
+   * hub has ever returned — so the reuse branch was exercised on a shape that
+   * only existed in this file, and in production nothing was ever reused. Keys
+   * accumulated one per cache miss until the per-user cap answered 409 in the
+   * middle of a conversation. Build list responses through this helper so a
+   * test cannot invent the shape again.
+   */
+  function keyList(...items: Record<string, unknown>[]) {
+    return ok(items)
+  }
+
+  function assistantKey(over: Record<string, unknown> = {}) {
+    return {
+      keyId: "k1",
+      description: SESSION_KEY_DESCRIPTION,
+      rawToken: "agbx_existing",
+      role: "tenant",
+      team: identity.team,
+      user: identity.user,
+      ...over,
+    }
+  }
+
   it("reuses the key it already minted for this person", () => {
-    fetchMock.mockResolvedValueOnce(
-      ok({ items: [{ keyId: "k1", description: SESSION_KEY_DESCRIPTION, rawToken: "agbx_existing" }] })
-    )
+    fetchMock.mockResolvedValueOnce(keyList(assistantKey()))
     return expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_existing")
   })
 
-  it("mints one when there is none", async () => {
+  it("asks the hub only for this identity's keys", async () => {
+    // LIST does not read the impersonation headers CREATE does: it reads
+    // ?team=&user=, and for an admin who sends neither it returns every key in
+    // the namespace.
+    fetchMock.mockResolvedValueOnce(keyList(assistantKey()))
+    await getOrCreateSessionKey("jwt", identity)
+
+    const [url] = fetchMock.mock.calls[0]
+    const params = new URL(url, "http://x").searchParams
+    expect(params.get("team")).toBe(identity.team)
+    expect(params.get("user")).toBe(identity.user)
+  })
+
+  it("never reuses a key belonging to someone else", async () => {
+    // What an unscoped list returns for an admin. Taking the first matching
+    // description out of it runs one person's conversation on another
+    // person's credential — in their namespace, against their quota.
     fetchMock
-      .mockResolvedValueOnce(ok({ items: [] }))
+      .mockResolvedValueOnce(
+        keyList(assistantKey({ team: "team9", user: "eve", rawToken: "agbx_eve" }))
+      )
       .mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
+    await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_new")
+  })
+
+  it("never reuses a key that is not a tenant key", async () => {
+    // This module's whole promise is that the sandbox runs as a tenant. A key
+    // with a wider role was not minted here, and using it would restore the
+    // whole-cluster access the identity exists to avoid.
+    fetchMock
+      .mockResolvedValueOnce(keyList(assistantKey({ role: "admin", rawToken: "agbx_admin" })))
+      .mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
+    await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_new")
+  })
+
+  it("mints one when there is none", async () => {
+    fetchMock.mockResolvedValueOnce(keyList()).mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
     await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_new")
 
     const [, init] = fetchMock.mock.calls[1]
@@ -140,13 +197,25 @@ describe("getOrCreateSessionKey", () => {
     expect(JSON.parse(init.body)).toEqual({ description: SESSION_KEY_DESCRIPTION })
   })
 
+  it("mints at most one key for concurrent first requests", async () => {
+    // A conversation opens its event stream and posts its run at the same
+    // moment. Two independent resolutions spend two of an allowance of three.
+    fetchMock.mockResolvedValue(ok({ apiKey: "agbx_new" }))
+    fetchMock.mockResolvedValueOnce(keyList())
+    const [a, b] = await Promise.all([
+      getOrCreateSessionKey("jwt", identity),
+      getOrCreateSessionKey("jwt", identity),
+    ])
+    expect([a, b]).toEqual(["agbx_new", "agbx_new"])
+    const posts = fetchMock.mock.calls.filter(([, init]) => init.method === "POST")
+    expect(posts).toHaveLength(1)
+  })
+
   it("skips a key it cannot reuse rather than failing", async () => {
     // A key minted before plaintext storage has no rawToken. Minting alongside
     // it is recoverable; refusing to start the conversation is not.
     fetchMock
-      .mockResolvedValueOnce(
-        ok({ items: [{ keyId: "old", description: SESSION_KEY_DESCRIPTION }] })
-      )
+      .mockResolvedValueOnce(keyList(assistantKey({ rawToken: undefined })))
       .mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
     await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_new")
   })
@@ -154,10 +223,23 @@ describe("getOrCreateSessionKey", () => {
   it("ignores keys the person made for something else", async () => {
     fetchMock
       .mockResolvedValueOnce(
-        ok({ items: [{ keyId: "ci", description: "my ci pipeline", rawToken: "agbx_ci" }] })
+        keyList(assistantKey({ keyId: "ci", description: "my ci pipeline", rawToken: "agbx_ci" }))
       )
       .mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
     await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_new")
+  })
+
+  it("names the person, not the cap, when the allowance is spent", async () => {
+    // The hub says "exceeded max keys per user (3)", which names a limit but
+    // not who can act on it. Reaching it with no reusable key means the
+    // person's own keys are the ones in the way.
+    fetchMock.mockResolvedValueOnce(keyList()).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      text: async () => '{"error":"exceeded max keys per user (3)"}',
+      json: async () => ({}),
+    })
+    await expect(getOrCreateSessionKey("jwt", identity)).rejects.toThrow(/API Keys page/)
   })
 
   it("ALWAYS names the identity, so the hub mints a tenant key", async () => {
@@ -166,9 +248,7 @@ describe("getOrCreateSessionKey", () => {
     // nothing therefore gets an ADMIN key — whose sandbox sees the whole cluster
     // and whose quota lookup is refused outright. Naming yourself is what makes
     // the result the same for everyone.
-    fetchMock
-      .mockResolvedValueOnce(ok({ items: [] }))
-      .mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
+    fetchMock.mockResolvedValueOnce(keyList()).mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
     await getOrCreateSessionKey("jwt", { team: "t", user: "u", impersonating: false })
 
     for (const [, init] of fetchMock.mock.calls) {
@@ -178,9 +258,7 @@ describe("getOrCreateSessionKey", () => {
   })
 
   it("caches per identity, not per conversation", async () => {
-    fetchMock.mockResolvedValue(
-      ok({ items: [{ keyId: "k1", description: SESSION_KEY_DESCRIPTION, rawToken: "agbx_x" }] })
-    )
+    fetchMock.mockResolvedValue(keyList(assistantKey({ rawToken: "agbx_x" })))
     await getOrCreateSessionKey("jwt", identity)
     await getOrCreateSessionKey("jwt", identity)
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -188,11 +266,16 @@ describe("getOrCreateSessionKey", () => {
 
   it("does not confuse two identities", async () => {
     fetchMock
+      .mockResolvedValueOnce(keyList(assistantKey({ keyId: "b", rawToken: "agbx_bob" })))
       .mockResolvedValueOnce(
-        ok({ items: [{ keyId: "b", description: SESSION_KEY_DESCRIPTION, rawToken: "agbx_bob" }] })
-      )
-      .mockResolvedValueOnce(
-        ok({ items: [{ keyId: "c", description: SESSION_KEY_DESCRIPTION, rawToken: "agbx_carol" }] })
+        keyList(
+          assistantKey({
+            keyId: "c",
+            team: "team2",
+            user: "carol",
+            rawToken: "agbx_carol",
+          })
+        )
       )
     await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_bob")
     await expect(
@@ -215,7 +298,7 @@ describe("getOrCreateSessionKey", () => {
 
   it("reports a hub that will not mint, rather than returning nothing", async () => {
     fetchMock
-      .mockResolvedValueOnce(ok({ items: [] }))
+      .mockResolvedValueOnce(keyList())
       .mockResolvedValueOnce({
         ok: false,
         status: 503,

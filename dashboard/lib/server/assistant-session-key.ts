@@ -125,6 +125,51 @@ interface HubKeyItem {
 }
 
 /**
+ * The hub answers `GET /v1/api-keys` with a BARE ARRAY (`ListAPIKeysResult =
+ * []APIKeyItem`), not with an `{items}` envelope like most list endpoints on
+ * this API. Reading `.items` off it yields `undefined`, no key is ever found
+ * reusable, and every cache miss mints another one until the hub's per-user cap
+ * refuses — which is what the person sees, a 409 in the middle of a
+ * conversation, nowhere near the shape mismatch that caused it.
+ *
+ * Both shapes are accepted so that a future envelope does not reintroduce it.
+ */
+function parseKeyList(body: unknown): HubKeyItem[] {
+  if (Array.isArray(body)) return body as HubKeyItem[]
+  const items = (body as { items?: unknown } | null)?.items
+  return Array.isArray(items) ? (items as HubKeyItem[]) : []
+}
+
+/**
+ * The one key belonging to `id` that this module may hand out.
+ *
+ * Matched on team+user as well as description, because the hub's LIST does not
+ * scope itself the way its CREATE does: create honours the impersonation
+ * headers, while list honours `?team=&user=` and, for an admin who sends
+ * neither, returns every key in the namespace. Picking the first matching
+ * description out of that would hand one person's conversation another person's
+ * credential — an admin's sandbox running as whoever happened to sort first.
+ *
+ * The role check keeps the module's promise that this is always a tenant key.
+ * A key carrying this description but a wider role was not minted here; using
+ * it would silently restore the whole-cluster access the identity exists to
+ * avoid. Skipping it mints a correct one alongside.
+ */
+function reusable(items: HubKeyItem[], id: EffectiveIdentity): string | undefined {
+  const match = items.find(
+    (k) =>
+      k.description === SESSION_KEY_DESCRIPTION &&
+      // A key minted before plaintext storage has no rawToken and cannot be
+      // reused — skipping it mints a usable one alongside rather than failing.
+      !!k.rawToken &&
+      (k.team ?? id.team) === id.team &&
+      (k.user ?? id.user) === id.user &&
+      (k.role ?? "tenant") === "tenant"
+  )
+  return match?.rawToken
+}
+
+/**
  * Keyed by identity, NOT by session: the key belongs to the person.
  *
  * Entries expire. A revoked key cannot be noticed here — it is spent by the
@@ -156,9 +201,21 @@ function remember(id: EffectiveIdentity, key: string): void {
   cache.set(cacheKey(id), { key, expires: Date.now() + CACHE_TTL_MS })
 }
 
+/**
+ * Resolutions already running, so concurrent first-requests share one.
+ *
+ * A conversation opens its event stream and posts its run at the same moment,
+ * and both need the key. Without this they both miss the cache, both list, both
+ * find nothing, and both create — two keys for one person, out of an allowance
+ * of three. The pair this produced was visible in the hub's key list as two
+ * entries issued in the same second.
+ */
+const inflight = new Map<string, Promise<string>>()
+
 /** Only for tests — the cache is process-wide and would leak between them. */
 export function resetSessionKeyCache(): void {
   cache.clear()
+  inflight.clear()
 }
 
 async function hubFetch(
@@ -217,7 +274,29 @@ export async function getOrCreateSessionKey(
   const hit = cached(id)
   if (hit) return hit
 
-  const listed = await hubFetch("/v1/api-keys", jwt, id)
+  const key = cacheKey(id)
+  const running = inflight.get(key)
+  if (running) return running
+
+  const attempt = resolveSessionKey(jwt, id).finally(() => {
+    if (inflight.get(key) === attempt) inflight.delete(key)
+  })
+  inflight.set(key, attempt)
+  return attempt
+}
+
+async function resolveSessionKey(
+  jwt: string,
+  id: EffectiveIdentity
+): Promise<string> {
+  // Scoped by query parameter, which is what LIST reads — the impersonation
+  // headers hubFetch always sends steer CREATE and are ignored here. An admin
+  // who sends neither gets every key in the namespace back.
+  const listPath =
+    `/v1/api-keys?team=${encodeURIComponent(id.team)}` +
+    `&user=${encodeURIComponent(id.user)}`
+
+  const listed = await hubFetch(listPath, jwt, id)
   if (listed.status === 401 || listed.status === 403) {
     throw new SessionKeyError(
       "Not allowed to read the API keys for this identity.",
@@ -225,17 +304,13 @@ export async function getOrCreateSessionKey(
     )
   }
   if (listed.ok) {
-    const body = (await listed.json().catch(() => null)) as {
-      items?: HubKeyItem[]
-    } | null
-    // A key minted before plaintext storage has no rawToken and cannot be
-    // reused — skipping it mints a usable one alongside rather than failing.
-    const reusable = body?.items?.find(
-      (k) => k.description === SESSION_KEY_DESCRIPTION && k.rawToken
+    const existing = reusable(
+      parseKeyList(await listed.json().catch(() => null)),
+      id
     )
-    if (reusable?.rawToken) {
-      remember(id, reusable.rawToken)
-      return reusable.rawToken
+    if (existing) {
+      remember(id, existing)
+      return existing
     }
   }
 
@@ -245,9 +320,18 @@ export async function getOrCreateSessionKey(
   })
   if (!created.ok) {
     const detail = await created.text().catch(() => "")
+    // The cap is reached with no reusable key only when the person's whole
+    // allowance is spent on keys of their own, so the way out is theirs to
+    // take on the API keys page. Saying so beats reporting the hub's wording,
+    // which names a limit without naming who can act on it.
+    const capped = created.status === 409 && detail.includes("max keys per user")
     throw new SessionKeyError(
-      `Could not create a sandbox API key for ${id.team}/${id.user}: ` +
-        `hub returned ${created.status} ${detail.slice(0, 200)}`,
+      capped
+        ? `${id.team}/${id.user} has used their whole API key allowance, and ` +
+          `none of those keys is the assistant's own ("${SESSION_KEY_DESCRIPTION}"). ` +
+          `Delete an unused key on the API Keys page and start the conversation again.`
+        : `Could not create a sandbox API key for ${id.team}/${id.user}: ` +
+          `hub returned ${created.status} ${detail.slice(0, 200)}`,
       created.status === 409 ? 409 : 503
     )
   }
