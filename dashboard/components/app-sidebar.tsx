@@ -38,6 +38,7 @@ import {
   Settings,
   Sun,
   Sparkles,
+  ShieldCheck,
   Vault,
 } from "lucide-react"
 import { useTheme } from "next-themes"
@@ -102,6 +103,9 @@ export const navSectionDefs: NavSectionDef[] = [
       // The vault sits with the agents rather than under Team: it is what an
       // agent's outbound calls draw on, and it is scoped per user, not per team.
       { labelKey: "nav.vault", page: "vault", icon: Vault },
+      // Beside the vault for the same reason: both are about what an agent is
+      // allowed to do while nobody is watching.
+      { labelKey: "nav.approvals", page: "approvals", icon: ShieldCheck },
     ],
   },
   {

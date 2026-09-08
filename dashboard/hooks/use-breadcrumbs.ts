@@ -54,6 +54,7 @@ const SEGMENT_LABEL_KEY: Partial<Record<string, TranslationKey>> = {
   admin: "nav.adminStats",
   "admin-api-keys": "nav.apiKeys",
   changelog: "nav.changelog",
+  approvals: "nav.approvals",
 }
 
 /**

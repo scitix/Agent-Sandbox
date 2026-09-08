@@ -30,6 +30,7 @@ export type DashboardPage =
   | "images"
   | "datasets"
   | "vault"
+  | "approvals"
   | "admin"
   | "general"
   | "api-keys"
