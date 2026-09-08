@@ -242,6 +242,7 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		ServerVersion:        cfg.ServerVersion,
 		Approvals:            cfg.ApprovalStore,
 		ConsoleBaseURL:       cfg.ConsoleBaseURL,
+		ConsoleBaseURLFn:     cfg.ClusterStore.ConsoleBaseURL,
 		ClusterID:            cfg.LocalClusterID,
 	}
 

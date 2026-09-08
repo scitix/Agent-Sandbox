@@ -142,6 +142,17 @@ type Deps struct {
 	// "agentbox-system" / "agentbox-images-catalog" values when unset.
 	ImagesCatalogNamespace string
 	ImagesCatalogConfigMap string
+
+	// ConsoleBaseURL is this deployment's own public address, e.g.
+	// "https://console.example.com/agentbox". It is republished to every Worker
+	// on the cluster-config snapshot so a Worker refusing a write can name the
+	// page a person goes to in order to approve it.
+	//
+	// Configured here rather than per Worker because the hub IS the console:
+	// asking each cluster to be told the address separately is one more thing
+	// to get wrong per cluster, and getting it wrong produces a link to nowhere
+	// in the one message whose whole job is to send someone somewhere.
+	ConsoleBaseURL string
 }
 
 // New creates a new SyncManager.

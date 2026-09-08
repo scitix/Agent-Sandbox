@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,6 +42,33 @@ class ApiError(RuntimeError):
     def __init__(self, message: str, status: int = 0) -> None:
         super().__init__(message)
         self.status = status
+
+
+@dataclass
+class Approval:
+    """The half of a 428 that says what to do about it."""
+
+    id: str
+    operation: str
+    summary: str
+    once_only: bool
+    url: str
+    poll_url: str
+    expires_at: str
+
+
+class ApprovalRequired(ApiError):
+    """The call is well formed and permitted, and is waiting on a person.
+
+    Its own class because the remedy is different from every other error: not
+    "fix the request" or "get access", but "go and click this, then run the same
+    command again". Callers that treat it as a plain failure would report a
+    refusal the user can resolve in ten seconds as something broken.
+    """
+
+    def __init__(self, message: str, approval: Approval) -> None:
+        super().__init__(message, 428)
+        self.approval = approval
 
 
 @dataclass
@@ -97,6 +126,13 @@ class Context:
             "X-AgentBox-Client-Version": agentbox_sdk.__version__,
             "Accept": "application/json",
         }
+        # Names the run this call belongs to, so an approval can be granted for
+        # the rest of it rather than one call at a time. Sent on every request,
+        # not just writes: a session the platform has never seen cannot be
+        # granted anything, and a read is the cheapest place to introduce it.
+        session = session_id()
+        if session:
+            h["X-AgentBox-Session-Id"] = session
         if self.auth_scheme == "bearer":
             h["Authorization"] = f"Bearer {self.api_key}"
         else:
@@ -168,16 +204,46 @@ class Context:
         return _parse(r, path)
 
 
+def _approval_of(payload: Any) -> Approval | None:
+    """Read the approval out of an error body, or return None.
+
+    Keyed on the errorCode rather than on the status, because the status is a
+    number a proxy or a gateway can also produce; the code is only ever written
+    by the gate itself. A body that claims the code but carries no id is treated
+    as not-an-approval — there would be nothing to poll or point at.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("errorCode") != "APPROVAL_REQUIRED":
+        return None
+    detail = payload.get("detail")
+    if not isinstance(detail, dict) or not detail.get("approvalId"):
+        return None
+    return Approval(
+        id=str(detail.get("approvalId") or ""),
+        operation=str(detail.get("operation") or ""),
+        summary=str(detail.get("summary") or ""),
+        once_only=bool(detail.get("onceOnly")),
+        url=str(detail.get("url") or ""),
+        poll_url=str(detail.get("pollUrl") or ""),
+        expires_at=str(detail.get("expiresAt") or ""),
+    )
+
+
 def _parse(r: httpx.Response, path: str) -> Any:
     text = r.text
     if r.status_code >= 400:
         msg = ""
+        payload: Any = None
         try:
             payload = json.loads(text)
             if isinstance(payload, dict):
                 msg = str(payload.get("error") or payload.get("message") or "")
         except Exception:
             pass
+        approval = _approval_of(payload)
+        if approval is not None:
+            raise ApprovalRequired(msg or "approval required", approval)
         raise ApiError(
             msg or f"HTTP {r.status_code} from {path}: {text[:200]}",
             r.status_code,
@@ -256,3 +322,64 @@ def env_default(*names: str, fallback: str = "") -> str:
         if v:
             return v
     return fallback
+
+
+# ── session identity ─────────────────────────────────────────────────────────
+
+# Where a generated session id is remembered.
+#
+# Per user, not per directory: a person driving an agent from two terminals is
+# in one working session as far as an approval is concerned, and asking them to
+# approve the same operation once per shell would train them to click yes
+# without reading.
+_SESSION_FILE = "session-id"
+
+
+def session_id() -> str:
+    """The id this invocation belongs to.
+
+    Order matters. An explicitly supplied id wins, because the caller that set
+    it knows more than we do — the platform's own sandboxes set it to the
+    conversation they were opened for, so an approval granted in a conversation
+    covers the rest of that conversation and nothing else.
+
+    Failing that we generate one and remember it. Generating is worth doing
+    rather than sending nothing: without an id the platform can only ever grant
+    one call at a time, which is correct but means a person clicking approve for
+    every step of a long task.
+    """
+    explicit = os.environ.get("AGENTBOX_SESSION_ID", "").strip()
+    if explicit:
+        return explicit
+
+    path = _session_path()
+    if path is None:
+        return ""
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+
+    generated = "cli_" + secrets.token_hex(8)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(generated, encoding="utf-8")
+    except OSError:
+        # An unwritable home is not a reason to fail a command. Returning the id
+        # anyway keeps THIS invocation coherent; the next one gets a new one and
+        # simply has to approve again.
+        return generated
+    return generated
+
+
+def _session_path() -> pathlib.Path | None:
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    try:
+        root = pathlib.Path(base) if base else pathlib.Path.home() / ".config"
+    except (OSError, RuntimeError):
+        # `Path.home()` raises where there is no home at all, which happens in
+        # some container images.
+        return None
+    return root / "abx" / _SESSION_FILE

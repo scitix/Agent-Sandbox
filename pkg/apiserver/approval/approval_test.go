@@ -306,3 +306,21 @@ func splitRoute(s string) (method, path string, ok bool) {
 	}
 	return "", "", false
 }
+
+func TestChallengeCarriesWhatAClientNeeds(t *testing.T) {
+	// The refusal is the only thing a blocked caller gets. It has to name the
+	// approval, say where to act on it, and say whether the wider scopes are
+	// even on offer — a client that has to consult a catalogue to interpret a
+	// refusal is a client that will not.
+	s, _ := newTestStore()
+	r := challenge(s, alice, "s1", "env.delete", "fp-1", true)
+	if r.ID == "" || r.Status != StatusPending {
+		t.Fatalf("unexpected challenge: %+v", r)
+	}
+	if !r.OnceOnly {
+		t.Fatal("a once-only operation must say so on the challenge")
+	}
+	if !r.ExpiresAt.After(r.CreatedAt) {
+		t.Fatal("a challenge must expire after it was created")
+	}
+}

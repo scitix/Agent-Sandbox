@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -43,6 +44,7 @@ from agentbox_sdk.cli import dispatch as D
 from agentbox_sdk.cli import render as R
 from agentbox_sdk.cli.context import (
     ApiError,
+    ApprovalRequired,
     Context,
     assert_cluster_served,
     env_default,
@@ -715,6 +717,99 @@ def run_whoami(ctx: Context, values: dict[str, Any]) -> Result:
     return Result("\n".join(R.yaml_lite(payload)))
 
 
+_APPROVALS_HELP = """abx approvals [list | wait <id>]
+— the writes that are waiting on a person.
+
+A key marked as acting unattended cannot change anything until someone approves
+it. A refused command prints an `approval:` block with a link and an id; these
+subcommands are the other half.
+
+  abx approvals            list what is pending and what is already allowed
+  abx approvals wait <id>  block until that request is decided
+
+`wait` exits 0 when it was approved — run the same command again and it will go
+through — and 1 when it was denied or expired. It does not retry for you: the
+command it is unblocking is the caller's, and re-running it is the caller's
+decision."""
+
+# How long `wait` blocks, and how often it looks.
+#
+# The ceiling matches the server's own request TTL: waiting past the point where
+# the request can still be decided would be waiting for something that cannot
+# happen. Two seconds between polls is chosen for the human on the other end —
+# they are clicking a button, not watching a build.
+_WAIT_TIMEOUT_S = 15 * 60
+_WAIT_POLL_S = 2.0
+
+
+def run_approvals(
+    ctx: Context, positionals: list[str], values: dict[str, Any]
+) -> Result:
+    sub = positionals[1] if len(positionals) > 1 else "list"
+
+    if sub == "list":
+        payload = ctx.get_json("/approvals")
+        if _fmt(values) == "json":
+            return Result(R.render_json(payload))
+        pending = payload.get("pending") or []
+        grants = payload.get("grants") or []
+        out: list[str] = []
+        if pending:
+            out.append("pending:")
+            for p in pending:
+                out.append(f"  {p.get('id')}  {p.get('summary')}")
+                scope = (
+                    "once only" if p.get("onceOnly") else "once / session / key"
+                )
+                out.append(f"    {p.get('operation')}  ({scope})")
+        else:
+            out.append("pending: none")
+        if grants:
+            out.append("allowed:")
+            for g in grants:
+                where = (
+                    g.get("sessionId")
+                    or g.get("principal", {}).get("keyId")
+                    or ""
+                )
+                gid, op = g.get("id"), g.get("operation")
+                out.append(f"  {gid}  {op}  {g.get('scope')} {where}")
+        return Result("\n".join(out))
+
+    if sub != "wait":
+        raise UsageError(
+            f'unknown approvals subcommand "{sub}". Use `list` or `wait <id>`.'
+        )
+
+    if len(positionals) < 3:
+        raise UsageError(
+            "abx approvals wait needs an approval id", ["abx approvals"]
+        )
+    approval_id = positionals[2]
+
+    deadline = time.monotonic() + _WAIT_TIMEOUT_S
+    while True:
+        payload = ctx.get_json(f"/approvals/{approval_id}")
+        status = str(payload.get("status") or "")
+        if status == "approved":
+            scope = payload.get("scope") or "once"
+            return Result(
+                f"approved ({scope}). Run the same command again.",
+            )
+        if status in ("denied", "expired"):
+            return Result(f"{status}.", error=True)
+        if time.monotonic() >= deadline:
+            # Not an error state on the server — it is still pending, we simply
+            # stopped looking. Saying so beats reporting a denial that did not
+            # happen.
+            return Result(
+                f"still pending after {_WAIT_TIMEOUT_S // 60} minutes; "
+                f"check `abx approvals` or the link in the refusal.",
+                error=True,
+            )
+        time.sleep(_WAIT_POLL_S)
+
+
 # --------------------------------------------------------------------------
 # Entry
 # --------------------------------------------------------------------------
@@ -798,6 +893,11 @@ def run(argv: Sequence[str]) -> Result:
             return Result(_WHOAMI_HELP)
         return run_whoami(_build_ctx(values), values)
 
+    if first == "approvals":
+        if want_help:
+            return Result(_APPROVALS_HELP)
+        return run_approvals(_build_ctx(values), positionals, values)
+
     if first == "auth":
         sub = positionals[1] if len(positionals) > 1 else "whoami"
         if sub != "whoami":
@@ -862,6 +962,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if e.hints:
             lines += ["hint:"] + [f"  {h}" for h in e.hints]
         text, code = "\n".join(lines), 2
+    except ApprovalRequired as e:
+        # Not a failure to report and move on from: the call was well formed and
+        # permitted, and a person can unblock it in seconds. Exit 3, distinct
+        # from the generic API error, so a caller scripting around this can tell
+        # "wait and retry" from "this will never work".
+        text = "\n".join([f"error: {e}", *R.approval_block(e.approval)])
+        code = 3
     except ApiError as e:
         # Relayed verbatim: the server's wording is what the caller can act on.
         text, code = f"error: {e}", 1

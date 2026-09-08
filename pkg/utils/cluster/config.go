@@ -55,6 +55,16 @@ const (
 type ClusterConfig struct {
 	Clusters    []ClusterEntry     `json:"clusters"`
 	HostAliases []corev1.HostAlias `json:"hostAliases,omitempty"`
+	// ConsoleBaseURL is where a person goes to act on something a worker
+	// refused, e.g. "https://console.example.com/agentbox".
+	//
+	// It travels on this snapshot rather than being configured per worker
+	// because the hub is the console's own deployment and is the only party
+	// that knows its public address. A worker that had to be told separately
+	// would be one more thing to get wrong per cluster, and getting it wrong
+	// produces a link to nowhere in the one message whose whole job is to send
+	// someone somewhere.
+	ConsoleBaseURL string `json:"consoleBaseURL,omitempty"`
 }
 
 // ClusterEntry describes a single cluster and how to reach it.
@@ -195,6 +205,11 @@ type Store struct {
 	// typeIndex maps "clusterID:type" to the first registry host of that type
 	// for the given cluster. Used to look up the local replacement target.
 	typeIndex map[string]string
+
+	// consoleBaseURL is pushed down from the hub. Read live rather than
+	// captured at startup: the hub can republish, and a stale value here is a
+	// link that leads to the wrong place.
+	consoleBaseURL string
 }
 
 // HostAliasSubscriber is invoked with the full host-alias list every time the
@@ -406,6 +421,12 @@ func (s *Store) ApplyConfig(cfg ClusterConfig) ConfigDiff {
 	diff := diffConfig(s.clusters, m, s.hostAliases, aliases)
 	s.clusters = m
 	s.hostAliases = aliases
+	// Only overwritten when the snapshot carries one, so a hub that has not
+	// been configured with a console address does not erase a value a worker
+	// was given by hand.
+	if cfg.ConsoleBaseURL != "" {
+		s.consoleBaseURL = cfg.ConsoleBaseURL
+	}
 	s.hostIndex = hostIdx
 	s.typeIndex = typeIdx
 	subs := append([]HostAliasSubscriber(nil), s.hostAliasSubs...)
@@ -669,4 +690,15 @@ func (s *Store) WatchConfigMap(ctx context.Context, informerCache cache.Cache, n
 		name:      name,
 	})
 	return err
+}
+
+// ConsoleBaseURL returns the console address most recently pushed by the hub,
+// or empty when none has been.
+func (s *Store) ConsoleBaseURL() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.consoleBaseURL
 }

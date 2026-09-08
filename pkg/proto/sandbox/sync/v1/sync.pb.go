@@ -2104,11 +2104,15 @@ func (x *ClusterEntry) GetLogs() *LogsConfig {
 }
 
 type ClusterConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Clusters      []*ClusterEntry        `protobuf:"bytes,1,rep,name=clusters,proto3" json:"clusters,omitempty"`
-	HostAliases   []*HostAlias           `protobuf:"bytes,2,rep,name=host_aliases,json=hostAliases,proto3" json:"host_aliases,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Clusters    []*ClusterEntry        `protobuf:"bytes,1,rep,name=clusters,proto3" json:"clusters,omitempty"`
+	HostAliases []*HostAlias           `protobuf:"bytes,2,rep,name=host_aliases,json=hostAliases,proto3" json:"host_aliases,omitempty"`
+	// Where a person goes to act on something a Worker refused. The hub is the
+	// console's own deployment and the only party that knows its public address,
+	// so it travels on this snapshot rather than being configured per Worker.
+	ConsoleBaseUrl string `protobuf:"bytes,3,opt,name=console_base_url,json=consoleBaseUrl,proto3" json:"console_base_url,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ClusterConfig) Reset() {
@@ -2153,6 +2157,13 @@ func (x *ClusterConfig) GetHostAliases() []*HostAlias {
 		return x.HostAliases
 	}
 	return nil
+}
+
+func (x *ClusterConfig) GetConsoleBaseUrl() string {
+	if x != nil {
+		return x.ConsoleBaseUrl
+	}
+	return ""
 }
 
 type ClusterConfigEvent struct {
@@ -2720,10 +2731,11 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\x04logs\x18\t \x01(\v2\x1b.sandbox.sync.v1.LogsConfigR\x04logs\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb3\x01\n" +
 	"\rClusterConfig\x129\n" +
 	"\bclusters\x18\x01 \x03(\v2\x1d.sandbox.sync.v1.ClusterEntryR\bclusters\x12=\n" +
-	"\fhost_aliases\x18\x02 \x03(\v2\x1a.sandbox.sync.v1.HostAliasR\vhostAliases\"P\n" +
+	"\fhost_aliases\x18\x02 \x03(\v2\x1a.sandbox.sync.v1.HostAliasR\vhostAliases\x12(\n" +
+	"\x10console_base_url\x18\x03 \x01(\tR\x0econsoleBaseUrl\"P\n" +
 	"\x12ClusterConfigEvent\x12:\n" +
 	"\bsnapshot\x18\x01 \x01(\v2\x1e.sandbox.sync.v1.ClusterConfigR\bsnapshot\"\x1b\n" +
 	"\x19WatchClusterConfigRequest\"\xa7\x03\n" +

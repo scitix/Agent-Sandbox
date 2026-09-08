@@ -70,8 +70,9 @@ func protoToTime(ts *timestamppb.Timestamp) time.Time {
 // proto representation used in WatchClusterConfig events.
 func clusterConfigToProto(cfg cluster.ClusterConfig) *syncv1.ClusterConfig {
 	out := &syncv1.ClusterConfig{
-		Clusters:    make([]*syncv1.ClusterEntry, 0, len(cfg.Clusters)),
-		HostAliases: make([]*syncv1.HostAlias, 0, len(cfg.HostAliases)),
+		Clusters:       make([]*syncv1.ClusterEntry, 0, len(cfg.Clusters)),
+		HostAliases:    make([]*syncv1.HostAlias, 0, len(cfg.HostAliases)),
+		ConsoleBaseUrl: cfg.ConsoleBaseURL,
 	}
 	for _, c := range cfg.Clusters {
 		entry := &syncv1.ClusterEntry{

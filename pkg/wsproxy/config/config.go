@@ -63,6 +63,13 @@ type Config struct {
 	// Flag: --admin-key  Env: AGENTBOX_ADMIN_KEY
 	AdminKey string
 
+	// ConsoleBaseURL is this deployment's own public address, e.g.
+	// "https://console.example.com/agentbox". Republished to every Worker on
+	// the cluster-config snapshot so a Worker refusing a write can name the page
+	// a person opens to approve it. Configured here because the hub IS the
+	// console and is the only party that knows its own address.
+	ConsoleBaseURL string
+
 	// MaxKeysPerUser is the per-(namespace, user) API key count limit.
 	// 0 means unlimited.
 	// Flag: --max-keys-per-user  Env: AGENTBOX_MAX_KEYS_PER_USER
@@ -129,6 +136,12 @@ func FromFlags(fs *flag.FlagSet) *Config {
 	fs.StringVar(&cfg.AdminKey, "admin-key",
 		os.Getenv("AGENTBOX_ADMIN_KEY"),
 		"Admin API key for internal API auth. Empty = dev mode (anonymous admin).")
+
+	fs.StringVar(&cfg.ConsoleBaseURL, "console-base-url",
+		envOr("AGENTBOX_CONSOLE_BASE_URL", ""),
+		"Public base URL of this console, e.g. \"https://console.example.com/agentbox\". "+
+			"Pushed to every Worker so an approval refusal can link to the page that "+
+			"resolves it. Empty omits the link; the CLI can still poll for the outcome.")
 
 	fs.IntVar(&cfg.MaxKeysPerUser, "max-keys-per-user",
 		envInt("AGENTBOX_MAX_KEYS_PER_USER", 0),

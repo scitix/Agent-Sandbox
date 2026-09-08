@@ -52,11 +52,14 @@ type Services struct {
 	// says yes. Nil disables the gate entirely, which is what a deployment that
 	// has not opted any key into it gets anyway.
 	Approvals *approval.Store
-	// ConsoleBaseURL is where a person goes to decide, e.g.
-	// "https://console.example.com/agentbox". Empty omits the link from the
-	// refusal — the CLI can still poll, and a link to nowhere is worse than
-	// none.
+	// ConsoleBaseURL is a manually configured fallback for where a person goes
+	// to decide. Normally empty: the hub publishes its own address on the
+	// cluster-config snapshot, and ConsoleBaseURLFn reads that live.
 	ConsoleBaseURL string
+	// ConsoleBaseURLFn reads the address the hub most recently published. Read
+	// per refusal rather than captured at startup, because the hub can
+	// republish and a stale link leads to the wrong place.
+	ConsoleBaseURLFn func() string
 	// ClusterID names this cluster in the console's approval URL, which is
 	// per-cluster because the approval is.
 	ClusterID string
@@ -145,7 +148,7 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 		apiMiddlewares = append(apiMiddlewares, gen.MiddlewareFunc(approval.New(
 			svcs.Approvals,
 			approvalIdentity,
-			approvalConsoleURL(svcs.ConsoleBaseURL, svcs.ClusterID),
+			approvalConsoleURL(svcs.ConsoleBaseURL, svcs.ConsoleBaseURLFn, svcs.ClusterID),
 		)))
 	}
 	gen.RegisterHandlersWithOptions(r, strictHandler, gen.GinServerOptions{
@@ -192,15 +195,32 @@ func approvalIdentity(c *gin.Context) approval.Identity {
 	}
 }
 
-// approvalConsoleURL builds the deep link a refusal carries. Returns nil when
-// the deployment has no console configured, which omits the link rather than
-// pointing at nothing.
-func approvalConsoleURL(base, clusterID string) approval.ConsoleURLFunc {
-	if base == "" || clusterID == "" {
+// approvalConsoleURL builds the deep link a refusal carries.
+//
+// The hub's published address wins over the local flag: the hub is the console
+// and knows its own address, while the flag exists for a deployment that has no
+// hub to ask. Both are consulted per refusal rather than once at startup —
+// config arrives after the server is already serving, and a link resolved too
+// early would be empty for the life of the process.
+//
+// Returns nil only when there is no cluster id to build a path from; a missing
+// base URL is handled per call, so a link appears as soon as one is published.
+func approvalConsoleURL(base string, live func() string, clusterID string) approval.ConsoleURLFunc {
+	if clusterID == "" {
 		return nil
 	}
-	trimmed := strings.TrimSuffix(base, "/")
 	return func(id string) string {
-		return trimmed + "/clusters/" + clusterID + "/approvals?id=" + url.QueryEscape(id)
+		b := ""
+		if live != nil {
+			b = live()
+		}
+		if b == "" {
+			b = base
+		}
+		if b == "" {
+			return ""
+		}
+		return strings.TrimSuffix(b, "/") + "/clusters/" + clusterID +
+			"/approvals?id=" + url.QueryEscape(id)
 	}
 }

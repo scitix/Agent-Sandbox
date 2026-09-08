@@ -201,3 +201,28 @@ def footer(
             out.append(f"  {h.cmd}  # {h.reason}")
 
     return out
+
+
+def approval_block(approval: Any) -> list[str]:
+    """The trailer a refused write prints.
+
+    Same shape as every other trailer — a label, then two-space-indented lines —
+    so an agent that has parsed one has parsed this one. It pairs an `approval:`
+    block naming what is being asked and where to go, with the `hint:` block
+    AGENTS.md already tells the agent to follow verbatim.
+
+    The hint is `approvals wait`, not "run the command again": waiting is what
+    the agent should do, and the wait command tells it when to retry. Telling it
+    to retry immediately produces a second refusal and a loop.
+    """
+    lines = ["approval:", "  " + (approval.summary or approval.operation)]
+    if approval.url:
+        lines.append("  " + approval.url)
+    scope = "once" if approval.once_only else "once, or for this whole session"
+    lines.append(f"  ({scope})")
+    lines += [
+        "hint:",
+        f"  abx approvals wait {approval.id}"
+        "  # blocks until it is decided, then run the same command again",
+    ]
+    return lines

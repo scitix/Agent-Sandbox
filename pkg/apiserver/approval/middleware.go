@@ -138,6 +138,9 @@ func New(store *Store, identity IdentityFunc, consoleURL ConsoleURLFunc) gin.Han
 			PollURL:    "/v1/approvals/" + req.ID,
 			ExpiresAt:  req.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		}
+		// Empty is a normal answer, not a failure: the console address arrives
+		// from the hub after this server is already serving, so early refusals
+		// legitimately carry no link. The CLI polls `pollUrl` either way.
 		if consoleURL != nil {
 			detail.URL = consoleURL(req.ID)
 		}

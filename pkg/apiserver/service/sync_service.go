@@ -606,8 +606,9 @@ func grpcCodeToHTTP(c codes.Code) int {
 // cluster.ClusterConfig type. Mirrors syncmgr/grpc_convert.go on the Hub side.
 func protoToClusterConfig(p *syncv1.ClusterConfig) cluster.ClusterConfig {
 	out := cluster.ClusterConfig{
-		Clusters:    make([]cluster.ClusterEntry, 0, len(p.Clusters)),
-		HostAliases: make([]corev1.HostAlias, 0, len(p.HostAliases)),
+		Clusters:       make([]cluster.ClusterEntry, 0, len(p.Clusters)),
+		HostAliases:    make([]corev1.HostAlias, 0, len(p.HostAliases)),
+		ConsoleBaseURL: p.ConsoleBaseUrl,
 	}
 	for _, c := range p.Clusters {
 		entry := cluster.ClusterEntry{

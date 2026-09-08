@@ -109,6 +109,7 @@ func Run() {
 			JWTSecret:              cfg.Secret,
 			ImagesCatalogNamespace: cfg.APIKeyNamespace,
 			ImagesCatalogConfigMap: cfg.ImagesCatalogConfigMap,
+			ConsoleBaseURL:         cfg.ConsoleBaseURL,
 		})
 
 		// Templates edited outside the internal API (kubectl, a restore) reach

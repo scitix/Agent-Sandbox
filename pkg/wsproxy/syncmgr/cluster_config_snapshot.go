@@ -24,8 +24,9 @@ import (
 // Store. Returns the zero value when nothing is configured.
 func (m *SyncManager) currentSnapshot() cluster.ClusterConfig {
 	return cluster.ClusterConfig{
-		Clusters:    m.clusters.All(),
-		HostAliases: m.clusters.HostAliases(),
+		Clusters:       m.clusters.All(),
+		HostAliases:    m.clusters.HostAliases(),
+		ConsoleBaseURL: m.deps.ConsoleBaseURL,
 	}
 }
 

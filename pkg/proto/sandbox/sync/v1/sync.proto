@@ -323,6 +323,10 @@ message ClusterEntry {
 message ClusterConfig {
   repeated ClusterEntry clusters = 1;
   repeated HostAlias host_aliases = 2;
+  // Where a person goes to act on something a Worker refused. The hub is the
+  // console's own deployment and the only party that knows its public address,
+  // so it travels on this snapshot rather than being configured per Worker.
+  string console_base_url = 3;
 }
 
 message ClusterConfigEvent {
