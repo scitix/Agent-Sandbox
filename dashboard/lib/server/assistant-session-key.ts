@@ -122,6 +122,7 @@ interface HubKeyItem {
   role?: string
   user?: string
   team?: string
+  mode?: string
 }
 
 /**
@@ -158,6 +159,12 @@ function parseKeyList(body: unknown): HubKeyItem[] {
 function reusable(items: HubKeyItem[], id: EffectiveIdentity): string | undefined {
   const match = items.find(
     (k) =>
+      // Agent mode is the load-bearing half of the match, not the description.
+      // The description is a label anyone can type; the mode is what actually
+      // holds this key's platform writes for a person, and reusing a key
+      // without it would hand the assistant a credential that changes things
+      // unattended — the exact thing the gate exists to prevent.
+      k.mode === "agent" &&
       k.description === SESSION_KEY_DESCRIPTION &&
       // A key minted before plaintext storage has no rawToken and cannot be
       // reused — skipping it mints a usable one alongside rather than failing.
@@ -285,18 +292,64 @@ export async function getOrCreateSessionKey(
   return attempt
 }
 
+/**
+ * Mints the one agent key this identity gets, tolerating the race.
+ *
+ * Two requests can both find no key and both try to make one — a conversation
+ * opens its event stream and posts its run at the same moment. The hub allows
+ * only one agent key per person and answers the loser with a conflict, so the
+ * loser re-reads rather than failing: the key it wanted now exists, and it was
+ * made for the same person by the same code a few milliseconds earlier.
+ */
+async function createAgentKey(
+  jwt: string,
+  id: EffectiveIdentity
+): Promise<Response> {
+  const created = await hubFetch("/v1/api-keys", jwt, id, {
+    method: "POST",
+    // `agent`: this key is handed to something that acts while nobody is
+    // watching, so the platform holds its writes until the person in the
+    // conversation approves them. Its sandbox work is unaffected — same key,
+    // and the gate does not sit on that surface.
+    body: JSON.stringify({
+      description: SESSION_KEY_DESCRIPTION,
+      mode: "agent",
+    }),
+  })
+  if (created.status !== 409) return created
+
+  const listed = await hubFetch(listPathFor(id), jwt, id)
+  if (!listed.ok) return created
+  const existing = reusable(
+    parseKeyList(await listed.json().catch(() => null)),
+    id
+  )
+  if (!existing) return created
+  return new Response(JSON.stringify({ apiKey: existing }), {
+    status: 201,
+    headers: { "content-type": "application/json" },
+  })
+}
+
+/**
+ * The hub's LIST scopes itself by query parameter; its CREATE scopes itself by
+ * the impersonation headers. `hubFetch` sends the headers on everything, so
+ * omitting these parameters does not narrow the read — for an admin it returns
+ * every key in the namespace, and the first matching one would be somebody
+ * else's.
+ */
+function listPathFor(id: EffectiveIdentity): string {
+  return (
+    `/v1/api-keys?team=${encodeURIComponent(id.team)}` +
+    `&user=${encodeURIComponent(id.user)}`
+  )
+}
+
 async function resolveSessionKey(
   jwt: string,
   id: EffectiveIdentity
 ): Promise<string> {
-  // Scoped by query parameter, which is what LIST reads — the impersonation
-  // headers hubFetch always sends steer CREATE and are ignored here. An admin
-  // who sends neither gets every key in the namespace back.
-  const listPath =
-    `/v1/api-keys?team=${encodeURIComponent(id.team)}` +
-    `&user=${encodeURIComponent(id.user)}`
-
-  const listed = await hubFetch(listPath, jwt, id)
+  const listed = await hubFetch(listPathFor(id), jwt, id)
   if (listed.status === 401 || listed.status === 403) {
     throw new SessionKeyError(
       "Not allowed to read the API keys for this identity.",
@@ -314,10 +367,7 @@ async function resolveSessionKey(
     }
   }
 
-  const created = await hubFetch("/v1/api-keys", jwt, id, {
-    method: "POST",
-    body: JSON.stringify({ description: SESSION_KEY_DESCRIPTION }),
-  })
+  const created = await createAgentKey(jwt, id)
   if (!created.ok) {
     const detail = await created.text().catch(() => "")
     // The cap is reached with no reusable key only when the person's whole

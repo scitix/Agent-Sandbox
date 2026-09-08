@@ -142,6 +142,10 @@ describe("getOrCreateSessionKey", () => {
       description: SESSION_KEY_DESCRIPTION,
       rawToken: "agbx_existing",
       role: "tenant",
+      // Agent mode is what makes a key reusable here. A key carrying the right
+      // description without it is an unrestricted credential, and handing that
+      // to the assistant is the thing the approval gate exists to prevent.
+      mode: "agent",
       team: identity.team,
       user: identity.user,
       ...over,
@@ -178,6 +182,16 @@ describe("getOrCreateSessionKey", () => {
     await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_new")
   })
 
+  it("never reuses a key that is not in agent mode", async () => {
+    // A key with the right description but no mode is an unrestricted
+    // credential: it would change things without anyone being asked, which is
+    // exactly what the gate exists to prevent.
+    fetchMock
+      .mockResolvedValueOnce(keyList(assistantKey({ mode: "unrestricted" })))
+      .mockResolvedValueOnce(ok({ apiKey: "agbx_new" }))
+    await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_new")
+  })
+
   it("never reuses a key that is not a tenant key", async () => {
     // This module's whole promise is that the sandbox runs as a tenant. A key
     // with a wider role was not minted here, and using it would restore the
@@ -194,7 +208,10 @@ describe("getOrCreateSessionKey", () => {
 
     const [, init] = fetchMock.mock.calls[1]
     expect(init.method).toBe("POST")
-    expect(JSON.parse(init.body)).toEqual({ description: SESSION_KEY_DESCRIPTION })
+    expect(JSON.parse(init.body)).toEqual({
+      description: SESSION_KEY_DESCRIPTION,
+      mode: "agent",
+    })
   })
 
   it("mints at most one key for concurrent first requests", async () => {
@@ -233,13 +250,35 @@ describe("getOrCreateSessionKey", () => {
     // The hub says "exceeded max keys per user (3)", which names a limit but
     // not who can act on it. Reaching it with no reusable key means the
     // person's own keys are the ones in the way.
-    fetchMock.mockResolvedValueOnce(keyList()).mockResolvedValueOnce({
-      ok: false,
-      status: 409,
-      text: async () => '{"error":"exceeded max keys per user (3)"}',
-      json: async () => ({}),
-    })
+    fetchMock
+      .mockResolvedValueOnce(keyList())
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: async () => '{"error":"exceeded max keys per user (3)"}',
+        json: async () => ({}),
+      })
+      // The re-read a conflict triggers. Still nothing to reuse, so the
+      // refusal stands.
+      .mockResolvedValueOnce(keyList())
     await expect(getOrCreateSessionKey("jwt", identity)).rejects.toThrow(/API Keys page/)
+  })
+
+  it("adopts the key the other request just made", async () => {
+    // Two requests can both find nothing and both try to create; the hub allows
+    // one agent key per person and refuses the loser. Failing there would end a
+    // conversation over a key that now exists, made for the same person by the
+    // same code a moment earlier.
+    fetchMock
+      .mockResolvedValueOnce(keyList())
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: async () => '{"error":"this user already has an agent key (k1)"}',
+        json: async () => ({}),
+      })
+      .mockResolvedValueOnce(keyList(assistantKey()))
+    await expect(getOrCreateSessionKey("jwt", identity)).resolves.toBe("agbx_existing")
   })
 
   it("ALWAYS names the identity, so the hub mints a tenant key", async () => {

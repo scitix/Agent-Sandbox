@@ -98,12 +98,40 @@ func (s *Server) CreateApiKey(
 		role = apikey.RoleTenant
 	}
 
-	if deps.MaxPerUser > 0 {
+	wantAgent := body.Mode != nil && *body.Mode == wsproxygen.Agent
+
+	// The agent key is not one of a person's own keys, and is counted as
+	// neither.
+	//
+	// It is issued FOR them rather than BY them — the assistant mints one the
+	// first time they open a conversation — so charging it to an allowance they
+	// did not spend is how someone ends up unable to make a third key of their
+	// own because a chat window made one for them. That is not hypothetical: it
+	// is exactly the 409 that surfaced mid-conversation before this existed.
+	//
+	// And there is only ever one. A second would be a second credential acting
+	// unattended in the same person's name, with nothing to distinguish them in
+	// an audit line; returning the existing one instead is both what the caller
+	// wanted and the only answer that keeps that true under a race.
+	if deps.MaxPerUser > 0 || wantAgent {
 		keys, err := deps.KeyStore.ListByTeamAndUser(ctx, targetTeam, targetUser)
 		if err != nil {
 			return wsproxygen.CreateApiKey503JSONResponse{Error: "internal error"}, nil
 		}
-		if len(keys) >= deps.MaxPerUser {
+		own := 0
+		for _, k := range keys {
+			if k.RequireApproval {
+				if wantAgent {
+					return wsproxygen.CreateApiKey409JSONResponse{
+						Error: "this user already has an agent key (" +
+							shortKeyName(k.KeyID) + "); there is only ever one",
+					}, nil
+				}
+				continue
+			}
+			own++
+		}
+		if !wantAgent && deps.MaxPerUser > 0 && own >= deps.MaxPerUser {
 			return wsproxygen.CreateApiKey409JSONResponse{
 				Error: fmt.Sprintf("exceeded max keys per user (%d)", deps.MaxPerUser),
 			}, nil
@@ -129,7 +157,7 @@ func (s *Server) CreateApiKey(
 		ExpiresAt:   expiresAt,
 		// Absent means unrestricted — what every key was before this existed,
 		// so an older client keeps issuing exactly what it always did.
-		RequireApproval: body.Mode != nil && *body.Mode == wsproxygen.Agent,
+		RequireApproval: wantAgent,
 	}
 
 	rawToken, keyID, err := deps.KeyStore.Create(ctx, meta)
@@ -262,4 +290,13 @@ func keyMetasToGenItems(metas []apikey.KeyMetadata) []nativegen.APIKeyItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+// shortKeyName drops the namespace from a fully qualified KeyID so an error
+// names the key the way the console's own list does.
+func shortKeyName(keyID string) string {
+	if i := strings.LastIndex(keyID, "/"); i >= 0 {
+		return keyID[i+1:]
+	}
+	return keyID
 }
