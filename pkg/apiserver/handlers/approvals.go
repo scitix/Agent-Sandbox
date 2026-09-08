@@ -34,21 +34,29 @@ func principalOf(auth domain.AuthInfo) approval.Principal {
 	return approval.Principal{Team: auth.Team, User: auth.User, KeyID: auth.KeyID}
 }
 
-// requireHuman refuses a decision made by anything other than a console
-// session.
+// requireHuman refuses a decision made by a credential that acts unattended.
 //
-// Without it the gate is a formality: an agent refused a write would hold, in
-// its own hands, the credential needed to approve it. The check is on the
-// authentication METHOD rather than on a role, because the property that
-// matters is "a person was present", and a JWT is the only thing this API
-// issues that means that.
+// The property being protected is narrow and worth stating exactly: an agent
+// refused a write must not hold, in its own hands, the credential needed to
+// approve it. That is a fact about the KEY — the one marked as acting with
+// nobody watching — not about the transport.
+//
+// So the rule is not "JWT only". It was, briefly, and testing through the
+// console found what that costs: the dashboard's cluster proxy forwards a
+// session as a Bearer JWT for an OIDC login but injects the caller's
+// AGENTBOX-API-KEY for an API-key login, so a person who signed in with a key
+// could not answer their own approvals from the page built for it.
+//
+// An unmarked key is a person's ordinary credential; an unattended one is the
+// agent's. Only the second is refused, and it is refused whatever else it is
+// also holding.
 func requireHuman(auth domain.AuthInfo) *domain.AppError {
-	if auth.AuthMethod == "jwt" {
+	if !auth.Unattended {
 		return nil
 	}
 	return domain.NewForbidden(
-		"approvals can only be decided from the console: the credential that " +
-			"made the request cannot approve it")
+		"an unattended credential cannot approve its own request: decide from " +
+			"the console, or with a credential that is not marked unattended")
 }
 
 func approvalPrincipalToGen(p approval.Principal) gen.ApprovalPrincipal {
