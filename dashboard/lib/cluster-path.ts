@@ -41,7 +41,7 @@ export type DashboardPage =
 /**
  * Returns the locale prefix for a URL. Default locale ("en") has no prefix.
  */
-function localePrefix(locale?: Locale): string {
+export function localePrefix(locale?: Locale): string {
   if (!locale || locale === "en") return ""
   return `/${locale}`
 }

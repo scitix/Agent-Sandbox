@@ -1525,5 +1525,7 @@
   "apiKeys.mode.agent": "Agent",
   "apiKeys.mode.agentHint": "For something that acts unattended. Sandboxes work as normal; platform changes wait for your approval.",
   "assistant.approval.title": "Approval required",
-  "assistant.approval.sessionHint": "Also allow the same call for the rest of this conversation"
+  "assistant.approval.sessionHint": "Also allow the same call for the rest of this conversation",
+  "assistant.opened": "Opened",
+  "assistant.openAgain": "Open again"
 }

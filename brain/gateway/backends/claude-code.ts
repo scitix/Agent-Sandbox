@@ -69,6 +69,11 @@ import {
 } from '../approval-tool.ts'
 import type { InteractionRegistry } from '../interactions.ts'
 import {
+  NAVIGATION_MCP_SERVER,
+  OPEN_PAGE_TOOL,
+  navigationMcpServer,
+} from '../open-page-tool.ts'
+import {
   bindSandboxIdentity,
   promptWithPage,
   releaseSandbox,
@@ -610,6 +615,11 @@ export class ClaudeCodeBackend implements AgentBackend {
       ...opts,
       mcpServers: {
         ...opts.mcpServers,
+        // Puts a page on the person's screen. Registered beside the sandbox
+        // toolset rather than inside it because it acts on the BROWSER, not on
+        // the sandbox — the toolset's whole promise is that everything in it
+        // runs in the remote sandbox and nowhere else.
+        [NAVIGATION_MCP_SERVER]: navigationMcpServer(),
         [APPROVAL_MCP_SERVER]: approvalMcpServer({
           threadId,
           events,
@@ -623,6 +633,7 @@ export class ClaudeCodeBackend implements AgentBackend {
       allowedTools: [
         ...opts.allowedTools,
         `mcp__${APPROVAL_MCP_SERVER}__${APPROVAL_TOOL}`,
+        `mcp__${NAVIGATION_MCP_SERVER}__${OPEN_PAGE_TOOL}`,
       ],
     }
   }

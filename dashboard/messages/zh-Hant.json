@@ -1525,5 +1525,7 @@
   "apiKeys.mode.agent": "Agent",
   "apiKeys.mode.agentHint": "給無人值守的東西用。沙箱照常，改動平台要等你批。",
   "assistant.approval.title": "需要審批",
-  "assistant.approval.sessionHint": "本次對話剩餘時間內，同樣的操作一併允許"
+  "assistant.approval.sessionHint": "本次對話剩餘時間內，同樣的操作一併允許",
+  "assistant.opened": "已開啟",
+  "assistant.openAgain": "再開啟一次"
 }

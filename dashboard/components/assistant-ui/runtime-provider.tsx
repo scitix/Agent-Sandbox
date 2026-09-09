@@ -33,6 +33,10 @@ import { CompactionToolUI } from '@/components/assistant-ui/compaction'
 import { authHeaders, gatewayBaseUrl } from '@/components/assistant-ui/gw/client'
 import { WorkspaceAutoOpenBridge } from '@/components/assistant-ui/workspace-auto-open'
 import {
+  NavigateToolUI,
+  NavigationBridge,
+} from '@/components/assistant-ui/navigate-tool-ui'
+import {
   basePath,
   basePathPrefix,
 } from '@/lib/base-path'
@@ -512,6 +516,10 @@ export function AssistantBridges() {
       <TopicNudgeBridge />
       <CompactionToolUI />
       <WorkspaceAutoOpenBridge />
+      {/* Acts on `open_page`. Here rather than in the tool card because a
+          collapsed tool group never mounts its children. */}
+      <NavigationBridge />
+      <NavigateToolUI />
     </>
   )
 }
