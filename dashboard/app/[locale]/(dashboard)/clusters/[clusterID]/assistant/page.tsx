@@ -30,9 +30,13 @@
  * wrong cluster's rows.
  */
 
-import { useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { useAuiState } from "@assistant-ui/react"
+import {
+  useAssistantHydrating,
+  useAssistantLoadState,
+} from "@/components/assistant-ui/backend-port"
 import { actingIdentityAtom } from "@/lib/atoms"
 import {
   atomAssistantOpen,
@@ -53,37 +57,66 @@ import { AssistantSurface } from "@/components/assistant-ui/assistant-surface"
  * every page after it.
  *
  * Runs on unmount, so it fires on any way out — a nav click, the back button, a
- * redirect — rather than only the ones a link could be taught about. The values
- * are read through refs because that cleanup closes over the render it was
- * created in, and the answer has to be as of the moment of leaving.
+ * redirect — rather than only the ones a link could be taught about.
  *
- * Separate component so it can read thread state: `useAuiState` needs the
- * runtime, which only exists below `AssistantHost`.
+ * Split in two because reading the thread needs the assistant runtime, and the
+ * runtime is NOT mounted for the whole life of this page: the host renders its
+ * children without a provider until the conversation has loaded. The half that
+ * reads is mounted only once that has happened; the half that REMEMBERS, and
+ * the cleanup that acts on it, stay here — an unmounting probe must not be
+ * mistaken for the user leaving.
  */
 function PanelOnLeaveBridge() {
   const setAssistantOpen = useSetAtom(atomAssistantOpen)
-  const hasMessages = useAuiState((s) => s.thread.messages.length > 0)
   // A queued auto-send is a question asked ON THE WAY OUT: something navigates
   // to a page and expects the answer to arrive in the panel beside it. Without
   // this the empty-thread rule would shut the panel that click had just opened,
   // and the reply would stream into nothing.
   const autoSend = useAtomValue(atomAssistantPendingAutoSend)
+  const loadState = useAssistantLoadState()
 
-  // Mirrored into a ref because the cleanup below runs once, closing over the
-  // render that created it — it has to read the answer as of the moment we
-  // leave, not as of mount. Written from an effect rather than during render:
-  // a ref assigned while rendering is not a value React guarantees anything
-  // about, and it is the kind of thing that works until it does not.
-  const keepOpen = hasMessages || !!autoSend
-  const keepOpenRef = useRef(keepOpen)
+  // Both answers are mirrored into refs because the cleanup below runs once,
+  // closing over the render that created it — it has to read them as of the
+  // moment we leave, not as of mount.
+  const hasMessagesRef = useRef(false)
+  const autoSendRef = useRef(false)
   useEffect(() => {
-    keepOpenRef.current = keepOpen
-  }, [keepOpen])
+    autoSendRef.current = !!autoSend
+  }, [autoSend])
+  const remember = useCallback((hasMessages: boolean) => {
+    hasMessagesRef.current = hasMessages
+  }, [])
 
   useEffect(
-    () => () => setAssistantOpen(keepOpenRef.current),
+    () => () => setAssistantOpen(hasMessagesRef.current || autoSendRef.current),
     [setAssistantOpen]
   )
+
+  // The same gate the surface uses before it renders the thread: while the
+  // conversation is still loading there is no runtime to read, and a hook that
+  // needs one throws rather than returning nothing.
+  if (loadState === "loading") return null
+  return <ThreadMessageProbe onChange={remember} />
+}
+
+/** Reports whether the open conversation has anything in it. Only ever mounted
+ *  where the assistant runtime is. */
+function ThreadMessageProbe({
+  onChange,
+}: {
+  onChange: (hasMessages: boolean) => void
+}) {
+  const hasMessages = useAuiState((s) => s.thread.messages.length > 0)
+  // While the transcript is still being replayed the runtime is legitimately
+  // empty, and an empty runtime is indistinguishable from a new conversation.
+  // Reporting during that window would tell the page a conversation with
+  // history has none — so someone who opens an old thread and immediately
+  // clicks away loses the panel that should have followed them.
+  const hydrating = useAssistantHydrating()
+  useEffect(() => {
+    if (hydrating) return
+    onChange(hasMessages)
+  }, [hasMessages, hydrating, onChange])
   return null
 }
 
