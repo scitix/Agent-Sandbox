@@ -74,7 +74,15 @@ var (
 // KeyMetadata holds the full metadata stored in a Kubernetes Secret for one API key.
 type KeyMetadata struct {
 	// KeyID is the fully qualified secret identifier: "<namespace>/<name>".
-	KeyID       string    `json:"keyId"`
+	KeyID string `json:"keyId"`
+	// Namespace is where the key was minted, kept for the record only.
+	//
+	// NOT used to decide anything, and deliberately no longer written by
+	// self-service key creation. A namespace is a per-cluster fact while a key
+	// is used across clusters, so a namespace carried on the key is right only
+	// where it was made. Every cluster resolves it per request instead (see
+	// IAMService.ResolveNamespace); `GET /v1/auth/whoami` reports the one in
+	// force. Populated on older keys and on admin imports, and ignored on both.
 	Namespace   string    `json:"namespace"`
 	Role        string    `json:"role"`
 	User        string    `json:"user"`

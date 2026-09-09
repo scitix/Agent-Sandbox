@@ -41,72 +41,73 @@ func iamWith(t *testing.T, namespaces ...string) IAMService {
 	return NewIAMService(c)
 }
 
-// The bug this exists to prevent: a credential minted on one cluster records
-// the namespace THAT cluster resolved, and is then used against a cluster that
-// maps the same tenant elsewhere. Listing the recorded namespace is a legal
-// empty result rather than an error, so the person sees an empty console while
-// their agent — holding a credential that records nothing — reads and writes
-// real objects in the namespace this cluster actually uses. Nothing reports a
-// problem anywhere, which is why this is pinned rather than left to review.
-func TestEffectiveNamespace(t *testing.T) {
+// The bug this exists to prevent: one person's two credentials resolving to
+// different namespaces, so what one creates the other cannot see.
+//
+// A namespace is a PER-CLUSTER fact and a credential is used across clusters,
+// so nothing a credential carries about namespaces can be right everywhere.
+// Each cluster therefore answers this itself, from team+user alone — and the
+// reason it is pinned rather than left to review is that getting it wrong has
+// no symptom: listing a namespace that does not exist is a legal EMPTY result,
+// not an error, so both sides return 200 and nobody is told anything.
+func TestResolveNamespace(t *testing.T) {
 	cases := []struct {
 		name       string
 		namespaces []string
-		recorded   string
 		want       string
 	}{
 		{
-			name:       "a recorded namespace that exists here is honoured",
+			name:       "a tenant with their own namespace gets it",
 			namespaces: []string{"default", "t-acme-bob"},
-			recorded:   "t-acme-bob",
 			want:       "t-acme-bob",
 		},
 		{
-			name: "a deliberate pin to some other existing namespace is kept",
-			// Not every namespace follows the t-<team>-<user> convention, and
-			// a credential aimed at one on purpose must not be dragged back to
-			// the convention.
-			namespaces: []string{"default", "shared-stress"},
-			recorded:   "shared-stress",
-			want:       "shared-stress",
-		},
-		{
-			name:       "a recorded namespace this cluster does not have is re-resolved",
-			namespaces: []string{"default", "t-acme-bob"},
-			recorded:   "t-other-bob",
-			want:       "t-acme-bob",
-		},
-		{
-			name:       "recording nothing resolves by convention",
-			namespaces: []string{"default", "t-acme-bob"},
-			recorded:   "",
-			want:       "t-acme-bob",
-		},
-		{
-			name:       "with no tenant namespace at all, everyone shares default",
+			name:       "a tenant this cluster has no namespace for shares the default",
 			namespaces: []string{"default"},
-			recorded:   "t-acme-bob",
+			want:       "default",
+		},
+		{
+			name: "another tenant's namespace is not mistaken for this one's",
+			// The convention is the whole lookup, so a near-miss must miss.
+			namespaces: []string{"default", "t-acme-bobby", "t-acme2-bob"},
 			want:       "default",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			iam := iamWith(t, tc.namespaces...)
-			got := iam.EffectiveNamespace(context.Background(), tc.recorded, "acme", "bob")
+			got, err := iam.ResolveNamespace(context.Background(), "acme", "bob")
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
 			if got != tc.want {
-				t.Fatalf("recorded %q -> %q, want %q", tc.recorded, got, tc.want)
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-// Two credentials for the same person must agree, whatever either one records.
-// They disagreeing is the whole bug: one creates, the other cannot see it.
-func TestBothCredentialsForOnePersonAgree(t *testing.T) {
+// The answer must not depend on which credential asked. Nothing here passes a
+// credential at all, which is the guarantee stated as a test: there is no
+// parameter through which one could differ from another.
+func TestTheAnswerDoesNotDependOnWhoAsks(t *testing.T) {
 	iam := iamWith(t, "default", "t-acme-bob")
-	fromOldKey := iam.EffectiveNamespace(context.Background(), "t-stale-bob", "acme", "bob")
-	fromHubKey := iam.EffectiveNamespace(context.Background(), "", "acme", "bob")
-	if fromOldKey != fromHubKey {
-		t.Fatalf("same person, different namespaces: %q vs %q", fromOldKey, fromHubKey)
+	first, _ := iam.ResolveNamespace(context.Background(), "acme", "bob")
+	second, _ := iam.ResolveNamespace(context.Background(), "acme", "bob")
+	if first != second || first != "t-acme-bob" {
+		t.Fatalf("same person, different answers: %q vs %q", first, second)
+	}
+}
+
+// Never empty. An empty namespace does not mean "no namespace" to the
+// Kubernetes client — it means EVERY namespace, so a caller that fell through
+// to it would list the whole cluster rather than nothing.
+func TestResolveNeverReturnsEmpty(t *testing.T) {
+	iam := iamWith(t, "default")
+	for _, p := range [][2]string{{"", ""}, {"acme", ""}, {"", "bob"}} {
+		got, _ := iam.ResolveNamespace(context.Background(), p[0], p[1])
+		if got == "" {
+			t.Fatalf("team=%q user=%q resolved to the empty namespace", p[0], p[1])
+		}
 	}
 }

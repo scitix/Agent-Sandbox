@@ -15,6 +15,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -154,14 +155,7 @@ func NewAuthenticateMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore api
 				}
 				team := claims.Team
 
-				// Resolve namespace from backend (with cache) based on team+user.
-				ns := DefaultNamespace
-				if iamSvc != nil && user != "" {
-					resolved, nsErr := iamSvc.ResolveNamespace(c.Request.Context(), team, user)
-					if nsErr == nil {
-						ns = resolved
-					}
-				}
+				ns := namespaceFor(c.Request.Context(), iamSvc, team, user)
 
 				auth := domain.AuthInfo{
 					Namespace:  ns,
@@ -236,21 +230,11 @@ func NewAuthenticateMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore api
 			return
 		}
 
-		// The namespace a key records is whatever its MINTING cluster resolved,
-		// and the same key is used against clusters that map a tenant
-		// differently — so it is honoured here only where it exists here, and
-		// re-resolved where it does not. Keys minted through the hub record
-		// nothing at all and are resolved outright.
-		ns := DefaultNamespace
-		if iamSvc != nil {
-			ns = iamSvc.EffectiveNamespace(
-				c.Request.Context(), meta.Namespace, meta.Team, meta.User)
-		} else if meta.Namespace != "" {
-			ns = meta.Namespace
-		}
-		if ns == "" {
-			ns = DefaultNamespace
-		}
+		// The namespace a key may have recorded is deliberately NOT consulted.
+		// It was whatever its minting cluster resolved at the time, and the same
+		// key is used against clusters that map a tenant differently — so it is
+		// right only where it was made, and wrong quietly everywhere else.
+		ns := namespaceFor(c.Request.Context(), iamSvc, meta.Team, meta.User)
 
 		c.Set(AuthContextKey, domain.AuthInfo{
 			Namespace:   ns,
@@ -334,6 +318,25 @@ func AuthFromContext(c *gin.Context) domain.AuthInfo {
 
 func writeError(c *gin.Context, statusCode int, message string) {
 	c.AbortWithStatusJSON(statusCode, gen.ErrorResponse{Error: message})
+}
+
+// namespaceFor resolves the namespace a request acts in, on this cluster.
+//
+// Every kind of credential comes through here, which is the point: when the two
+// auth paths each decided this for themselves they disagreed, and the way that
+// showed up was an empty console for one credential and real objects for
+// another belonging to the same person — with a 200 on both and nothing to
+// suggest a problem. Listing a namespace that does not exist is a legal empty
+// result, so a divergence here has no symptom of its own.
+func namespaceFor(ctx context.Context, iamSvc service.IAMService, team, user string) string {
+	if iamSvc == nil || user == "" {
+		return DefaultNamespace
+	}
+	ns, err := iamSvc.ResolveNamespace(ctx, team, user)
+	if err != nil || ns == "" {
+		return DefaultNamespace
+	}
+	return ns
 }
 
 // approvedOps flattens a key's standing approvals into the operation ids the

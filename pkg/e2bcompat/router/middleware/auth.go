@@ -120,19 +120,21 @@ func NewE2BAuthMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore apikey.K
 			return
 		}
 
-		// When the key's stored namespace is empty (global keys created via
-		// Manager), resolve the effective namespace via IAM based on the key's
-		// team+user metadata. This mirrors the native AgentBox auth middleware
-		// and allows each Worker cluster to derive the correct namespace.
-		ns := meta.Namespace
-		if ns == "" && iamSvc != nil && meta.Team != "" && meta.User != "" {
-			resolved, nsErr := iamSvc.ResolveNamespace(c.Request.Context(), meta.Team, meta.User)
-			if nsErr == nil {
+		// Resolved here, from team+user, exactly as the native middleware does.
+		// The namespace a key may have recorded is deliberately NOT consulted:
+		// it was whatever its minting cluster resolved at the time, and the same
+		// key is used against clusters that map a tenant differently.
+		//
+		// This surface is where sandboxes are created, so a namespace taken from
+		// the key would put someone's sandbox in a namespace this cluster may
+		// not even have — while the same person's other credential works fine.
+		ns := DefaultNamespace
+		if iamSvc != nil && meta.User != "" {
+			if resolved, nsErr := iamSvc.ResolveNamespace(
+				c.Request.Context(), meta.Team, meta.User,
+			); nsErr == nil && resolved != "" {
 				ns = resolved
 			}
-		}
-		if ns == "" {
-			ns = DefaultNamespace
 		}
 
 		auth := domain.AuthInfo{

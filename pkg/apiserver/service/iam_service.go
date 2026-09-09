@@ -24,7 +24,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 )
@@ -45,24 +44,19 @@ type IAMResolveResult struct {
 
 // IAMService defines operations related to IAM identity resolution.
 type IAMService interface {
-	// ResolveNamespace resolves the effective namespace for a given team+user pair.
+	// ResolveNamespace resolves the namespace a tenant acts in ON THIS CLUSTER.
+	//
+	// This is the ONLY way a request's namespace is decided, for every kind of
+	// credential. A namespace is a per-cluster fact and a credential is used
+	// across clusters, so nothing a credential carries about namespaces can be
+	// right everywhere — and a credential that named one would only be right
+	// where it happened to be minted.
+	//
+	// Never returns empty: a tenant this cluster has no namespace for shares
+	// the default one.
+	//
 	// Results are cached permanently (until process restart) for performance.
 	ResolveNamespace(ctx context.Context, team, user string) (string, *domain.AppError)
-
-	// EffectiveNamespace resolves the namespace a credential acts in, given the
-	// namespace recorded on the credential itself.
-	//
-	// A recorded namespace is a CACHED RESOLUTION, not a fact: it was whatever
-	// the minting cluster resolved at issue time, and the same credential is
-	// used against several clusters that map a tenant differently. So it is
-	// honoured only where it exists here, and re-resolved where it does not.
-	//
-	// Trusting it blindly is what makes the failure invisible: listing a
-	// namespace that does not exist is a legal EMPTY result, not an error, so
-	// one person reads an empty console while their agent — holding a
-	// credential with no recorded namespace — creates and lists real objects
-	// somewhere else entirely. Nothing anywhere reports a problem.
-	EffectiveNamespace(ctx context.Context, recorded, team, user string) string
 }
 
 type k8sIAMService struct {
@@ -84,6 +78,13 @@ func NewIAMService(c client.Client) IAMService {
 var nonAlphanumDash = regexp.MustCompile(`[^a-z0-9-]`)
 
 const defaultTeam = "default"
+
+// defaultNamespace is where a tenant lands when this cluster has no namespace
+// of its own for them. Spelled separately from defaultTeam because they are
+// different things that happen to share a word, and a reader chasing a
+// namespace should not have to satisfy themselves that a team constant was
+// meant.
+const defaultNamespace = "default"
 
 // sanitizeNamePart lowercases a string and replaces disallowed characters with '-'.
 func sanitizeNamePart(s string) string {
@@ -129,35 +130,16 @@ func (s *k8sIAMService) ResolveNamespace(ctx context.Context, team, user string)
 	return ns, nil
 }
 
-// EffectiveNamespace honours a recorded namespace only where it exists.
-func (s *k8sIAMService) EffectiveNamespace(ctx context.Context, recorded, team, user string) string {
-	if recorded != "" {
-		if s.resolveNamespaceFromK8s(ctx, recorded) == recorded {
-			return recorded
-		}
-		// Stale — the cluster that minted this credential mapped the tenant
-		// somewhere this cluster does not have. Fall through and resolve.
-		log.FromContext(ctx).V(1).Info(
-			"credential names a namespace this cluster does not have; resolving locally",
-			"recorded", recorded, "team", team, "user", user,
-		)
-	}
-	ns, err := s.ResolveNamespace(ctx, team, user)
-	if err != nil || ns == "" {
-		return defaultTeam
-	}
-	return ns
-}
-
-// resolveNamespaceFromK8s returns ns if it exists in the cluster, otherwise "default".
+// resolveNamespaceFromK8s returns ns if it exists in the cluster, otherwise the
+// default namespace.
 func (s *k8sIAMService) resolveNamespaceFromK8s(ctx context.Context, ns string) string {
 	obj := &corev1.Namespace{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: ns}, obj); err != nil {
 		if k8serrors.IsNotFound(err) {
-			return defaultTeam
+			return defaultNamespace
 		}
 		// On unexpected error be conservative and return default to avoid 404s.
-		return defaultTeam
+		return defaultNamespace
 	}
 	return ns
 }

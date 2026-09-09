@@ -1325,7 +1325,12 @@ func (s *Server) SelfCreateAPIKey(ctx context.Context, req gen.SelfCreateAPIKeyR
 	auth := authFrom(ctx)
 
 	input := service.CreateAPIKeyInput{
-		Namespace:   auth.Namespace,
+		// No namespace. It would only be a snapshot of what THIS cluster
+		// resolved for this person at this instant, and the key is used against
+		// clusters that answer differently — so recording it makes the key
+		// carry an answer that is right in one place and quietly wrong
+		// elsewhere. Every cluster resolves it per request instead; `whoami`
+		// reports the one in force.
 		User:        auth.User,
 		Team:        auth.Team,
 		Description: derefString(req.Body.Description),
