@@ -227,17 +227,31 @@ export function GatewayAssistantHost({
           interruptForSend={interruptForSend}
           turnLive={turnLive}
         >
-          {keepMounted ? (
-            <AssistantRuntimeProvider runtime={runtime}>
-              {/* Agent state and interrupts only exist inside the provider. */}
-              <StateBridge />
-              <CurrentSessionPublisher sessionId={threadId} />
-              <AssistantBridges />
-              {children}
-            </AssistantRuntimeProvider>
-          ) : (
-            children
-          )}
+          {/* The provider is ALWAYS here, even when nothing is driving it.
+              The runtime object exists either way (`useAgUiRuntime` runs every
+              render; `isDisabled` is what idles it), so the only thing this
+              conditional ever decided was whether the CONTEXT existed — and
+              children render regardless. A child that reads thread state then
+              throws "requires an AuiProvider" mid-render, which takes the tree
+              down rather than degrading.
+
+              That window is easy to hit: the side panel stays mounted after it
+              is closed (unmounting would discard the conversation), so closing
+              it drops `keepMounted` while the surface is still rendering. */}
+          <AssistantRuntimeProvider runtime={runtime}>
+            {/* The bridges are the side-effecting half and stay gated. They
+                publish into shared atoms — the open session id, the run state
+                — and a second, idle host publishing over a live one is how a
+                hidden panel would blank out the page beside it. */}
+            {keepMounted ? (
+              <>
+                <StateBridge />
+                <CurrentSessionPublisher sessionId={threadId} />
+                <AssistantBridges />
+              </>
+            ) : null}
+            {children}
+          </AssistantRuntimeProvider>
         </AssistantPortProvider>
       </AssistantReconnectProvider>
     </AssistantSessionProvider>

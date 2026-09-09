@@ -21,9 +21,14 @@ import {
 import type { AgUiInterrupt, AgUiResumeEntry } from '@assistant-ui/react-ag-ui'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/lib/i18n'
-import { useDecideApproval, type ApprovalScope } from '@/lib/queries/approval'
+import {
+  approvalQueryOptions,
+  useDecideApproval,
+  type ApprovalScope,
+} from '@/lib/queries/approval'
+import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 // Renders the agent's question / permission requests as selectable cards.
@@ -84,16 +89,40 @@ const DECISION_APPROVE_ONCE = 'approve_once'
 const DECISION_APPROVE_SESSION = 'approve_session'
 const DECISION_DENY = 'deny'
 
+/**
+ * What to tell the agent when the request settled somewhere other than here.
+ *
+ * `null` means it has not settled and the card should keep waiting. Everything
+ * that is not an approval maps to `deny`, deliberately: a denial, an expiry and
+ * a request the server no longer has all mean the same thing to the agent — do
+ * not run this — and inventing a distinction would invite it to retry the one
+ * it read as merely unfinished.
+ */
+export function tokenForApprovalStatus(status: string | undefined): string | null {
+  if (!status || status === 'pending') return null
+  return status === 'approved' ? DECISION_APPROVE_ONCE : DECISION_DENY
+}
+
 function InterruptQuestionList({ cards }: { cards: Card[] }) {
   const submit = useAgUiSubmitInterruptResponses()
-  const [answered, setAnswered] = useState<Record<string, string[][]>>({})
 
-  // Fire once every card has been answered or declined. `undefined` in the map
-  // means "still waiting on the user".
-  const flush = useCallback(
-    (next: Record<string, string[][]>) => {
+  // Answers so far, in a ref rather than state.
+  //
+  // Nothing renders from it, and a ref is what makes it safe to record two
+  // answers in the same tick: with state, both callers would read the same
+  // pre-update value and the second would overwrite the first — one card's
+  // answer lost, the group never complete, the conversation parked forever.
+  // Two at once is not exotic now that a card can settle on its own, because a
+  // decision made on the approvals page can land on several at the same moment.
+  const answered = useRef<Record<string, string[][]>>({})
+
+  // Fire once every card has been answered or declined. A missing entry means
+  // "still waiting on the user".
+  const record = useCallback(
+    (id: string, value: string[][]) => {
+      answered.current = { ...answered.current, [id]: value }
+      const next = answered.current
       if (cards.some(c => next[c.id] === undefined)) {
-        setAnswered(next)
         return
       }
       const responses: AgUiResumeEntry[] = cards.map(card => {
@@ -111,7 +140,7 @@ function InterruptQuestionList({ cards }: { cards: Card[] }) {
             // the tool then reports "no answer" instead of hanging.
             { interruptId: card.id, status: 'cancelled' }
       })
-      setAnswered({})
+      answered.current = {}
       void submit(responses).catch(e =>
         // A rejected submission would otherwise be indistinguishable from a hung
         // run.
@@ -128,14 +157,14 @@ function InterruptQuestionList({ cards }: { cards: Card[] }) {
           <ApprovalCard
             key={card.id}
             approval={card.approval}
-            onDecided={token => flush({ ...answered, [card.id]: [[token]] })}
+            onDecided={token => record(card.id, [[token]])}
           />
         ) : (
           <QuestionCard
             key={card.id}
             request={card.request}
-            onReply={answers => flush({ ...answered, [card.id]: answers })}
-            onReject={() => flush({ ...answered, [card.id]: [] })}
+            onReply={answers => record(card.id, answers)}
+            onReject={() => record(card.id, [])}
           />
         )
       )}
@@ -398,6 +427,35 @@ function ApprovalCard({
   const decide = useDecideApproval(approval.cluster)
   const [busy, setBusy] = useState<string | null>(null)
 
+  // Watch the request, because these buttons are not the only way to answer it:
+  // the approvals page shows the same one, and so does `abx`. Whichever route
+  // is taken, the conversation stays parked on an interrupt that only the
+  // browser can settle — so a decision made elsewhere has to reach this card,
+  // or the conversation simply stops with nothing on screen saying why.
+  const watched = useQuery(
+    approvalQueryOptions(approval.approvalId, approval.cluster)
+  )
+  const status = watched.data?.status
+
+  // `onDecided` identity changes with the answer map it closes over, so the
+  // effect below would re-run and resolve twice. Once is enough and twice is a
+  // second run of the agent's turn.
+  const settledRef = useRef(false)
+  const onDecidedRef = useRef(onDecided)
+  useEffect(() => {
+    onDecidedRef.current = onDecided
+  }, [onDecided])
+
+  useEffect(() => {
+    if (settledRef.current) return
+    const token = tokenForApprovalStatus(status)
+    if (!token) return
+    settledRef.current = true
+    // Approved anywhere means approved: hand the agent the same token the
+    // button would have, and it retries the command it was refused.
+    onDecidedRef.current(token)
+  }, [status])
+
   const send = (
     decision: 'approve' | 'deny',
     scope: ApprovalScope,
@@ -413,14 +471,24 @@ function ApprovalCard({
               ? t('approvals.toast.approved')
               : t('approvals.toast.denied')
           )
+          settledRef.current = true
           onDecided(token)
         },
         onError: () => {
-          // Left unresolved on purpose. The agent is still parked, so the person
-          // can press the button again — resolving it here would hand the agent
-          // an approval that was never recorded.
+          // Almost always this is "already decided" — the person answered on
+          // the approvals page and then pressed here too, and the platform
+          // refuses to decide the same request twice. Re-read rather than
+          // report a failure: if it is settled, the effect above carries the
+          // conversation forward, and the card is right to disappear.
+          //
+          // Anything else leaves it unresolved on purpose. The agent is still
+          // parked, so the person can press again, and resolving here would
+          // hand the agent an approval that was never recorded.
           setBusy(null)
-          toast.error(t('approvals.toast.failed'))
+          void watched.refetch().then(r => {
+            if (r.data?.status && r.data.status !== 'pending') return
+            toast.error(t('approvals.toast.failed'))
+          })
         },
       }
     )

@@ -25,7 +25,10 @@
 
 import { describe, expect, it } from "vitest"
 import type { AgUiInterrupt } from "@assistant-ui/react-ag-ui"
-import { readCard } from "@/components/assistant-ui/assistant-questions"
+import {
+  readCard,
+  tokenForApprovalStatus,
+} from "@/components/assistant-ui/assistant-questions"
 import { transcriptToMessages } from "@/components/assistant-ui/gw/transcript"
 
 /** The shape `toInterrupt` in the gateway actually sends. */
@@ -195,4 +198,35 @@ describe("a reloaded page keeps the approval buttons", () => {
     expect(interrupts).toHaveLength(1)
     expect(readCard(interrupts![0])?.approval).toEqual(APPROVAL)
   })
+})
+
+// ── a decision made somewhere else ───────────────────────────────────────────
+//
+// The card's buttons are not the only way to answer: the same request is on the
+// approvals page, and in `abx`. Whichever route is taken, the conversation is
+// still parked on an interrupt only the browser can settle — so the card
+// follows the request rather than only pushing to it. Without that, approving
+// on the page leaves the conversation stopped with nothing on screen to explain
+// it, and pressing the card afterwards fails too, because the platform refuses
+// to decide the same request twice.
+
+describe("tokenForApprovalStatus", () => {
+  it("keeps waiting while the request is open", () => {
+    expect(tokenForApprovalStatus("pending")).toBeNull()
+    expect(tokenForApprovalStatus(undefined)).toBeNull()
+  })
+
+  it("carries the conversation forward when it was approved elsewhere", () => {
+    expect(tokenForApprovalStatus("approved")).toBe("approve_once")
+  })
+
+  it.each(["denied", "expired", "something-new"])(
+    "treats %s as: do not run it",
+    (status) => {
+      // A denial, an expiry and a status this build has never heard of all mean
+      // the same thing to the agent. Mapping an unknown one to "approved" would
+      // be the one mistake that matters.
+      expect(tokenForApprovalStatus(status)).toBe("deny")
+    }
+  )
 })

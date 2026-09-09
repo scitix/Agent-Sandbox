@@ -42,6 +42,39 @@ export const approvalsQueryOptions = (clusterID?: string) =>
     refetchInterval: POLL_MS,
   })
 
+/**
+ * One approval, watched while it is still open.
+ *
+ * The card in the conversation is not the only way to answer: the same request
+ * appears on the approvals page, and someone can answer it there — or from
+ * another tab, or with `abx`. Whichever route is taken, the conversation is
+ * still parked on an interrupt that only the browser can settle, so the card
+ * has to FOLLOW the request rather than only push to it. Without this,
+ * approving on the page leaves the conversation stuck with nothing on screen
+ * explaining why, and the card's own button then fails too — the platform
+ * refuses to decide an already-decided request.
+ *
+ * Polling stops once it is settled: there is nothing further to learn.
+ */
+export const approvalQueryOptions = (id: string, clusterID?: string) =>
+  apiFor(clusterID).queryOptions(
+    "get",
+    "/approvals/{approvalId}",
+    { params: { path: { approvalId: id } } },
+    {
+      enabled: !!id,
+      // Faster than the board's five seconds: someone who has just clicked
+      // approve on the other page is watching this one to carry on.
+      refetchInterval: (q) =>
+        (q.state.data as ApprovalRequest | undefined)?.status === "pending"
+          ? 2000
+          : false,
+      // A request the server has forgotten (restart, expiry) is a settled
+      // state as far as the card is concerned — retrying only delays saying so.
+      retry: false,
+    },
+  )
+
 /** How far one decision reaches. `once` is always offered; the wider two are
  *  refused by the server for destructive and credential-minting calls, which is
  *  why the card reads `onceOnly` off the request rather than deciding here. */
