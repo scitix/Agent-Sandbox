@@ -30,12 +30,62 @@
  * wrong cluster's rows.
  */
 
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
+import { useAuiState } from "@assistant-ui/react"
 import { actingIdentityAtom } from "@/lib/atoms"
-import { atomAssistantUserKey } from "@/lib/assistant/store"
+import {
+  atomAssistantOpen,
+  atomAssistantPendingAutoSend,
+  atomAssistantUserKey,
+} from "@/lib/assistant/store"
 import { AssistantHost } from "@/components/assistant-ui/assistant-host"
 import { AssistantSurface } from "@/components/assistant-ui/assistant-surface"
+
+/**
+ * Carry the conversation off this page — but only when there is one.
+ *
+ * Leaving the assistant for some other page opens the side panel if the current
+ * conversation has anything in it, and leaves it shut otherwise. The asymmetry
+ * is the point: someone mid-conversation who clicks through to a list wants to
+ * keep talking about what they are now looking at, while someone who merely
+ * passed through an empty assistant would get a panel they never asked for on
+ * every page after it.
+ *
+ * Runs on unmount, so it fires on any way out — a nav click, the back button, a
+ * redirect — rather than only the ones a link could be taught about. The values
+ * are read through refs because that cleanup closes over the render it was
+ * created in, and the answer has to be as of the moment of leaving.
+ *
+ * Separate component so it can read thread state: `useAuiState` needs the
+ * runtime, which only exists below `AssistantHost`.
+ */
+function PanelOnLeaveBridge() {
+  const setAssistantOpen = useSetAtom(atomAssistantOpen)
+  const hasMessages = useAuiState((s) => s.thread.messages.length > 0)
+  // A queued auto-send is a question asked ON THE WAY OUT: something navigates
+  // to a page and expects the answer to arrive in the panel beside it. Without
+  // this the empty-thread rule would shut the panel that click had just opened,
+  // and the reply would stream into nothing.
+  const autoSend = useAtomValue(atomAssistantPendingAutoSend)
+
+  // Mirrored into a ref because the cleanup below runs once, closing over the
+  // render that created it — it has to read the answer as of the moment we
+  // leave, not as of mount. Written from an effect rather than during render:
+  // a ref assigned while rendering is not a value React guarantees anything
+  // about, and it is the kind of thing that works until it does not.
+  const keepOpen = hasMessages || !!autoSend
+  const keepOpenRef = useRef(keepOpen)
+  useEffect(() => {
+    keepOpenRef.current = keepOpen
+  }, [keepOpen])
+
+  useEffect(
+    () => () => setAssistantOpen(keepOpenRef.current),
+    [setAssistantOpen]
+  )
+  return null
+}
 
 export default function ClusterAssistantPage() {
   const acting = useAtomValue(actingIdentityAtom)
@@ -56,6 +106,7 @@ export default function ClusterAssistantPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <AssistantHost active>
+        <PanelOnLeaveBridge />
         <AssistantSurface mode="page" />
       </AssistantHost>
     </div>

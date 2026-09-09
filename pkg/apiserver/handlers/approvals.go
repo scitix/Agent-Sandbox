@@ -131,7 +131,7 @@ func (s *Server) ListApprovals(
 			Grants:  []gen.ApprovalGrant{},
 		}, nil
 	}
-	pending, grants := s.approvals.List(principalOf(auth))
+	pending, grants := s.approvals.List(ctx, principalOf(auth))
 	out := gen.ListApprovals200JSONResponse{
 		Pending: make([]gen.ApprovalRequest, 0, len(pending)),
 		Grants:  make([]gen.ApprovalGrant, 0, len(grants)),
@@ -194,7 +194,7 @@ func (s *Server) DecideApproval(
 		scope = approval.Scope(*request.Body.Scope)
 	}
 
-	decided, err := s.approvals.Decide(request.ApprovalId, approve, scope, decidedBy(auth))
+	decided, err := s.approvals.Decide(ctx, request.ApprovalId, approve, scope, decidedBy(auth))
 	if err != nil {
 		return gen.DecideApproval400JSONResponse(
 			errResp(ctx, domain.NewBadRequest(err.Error()))), nil
@@ -215,7 +215,7 @@ func (s *Server) RevokeApprovalGrant(
 		return gen.RevokeApprovalGrant404JSONResponse(
 			errResp(ctx, domain.NewNotFound("grant not found"))), nil
 	}
-	if s.approvals == nil || !s.approvals.Revoke(principalOf(auth), request.GrantId) {
+	if s.approvals == nil || !s.approvals.Revoke(ctx, principalOf(auth), request.GrantId) {
 		return gen.RevokeApprovalGrant404JSONResponse(
 			errResp(ctx, domain.NewNotFound("grant not found"))), nil
 	}

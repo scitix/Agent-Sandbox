@@ -15,6 +15,7 @@
 package approval
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -44,17 +45,17 @@ func TestOnceApprovalAuthorisesExactlyOneCall(t *testing.T) {
 	s, _ := newTestStore()
 	r := challenge(s, alice, "s1", "env.create", "fp-foo", false)
 
-	if s.Allow(alice, "s1", "env.create", "fp-foo") {
+	if s.Allow(alice, nil, "s1", "env.create", "fp-foo") {
 		t.Fatal("a pending request must not authorise anything")
 	}
-	if _, err := s.Decide(r.ID, true, ScopeOnce, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeOnce, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
-	if !s.Allow(alice, "s1", "env.create", "fp-foo") {
+	if !s.Allow(alice, nil, "s1", "env.create", "fp-foo") {
 		t.Fatal("the approved call must go through")
 	}
 	// The point of `once`: the retry it authorised is the only one.
-	if s.Allow(alice, "s1", "env.create", "fp-foo") {
+	if s.Allow(alice, nil, "s1", "env.create", "fp-foo") {
 		t.Fatal("a once approval must not authorise a second call")
 	}
 }
@@ -65,10 +66,10 @@ func TestOnceApprovalDoesNotCoverADifferentCall(t *testing.T) {
 	// fingerprint includes the body.
 	s, _ := newTestStore()
 	r := challenge(s, alice, "s1", "env.create", "fp-foo", false)
-	if _, err := s.Decide(r.ID, true, ScopeOnce, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeOnce, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
-	if s.Allow(alice, "s1", "env.create", "fp-bar") {
+	if s.Allow(alice, nil, "s1", "env.create", "fp-bar") {
 		t.Fatal("a different request must not be authorised")
 	}
 }
@@ -76,25 +77,25 @@ func TestOnceApprovalDoesNotCoverADifferentCall(t *testing.T) {
 func TestSessionGrantCoversTheSessionAndNothingElse(t *testing.T) {
 	s, _ := newTestStore()
 	r := challenge(s, alice, "s1", "sandbox.create", "fp-1", false)
-	if _, err := s.Decide(r.ID, true, ScopeSession, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeSession, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 
 	// Same session, a call that was never challenged: covered.
-	if !s.Allow(alice, "s1", "sandbox.create", "fp-anything-else") {
+	if !s.Allow(alice, nil, "s1", "sandbox.create", "fp-anything-else") {
 		t.Fatal("the session grant must cover later calls of the same operation")
 	}
 	// Another session of the same person: not covered.
-	if s.Allow(alice, "s2", "sandbox.create", "fp-1") {
+	if s.Allow(alice, nil, "s2", "sandbox.create", "fp-1") {
 		t.Fatal("a session grant must not leak into another session")
 	}
 	// Another operation in the same session: not covered.
-	if s.Allow(alice, "s1", "env.delete", "fp-1") {
+	if s.Allow(alice, nil, "s1", "env.delete", "fp-1") {
 		t.Fatal("a session grant must not cover a different operation")
 	}
 	// Another person who happens to use the same session id: not covered.
 	bob := Principal{Team: "t1", User: "bob", KeyID: "ns/key-b"}
-	if s.Allow(bob, "s1", "sandbox.create", "fp-1") {
+	if s.Allow(bob, nil, "s1", "sandbox.create", "fp-1") {
 		t.Fatal("a session grant must not cross owners")
 	}
 }
@@ -102,15 +103,15 @@ func TestSessionGrantCoversTheSessionAndNothingElse(t *testing.T) {
 func TestSessionGrantExpires(t *testing.T) {
 	s, now := newTestStore()
 	r := challenge(s, alice, "s1", "sandbox.create", "fp-1", false)
-	if _, err := s.Decide(r.ID, true, ScopeSession, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeSession, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 	*now = now.Add(SessionGrantTTL - time.Minute)
-	if !s.Allow(alice, "s1", "sandbox.create", "fp-1") {
+	if !s.Allow(alice, nil, "s1", "sandbox.create", "fp-1") {
 		t.Fatal("still inside the window")
 	}
 	*now = now.Add(2 * time.Minute)
-	if s.Allow(alice, "s1", "sandbox.create", "fp-1") {
+	if s.Allow(alice, nil, "s1", "sandbox.create", "fp-1") {
 		t.Fatal("a session grant must not outlive its window")
 	}
 }
@@ -118,16 +119,16 @@ func TestSessionGrantExpires(t *testing.T) {
 func TestKeyGrantIsBoundToTheKey(t *testing.T) {
 	s, _ := newTestStore()
 	r := challenge(s, alice, "", "pool.create", "fp-1", false)
-	if _, err := s.Decide(r.ID, true, ScopeKey, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeKey, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
-	if !s.Allow(alice, "", "pool.create", "fp-2") {
+	if !s.Allow(alice, nil, "", "pool.create", "fp-2") {
 		t.Fatal("the key grant must cover this key")
 	}
 	// The same person's OTHER key is a separate credential — revoking one must
 	// not be undone by the other still carrying the grant.
 	other := Principal{Team: "t1", User: "alice", KeyID: "ns/key-z"}
-	if s.Allow(other, "", "pool.create", "fp-2") {
+	if s.Allow(other, nil, "", "pool.create", "fp-2") {
 		t.Fatal("a key grant must not cover another key")
 	}
 }
@@ -137,7 +138,7 @@ func TestNoSessionHeaderCannotBecomeASessionGrant(t *testing.T) {
 	// no session id".
 	s, _ := newTestStore()
 	r := challenge(s, alice, "", "sandbox.create", "fp-1", false)
-	if _, err := s.Decide(r.ID, true, ScopeSession, "alice"); err == nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeSession, "alice"); err == nil {
 		t.Fatal("a session grant without a session must be refused")
 	}
 }
@@ -146,14 +147,14 @@ func TestDestructiveOperationsAreOnceOnly(t *testing.T) {
 	s, _ := newTestStore()
 	for _, scope := range []Scope{ScopeSession, ScopeKey} {
 		r := challenge(s, alice, "s1", "env.delete", "fp-"+string(scope), true)
-		if _, err := s.Decide(r.ID, true, scope, "alice"); err == nil {
+		if _, err := s.Decide(context.Background(), r.ID, true, scope, "alice"); err == nil {
 			t.Fatalf("scope %s must be refused for a once-only operation", scope)
 		}
 		// The refusal must leave the request answerable, not wedge it.
 		if got, _ := s.Get(r.ID); got.Status != StatusPending {
 			t.Fatalf("after a refused scope the request should still be pending, got %s", got.Status)
 		}
-		if _, err := s.Decide(r.ID, true, ScopeOnce, "alice"); err != nil {
+		if _, err := s.Decide(context.Background(), r.ID, true, ScopeOnce, "alice"); err != nil {
 			t.Fatalf("once must still be allowed: %v", err)
 		}
 	}
@@ -168,7 +169,7 @@ func TestRetryingTheSameCallReusesOneRequest(t *testing.T) {
 	if a.ID != b.ID {
 		t.Fatalf("expected the same request back, got %s and %s", a.ID, b.ID)
 	}
-	pending, _ := s.List(alice)
+	pending, _ := s.List(context.Background(), alice)
 	if len(pending) != 1 {
 		t.Fatalf("expected 1 pending request, got %d", len(pending))
 	}
@@ -178,10 +179,10 @@ func TestDeniedAndExpiredNeverAuthorise(t *testing.T) {
 	s, now := newTestStore()
 
 	denied := challenge(s, alice, "s1", "env.create", "fp-d", false)
-	if _, err := s.Decide(denied.ID, false, ScopeOnce, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), denied.ID, false, ScopeOnce, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
-	if s.Allow(alice, "s1", "env.create", "fp-d") {
+	if s.Allow(alice, nil, "s1", "env.create", "fp-d") {
 		t.Fatal("a denied request must not authorise")
 	}
 
@@ -190,7 +191,7 @@ func TestDeniedAndExpiredNeverAuthorise(t *testing.T) {
 	if got, _ := s.Get(stale.ID); got.Status != StatusExpired {
 		t.Fatalf("expected expired, got %s", got.Status)
 	}
-	if _, err := s.Decide(stale.ID, true, ScopeOnce, "alice"); err == nil {
+	if _, err := s.Decide(context.Background(), stale.ID, true, ScopeOnce, "alice"); err == nil {
 		t.Fatal("an expired request must not be decidable")
 	}
 }
@@ -199,11 +200,11 @@ func TestApprovedOnceDoesNotSurviveItsRequestWindow(t *testing.T) {
 	// The approval is a licence to retry, not a licence to come back tomorrow.
 	s, now := newTestStore()
 	r := challenge(s, alice, "s1", "env.create", "fp-foo", false)
-	if _, err := s.Decide(r.ID, true, ScopeOnce, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeOnce, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 	*now = now.Add(RequestTTL + time.Minute)
-	if s.Allow(alice, "s1", "env.create", "fp-foo") {
+	if s.Allow(alice, nil, "s1", "env.create", "fp-foo") {
 		t.Fatal("an approval must not authorise after its request has expired")
 	}
 }
@@ -211,25 +212,25 @@ func TestApprovedOnceDoesNotSurviveItsRequestWindow(t *testing.T) {
 func TestListAndRevoke(t *testing.T) {
 	s, _ := newTestStore()
 	r := challenge(s, alice, "s1", "sandbox.create", "fp-1", false)
-	if _, err := s.Decide(r.ID, true, ScopeSession, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), r.ID, true, ScopeSession, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
-	_, grants := s.List(alice)
+	_, grants := s.List(context.Background(), alice)
 	if len(grants) != 1 {
 		t.Fatalf("expected 1 grant, got %d", len(grants))
 	}
 
 	bob := Principal{Team: "t1", User: "bob"}
-	if _, bobGrants := s.List(bob); len(bobGrants) != 0 {
+	if _, bobGrants := s.List(context.Background(), bob); len(bobGrants) != 0 {
 		t.Fatal("grants must not be visible to another owner")
 	}
-	if s.Revoke(bob, grants[0].ID) {
+	if s.Revoke(context.Background(), bob, grants[0].ID) {
 		t.Fatal("another owner must not be able to revoke")
 	}
-	if !s.Revoke(alice, grants[0].ID) {
+	if !s.Revoke(context.Background(), alice, grants[0].ID) {
 		t.Fatal("the owner must be able to revoke")
 	}
-	if s.Allow(alice, "s1", "sandbox.create", "fp-1") {
+	if s.Allow(alice, nil, "s1", "sandbox.create", "fp-1") {
 		t.Fatal("a revoked grant must stop authorising")
 	}
 }

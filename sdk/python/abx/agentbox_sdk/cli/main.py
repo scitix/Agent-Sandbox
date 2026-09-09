@@ -705,10 +705,15 @@ def _cl(ctx: Context) -> str:
 _WHOAMI_HELP = """abx whoami (= abx auth whoami)
 — who this key authenticates as.
 
-Prints the role, user and team the credential resolves to. Everything else the
-CLI shows is scoped to that identity: `quotas` is your quota, `envs` and `pools`
-are the ones in your namespace. Run it first when you need to know whose view
-you are looking at."""
+Prints the role, user, team and namespace the credential resolves to. Everything
+else the CLI shows is scoped to that identity: `quotas` is your quota, `envs` and
+`pools` are the ones in your namespace. Run it first when you need to know whose
+view you are looking at.
+
+`namespace` is worth reading when a list comes back empty that should not be.
+Each cluster resolves it locally, so two credentials belonging to the same person
+can land in different namespaces — and reading a namespace that holds nothing is
+an empty answer, never an error."""
 
 
 def run_whoami(ctx: Context, values: dict[str, Any]) -> Result:

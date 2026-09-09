@@ -2290,6 +2290,8 @@ export interface components {
             user?: string;
             /** @description Team extracted from the caller's auth context. */
             team?: string;
+            /** @description The namespace this credential reads and writes in on THIS cluster. Reported because it is not always the one recorded when the credential was minted — a credential is used against several clusters, which map a tenant differently, so each cluster resolves it locally. Two credentials for the same person can land in different namespaces, and the symptom is an empty list rather than an error, which is why it is worth being able to read it back. */
+            namespace?: string;
         };
         /** @description Boolean switches that tell clients which optional features are wired into the current deployment. Dashboards gate feature UI on these values; SDKs can short-circuit feature-specific calls when a gate is false. */
         FeatureGates: {

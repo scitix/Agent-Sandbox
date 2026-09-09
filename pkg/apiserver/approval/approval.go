@@ -27,11 +27,15 @@
 package approval
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -134,26 +138,94 @@ func (g Grant) live(now time.Time) bool {
 	return g.ExpiresAt.IsZero() || now.Before(g.ExpiresAt)
 }
 
+// KeyGrantStore is where key-scoped approvals outlive this process.
+//
+// Only the KEY scope has one, and the asymmetry is deliberate. A once-approval
+// is spent within minutes and a session grant dies with the session, so losing
+// either to a restart costs one extra question. A key grant is the one a person
+// gave in order to STOP being asked — losing it silently undoes the thing they
+// asked for, and it goes missing exactly when it is being relied on, since a
+// rollout is most disruptive during a long unattended run.
+//
+// Implemented by the API key store, because the key is where the permission
+// belongs: a person can find it there, read who granted it, and take it back.
+type KeyGrantStore interface {
+	// GrantOperation records a standing approval on a key.
+	GrantOperation(ctx context.Context, keyID, operation, by string) error
+	// RevokeOperation withdraws one. Withdrawing an absent one is not an error.
+	RevokeOperation(ctx context.Context, keyID, operation string) error
+	// KeyGrants lists every standing approval held by this person's keys, so
+	// the console can show and withdraw permissions this process did not itself
+	// grant — which after a restart is all of them.
+	KeyGrants(ctx context.Context, team, user string) ([]KeyGrant, error)
+}
+
+// KeyGrant is one standing permission as the credential records it.
+type KeyGrant struct {
+	KeyID     string
+	Operation string
+	GrantedAt time.Time
+	GrantedBy string
+}
+
+// grantIDFor names a persisted grant reversibly.
+//
+// A persisted grant has no id of its own — it is a (key, operation) pair on a
+// Secret — and this process cannot mint one that survives its own restart. So
+// the id CARRIES the pair rather than pointing at a table: the console can
+// revoke a permission it has only just read, on a server that has never seen it
+// before. Opaque to the reader, but only by encoding, and it is not a
+// capability: revoking still checks the caller owns the key.
+func grantIDFor(keyID, operation string) string {
+	return persistedGrantPrefix +
+		base64.RawURLEncoding.EncodeToString([]byte(keyID+"\n"+operation))
+}
+
+func parseGrantID(id string) (keyID, operation string, ok bool) {
+	if !strings.HasPrefix(id, persistedGrantPrefix) {
+		return "", "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(id, persistedGrantPrefix))
+	if err != nil {
+		return "", "", false
+	}
+	k, o, found := strings.Cut(string(raw), "\n")
+	if !found || k == "" || o == "" {
+		return "", "", false
+	}
+	return k, o, true
+}
+
+// persistedGrantPrefix distinguishes a grant recorded on a key from one this
+// process is holding in memory.
+const persistedGrantPrefix = "grk_"
+
 // Store is the whole state of the gate.
 //
-// In memory, on purpose, for now. Losing a grant on restart fails CLOSED — the
-// next call asks again — and losing a pending request costs one retry. The
-// interface is what the middleware and the handlers depend on, so moving this
-// onto a ConfigMap is one implementation swap when it needs to survive a
-// restart or a second replica.
+// Requests and session grants are in memory on purpose: both are short-lived,
+// and losing either fails CLOSED — the next call asks again. Key grants are
+// persisted through KeyGrantStore, and are also mirrored here so a decision
+// takes effect on the very next call rather than after the key cache turns
+// over.
 type Store struct {
 	mu       sync.Mutex
 	requests map[string]*Request
 	grants   map[string]*Grant
+	keys     KeyGrantStore
 	now      func() time.Time
 }
 
 // NewStore returns a store and starts its collector, which runs until done is
 // closed.
-func NewStore(done <-chan struct{}) *Store {
+//
+// `keys` may be nil, in which case key-scoped grants live only as long as this
+// process — which is what the tests want, and what a deployment with no key
+// store could offer anyway.
+func NewStore(done <-chan struct{}, keys KeyGrantStore) *Store {
 	s := &Store{
 		requests: map[string]*Request{},
 		grants:   map[string]*Grant{},
+		keys:     keys,
 		now:      time.Now,
 	}
 	go s.collect(done)
@@ -197,7 +269,18 @@ func (s *Store) sweep() {
 // Checked widest-first so a session or key grant is not consumed by being
 // shadowed: a standing permission should keep a one-time approval in reserve
 // rather than the other way round.
-func (s *Store) Allow(p Principal, sessionID, operation, fingerprint string) bool {
+func (s *Store) Allow(
+	p Principal,
+	keyApprovals []string,
+	sessionID, operation, fingerprint string,
+) bool {
+	// The credential's own record comes first and needs no lock: it is the one
+	// answer that is true even when this process has just started and knows
+	// nothing.
+	if slices.Contains(keyApprovals, operation) {
+		return true
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -286,7 +369,13 @@ func (e *ErrNotDecidable) Error() string { return e.Reason }
 
 // Decide answers a pending request, creating a grant when the answer reaches
 // beyond this one call.
-func (s *Store) Decide(id string, approve bool, scope Scope, decidedBy string) (Request, error) {
+func (s *Store) Decide(
+	ctx context.Context,
+	id string,
+	approve bool,
+	scope Scope,
+	decidedBy string,
+) (Request, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -355,6 +444,20 @@ func (s *Store) Decide(id string, approve bool, scope Scope, decidedBy string) (
 		if scope == ScopeSession {
 			g.ExpiresAt = now.Add(SessionGrantTTL)
 		}
+		if scope == ScopeKey && s.keys != nil {
+			// Written BEFORE the in-memory mirror, and a failure refuses the
+			// decision. Granting in memory only would look like it worked and
+			// then quietly stop working on the next rollout — the person would
+			// have no reason to suspect the permission they gave was never
+			// written down.
+			if err := s.keys.GrantOperation(
+				ctx, r.Principal.KeyID, r.Operation, decidedBy,
+			); err != nil {
+				return Request{}, &ErrNotDecidable{
+					Reason: "could not record the permission on the key: " + err.Error(),
+				}
+			}
+		}
 		s.grants[g.ID] = g
 	}
 	return *r, nil
@@ -366,7 +469,12 @@ func (s *Store) Decide(id string, approve bool, scope Scope, decidedBy string) (
 // Scoped to team+user rather than to the key, because the person deciding is
 // the owner of every key they hold — and because the console shows this list to
 // a human, not to a credential.
-func (s *Store) List(p Principal) ([]Request, []Grant) {
+func (s *Store) List(ctx context.Context, p Principal) ([]Request, []Grant) {
+	// Read the durable ones outside the lock: they come from the API server,
+	// and holding the gate's mutex across a network call would stall every
+	// request passing through the middleware.
+	persisted := s.persistedGrants(ctx, p)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -378,11 +486,25 @@ func (s *Store) List(p Principal) ([]Request, []Grant) {
 		}
 		requests = append(requests, *r)
 	}
-	grants := []Grant{}
+	// Start from what the KEYS say, because that is the durable record: after a
+	// restart it is the only one, and while this process is alive it is the same
+	// set the mirror below holds.
+	grants := persisted
+	seen := make(map[string]bool, len(grants))
+	for _, g := range grants {
+		seen[g.Principal.KeyID+"\n"+g.Operation] = true
+	}
 	for _, g := range s.grants {
-		if g.Principal.sameOwner(p) && g.live(now) {
-			grants = append(grants, *g)
+		if !g.Principal.sameOwner(p) || !g.live(now) {
+			continue
 		}
+		// A key grant already listed from the key itself — listing the mirror
+		// too would show one permission twice, with two different revoke
+		// buttons, one of which does half the job.
+		if g.Scope == ScopeKey && seen[g.Principal.KeyID+"\n"+g.Operation] {
+			continue
+		}
+		grants = append(grants, *g)
 	}
 	sort.Slice(requests, func(i, j int) bool {
 		return requests[i].CreatedAt.After(requests[j].CreatedAt)
@@ -393,16 +515,92 @@ func (s *Store) List(p Principal) ([]Request, []Grant) {
 	return requests, grants
 }
 
+// persistedGrants reads the standing permissions recorded on this person's
+// keys. A read failure yields none rather than an error: the page is better
+// showing the requests waiting on someone than refusing to render at all.
+func (s *Store) persistedGrants(ctx context.Context, p Principal) []Grant {
+	if s.keys == nil {
+		return []Grant{}
+	}
+	rows, err := s.keys.KeyGrants(ctx, p.Team, p.User)
+	if err != nil {
+		return []Grant{}
+	}
+	out := make([]Grant, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Grant{
+			ID:        grantIDFor(r.KeyID, r.Operation),
+			Principal: Principal{KeyID: r.KeyID, Team: p.Team, User: p.User},
+			Scope:     ScopeKey,
+			Operation: r.Operation,
+			CreatedAt: r.GrantedAt,
+			GrantedBy: r.GrantedBy,
+		})
+	}
+	return out
+}
+
 // Revoke withdraws a standing permission. Only its owner can.
-func (s *Store) Revoke(p Principal, grantID string) bool {
+func (s *Store) Revoke(ctx context.Context, p Principal, grantID string) bool {
+	// A permission recorded on a key is withdrawn from the key. It may well
+	// have been granted by a process that no longer exists, so there is nothing
+	// in memory to look for first.
+	if keyID, operation, ok := parseGrantID(grantID); ok {
+		if s.keys == nil || !s.ownsKey(ctx, p, keyID) {
+			return false
+		}
+		if err := s.keys.RevokeOperation(ctx, keyID, operation); err != nil {
+			return false
+		}
+		// Drop the mirror too, or the permission keeps working from memory
+		// until this process restarts — which is the opposite of what the
+		// person just asked for, and the worse direction to fail in.
+		s.mu.Lock()
+		for id, g := range s.grants {
+			if g.Scope == ScopeKey && g.Principal.KeyID == keyID && g.Operation == operation {
+				delete(s.grants, id)
+			}
+		}
+		s.mu.Unlock()
+		return true
+	}
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	g, ok := s.grants[grantID]
 	if !ok || !g.Principal.sameOwner(p) {
+		s.mu.Unlock()
 		return false
 	}
 	delete(s.grants, grantID)
+	keyID, operation, scope := g.Principal.KeyID, g.Operation, g.Scope
+	s.mu.Unlock()
+
+	if scope == ScopeKey && s.keys != nil {
+		// Best effort: the in-memory grant is already gone, so the permission
+		// has stopped working either way. Leaving the record behind would let
+		// it come back on the next restart, so it is worth attempting, but not
+		// worth reporting a failed revocation the caller cannot act on.
+		_ = s.keys.RevokeOperation(ctx, keyID, operation)
+	}
 	return true
+}
+
+// ownsKey reports whether one of this person's keys is the one named.
+//
+// The grant id encodes the key, and an id is guessable by anyone who can list
+// their own — so ownership is checked against the store rather than assumed
+// from the fact that the caller had an id at all.
+func (s *Store) ownsKey(ctx context.Context, p Principal, keyID string) bool {
+	grants, err := s.keys.KeyGrants(ctx, p.Team, p.User)
+	if err != nil {
+		return false
+	}
+	for _, g := range grants {
+		if g.KeyID == keyID {
+			return true
+		}
+	}
+	return false
 }
 
 // Fingerprint identifies one call closely enough that approving it cannot

@@ -559,7 +559,11 @@ const SurfaceHeader: FC<{
   if (mode === "panel") {
     return (
       <>
-        <div className="flex h-11 shrink-0 items-center gap-1 border-b px-3">
+        {/* h-13, matching the page header and the app sidebar's own
+            header. The three sit side by side across the top of the
+            window, so the rule under this one has to land on the same
+            line as the other two or the window looks stepped. */}
+        <div className="flex h-13 shrink-0 items-center gap-1 border-b px-3">
           <span className="truncate text-sm font-medium">
             {t("assistant.title")}
           </span>

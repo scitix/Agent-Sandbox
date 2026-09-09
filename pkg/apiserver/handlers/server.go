@@ -226,9 +226,10 @@ func parseCRDJSON(jsonStr string) (*agentsv1alpha1.SandboxTemplate, error) {
 func (s *Server) GetWhoAmI(ctx context.Context, _ gen.GetWhoAmIRequestObject) (gen.GetWhoAmIResponseObject, error) {
 	auth := authFrom(ctx)
 	return gen.GetWhoAmI200JSONResponse(gen.WhoAmIResult{
-		Role: auth.Role,
-		User: ptr.To(auth.User),
-		Team: ptr.To(auth.Team),
+		Role:      auth.Role,
+		User:      ptr.To(auth.User),
+		Team:      ptr.To(auth.Team),
+		Namespace: ptr.To(auth.Namespace),
 	}), nil
 }
 

@@ -236,29 +236,31 @@ func NewAuthenticateMiddleware(adminKeyMgr *apikey.AdminKeyManager, keyStore api
 			return
 		}
 
-		// When the key's stored namespace is empty (global keys created via
-		// Manager), resolve the effective namespace locally via IAM based on
-		// the key's team+user metadata. This allows each Worker cluster to
-		// derive the correct namespace for its own environment.
-		ns := meta.Namespace
-		if ns == "" && iamSvc != nil {
-			resolved, nsErr := iamSvc.ResolveNamespace(c.Request.Context(), meta.Team, meta.User)
-			if nsErr == nil {
-				ns = resolved
-			}
+		// The namespace a key records is whatever its MINTING cluster resolved,
+		// and the same key is used against clusters that map a tenant
+		// differently — so it is honoured here only where it exists here, and
+		// re-resolved where it does not. Keys minted through the hub record
+		// nothing at all and are resolved outright.
+		ns := DefaultNamespace
+		if iamSvc != nil {
+			ns = iamSvc.EffectiveNamespace(
+				c.Request.Context(), meta.Namespace, meta.Team, meta.User)
+		} else if meta.Namespace != "" {
+			ns = meta.Namespace
 		}
 		if ns == "" {
 			ns = DefaultNamespace
 		}
 
 		c.Set(AuthContextKey, domain.AuthInfo{
-			Namespace:  ns,
-			Role:       meta.Role,
-			User:       meta.User,
-			Team:       meta.Team,
-			AuthMethod: "apikey",
-			KeyID:      meta.KeyID,
-			Unattended: meta.RequireApproval,
+			Namespace:   ns,
+			Role:        meta.Role,
+			User:        meta.User,
+			Team:        meta.Team,
+			AuthMethod:  "apikey",
+			KeyID:       meta.KeyID,
+			Unattended:  meta.RequireApproval,
+			ApprovedOps: approvedOps(meta),
 		})
 
 		// If this route requires admin access (AdminKeyAuth security scheme),
@@ -332,4 +334,17 @@ func AuthFromContext(c *gin.Context) domain.AuthInfo {
 
 func writeError(c *gin.Context, statusCode int, message string) {
 	c.AbortWithStatusJSON(statusCode, gen.ErrorResponse{Error: message})
+}
+
+// approvedOps flattens a key's standing approvals into the operation ids the
+// gate matches on. Order is not meaningful; the gate does a membership test.
+func approvedOps(meta *apikey.KeyMetadata) []string {
+	if len(meta.Approvals) == 0 {
+		return nil
+	}
+	ops := make([]string, 0, len(meta.Approvals))
+	for op := range meta.Approvals {
+		ops = append(ops, op)
+	}
+	return ops
 }

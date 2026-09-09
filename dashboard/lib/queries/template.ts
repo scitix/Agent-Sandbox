@@ -16,16 +16,51 @@
 
 // Query options and mutations for Sandbox Template resources.
 //
-// All reads and writes go through BFF → ws-proxy, which operates on the Master
-// cluster. This ensures ResourceVersion always matches between GET and PUT,
-// eliminating 409 conflicts that occurred when reads came from Worker clusters.
+// Reads and writes deliberately come from different places, because "which
+// templates exist" and "which template am I editing" are different questions:
+//
+//   * The LIST is per cluster. This page lives at /clusters/{id}/templates and
+//     answers "what can I build a sandbox from HERE". The hub's catalog answers
+//     a different question — what has been published globally — and the two do
+//     diverge: a template applied straight to a worker is absent from the hub,
+//     and one published to the hub is absent from a cluster it has not reached.
+//     Listing the hub's copy under a cluster's heading shows templates that
+//     cannot be used and hides ones that can, with nothing on screen saying so.
+//   * The DETAIL read stays on the hub, because the edit form round-trips the
+//     whole CRD JSON and PUT goes to the hub: a resourceVersion read from a
+//     worker belongs to that worker's copy and the write 409s.
+//
+// A template the hub does not have is therefore listable but not editable —
+// which is the truth, since there is nothing on the hub to edit.
 
-import { globalTemplatesQueryOptions, globalTemplateQueryOptions } from "./global-template"
+import { globalTemplateQueryOptions } from "./global-template"
+import { apiFor } from "./utils"
 
-// ─── Query options (Master reads via BFF) ────────────────────────────────────
+// ─── Query options ───────────────────────────────────────────────────────────
 
-export const templatesQueryOptions = globalTemplatesQueryOptions
+/** Templates this cluster can actually build from. */
+export const templatesQueryOptions = (clusterID?: string) =>
+  apiFor(clusterID).queryOptions("get", "/sandbox-templates", undefined, {
+    select: (data) => data.items ?? [],
+  })
+
 export const templateQueryOptions = globalTemplateQueryOptions
+
+/**
+ * The same template as this cluster holds it.
+ *
+ * Read only when the hub does not have it, which is how a template applied
+ * straight to a worker still opens instead of showing "not found". It carries
+ * the same envelope, so the detail view needs no second shape — but it cannot
+ * be edited, because the write goes to a hub that has nothing to write to.
+ */
+export const clusterTemplateQueryOptions = (name: string, clusterID?: string) =>
+  apiFor(clusterID).queryOptions(
+    "get",
+    "/sandbox-templates/{name}",
+    { params: { path: { name } } },
+    { enabled: !!name, retry: false },
+  )
 
 // ─── Mutations (global, via BFF → ws-proxy) ──────────────────────────────────
 // Re-exported with backward-compatible names so existing component imports

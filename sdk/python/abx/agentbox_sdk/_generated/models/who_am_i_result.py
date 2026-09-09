@@ -40,11 +40,17 @@ class WhoAmIResult:
             role (str): Role assigned to the caller's API key (e.g. tenant, admin).
             user (str | Unset): Username extracted from the caller's auth context.
             team (str | Unset): Team extracted from the caller's auth context.
+            namespace (str | Unset): The namespace this credential reads and writes in on THIS cluster. Reported because it
+                is not always the one recorded when the credential was minted — a credential is used against several clusters,
+                which map a tenant differently, so each cluster resolves it locally. Two credentials for the same person can
+                land in different namespaces, and the symptom is an empty list rather than an error, which is why it is worth
+                being able to read it back.
      """
 
     role: str
     user: str | Unset = UNSET
     team: str | Unset = UNSET
+    namespace: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -58,6 +64,8 @@ class WhoAmIResult:
 
         team = self.team
 
+        namespace = self.namespace
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -68,6 +76,8 @@ class WhoAmIResult:
             field_dict["user"] = user
         if team is not UNSET:
             field_dict["team"] = team
+        if namespace is not UNSET:
+            field_dict["namespace"] = namespace
 
         return field_dict
 
@@ -82,10 +92,13 @@ class WhoAmIResult:
 
         team = d.pop("team", UNSET)
 
+        namespace = d.pop("namespace", UNSET)
+
         who_am_i_result = cls(
             role=role,
             user=user,
             team=team,
+            namespace=namespace,
         )
 
 

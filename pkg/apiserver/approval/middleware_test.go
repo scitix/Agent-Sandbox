@@ -15,6 +15,7 @@
 package approval
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -104,11 +105,11 @@ func TestTheHandlerStillSeesItsBody(t *testing.T) {
 	r, seen := newGatedRouter(s, true)
 
 	post(r, "POST", "/v1/envs", `{"name":"foo"}`, "s1")
-	pending, _ := s.List(alice)
+	pending, _ := s.List(context.Background(), alice)
 	if len(pending) != 1 {
 		t.Fatalf("expected a pending request, got %d", len(pending))
 	}
-	if _, err := s.Decide(pending[0].ID, true, ScopeOnce, "alice"); err != nil {
+	if _, err := s.Decide(context.Background(), pending[0].ID, true, ScopeOnce, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 
@@ -131,7 +132,7 @@ func TestUngatedCallerPassesStraightThrough(t *testing.T) {
 	if len(*seen) != 1 {
 		t.Fatalf("handler should have run, saw %#v", *seen)
 	}
-	if pending, _ := s.List(alice); len(pending) != 0 {
+	if pending, _ := s.List(context.Background(), alice); len(pending) != 0 {
 		t.Fatal("an ungated caller must not create approval requests")
 	}
 }
@@ -184,8 +185,8 @@ func TestSessionGrantLetsLaterCallsThrough(t *testing.T) {
 	r, _ := newGatedRouter(s, true)
 
 	post(r, "POST", "/v1/envs", `{"name":"a"}`, "s1")
-	pending, _ := s.List(alice)
-	if _, err := s.Decide(pending[0].ID, true, ScopeSession, "alice"); err != nil {
+	pending, _ := s.List(context.Background(), alice)
+	if _, err := s.Decide(context.Background(), pending[0].ID, true, ScopeSession, "alice"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 

@@ -39,4 +39,11 @@ type AuthInfo struct {
 	// of the caller's identity: the same person is exempt in the console — where
 	// their click IS the approval — and gated through an agent.
 	Unattended bool
+	// ApprovedOps are the operations this credential is already allowed to
+	// perform without asking, as recorded on the credential itself.
+	//
+	// Carried on AuthInfo because it arrives with the rest of the credential's
+	// metadata and shares its cache — the alternative, reading it per gated
+	// request, would put a Secret lookup in front of every write.
+	ApprovedOps []string
 }

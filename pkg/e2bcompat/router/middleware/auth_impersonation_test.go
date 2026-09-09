@@ -33,6 +33,16 @@ func (iamFake) ResolveNamespace(_ context.Context, team, user string) (string, *
 	return "t-" + team + "-" + user, nil
 }
 
+// A fake that keeps the two paths in step: whatever is recorded on the
+// credential is honoured, and an absent one resolves by convention.
+func (f iamFake) EffectiveNamespace(_ context.Context, recorded, team, user string) string {
+	if recorded != "" {
+		return recorded
+	}
+	ns, _ := f.ResolveNamespace(context.Background(), team, user)
+	return ns
+}
+
 func ctxWithHeaders(team, user string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

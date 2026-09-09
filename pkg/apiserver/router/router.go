@@ -192,6 +192,7 @@ func approvalIdentity(c *gin.Context) approval.Identity {
 			User:  auth.User,
 			KeyID: auth.KeyID,
 		},
+		KeyApprovals: auth.ApprovedOps,
 	}
 }
 

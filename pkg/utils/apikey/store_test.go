@@ -491,3 +491,110 @@ func TestKeyMetadata_JSONOmitsTokenHash(t *testing.T) {
 		}
 	}
 }
+
+// ── standing approvals ────────────────────────────────────────────────────────
+//
+// A permission a person gives so an agent will stop asking is recorded on the
+// credential, which is what makes it outlive this process and makes it findable
+// and revocable afterwards. If it does not round-trip through the Secret, the
+// gate simply asks again after every rollout while the console insists the
+// answer was given — and nothing reports a problem.
+
+func TestApprovalsRoundTripThroughTheSecret(t *testing.T) {
+	store := newFakeStore()
+	ctx := context.Background()
+
+	_, keyID, err := store.Create(ctx, apikey.KeyMetadata{
+		Namespace: "test-ns", User: "bob", Team: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if err := store.GrantOperation(ctx, keyID, "env.create", "bob@example.com"); err != nil {
+		t.Fatalf("GrantOperation() error = %v", err)
+	}
+	meta, err := store.Get(ctx, keyID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	got, ok := meta.Approvals["env.create"]
+	if !ok {
+		t.Fatal("the permission did not come back off the credential")
+	}
+	if got.GrantedBy != "bob@example.com" || got.GrantedAt.IsZero() {
+		t.Fatalf("lost the record of who and when: %+v", got)
+	}
+
+	// A duplicate decision keeps the ORIGINAL record. It answers "since when,
+	// and who"; re-stamping it would rewrite that history without saying so.
+	first := got.GrantedAt
+	if err := store.GrantOperation(ctx, keyID, "env.create", "someone@example.com"); err != nil {
+		t.Fatalf("second GrantOperation() error = %v", err)
+	}
+	meta, _ = store.Get(ctx, keyID)
+	again := meta.Approvals["env.create"]
+	if !again.GrantedAt.Equal(first) || again.GrantedBy != "bob@example.com" {
+		t.Fatalf("a duplicate decision rewrote the record: %+v", again)
+	}
+
+	if err := store.RevokeOperation(ctx, keyID, "env.create"); err != nil {
+		t.Fatalf("RevokeOperation() error = %v", err)
+	}
+	meta, _ = store.Get(ctx, keyID)
+	if len(meta.Approvals) != 0 {
+		t.Fatalf("the permission outlived its revocation: %+v", meta.Approvals)
+	}
+	// Withdrawing one that is not there is what the caller wanted anyway.
+	if err := store.RevokeOperation(ctx, keyID, "env.create"); err != nil {
+		t.Fatalf("idempotent RevokeOperation() error = %v", err)
+	}
+}
+
+// A key with nothing recorded reports nothing, rather than an empty map that
+// callers would have to distinguish from "not read yet".
+func TestAKeyWithNoApprovalsReportsNone(t *testing.T) {
+	store := newFakeStore()
+	ctx := context.Background()
+	_, keyID, err := store.Create(ctx, apikey.KeyMetadata{
+		Namespace: "test-ns", User: "bob", Team: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	meta, err := store.Get(ctx, keyID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if meta.Approvals != nil {
+		t.Fatalf("expected no approvals, got %+v", meta.Approvals)
+	}
+}
+
+// Granting a permission must be visible to the very next call. The validation
+// cache would otherwise serve the pre-change metadata for its whole TTL, so the
+// button appears not to have worked and gets pressed again.
+func TestGrantingIsVisibleImmediatelyDespiteTheCache(t *testing.T) {
+	store := newFakeStore() // 5-minute cache TTL
+	ctx := context.Background()
+	raw, keyID, err := store.Create(ctx, apikey.KeyMetadata{
+		Namespace: "test-ns", User: "bob", Team: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	// Warm the cache the way a request would.
+	if _, err := store.Validate(ctx, raw); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := store.GrantOperation(ctx, keyID, "env.create", "bob@example.com"); err != nil {
+		t.Fatalf("GrantOperation() error = %v", err)
+	}
+	meta, err := store.Validate(ctx, raw)
+	if err != nil {
+		t.Fatalf("Validate() after grant error = %v", err)
+	}
+	if _, ok := meta.Approvals["env.create"]; !ok {
+		t.Fatal("the cache hid a permission that had just been granted")
+	}
+}

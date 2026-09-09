@@ -34,7 +34,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Button } from "@/components/ui/button"
 import { MarkdownRenderer } from "@/components/markdown-renderer"
 import type { AgentSandboxTemplate, AgentSandboxTemplateSummary } from "@/lib/api/client"
-import { templateQueryOptions } from "@/lib/queries/template"
+import {
+  clusterTemplateQueryOptions,
+  templateQueryOptions,
+} from "@/lib/queries/template"
 import { useTranslation } from "@/lib/i18n"
 import { parseCpuToCore, parseMemoryToMiB, formatCores, formatMiB } from "@/lib/resources"
 
@@ -95,7 +98,19 @@ export function TemplateDetailContent({
   isAdmin: boolean
 }) {
   const { t } = useTranslation()
-  const { data: envelope, isLoading } = useQuery(templateQueryOptions(templateName))
+  // The hub first, because that is the copy the edit form must round-trip.
+  const hub = useQuery(templateQueryOptions(templateName))
+  // A template applied straight to this cluster is absent from the hub. It is
+  // still real and still listed, so read it from the cluster rather than
+  // reporting it missing — with editing withheld, since the write goes to a hub
+  // that has nothing to update.
+  const local = useQuery({
+    ...clusterTemplateQueryOptions(templateName),
+    enabled: !!templateName && !hub.isLoading && !hub.data,
+  })
+  const envelope = hub.data ?? local.data
+  const clusterOnly = !hub.data && !!local.data
+  const isLoading = hub.isLoading || local.isLoading
 
   if (isLoading) {
     return (
@@ -144,7 +159,7 @@ export function TemplateDetailContent({
             {t("templates.detail.exportYaml")}
           </Button>
         )}
-        {isAdmin && onEdit && (
+        {isAdmin && onEdit && !clusterOnly && (
           <Button
             variant="outline"
             size="sm"

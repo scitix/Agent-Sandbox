@@ -19,8 +19,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -103,6 +105,33 @@ type KeyMetadata struct {
 	// Absent on every existing key, which reads as false — the gate is opt-in,
 	// so shipping it changes nothing until a key is marked.
 	RequireApproval bool `json:"requireApproval,omitempty"`
+
+	// Approvals are the operations a person has allowed this key to perform
+	// without being asked again, keyed by operation id.
+	//
+	// Kept on the key because the key is what the permission is ABOUT: it is
+	// the durable identity of an agent's work, so a standing permission on it
+	// is something a person can find, read and take back. A grant held only in
+	// the API server's memory is none of those — it evaporates on the next
+	// rollout, which lands precisely during the long unattended runs that
+	// needed it, and nothing anywhere says why the agent started asking again.
+	//
+	// Deliberately NOT synced between clusters. The same key is used against
+	// several, and "may create environments" answered in one cluster's console
+	// is not an answer about another cluster's quota. Each cluster keeps its
+	// own, which is also why a worker may write this field: the hub's key sync
+	// leaves an existing Secret alone, so a locally-granted permission is not
+	// overwritten by the next broadcast.
+	Approvals map[string]KeyApproval `json:"approvals,omitempty"`
+}
+
+// KeyApproval is one standing permission, and the record of who gave it.
+//
+// The record is half the point. An approval gate that cannot say who allowed
+// something, and when, only moves the question rather than answering it.
+type KeyApproval struct {
+	GrantedAt time.Time `json:"grantedAt"`
+	GrantedBy string    `json:"grantedBy,omitempty"`
 }
 
 // KeyStore defines the operations for managing opaque API keys backed by
@@ -588,6 +617,7 @@ func metadataFromSecret(secret *corev1.Secret) (*KeyMetadata, error) {
 		// Absent reads as false: every key that predates the approval gate is
 		// unmarked, and an unmarked key is not gated.
 		RequireApproval: string(secret.Data["requireApproval"]) == "true",
+		Approvals:       decodeApprovals(secret.Data[secretKeyApprovals]),
 	}
 	if meta.Role == "" {
 		meta.Role = RoleTenant
@@ -610,4 +640,112 @@ func metadataFromSecret(secret *corev1.Secret) (*KeyMetadata, error) {
 	}
 
 	return meta, nil
+}
+
+// ── standing approvals ────────────────────────────────────────────────────────
+
+// secretKeyApprovals is the Secret data field holding a key's standing
+// approvals. A separate field rather than a label: label values are capped at
+// 63 characters and may not contain the characters an operation id and an
+// approver's address need.
+const secretKeyApprovals = "approvals"
+
+// decodeApprovals reads the stored map, treating anything unreadable as none.
+//
+// Failing open would be the wrong way round here: a corrupt field must mean
+// "ask a person", not "this key may do anything it once could".
+func decodeApprovals(raw []byte) map[string]KeyApproval {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out map[string]KeyApproval
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// GrantOperation records a standing approval on a key.
+//
+// Read-modify-write against the live Secret rather than the cached metadata,
+// because the cache is up to a minute stale and two approvals a minute apart
+// would otherwise erase one another.
+func (s *SecretKeyStore) GrantOperation(ctx context.Context, keyID, operation, by string) error {
+	return s.mutateApprovals(ctx, keyID, func(m map[string]KeyApproval) bool {
+		if _, ok := m[operation]; ok {
+			// Already allowed. Keep the ORIGINAL grant rather than refreshing
+			// it: the record answers "since when, and who", and re-stamping it
+			// on every duplicate decision would quietly rewrite that history.
+			return false
+		}
+		m[operation] = KeyApproval{GrantedAt: time.Now().UTC(), GrantedBy: by}
+		return true
+	})
+}
+
+// RevokeOperation withdraws a standing approval. Withdrawing one that is not
+// there is not an error — the caller wanted it gone, and it is.
+func (s *SecretKeyStore) RevokeOperation(ctx context.Context, keyID, operation string) error {
+	return s.mutateApprovals(ctx, keyID, func(m map[string]KeyApproval) bool {
+		if _, ok := m[operation]; !ok {
+			return false
+		}
+		delete(m, operation)
+		return true
+	})
+}
+
+func (s *SecretKeyStore) mutateApprovals(
+	ctx context.Context,
+	keyID string,
+	edit func(map[string]KeyApproval) bool,
+) error {
+	name := keyID
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	var secret corev1.Secret
+	key := client.ObjectKey{Namespace: s.namespace, Name: name}
+	if err := s.client.Get(ctx, key, &secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ErrTokenNotFound
+		}
+		return fmt.Errorf("apikey: read %s: %w", name, err)
+	}
+
+	current := decodeApprovals(secret.Data[secretKeyApprovals])
+	if current == nil {
+		current = map[string]KeyApproval{}
+	}
+	if !edit(current) {
+		return nil
+	}
+
+	patch := client.MergeFrom(secret.DeepCopy())
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+	if len(current) == 0 {
+		delete(secret.Data, secretKeyApprovals)
+	} else {
+		encoded, err := json.Marshal(current)
+		if err != nil {
+			return fmt.Errorf("apikey: encode approvals: %w", err)
+		}
+		secret.Data[secretKeyApprovals] = encoded
+	}
+	if err := s.client.Patch(ctx, &secret, patch); err != nil {
+		return fmt.Errorf("apikey: write approvals for %s: %w", name, err)
+	}
+	// The validation cache is keyed by the token hash and would otherwise serve
+	// the pre-change metadata for up to its TTL: a permission just granted
+	// appears not to work, and one just revoked keeps working. A minute is long
+	// enough that whoever pressed the button concludes it is broken.
+	if h := string(secret.Data["token"]); h != "" {
+		s.cacheEvict(h)
+	}
+	return nil
 }

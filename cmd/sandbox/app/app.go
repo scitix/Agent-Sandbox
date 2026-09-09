@@ -469,11 +469,6 @@ func Run(opts Options) {
 		}
 	}()
 
-	// The approval gate's state. Started here so its collector shares the
-	// process lifetime, and passed to the API server, which registers the gate
-	// only because this is non-nil.
-	approvalStore := approval.NewStore(ctx.Done())
-
 	sandboxSvc := service.NewSandboxService(
 		mgr.GetClient(), clientset, restCfg, sandboxStore, envoyGatewayBaseURL, localClusterID, extprocClient, clusterStore,
 	)
@@ -548,6 +543,17 @@ func Run(opts Options) {
 	if adminKey != "" {
 		adminKeyMgr = apikey.NewAdminKeyManager(adminKey)
 	}
+
+	// The approval gate's state. Its collector shares the process lifetime, and
+	// it is passed to the API server, which registers the gate only because
+	// this is non-nil.
+	//
+	// Built after the key store because key-scoped permissions are recorded on
+	// the keys themselves: they have to outlive this process, and they are what
+	// a person revokes on the API keys page. Requests and session grants stay
+	// in memory, where losing them costs one extra question.
+	approvalStore := approval.NewStore(
+		ctx.Done(), approval.NewKeyGrantStore(keyStore))
 	iamSvc := service.NewIAMService(mgr.GetClient())
 
 	digestResolver := imageresolver.NewResolver(mgr.GetClient(), 3*24*time.Hour)

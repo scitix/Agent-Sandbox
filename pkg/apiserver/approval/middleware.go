@@ -78,6 +78,14 @@ type Identity struct {
 	// admin keys, and every credential not marked as acting unattended.
 	Gated     bool
 	Principal Principal
+	// KeyApprovals are the operations this credential is already allowed to
+	// perform, as recorded on the credential itself.
+	//
+	// Read from the caller's own metadata rather than from the gate's memory so
+	// that a permission survives a restart of this process: the memory is a
+	// cache of decisions made since it started, and after a rollout it is
+	// simply empty.
+	KeyApprovals []string
 }
 
 // IdentityFunc extracts the caller from a request.
@@ -114,7 +122,7 @@ func New(store *Store, identity IdentityFunc, consoleURL ConsoleURLFunc) gin.Han
 		fp := Fingerprint(c.Request.Method, c.FullPath(), body)
 		session := c.GetHeader(SessionHeader)
 
-		if store.Allow(id.Principal, session, op.ID, fp) {
+		if store.Allow(id.Principal, id.KeyApprovals, session, op.ID, fp) {
 			c.Next()
 			return
 		}
