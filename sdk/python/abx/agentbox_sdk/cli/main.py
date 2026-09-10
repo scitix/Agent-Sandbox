@@ -41,15 +41,16 @@ from collections.abc import Sequence
 from typing import Any
 
 import agentbox_sdk.cli.kinds  # noqa: F401  (registers every resource)
-from agentbox_sdk.cli import dispatch as D
-from agentbox_sdk.cli import render as R
-from agentbox_sdk.cli import spec as S
 from agentbox_sdk._generated.models.create_env_sandbox_pool_request import (
     CreateEnvSandboxPoolRequest,
 )
 from agentbox_sdk._generated.models.create_sandbox_env_request import (
     CreateSandboxEnvRequest,
 )
+from agentbox_sdk.cli import dispatch as D
+from agentbox_sdk.cli import render as R
+from agentbox_sdk.cli import spec as S
+from agentbox_sdk.cli._body_docs import BODY_DOCS
 from agentbox_sdk.cli.context import (
     ApiError,
     ApprovalRequired,
@@ -281,42 +282,61 @@ def root_help() -> str:
     return "\n".join(out)
 
 
-# One worked example per create, shown by `--help`.
-#
-# Deliberately complete rather than minimal: the fields that are hard to guess
-# are the nested ones, and those are exactly the ones a flag could never carry.
-# A test parses each of these into the generated request model and fails if
-# anything is left over, so an example cannot drift away from the API.
-BODY_EXAMPLES = {
-    "env": """\
-{
-  "name": "my-env",
-  "templateRef": { "name": "e2b-envd" },
-  "mode": "WarmPool",
-  "overrides": {
-    "gateway": { "enabled": true }
-  },
-  "labels": { "team": "ai-infra" }
-}""",
-    "pool": """\
-{
-  "instanceType": "sci.c23-2",
-  "multiplier": 1,
-  "replicas": 1,
-  "minReplicas": 0,
-  "maxReplicas": 4,
-  "inlineResources": {
-    "requests": { "cpu": "100m", "memory": "500Mi" },
-    "limits":   { "cpu": "100m", "memory": "500Mi" }
-  },
-  "labels": { "quota.scitix.ai/url": "https://quota.example/q/1" }
-}""",
-}
+def _body_reference(kind: str) -> list[str]:
+    """The `-f` body, described from the OpenAPI schema that defines it.
+
+    Every line below is generated (see scripts/gen_body_docs.py). Nothing here
+    is a second description of the request — there is only the schema, and this
+    is a rendering of it.
+    """
+    doc = BODY_DOCS.get(kind)
+    if doc is None:
+        return []
+    out = ["  " + line for line in str(doc["example"]).splitlines()]
+    fields: tuple[tuple[str, str, bool, str], ...]
+    fields = doc["fields"]  # type: ignore[assignment]
+    out += ["", "  Fields:"]
+    out += _field_table(fields, indent="    ")
+    nested: dict[str, tuple[tuple[str, str, bool, str], ...]]
+    nested = doc["nested"]  # type: ignore[assignment]
+    for name in sorted(nested):
+        out += ["", f"  {name}:"]
+        out += _field_table(nested[name], indent="    ")
+    out += [
+        "",
+        "  Anything the API accepts is accepted here, flag or no flag.",
+        "  Flags override the body, so `-f base.json --name staging` works.",
+    ]
+    return out
 
 
-def model_for(kind: str) -> Any:
-    """The generated request model a create body is checked against."""
-    return CreateSandboxEnvRequest if kind == "env" else CreateEnvSandboxPoolRequest
+def _field_table(
+    fields: tuple[tuple[str, str, bool, str], ...], indent: str
+) -> list[str]:
+    if not fields:
+        return [indent + "(no fields)"]
+    width = max(len(n) for n, _, _, _ in fields)
+    rows = []
+    for name, type_, required, describe in fields:
+        head = f"{indent}{name.ljust(width)}  {type_}"
+        if required:
+            head += "  (required)"
+        rows.append(head)
+        if describe:
+            rows += _wrap(describe, indent + "  " + " " * width)
+    return rows
+
+
+def _wrap(text: str, pad: str, width: int = 78) -> list[str]:
+    out, line = [], pad
+    for word in text.split():
+        if len(line) + 1 + len(word) > width and line != pad:
+            out.append(line)
+            line = pad
+        line += (" " if line != pad else "") + word
+    if line != pad:
+        out.append(line)
+    return out
 
 
 def verb_help(
@@ -352,15 +372,8 @@ def verb_help(
         # accepted here, whether or not it has a flag.
         "Body (JSON, the same request the console sends):",
     ]
-    out += ["  " + line for line in BODY_EXAMPLES[kind.kind].splitlines()]
-    out += [
-        "",
-        "  Top-level fields: "
-        + ", ".join(sorted(S.wire_fields(model_for(kind.kind)))),
-        "  Flags override the body, so `-f base.json --name staging` works.",
-        "",
-        "Flags:",
-    ]
+    out += _body_reference(kind.kind)
+    out += ["", "Flags:"]
     # The create sets already begin with GLOBAL, so listing them again below
     # would print every global flag twice.
     out += _flag_help(params)
@@ -822,7 +835,10 @@ def create_pool(ctx: Context, values: dict[str, Any]) -> Result:
         # above the request would be charged to an envelope the reservation has
         # already paid for, so there is nothing to gain by letting it.
         requests = {"cpu": cpu, "memory": memory}
-        body["inlineResources"] = {"requests": requests, "limits": dict(requests)}
+        body["inlineResources"] = {
+            "requests": requests,
+            "limits": dict(requests),
+        }
 
     if values.get("quota"):
         # The quota is selected by a label the server parses, not by a field.
@@ -870,12 +886,14 @@ _WHOAMI_HELP = """abx whoami (= abx auth whoami)
 — who this key authenticates as.
 
 Prints the role, user, team and namespace the credential resolves to. Everything
-else the CLI shows is scoped to that identity: `quotas` is your quota, `envs` and
+else the CLI shows is scoped to that identity: `quotas` is your quota,
+`envs` and
 `pools` are the ones in your namespace. Run it first when you need to know whose
 view you are looking at.
 
 `namespace` is worth reading when a list comes back empty that should not be.
-Each cluster resolves it locally, so two credentials belonging to the same person
+Each cluster resolves it locally, so two credentials belonging to the same
+person
 can land in different namespaces — and reading a namespace that holds nothing is
 an empty answer, never an error."""
 

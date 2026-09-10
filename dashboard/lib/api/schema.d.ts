@@ -1287,6 +1287,26 @@ export interface components {
          *     `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
          *     `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
          *     real size and Pools downsized differently land in distinct scaling groups.
+         * @example {
+         *       "instanceType": "sci.c23-2",
+         *       "multiplier": 1,
+         *       "replicas": 1,
+         *       "minReplicas": 0,
+         *       "maxReplicas": 4,
+         *       "inlineResources": {
+         *         "requests": {
+         *           "cpu": "100m",
+         *           "memory": "500Mi"
+         *         },
+         *         "limits": {
+         *           "cpu": "100m",
+         *           "memory": "500Mi"
+         *         }
+         *       },
+         *       "labels": {
+         *         "quota.scitix.ai/url": "https://quota.example/q/1"
+         *       }
+         *     }
          */
         CreateEnvSandboxPoolRequest: {
             /** @description InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod. */
@@ -1898,11 +1918,30 @@ export interface components {
             /** @description 'Deleted' on success. */
             status: string;
         };
+        /**
+         * @example {
+         *       "name": "my-env",
+         *       "templateRef": {
+         *         "name": "e2b-envd"
+         *       },
+         *       "mode": "WarmPool",
+         *       "overrides": {
+         *         "gateway": {
+         *           "enabled": true
+         *         }
+         *       },
+         *       "labels": {
+         *         "team": "ai-infra"
+         *       }
+         *     }
+         */
         CreateSandboxEnvRequest: {
             /** @description RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit. */
             name: string;
+            /** @description Which SandboxTemplate every member Pool is rendered from. Pin a version to hold the Env still across Template edits; omit it to follow the Template. */
             templateRef: components["schemas"]["SandboxEnvTemplateRef"];
             /**
+             * @description WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod per sandbox and tears it down after, trading start latency for holding no capacity between runs.
              * @default WarmPool
              * @enum {string}
              */

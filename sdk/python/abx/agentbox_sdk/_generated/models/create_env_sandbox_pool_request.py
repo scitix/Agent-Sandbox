@@ -63,6 +63,11 @@ class CreateEnvSandboxPoolRequest:
     `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
     real size and Pools downsized differently land in distinct scaling groups.
 
+        Example:
+            {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0, 'maxReplicas': 4,
+                'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'}, 'limits': {'cpu': '100m', 'memory':
+                '500Mi'}}, 'labels': {'quota.scitix.ai/url': 'https://quota.example/q/1'}}
+
         Attributes:
             instance_type (str | Unset): InstanceType catalog entry. Required when the catalog is enabled and
                 inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running

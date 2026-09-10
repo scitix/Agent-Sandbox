@@ -43,11 +43,17 @@ T = TypeVar("T", bound="CreateSandboxEnvRequest")
 @_attrs_define
 class CreateSandboxEnvRequest:
     """ 
+        Example:
+            {'name': 'my-env', 'templateRef': {'name': 'e2b-envd'}, 'mode': 'WarmPool', 'overrides': {'gateway': {'enabled':
+                True}}, 'labels': {'team': 'ai-infra'}}
+
         Attributes:
             name (str): RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey +
                 QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit.
             template_ref (SandboxEnvTemplateRef):
-            mode (CreateSandboxEnvRequestMode | Unset):  Default: CreateSandboxEnvRequestMode.WARMPOOL.
+            mode (CreateSandboxEnvRequestMode | Unset): WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod
+                per sandbox and tears it down after, trading start latency for holding no capacity between runs. Default:
+                CreateSandboxEnvRequestMode.WARMPOOL.
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The
                 Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull
                 credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.

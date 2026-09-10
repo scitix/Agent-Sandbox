@@ -154,6 +154,10 @@ def sync_detailed(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,6 +213,10 @@ def sync(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -259,6 +267,10 @@ async def asyncio_detailed(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -314,6 +326,10 @@ async def asyncio(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

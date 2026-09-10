@@ -31,7 +31,7 @@ from agentbox_sdk._generated.models.create_sandbox_env_request import (
     CreateSandboxEnvRequest,
 )
 from agentbox_sdk.cli import main as M
-from agentbox_sdk.cli import spec as S
+from agentbox_sdk.cli._body_docs import BODY_DOCS
 from agentbox_sdk.cli.context import Context
 from agentbox_sdk.cli.parser import UsageError
 
@@ -57,29 +57,63 @@ def write(tmp_path, obj):
     return str(p)
 
 
-# ── the examples in --help must stay true ────────────────────────────────────
+# ── the body reference is generated, and must stay generated ─────────────────
+
+def test_the_checked_in_reference_matches_the_spec(tmp_path):
+    """The one check that matters: regenerate, and compare.
+
+    Everything the help says about the body comes from the OpenAPI schema. If
+    the spec changes and nobody re-runs `make gen`, the help starts describing
+    a request the API no longer takes — and nothing else would notice, because
+    the CLI keeps working and only the documentation is wrong.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    spec = (
+        root.parents[2] / "pkg" / "openapi" / "native" / "openapi.yaml"
+    )
+    if not spec.exists():  # pragma: no cover - absent when packaged
+        pytest.skip("openapi.yaml is not in this checkout")
+    fresh = tmp_path / "_body_docs.py"
+    subprocess.run(
+        [sys.executable, str(root / "scripts" / "gen_body_docs.py"),
+         str(spec), str(fresh)],
+        check=True,
+    )
+    current = (root / "agentbox_sdk" / "cli" / "_body_docs.py").read_text()
+    assert fresh.read_text() == current, (
+        "_body_docs.py is stale — run `make gen-all-api`"
+    )
+
 
 @pytest.mark.parametrize(
     "kind,model",
     [("env", CreateSandboxEnvRequest), ("pool", CreateEnvSandboxPoolRequest)],
 )
-def test_the_documented_example_is_a_valid_body(kind, model):
-    body = json.loads(M.BODY_EXAMPLES[kind])
+def test_the_generated_example_is_a_valid_body(kind, model):
+    # The example is authored in the spec, so this asks whether the spec's own
+    # example still matches the spec's own schema.
+    body = json.loads(str(BODY_DOCS[kind]["example"]))
     leftover = model.from_dict(dict(body)).additional_properties
     assert leftover == {}, (
-        f"the {kind} example in --help has fields the API does not accept: "
-        f"{sorted(leftover)}"
+        f"the {kind} example in openapi.yaml has fields the schema does not "
+        f"accept: {sorted(leftover)}"
     )
 
 
 @pytest.mark.parametrize("kind", ["env", "pool"])
-def test_the_example_appears_in_the_help(kind):
+def test_the_help_renders_the_generated_reference(kind):
     plural = "envs" if kind == "env" else "pools"
     text = M.run([plural, "create", "--help"]).text
-    # Not the whole blob — one distinctive nested line is enough to show the
-    # example is what is rendered.
-    assert '"templateRef"' in text or '"inlineResources"' in text
     assert "-f body.json" in text
+    # A description that only exists in the spec: proof the help is rendering
+    # generated data rather than a copy someone typed here.
+    described = [f for f in BODY_DOCS[kind]["fields"] if f[3]]  # type: ignore[index]
+    assert described, "no field carries a description"
+    assert described[0][3].split()[0] in text
 
 
 # ── the body reaches the API unchanged ───────────────────────────────────────
@@ -99,7 +133,10 @@ def test_flags_override_the_body_without_disturbing_the_rest(sent, tmp_path):
     body = {
         "name": "base",
         "templateRef": {"name": "e2b-envd"},
-        "overrides": {"gateway": {"enabled": False}, "volumes": [{"name": "v"}]},
+        "overrides": {
+            "gateway": {"enabled": False},
+            "volumes": [{"name": "v"}],
+        },
     }
     M.run(["envs", "create", "-f", write(tmp_path, body), "--name", "staging",
            "--gateway"])
@@ -141,7 +178,9 @@ def test_yaml_is_refused_by_name_not_by_parse_error(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTBOX_API_KEY", "agbx_test")
     monkeypatch.setenv("AGENTBOX_ENDPOINT", "http://example.invalid")
     p = tmp_path / "body.yaml"
-    p.write_text("name: my-env\ntemplateRef:\n  name: e2b-envd\n", encoding="utf-8")
+    p.write_text(
+        "name: my-env\ntemplateRef:\n  name: e2b-envd\n", encoding="utf-8"
+    )
     with pytest.raises(UsageError) as e:
         M.run(["envs", "create", "-f", str(p)])
     assert "YAML" in str(e.value)
@@ -161,7 +200,9 @@ def test_stdin_is_a_body_source(sent, monkeypatch, capsys):
 
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(json.dumps({"name": "piped", "templateRef": {"name": "t"}})),
+        io.StringIO(
+            json.dumps({"name": "piped", "templateRef": {"name": "t"}})
+        ),
     )
     M.run(["envs", "create", "-f", "-"])
     assert sent["body"]["name"] == "piped"
