@@ -320,6 +320,8 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 		switch appErr.Code {
 		case domain.ErrCodeNotFound:
 			return gen.CreateSandbox404JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeForbidden:
+			return gen.CreateSandbox403JSONResponse(errResp(ctx, appErr)), nil
 		case domain.ErrCodeConflict:
 			return gen.CreateSandbox409JSONResponse(errResp(ctx, appErr)), nil
 		case domain.ErrCodeBadRequest:

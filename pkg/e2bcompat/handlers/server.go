@@ -401,7 +401,13 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 		switch appErr.Code {
 		// A missing Env reads as a bad templateID rather than a missing
 		// resource: E2B's create has no 404, and the id came from the caller.
-		case apidomain.ErrCodeNotFound, apidomain.ErrCodeBadRequest:
+		//
+		// A pool owned by another tenant lands here too. E2B's create has no
+		// 403 either, and of the codes it does define this is the only honest
+		// one: the caller named a template they may not use, which is theirs to
+		// fix. 500 would claim a server fault and invite a retry that can never
+		// succeed; 401 would claim the credential is bad when it is fine.
+		case apidomain.ErrCodeNotFound, apidomain.ErrCodeBadRequest, apidomain.ErrCodeForbidden:
 			return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(errRespCode(400, appErr.Message))}, nil
 		// Capacity, not correctness: retrying the identical request can succeed
 		// once a pool has an idle Pod again, which 500 would not tell a client.

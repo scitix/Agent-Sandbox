@@ -2768,6 +2768,19 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 error: "invalid API key"
+        "403":
+          description: |
+            Forbidden — the target pool belongs to another tenant.
+
+            A warm pool's Pods are capacity its owner already paid for out of
+            their quota and reservation, so only that tenant (or an admin) may
+            claim one. Pools carrying no ownership labels are exempt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "sandbox pool default/demo-1c2gi belongs to team-a/alice; create in a pool of your own"
         "404":
           description: |
             Not Found — the requested `poolName` does not exist in the caller's namespace.

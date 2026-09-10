@@ -2703,6 +2703,26 @@ export interface operations {
                 };
             };
             /**
+             * @description Forbidden — the target pool belongs to another tenant.
+             *
+             *     A warm pool's Pods are capacity its owner already paid for out of
+             *     their quota and reservation, so only that tenant (or an admin) may
+             *     claim one. Pools carrying no ownership labels are exempt.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sandbox pool default/demo-1c2gi belongs to team-a/alice; create in a pool of your own"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /**
              * @description Not Found — the requested `poolName` does not exist in the caller's namespace.
              *     The `detail` field carries an `availablePools` array so the client can pick a
              *     valid pool without a second round-trip to `ListSandboxPools`.
