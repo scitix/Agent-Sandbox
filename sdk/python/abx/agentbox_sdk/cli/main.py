@@ -43,6 +43,13 @@ from typing import Any
 import agentbox_sdk.cli.kinds  # noqa: F401  (registers every resource)
 from agentbox_sdk.cli import dispatch as D
 from agentbox_sdk.cli import render as R
+from agentbox_sdk.cli import spec as S
+from agentbox_sdk._generated.models.create_env_sandbox_pool_request import (
+    CreateEnvSandboxPoolRequest,
+)
+from agentbox_sdk._generated.models.create_sandbox_env_request import (
+    CreateSandboxEnvRequest,
+)
 from agentbox_sdk.cli.context import (
     ApiError,
     ApprovalRequired,
@@ -128,6 +135,12 @@ REPLICAS = Param("replicas", "int", "Initial replica count.")
 MIN_REPLICAS = Param("minReplicas", "int", "Scale-down floor.")
 MAX_REPLICAS = Param("maxReplicas", "int", "Scale-up ceiling.")
 QUOTA = Param("quota", "string", "Quota URL to charge the reservation against.")
+FILE = Param(
+    "file",
+    "string",
+    "JSON request body to send, or - for stdin. Flags override it.",
+    aliases=("f",),
+)
 # The pod may REQUEST less than the reservation holds. The instance type is a
 # fixed catalog and the reservation is charged for the whole envelope either
 # way, so these do not buy a cheaper pool — they stop a small workload from
@@ -180,6 +193,7 @@ SECTION_PARAMS = (
 
 ENV_CREATE = (
     *GLOBAL,
+    FILE,
     NAME,
     TEMPLATE,
     TEMPLATE_VERSION,
@@ -190,6 +204,7 @@ ENV_CREATE = (
 )
 POOL_CREATE = (
     *GLOBAL,
+    FILE,
     ENV,
     INSTANCE_TYPE,
     MULTIPLIER,
@@ -266,6 +281,44 @@ def root_help() -> str:
     return "\n".join(out)
 
 
+# One worked example per create, shown by `--help`.
+#
+# Deliberately complete rather than minimal: the fields that are hard to guess
+# are the nested ones, and those are exactly the ones a flag could never carry.
+# A test parses each of these into the generated request model and fails if
+# anything is left over, so an example cannot drift away from the API.
+BODY_EXAMPLES = {
+    "env": """\
+{
+  "name": "my-env",
+  "templateRef": { "name": "e2b-envd" },
+  "mode": "WarmPool",
+  "overrides": {
+    "gateway": { "enabled": true }
+  },
+  "labels": { "team": "ai-infra" }
+}""",
+    "pool": """\
+{
+  "instanceType": "sci.c23-2",
+  "multiplier": 1,
+  "replicas": 1,
+  "minReplicas": 0,
+  "maxReplicas": 4,
+  "inlineResources": {
+    "requests": { "cpu": "100m", "memory": "500Mi" },
+    "limits":   { "cpu": "100m", "memory": "500Mi" }
+  },
+  "labels": { "quota.scitix.ai/url": "https://quota.example/q/1" }
+}""",
+}
+
+
+def model_for(kind: str) -> Any:
+    """The generated request model a create body is checked against."""
+    return CreateSandboxEnvRequest if kind == "env" else CreateEnvSandboxPoolRequest
+
+
 def verb_help(
     ctx: Context | None, kind: ResourceKind, verb: str | None
 ) -> str:
@@ -291,6 +344,20 @@ def verb_help(
         "",
         "Usage:",
         usage,
+        f"  abx {kind.plural} create -f body.json    # or -f - to read stdin",
+        "",
+        # A worked example beats a field list: it shows the nesting, and it is
+        # the thing an agent can copy and edit. The fields are the API's own —
+        # this is the body the console POSTs — so anything the API accepts is
+        # accepted here, whether or not it has a flag.
+        "Body (JSON, the same request the console sends):",
+    ]
+    out += ["  " + line for line in BODY_EXAMPLES[kind.kind].splitlines()]
+    out += [
+        "",
+        "  Top-level fields: "
+        + ", ".join(sorted(S.wire_fields(model_for(kind.kind)))),
+        "  Flags override the body, so `-f base.json --name staging` works.",
         "",
         "Flags:",
     ]
@@ -631,32 +698,47 @@ def run_section(
 # Writes
 # --------------------------------------------------------------------------
 def create_env(ctx: Context, values: dict[str, Any]) -> Result:
-    name = values.get("name")
-    template = values.get("template")
-    missing = [
-        f for f, v in (("--name", name), ("--template", template)) if not v
-    ]
-    if missing:
-        raise UsageError(
-            f"envs create needs {' and '.join(missing)}",
-            [
-                "abx templates"
-                + (f" --cluster {ctx.cluster}" if ctx.cluster else "")
-            ],
-        )
-    body: dict[str, Any] = {
-        "name": name,
-        "templateRef": {"name": template},
-    }
+    # The file is the request body; the flags are a shorthand for its common
+    # fields, laid over the top. Same object either way, so `-f base.json
+    # --name staging` is a sensible thing to write and needs no extra rules.
+    src = values.get("file")
+    body: dict[str, Any] = {}
+    if src:
+        body = S.load_body(src)
+        S.reject_unknown(body, CreateSandboxEnvRequest, src)
+
+    if values.get("name"):
+        body["name"] = values["name"]
+    if values.get("template"):
+        S.put(body, ("templateRef", "name"), values["template"])
     if values.get("templateVersion"):
-        body["templateRef"]["version"] = values["templateVersion"]
+        S.put(body, ("templateRef", "version"), values["templateVersion"])
     if values.get("mode"):
         body["mode"] = values["mode"]
     if values.get("gateway"):
         # The gateway is an Env-level switch because it changes the Pod spec.
         # Credential-injection rules are per sandbox and are refused outright
         # against an env without it, so this is what makes them possible later.
-        body["overrides"] = {"gateway": {"enabled": True}}
+        # Set as a leaf so the rest of `overrides` from a file survives it.
+        S.put(body, ("overrides", "gateway", "enabled"), True)
+
+    name = body.get("name")
+    template = (body.get("templateRef") or {}).get("name")
+    missing = [
+        f
+        for f, v in (("a name", name), ("a template", template))
+        if not v
+    ]
+    if missing:
+        raise UsageError(
+            f"envs create needs {' and '.join(missing)} — pass --name / "
+            "--template, or put them in the body given to --file",
+            [
+                "abx envs create --help",
+                "abx templates"
+                + (f" --cluster {ctx.cluster}" if ctx.cluster else ""),
+            ],
+        )
 
     payload = ctx.post_json("/envs", body)
     if _fmt(values) == "json":
@@ -699,14 +781,14 @@ def create_pool(ctx: Context, values: dict[str, Any]) -> Result:
         raise UsageError(
             "pools create needs --env <name>", [f"abx envs{_cl(ctx)}"]
         )
-    it = values.get("instanceType")
-    if not it:
-        raise UsageError(
-            "pools create needs --instance-type <name>",
-            [f"abx instancetypes{_cl(ctx)}"],
-        )
-    body: dict[str, Any] = {"instanceType": it}
+    src = values.get("file")
+    body: dict[str, Any] = {}
+    if src:
+        body = S.load_body(src)
+        S.reject_unknown(body, CreateEnvSandboxPoolRequest, src)
+
     for key, field in (
+        ("instanceType", "instanceType"),
         ("multiplier", "multiplier"),
         ("replicas", "replicas"),
         ("minReplicas", "minReplicas"),
@@ -714,6 +796,17 @@ def create_pool(ctx: Context, values: dict[str, Any]) -> Result:
     ):
         if values.get(key) is not None:
             body[field] = values[key]
+
+    it = body.get("instanceType")
+    if not it and "inlineResources" not in body:
+        # One of the two has to say how big a pod is. The catalog entry is the
+        # usual answer; an explicit request is the other, and only a body can
+        # carry it.
+        raise UsageError(
+            "pools create needs --instance-type, or an inlineResources block "
+            "in the body given to --file",
+            ["abx pools create --help", f"abx instancetypes{_cl(ctx)}"],
+        )
     cpu, memory = values.get("cpu"), values.get("memory")
     if bool(cpu) != bool(memory):
         # All or nothing: the server uses inlineResources verbatim, so a request
@@ -738,10 +831,12 @@ def create_pool(ctx: Context, values: dict[str, Any]) -> Result:
     payload = ctx.post_json(f"/envs/{env}/sandboxpools", body)
     if _fmt(values) == "json":
         return Result(R.render_json(payload))
-    spec = f"instanceType={it}"
-    if cpu and memory:
-        spec += f", requests={cpu}/{memory}"
-    out = [f"created pool in env {env} ({spec})", ""]
+    shape = f"instanceType={it}" if it else "inlineResources"
+    inline = body.get("inlineResources") or {}
+    req = inline.get("requests") or {}
+    if req.get("cpu") and req.get("memory"):
+        shape += f", requests={req['cpu']}/{req['memory']}"
+    out = [f"created pool in env {env} ({shape})", ""]
     out += R.yaml_lite(
         payload if isinstance(payload, dict) else {"result": payload}
     )
