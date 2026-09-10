@@ -49,7 +49,10 @@ import {
   FolderClosed,
   FolderOpen,
   KeyIcon,
+  MoreHorizontalIcon,
+  PencilIcon,
   SquarePenIcon,
+  Trash2Icon,
   X,
 } from "lucide-react"
 import {
@@ -65,7 +68,15 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { useAuiState } from "@assistant-ui/react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Spinner } from "@/components/ui/spinner"
+import { useDraggableBall } from "@/hooks/use-draggable-ball"
 import { usePersistedLayout } from "@/hooks/use-persisted-layout"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/lib/i18n"
@@ -80,7 +91,6 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import {
   atomAssistantMenuOpen,
   atomAssistantOpen,
-  atomAssistantCurrentSessionId,
   atomAssistantPage,
   atomAssistantPendingAutoSend,
   atomWorkspaceOpen,
@@ -95,10 +105,12 @@ import {
   type LandingActionSpec,
 } from "@/components/assistant-ui/assistant-landing"
 import {
+  ConfirmDeleteDialog,
   sessionLabel,
   useCurrentSession,
   useHasSessionHistory,
 } from "@/components/assistant-ui/session-history"
+import { SessionRenameDialog } from "@/components/assistant-ui/session-rename-dialog"
 import { useSessionActions } from "@/components/assistant-ui/session-controls"
 import {
   useAssistantLoadState,
@@ -145,6 +157,16 @@ function McpEntry({ cluster }: { cluster: string }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  // Destructured rather than read through `ball.…` inside the markup: the hooks
+  // lint reads a property access on an object that holds a ref as a ref access
+  // during render, which this is not.
+  const {
+    ref: ballRef,
+    style: ballStyle,
+    dragging: ballDragging,
+    onPointerDown: onBallPointerDown,
+  } = useDraggableBall("agentbox.assistant.mcp.position.v1")
+
   const entry = clusters.find(c => c.id === cluster)
   const guide = mcpGuide(
     { e2bURL: entry?.gateway?.e2bURL, dataURL: entry?.gateway?.dataURL },
@@ -165,80 +187,111 @@ function McpEntry({ cluster }: { cluster: string }) {
   if (typeof document === "undefined") return null
 
   return createPortal(
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            aria-label={t("assistant.mcp.title")}
-            // Below the z-index dialogs and sheets take (50), so anything modal
-            // covers it rather than being punched through by a help bubble.
-            className="bg-primary hover:bg-primary/90 fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-full py-1.5 pe-3.5 ps-1.5 text-xs font-medium text-white shadow-lg transition-colors"
-          >
-            {/* The mark takes the button's own colour out of a white disc, so
-                the entry reads as the protocol's badge rather than as a
-                monochrome glyph that disappears into the fill — and, in dark
-                mode, went black. */}
-            <span className="text-primary flex size-6 items-center justify-center rounded-full bg-white">
-              <MCP size={14} />
-            </span>
-            {t("assistant.mcp.label")}
-          </button>
-        }
-      />
-      <PopoverContent
-        side="top"
-        align="end"
-        className="flex max-h-[70vh] w-[30rem] flex-col gap-0 p-0"
+    <>
+      {/* Over everything while a drag is in flight: it stops the pointer being
+          taken mid-drag — by text selection, by an iframe, by anything that
+          would rather have the events — and carries the grabbing cursor so the
+          whole screen agrees about what is happening. */}
+      {ballDragging ? (
+        <div className="fixed inset-0 z-40 cursor-grabbing" />
+      ) : null}
+      <Popover
+        open={open}
+        // A drag ends with a click the browser has already queued. Opening the
+        // guide because someone moved the button is the one thing this must not
+        // do.
+        onOpenChange={next => {
+          if (next && ballDragging) return
+          setOpen(next)
+        }}
       >
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
-          <PopoverTitle className="text-[13px]">
-            {t("assistant.mcp.title")}
-          </PopoverTitle>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="-me-2 size-7 shrink-0 rounded-full"
-            aria-label={t("common.close")}
-            onClick={() => setOpen(false)}
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              ref={ballRef as React.RefObject<HTMLButtonElement>}
+              style={ballStyle}
+              onPointerDown={onBallPointerDown}
+              aria-label={t("assistant.mcp.title")}
+              // Below the z-index dialogs and sheets take (50), so anything
+              // modal covers it rather than being punched through by a help
+              // bubble — but not below the drag overlay it is dragged over.
+              className={cn(
+                "bg-primary hover:bg-primary/90 fixed right-6 bottom-6 z-40 flex touch-none items-center gap-2 rounded-full py-1.5 pe-3.5 ps-1.5 text-xs font-medium shadow-lg transition-colors select-none",
+                // Dark mode keeps the brand fill but stops the CONTENTS being
+                // white: white text next to a white disc are the two brightest
+                // things on a dark screen, and together they made a small
+                // control read as a lamp.
+                "text-white dark:text-neutral-900",
+                ballDragging ? "cursor-grabbing" : "cursor-grab"
+              )}
+            >
+              {/* The mark takes a colour out of a disc, so the entry reads as
+                  the protocol's badge rather than a monochrome glyph lost in
+                  the fill. The disc darkens with the text; the mark keeps the
+                  brand colour, which is the one thing that should still catch
+                  the eye. */}
+              <span className="text-primary flex size-6 items-center justify-center rounded-full bg-white dark:bg-neutral-900">
+                <MCP size={14} />
+              </span>
+              {t("assistant.mcp.label")}
+            </button>
+          }
+        />
+        <PopoverContent
+          side="top"
+          align="end"
+          className="flex max-h-[70vh] w-[30rem] flex-col gap-0 p-0"
+        >
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
+            <PopoverTitle className="text-[13px]">
+              {t("assistant.mcp.title")}
+            </PopoverTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="-me-2 size-7 shrink-0 rounded-full"
+              aria-label={t("common.close")}
+              onClick={() => setOpen(false)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
 
-        {/* Nothing floats over the document: a button pinned inside a scroller
-            scrolls with it, and pinning it outside means wrapping the scroller
-            in a second box that breaks the scroll it was supposed to leave
-            alone. The copy action lives in the footer instead, next to the
-            other thing you can do from here. */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <MarkdownContent content={guide} />
-        </div>
+          {/* Nothing floats over the document: a button pinned inside a scroller
+              scrolls with it, and pinning it outside means wrapping the scroller
+              in a second box that breaks the scroll it was supposed to leave
+              alone. The copy action lives in the footer instead, next to the
+              other thing you can do from here. */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+            <MarkdownContent content={guide} />
+          </div>
 
-        <div className="flex shrink-0 items-center gap-2 border-t p-3">
-          <Button variant="secondary" className="gap-1.5" onClick={copyAll}>
-            {copied ? (
-              <CheckIcon className="size-4" />
-            ) : (
-              <CopyIcon className="size-4" />
-            )}
-            {copied ? t("common.copied") : t("assistant.mcp.copyAll")}
-          </Button>
-          <Button
-            className="flex-1 gap-1.5"
-            render={
-              <Link
-                href={clusterPath(cluster, "api-keys", locale)}
-                onClick={() => setOpen(false)}
-              >
-                <KeyIcon className="size-4" />
-                {t("assistant.mcp.apiKey")}
-              </Link>
-            }
-          />
-        </div>
-      </PopoverContent>
-    </Popover>,
+          <div className="flex shrink-0 items-center gap-2 border-t p-3">
+            <Button variant="secondary" className="gap-1.5" onClick={copyAll}>
+              {copied ? (
+                <CheckIcon className="size-4" />
+              ) : (
+                <CopyIcon className="size-4" />
+              )}
+              {copied ? t("common.copied") : t("assistant.mcp.copyAll")}
+            </Button>
+            <Button
+              className="flex-1 gap-1.5"
+              render={
+                <Link
+                  href={clusterPath(cluster, "api-keys", locale)}
+                  onClick={() => setOpen(false)}
+                >
+                  <KeyIcon className="size-4" />
+                  {t("assistant.mcp.apiKey")}
+                </Link>
+              }
+            />
+          </div>
+        </PopoverContent>
+      </Popover>
+    </>,
     document.body
   )
 }
@@ -454,8 +507,15 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
               // Inset only when something is beside it — the padding is what
               // lets the card read as floating, and a card alone in the frame
               // has nothing to float above.
-              (showMenu || showWorkspace) && "py-2 pr-2",
-              showMenu && "pl-0"
+              (showMenu || showWorkspace) && "py-2",
+              // Inset against the FRAME, never against a neighbouring column.
+              // Padding on the side a column sits on puts the card's visible
+              // edge a few pixels inside the panel boundary, while the drag
+              // seam is AT the boundary — so the line you see and the line you
+              // can grab are not the same line. The menu side has always been
+              // flush; the workspace side was not, and that gap is the whole of
+              // the "I cannot grab the divider" complaint.
+              showMenu && !showWorkspace && "pr-2"
             )}
           >
             {conversation}
@@ -547,14 +607,82 @@ function useSurfaceSessionActions() {
  * says nothing and then changes.
  */
 const ConversationTitle: FC = () => {
-  const { session } = useCurrentSession()
-  const title = session ? sessionLabel(session, "") : ""
-  if (!title) return null
+  const { t } = useTranslation()
+  const hasConversation = useHasConversation()
+  const { session, rename, remove } = useCurrentSession()
+  const [renaming, setRenaming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  // Nothing to name and nothing to act on until the conversation exists.
+  if (!hasConversation || !session) return null
+  const title = sessionLabel(session, t("assistant.newSession"))
+
   return (
-    <span className="text-muted-foreground min-w-0 truncate px-1 text-[13px]">
-      {title}
-    </span>
+    <div className="flex min-w-0 items-center gap-0.5 ps-1">
+      <span className="truncate text-[13px] font-medium" title={title}>
+        {title}
+      </span>
+      <DropdownMenu>
+        {/* The hint is a native `title`, not a Tooltip: a tooltip renders a
+            provider > tooltip > [trigger, content] tree, and a Base UI menu
+            trigger needs ONE element to take a ref on to anchor its popup. */}
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 rounded-full"
+              aria-label={t("assistant.moreActions")}
+              title={t("assistant.moreActions")}
+            />
+          }
+        >
+          <MoreHorizontalIcon className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-40">
+          {rename ? (
+            <DropdownMenuItem onClick={() => setRenaming(true)}>
+              <PencilIcon className="size-4" />
+              {t("assistant.renameSession")}
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => setDeleting(true)}
+          >
+            <Trash2Icon className="size-4" />
+            {t("assistant.deleteSession")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {rename ? (
+        <SessionRenameDialog
+          open={renaming}
+          onOpenChange={setRenaming}
+          currentTitle={title}
+          onRename={rename}
+        />
+      ) : null}
+      <ConfirmDeleteDialog
+        count={1}
+        open={deleting}
+        onOpenChange={setDeleting}
+        onConfirm={() => void remove?.()}
+      />
+    </div>
   )
+}
+
+/**
+ * Has this conversation actually happened?
+ *
+ * Distinct from "a thread exists": the page opens one before anyone speaks, so
+ * a thread id is true on the landing screen. Anything offered per-conversation
+ * — the workspace the agent writes into, the conversation's own name and menu —
+ * has nothing to act on until there are messages.
+ */
+function useHasConversation(): boolean {
+  return useAuiState(s => s.thread.messages.length > 0)
 }
 
 const SurfaceHeader: FC<{
@@ -575,8 +703,11 @@ const SurfaceHeader: FC<{
   onClose,
 }) => {
   const { t } = useTranslation()
-  // The agent's scratch directory only exists once a tool has run in it.
-  const hasSession = !!useAtomValue(atomAssistantCurrentSessionId)
+  // A thread RECORD exists from the moment the page opens one, before a word
+  // has been said — so keying the workspace button on that put a folder on the
+  // landing page, pointing at a directory no tool had written to. What the
+  // button needs is a conversation that has happened.
+  const hasConversation = useHasConversation()
 
   // The panel says what it is and how to shut it, and nothing else. Its actions
   // sit on their own row below, because in a column this narrow a title flanked
@@ -629,7 +760,13 @@ const SurfaceHeader: FC<{
   }
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 px-2">
+    // Same height and gutter as the page header above and the session menu
+    // beside it, so the three read as one strip rather than three rows that
+    // nearly line up. The edge buttons pull their boxes outward (`-ms-2` /
+    // `-me-2`) so their GLYPHS land on the 24px gutter — a ghost button's box
+    // is wider than the mark inside it, and aligning the box leaves the mark
+    // looking indented.
+    <div className="flex h-13 shrink-0 items-center gap-2 px-6">
       {/* ONE toggle on screen at a time, and it lives on whichever side the
           menu currently is. Open, the menu carries it in its own header; closed,
           it reappears here. Showing both put two identical glyphs a few pixels
@@ -638,7 +775,7 @@ const SurfaceHeader: FC<{
         <Button
           variant="ghost"
           size="icon"
-          className="size-7 rounded-full"
+          className="-ms-2 size-7 rounded-full"
           onClick={onToggleMenu}
           aria-label={t("assistant.menu.expand")}
         >
@@ -654,11 +791,12 @@ const SurfaceHeader: FC<{
           the button's whole effect is to open a panel explaining that there is
           nothing to see. Hiding it means the folder appearing IS the signal
           that there is now something in it. */}
-      {hasSession ? (
+      <div className="flex-1" />
+      {hasConversation ? (
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto size-7 rounded-full"
+          className="-me-2 size-7 rounded-full"
           onClick={onToggleWorkspace}
           aria-label={t("workspace.title")}
         >
