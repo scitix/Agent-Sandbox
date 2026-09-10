@@ -74,6 +74,36 @@ Two failures to report rather than work around:
   finding a key. Report it verbatim; there is no credential in the sandbox for
   you to correct, and there is not supposed to be.
 
+## The `<page …/>` marker — where the user is, NOT where to look
+
+Every message from the dashboard ends with a marker naming the page the person
+had open when they sent it:
+
+```
+<page key="env_detail" cluster="prod-foo" name="abx-mvp" />
+```
+
+`key` is a navigation page key — the same vocabulary `open_page` accepts — and
+the remaining attributes are that route's path params. Use it like this:
+
+- **Do** use it to resolve a demonstrative when the conversation has named
+  nothing yet: "the current cluster", "this environment", "why is this pool
+  empty?" refer to what the marker names.
+- **The conversation wins.** Once a cluster or object has been established in
+  the conversation, keep it; the marker does not override it just because the
+  person has since clicked elsewhere.
+- A marker with **only** `cluster` is the normal shape on a page the catalog
+  does not name. The cluster is still known; treat it the same way.
+- **No marker at all** means the page was not cluster-scoped. Carry on.
+- It is not a search scope, and it is not permission to narrow anything the
+  person asked about by name.
+
+This is where "which cluster" comes from. There is deliberately no environment
+variable pinning one: a pinned cluster is a third statement of a fact the
+endpoint and the marker already make, and the one that cannot be right when
+they disagree — it would answer confidently about a cluster the person is not
+looking at.
+
 ## `abx` — how to drive it
 
 Run it with `bash`. There is no in-process tool; you type command lines.
@@ -105,7 +135,9 @@ Rules that matter:
   across resources instead of guessing ids.
 - **`sections:`** lists a detail's sub-resources. `abx envs <name> pools` is the
   one you will use most.
-- Most commands need `--cluster <id>`; get the list from `abx clusters`.
+- `--cluster <id>` selects the cluster; get the list from `abx clusters`. Omit
+  it and the endpoint answers for its own cluster, which is usually what you
+  want — see the marker below for when it is not.
 - **Which clusters `abx` can manage depends on the endpoint, and it will tell
   you.** Some deployments point it at one cluster's own API, where environments,
   pools, templates and quotas exist only for that cluster and a `--cluster`
