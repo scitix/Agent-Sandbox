@@ -105,7 +105,12 @@ export const AssistantSidePanel: FC = () => {
       // while the column is shut. The width is the panel's, not this element's:
       // it is one side of a split the person can drag.
       hidden={!open}
-      className="bg-background flex h-full min-h-0 min-w-0 flex-col border-l"
+      // No border of its own. The resize handle beside it already draws the
+      // seam, and a border here put a second 1px line hard against the first —
+      // two rules where the eye expects one. It was correct back when this was
+      // a plain sibling of the page with nothing between them; the handle took
+      // that job over.
+      className="bg-background flex h-full min-h-0 min-w-0 flex-col"
       aria-label="assistant"
     >
       <AssistantHost active={open}>
