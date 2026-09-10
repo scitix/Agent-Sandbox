@@ -42,13 +42,19 @@ import {
 import { AssistantHost } from "@/components/assistant-ui/assistant-host"
 import { AssistantSurface } from "@/components/assistant-ui/assistant-surface"
 
-/** How wide the column is. Narrow enough to keep the page readable beside it. */
-const PANEL_WIDTH = "min(38rem, 42vw)"
-
-export const AssistantSidePanel: FC = () => {
+/**
+ * Whether the assistant column should be showing, and whether it has ever been.
+ *
+ * Split out of the panel so the LAYOUT can own the sizing. The column is one
+ * half of a resizable split with the page, and a split's two sides have to be
+ * siblings in one panel group — so the layout renders both, and this supplies
+ * the two facts it needs to know.
+ */
+export function useAssistantPanelState(): {
+  open: boolean
+  everOpened: boolean
+} {
   const rawOpen = useAtomValue(atomAssistantOpen)
-  const acting = useAtomValue(actingIdentityAtom)
-  const setUserKey = useSetAtom(atomAssistantUserKey)
   const setOpen = useSetAtom(atomAssistantOpen)
   const pathname = usePathname()
   // On the assistant's own page the panel is the same assistant, twice — two
@@ -66,14 +72,23 @@ export const AssistantSidePanel: FC = () => {
   useEffect(() => {
     if (onAssistantPage && rawOpen) setOpen(false)
   }, [onAssistantPage, rawOpen, setOpen])
+
   // Once mounted it stays: unmounting takes the in-memory thread and any open
-  // question with it, and a closed panel costs nothing but a hidden element.
+  // question with it, and a shut column costs nothing but a collapsed panel.
   //
   // Latched during render rather than in an effect, so the first render after
   // the button is pressed already mounts the host — an effect would leave one
   // frame where the panel is open and empty.
   const [everOpened, setEverOpened] = useState(false)
   if (open && !everOpened) setEverOpened(true)
+
+  return { open, everOpened }
+}
+
+export const AssistantSidePanel: FC = () => {
+  const { open } = useAssistantPanelState()
+  const acting = useAtomValue(actingIdentityAtom)
+  const setUserKey = useSetAtom(atomAssistantUserKey)
 
   // Mirrored for the UI only. The gateway's idea of who is asking comes from
   // the BFF, which overwrites it from a verified session. The ACTING identity,
@@ -84,15 +99,13 @@ export const AssistantSidePanel: FC = () => {
     setUserKey(key || undefined)
   }, [acting.team, acting.user, setUserKey])
 
-  if (!everOpened) return null
-
   return (
     <aside
       // `hidden` rather than unmounted, so a turn in flight keeps streaming
-      // while the panel is shut.
+      // while the column is shut. The width is the panel's, not this element's:
+      // it is one side of a split the person can drag.
       hidden={!open}
-      style={{ width: open ? PANEL_WIDTH : 0 }}
-      className="bg-background flex min-h-0 shrink-0 flex-col border-l"
+      className="bg-background flex h-full min-h-0 min-w-0 flex-col border-l"
       aria-label="assistant"
     >
       <AssistantHost active={open}>

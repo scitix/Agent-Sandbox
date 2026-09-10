@@ -66,6 +66,7 @@ import {
 } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
+import { usePersistedLayout } from "@/hooks/use-persisted-layout"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "@/lib/i18n"
 import { useLocale } from "@/hooks/use-locale"
@@ -316,6 +317,13 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
   const locale = useLocale()
   const router = useRouter()
   const loadState = useAssistantLoadState()
+  // Above every early return: the split is remembered per mode, so the panel
+  // page and the side column do not fight over one stored layout.
+  const surfaceSplit = usePersistedLayout(
+    mode === "page"
+      ? "agentbox.assistant.surface.page.v1"
+      : "agentbox.assistant.surface.panel.v1"
+  )
   const sessions = useAssistantSessionStore()
   const [menuOpen, setMenuOpen] = useMenuOpen()
   const [workspaceOpen, setWorkspaceOpen] = useAtom(atomWorkspaceOpen)
@@ -407,10 +415,19 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
       className="bg-background flex min-h-0 min-w-0 flex-1 flex-col"
     >
       {showMenu || showWorkspace ? (
-        <ResizablePanelGroup className="min-h-0 flex-1">
+        <ResizablePanelGroup
+          // Keyed by which columns are out: each combination is its own split,
+          // and restoring a two-column layout into a three-column group puts
+          // the widths on the wrong panels.
+          key={`${showMenu ? "m" : ""}${showWorkspace ? "w" : ""}`}
+          groupRef={surfaceSplit.groupRef}
+          onLayoutChanged={surfaceSplit.onLayoutChanged}
+          className="min-h-0 flex-1"
+        >
           {showMenu ? (
             <>
               <ResizablePanel
+                id="menu"
                 defaultSize="20%"
                 minSize="14%"
                 maxSize="34%"
@@ -418,13 +435,19 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
               >
                 <MenuColumn />
               </ResizablePanel>
-              {/* Invisible on purpose: the gap between the menu and the card IS
-                  the seam, and a painted divider on top of it draws a second
-                  one. The handle keeps its hit area either way. */}
-              <ResizableHandle className="bg-transparent" />
+              {/* Invisible at rest on purpose: the gap between the menu and
+                  the card IS the seam, and a painted divider on top of it draws
+                  a second one. But a seam nobody can find is not a seam they
+                  can drag — so the hit area is widened and the grip fades in
+                  under the cursor, which is the only moment it says anything. */}
+              <ResizableHandle
+                withHandle
+                className="group bg-transparent after:w-3 [&>div]:opacity-0 [&>div]:transition-opacity hover:[&>div]:opacity-100 [&[data-dragging]>div]:opacity-100"
+              />
             </>
           ) : null}
           <ResizablePanel
+            id="conversation"
             minSize="30%"
             className={cn(
               "flex min-w-0 flex-col",
@@ -439,8 +462,12 @@ export const AssistantSurface: FC<AssistantSurfaceProps> = ({
           </ResizablePanel>
           {showWorkspace ? (
             <>
-              <ResizableHandle className="bg-transparent" />
+              <ResizableHandle
+                withHandle
+                className="group bg-transparent after:w-3 [&>div]:opacity-0 [&>div]:transition-opacity hover:[&>div]:opacity-100 [&[data-dragging]>div]:opacity-100"
+              />
               <ResizablePanel
+                id="workspace"
                 defaultSize="26%"
                 minSize="18%"
                 maxSize="45%"
