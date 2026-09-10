@@ -80,18 +80,35 @@ func applyImpersonation(c *gin.Context, auth *domain.AuthInfo, iamSvc service.IA
 		// Silently ignore impersonation headers for non-admin callers.
 		return true
 	}
-	if iamSvc == nil {
-		writeError(c, http.StatusServiceUnavailable, "IAM service not configured for impersonation")
-		return false
-	}
-	ns, appErr := iamSvc.ResolveNamespace(c.Request.Context(), team, user)
-	if appErr != nil {
-		writeError(c, http.StatusServiceUnavailable, appErr.Message)
-		return false
-	}
+	// Who is acted for is settled here; WHERE they act is a per-cluster
+	// question, and one this deployment may not be able to answer.
+	//
+	// The manager cluster runs this same middleware but has no IAM service and
+	// no tenant namespaces — nothing it serves reads a namespace at all. It
+	// used to refuse the whole request for want of one, which is how signing in
+	// through IAM as an admin made the assistant unusable: every conversation
+	// begins by asking the hub for a key, and the browser names the acting
+	// identity in these headers on every such call, including when that
+	// identity is the caller themselves.
+	//
+	// So a missing resolver leaves the namespace at its default rather than
+	// failing the call. This is not a relaxed permission check — the admin-only
+	// rule above still stands, and it is the only thing here that authorises
+	// anything. What is skipped is a lookup whose answer the caller would not
+	// have used.
 	auth.Team = team
 	auth.User = user
-	auth.Namespace = ns
+	if iamSvc != nil {
+		ns, appErr := iamSvc.ResolveNamespace(c.Request.Context(), team, user)
+		if appErr != nil {
+			writeError(c, http.StatusServiceUnavailable, appErr.Message)
+			return false
+		}
+		auth.Namespace = ns
+	}
+	// Written back on BOTH paths. Returning early without this would leave the
+	// rewritten identity in a local copy nobody reads — impersonation silently
+	// ignored, which is worse than the refusal it replaced.
 	c.Set(AuthContextKey, *auth)
 	return true
 }

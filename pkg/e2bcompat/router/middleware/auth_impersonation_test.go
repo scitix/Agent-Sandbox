@@ -98,14 +98,63 @@ func TestApplyImpersonation_RequiresBothHeaders(t *testing.T) {
 
 // Without IAM the namespace cannot be resolved, and guessing it would address
 // the wrong tenant's data.
-func TestApplyImpersonation_NoIAMIsRefused(t *testing.T) {
-	c, rec := ctxWithHeaders("ai-infra", "alice")
-	auth := domain.AuthInfo{Role: apikey.RoleAdmin, User: "admin", Namespace: "default"}
+// No resolver is no longer a refusal — see
+// TestImpersonationWorksWithoutANamespaceResolver below, which replaced this
+// test's inverse assertion. The namespace was the only thing that needed one,
+// and the deployment that has no resolver is also the one that reads no
+// namespace.
 
-	if ok := applyImpersonation(c, &auth, nil); ok {
-		t.Fatal("expected a refusal when IAM is unavailable")
+// A deployment with no namespaces to resolve must still be able to say WHO is
+// acting.
+//
+// The manager cluster runs this middleware with no IAM service, because it has
+// no tenant namespaces and nothing it serves reads one. Refusing the request
+// for want of a namespace made signing in through IAM as an admin break the
+// assistant outright: every conversation opens by asking the hub for a key, and
+// the browser names the acting identity on every such call — including when
+// that identity is the caller themselves, which is the ordinary case rather
+// than the exotic one.
+func TestImpersonationWorksWithoutANamespaceResolver(t *testing.T) {
+	c, rec := ctxWithHeaders("acme", "bob")
+	auth := domain.AuthInfo{Role: apikey.RoleAdmin, Team: "ops", User: "root"}
+
+	if ok := applyImpersonation(c, &auth, nil); !ok {
+		t.Fatal("refused the request because it could not resolve a namespace")
 	}
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
+	if auth.Team != "acme" || auth.User != "bob" {
+		t.Fatalf("identity was not applied: %+v", auth)
+	}
+	// Nothing written: the call carries on rather than answering an error.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an error response was written: %d", rec.Code)
+	}
+}
+
+// The relaxation above is about a namespace lookup, not about who may
+// impersonate. That rule is the only thing here that authorises anything, so it
+// holds whether or not a resolver exists.
+func TestOnlyAnAdminMayImpersonateEvenWithoutAResolver(t *testing.T) {
+	c, _ := ctxWithHeaders("acme", "bob")
+	auth := domain.AuthInfo{Role: apikey.RoleTenant, Team: "ops", User: "root"}
+
+	if ok := applyImpersonation(c, &auth, nil); !ok {
+		t.Fatal("a tenant's headers should be ignored, not refused")
+	}
+	if auth.Team != "ops" || auth.User != "root" {
+		t.Fatalf("a tenant impersonated someone: %+v", auth)
+	}
+}
+
+// With a resolver present nothing changes — the worker always has one, and its
+// behaviour must be exactly what it was.
+func TestAResolverIsStillUsedWhenThereIsOne(t *testing.T) {
+	c, _ := ctxWithHeaders("acme", "bob")
+	auth := domain.AuthInfo{Role: apikey.RoleAdmin, Namespace: "default"}
+
+	if ok := applyImpersonation(c, &auth, iamFake{}); !ok {
+		t.Fatal("refused with a resolver present")
+	}
+	if auth.Namespace != "t-acme-bob" {
+		t.Fatalf("namespace not resolved: %q", auth.Namespace)
 	}
 }
