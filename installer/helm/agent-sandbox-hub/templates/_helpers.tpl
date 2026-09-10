@@ -124,6 +124,15 @@ the other either hands the agent a useless token (no rules) or a real one
 {{- $s := (.Values.assistant | default dict).sandbox | default dict -}}
 {{- $inj := $s.injection | default dict -}}
 {{- $env := dict -}}
+{{- /* True of every deployment of this chart, so they are set here rather than
+       copied into each one's values. Both describe THE HOST rather than the
+       cluster: a sandbox this assistant owns has a browser in front of it and
+       a tool to ask a person with, and `abx` renders its hints differently
+       because of that. A sandbox someone drives from their own terminal has
+       neither, which is why these are not defaults of the CLI itself.
+       Overridable through extraEnv below, which is applied last. */ -}}
+{{- $_ := set $env "ABX_UI_MODE" "open_page" -}}
+{{- $_ := set $env "AGENTBOX_APPROVAL_TOOL" "request_approval" -}}
 {{- if $inj.enabled -}}
 {{- if $inj.bffEndpoint -}}
 {{- /* Routes by cluster in its path, so `abx --cluster X` reaches X through
@@ -192,7 +201,7 @@ own credential.
 {{- end -}}
 {{- if $inj.e2bHost -}}
 {{- $allow = append $allow $inj.e2bHost -}}
-{{- $hdr := dict "X-API-Key" (printf "${e2b.secrets.%s}" ($inj.e2bSecretName | default "e2b-key")) -}}
+{{- $hdr := dict "X-API-Key" (printf "${e2b.secrets.%s}" ($inj.e2bSecretName | default (include "agent-sandbox-hub.assistantNativeSecretName" $))) -}}
 {{- $_ := set $rules $inj.e2bHost (list (dict "transform" (dict "headers" $hdr))) -}}
 {{- end -}}
 {{- if $inj.dataHost -}}
@@ -216,6 +225,23 @@ The BFF-mode entry is included even though its header is a Bearer JWT: what the
 daemon has to put there is still the acting identity's platform credential, and
 the console's BFF accepts one in that position.
 */}}
+{{/*
+The vault entry the assistant's sandboxes authenticate from.
+
+ONE entry, not one per header. The two rules differ only in which header they
+write; the value they write is the same, and it could not be otherwise — the
+daemon has exactly one credential to put there, the acting identity's own, and
+it writes that under every name it is given. Two names were two spellings of
+one secret, and the second bought nothing but a second write per create.
+
+`e2bSecretName` is still honoured for a deployment whose E2B surface really
+does take a different credential. It just no longer defaults to a second name.
+*/}}
+{{- define "agent-sandbox-hub.assistantNativeSecretName" -}}
+{{- $inj := (((.Values.assistant | default dict).sandbox | default dict).injection | default dict) -}}
+{{- $inj.nativeSecretName | default "abx-key" -}}
+{{- end }}
+
 {{- define "agent-sandbox-hub.assistantSessionSecretNames" -}}
 {{- $s := (.Values.assistant | default dict).sandbox | default dict -}}
 {{- $inj := $s.injection | default dict -}}
@@ -229,9 +255,12 @@ the console's BFF accepts one in that position.
 {{- $names = append $names ($inj.nativeSecretName | default "abx-key") -}}
 {{- end -}}
 {{- if $inj.e2bHost -}}
-{{- $names = append $names ($inj.e2bSecretName | default "e2b-key") -}}
+{{- $names = append $names ($inj.e2bSecretName | default (include "agent-sandbox-hub.assistantNativeSecretName" $)) -}}
 {{- end -}}
-{{- join "," $names -}}
+{{- /* Deduplicated, because the names now default to ONE name and the daemon
+       would otherwise write the same credential to the same entry twice per
+       sandbox create. */ -}}
+{{- join "," (uniq $names) -}}
 {{- end -}}
 {{- end }}
 

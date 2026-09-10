@@ -330,7 +330,15 @@ assistant:
       # assistantSandboxNetwork / assistantSessionSecretNames), so renaming one
       # here cannot leave the other behind.
       nativeSecretName: abx-key
-      e2bSecretName: e2b-key
+      # Empty means "the same entry as nativeSecretName", which is the right
+      # answer for every deployment of this chart: the two rules differ by
+      # HEADER, not by credential, and the daemon has exactly one credential to
+      # write — the acting identity's own. Two names were two spellings of one
+      # secret and bought a second vault write per sandbox create.
+      #
+      # Set it only if this deployment's E2B surface genuinely takes a
+      # different credential from its native one.
+      e2bSecretName: ""
       # --- one cluster, addressed directly -------------------------------
       # Hosts, as the sandbox resolves them. These must be routable names: the
       # sidecar never intercepts loopback, and 127.0.0.0/8 sits in a deny tier

@@ -44,10 +44,16 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with $a.hostAliases }}
+      {{- with (default .Values.hostAliases $a.hostAliases) }}
       # A worker cluster's API may sit behind a host-routed ingress this
-      # cluster's DNS does not resolve; the dashboard's own cluster registry
-      # carries the same list for the same reason.
+      # cluster's DNS does not resolve.
+      #
+      # Defaults to the deployment's own `hostAliases` — the list the cluster
+      # registry already carries, for the same reason and with the same
+      # entries. Maintained separately they drift, and a drift shows up only as
+      # the assistant failing to reach one cluster while the console reaches it
+      # fine. Set `assistant.hostAliases` to override for the rare pod that
+      # needs a different list.
       hostAliases:
         {{- toYaml . | nindent 8 }}
       {{- end }}
