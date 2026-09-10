@@ -49,6 +49,56 @@ export async function requireAuth(authHeader: string | null): Promise<AuthResult
   }
 }
 
+/**
+ * The platform API key prefix, mirroring `apikey.TokenPrefix` in
+ * pkg/utils/apikey/store.go. Only used to tell the two credential shapes apart
+ * — the key itself is never validated here, the cluster's own API does that.
+ */
+const PLATFORM_KEY_PREFIX = "agbx_"
+
+/**
+ * Who is calling a proxy route, and with which of the two accepted credentials.
+ *
+ * `jwt` is a browser session: the BFF minted it, so it carries the resolved
+ * identity and the route forwards either the raw JWT or the session's bound
+ * API key depending on how the person signed in.
+ *
+ * `platformKey` is a caller holding a platform credential directly — the
+ * assistant's sandboxes are the ones that matter, since `abx` inside them
+ * reaches every cluster through this one path-routed address. There is no
+ * payload to read: the key names its own tenant and the cluster API resolves it,
+ * so the BFF forwards it untouched and claims nothing about who sent it.
+ */
+export type ProxyIdentity =
+  | { kind: "jwt"; payload: AuthJWTPayload; token: string }
+  | { kind: "platformKey"; apiKey: string }
+
+export type ProxyAuthResult = { identity: ProxyIdentity } | { error: NextResponse }
+
+/**
+ * Accept either credential on a proxy route.
+ *
+ * A platform key is NOT a weaker check that happens to pass here: the upstream
+ * cluster API is the only thing that can validate one, and it is the same
+ * validation it would apply if the caller reached it directly. Running it
+ * through `verifyJWT` instead — which is what this route used to do
+ * unconditionally — rejects a perfectly good credential with "Invalid or
+ * expired token", which reads like the key is wrong rather than like the door
+ * only accepts one kind of key.
+ */
+export async function requireProxyAuth(authHeader: string | null): Promise<ProxyAuthResult> {
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) }
+  }
+  const token = authHeader.slice(7)
+  if (token.startsWith(PLATFORM_KEY_PREFIX)) {
+    return { identity: { kind: "platformKey", apiKey: token } }
+  }
+  const result = await requireAuth(authHeader)
+  if ("error" in result) return result
+  return { identity: { kind: "jwt", payload: result.payload, token } }
+}
+
 /** Verify Bearer JWT and require admin role. Returns { payload } or { error }. */
 export async function requireAdmin(authHeader: string | null): Promise<AuthResult> {
   const result = await requireAuth(authHeader)

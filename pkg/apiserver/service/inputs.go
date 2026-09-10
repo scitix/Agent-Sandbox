@@ -64,6 +64,11 @@ type CreateSandboxInput struct {
 	// back to another group. Empty = no constraint. Set from the reserved
 	// metadata key MetaKeyScalingGroup by the create handlers.
 	RequestedScalingGroup string
+	// Role is the caller's authenticated role (domain.AuthInfo.Role). Only
+	// "admin" is meaningful here: it waives the check that the target Pool
+	// belongs to the caller's tenant. Empty means "not an admin", which is the
+	// safe reading for any caller that did not set it.
+	Role string
 	// PostStartHooks are actions to run after the sandbox transitions Starting → Running.
 	// Serialized to a pod annotation at claim time; consumed by the controller.
 	PostStartHooks []poststarthooks.Action

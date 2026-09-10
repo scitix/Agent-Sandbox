@@ -66,7 +66,10 @@ function formatEvent(event: AuditEvent): string {
   const authPart = actor.authMethod ? `  [${actor.authMethod}]` : ""
   const emailPart = actor.email ? `  <${actor.email}>` : ""
   const namePart = actor.name && actor.name !== actor.user ? `  (${actor.name})` : ""
-  const line2 = `  actor:        ${actor.role}  ${userAt}${teamPart}${authPart}${namePart}${emailPart}`
+  // A platform-key caller has no role resolved on this side; print the
+  // placeholder rather than the string "undefined".
+  const rolePart = actor.role ?? "(unresolved)"
+  const line2 = `  actor:        ${rolePart}  ${userAt}${teamPart}${authPart}${namePart}${emailPart}`
 
   // ── optional line 3: impersonation ────────────────────────────────────────
   let line3 = ""

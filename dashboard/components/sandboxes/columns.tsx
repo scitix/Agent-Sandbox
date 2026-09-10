@@ -432,6 +432,46 @@ export function createSandboxColumns(
     },
   }
 
+  // Sandbox metadata, as supplied on create (E2B `metadata`) and stored on the
+  // Pod. It is the only place a caller can say WHY a sandbox exists, and the
+  // assistant already uses it: each conversation's sandbox carries
+  // `hands.user` / `hands.session`, which is what tells two otherwise identical
+  // sandboxes apart when they were created under one shared identity.
+  const metadataColumn: ColumnDef<AgentSandbox> = {
+    id: "metadata",
+    accessorFn: (row) =>
+      Object.entries(row.metadata ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join(" "),
+    header: ({ column }) => (
+      <DataTableColumnHeader
+        column={column}
+        title={t("sandboxes.col.metadata")}
+        tooltip={t("sandboxes.col.metadataTooltip")}
+      />
+    ),
+    enableHiding: true,
+    filterFn: textFilterFn,
+    cell: ({ row }) => {
+      const entries = Object.entries(row.original.metadata ?? {}).sort(([a], [b]) =>
+        a.localeCompare(b),
+      )
+      if (entries.length === 0) return <span className="text-muted-foreground text-xs">---</span>
+      const text = entries.map(([k, v]) => `${k}=${v}`).join("\n")
+      return (
+        <div className="flex flex-col gap-0.5">
+          {entries.map(([k, v]) => (
+            <span key={k} className="font-mono text-xs whitespace-nowrap">
+              <span className="text-muted-foreground">{k}</span>
+              <span className="text-muted-foreground">=</span>
+              <CopyableText value={text} label={v} className="font-mono text-xs" />
+            </span>
+          ))}
+        </div>
+      )
+    },
+  }
+
   const durationColumn: ColumnDef<AgentSandbox> = {
     accessorKey: "durationSeconds",
     header: ({ column }) => (
@@ -623,6 +663,7 @@ export function createSandboxColumns(
       cell: ({ row }) => <RelativeTime date={row.original.recycledAt} />,
     },
     imagesColumn,
+    metadataColumn,
     nodeNameColumn,
     containerIdColumn,
     durationColumn,

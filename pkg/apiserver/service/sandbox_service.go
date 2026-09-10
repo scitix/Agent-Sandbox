@@ -54,6 +54,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/schedule"
 	pkgmetrics "github.com/scitix/agent-sandbox/pkg/metrics"
 	"github.com/scitix/agent-sandbox/pkg/store"
+	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
@@ -426,6 +427,45 @@ func (s *k8sSandboxService) buildAvailablePoolsDetail(ctx context.Context, names
 	}
 }
 
+// assertPoolOwnedByCaller refuses a create whose target Pool belongs to another
+// tenant. Returns nil when the create may proceed.
+//
+// A warm pool is pre-paid capacity: its Pods were provisioned against the
+// owner's quota and reservation. Without this check any caller who can name a
+// Pool claims one of those Pods, and the resulting Sandbox is labelled with the
+// CALLER's team/user — so the capacity is billed to one tenant while the
+// workload belongs to another, and the owner cannot see the Sandbox occupying
+// their pool. It also produces the confusing pair where an Env reports a
+// running Sandbox (a cluster-wide status rollup) that the owner's own,
+// tenant-filtered Sandbox list does not contain.
+//
+// Two deliberate exemptions:
+//   - admin callers, who legitimately act across tenants;
+//   - Pools carrying no ownership labels at all, which pre-date tenant
+//     labelling. Refusing those would break existing deployments to enforce a
+//     rule their objects cannot express.
+func assertPoolOwnedByCaller(pool *agentsv1alpha1.SandboxPool, input CreateSandboxInput) *domain.AppError {
+	if input.Role == apikey.RoleAdmin {
+		return nil
+	}
+	ownerTeam := pool.Labels[agentsv1alpha1.LabelTeam]
+	ownerUser := pool.Labels[agentsv1alpha1.LabelUser]
+	if ownerTeam == "" && ownerUser == "" {
+		return nil
+	}
+	callerTeam := input.Labels[agentsv1alpha1.LabelTeam]
+	callerUser := input.Labels[agentsv1alpha1.LabelUser]
+	if ownerTeam == callerTeam && ownerUser == callerUser {
+		return nil
+	}
+	// The owner is named because the caller can already list Pools in this
+	// namespace and see it; withholding it would only make the 403 harder to
+	// act on without concealing anything.
+	return domain.NewForbidden(fmt.Sprintf(
+		"sandbox pool %s/%s belongs to %s/%s; create in a pool of your own",
+		pool.Namespace, pool.Name, ownerTeam, ownerUser))
+}
+
 func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput) (*gen.Sandbox, *domain.AppError) { //nolint:gocyclo // claim path branches by metric outcome; restructuring would obscure ordering
 	// Resolve the request's `template` field (carried as input.PoolName for
 	// historical reasons) against the Env router. Three outcomes that we
@@ -498,6 +538,10 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		appErr := domain.NewNotFound(fmt.Sprintf("sandbox pool %s/%s not found", input.Namespace, input.PoolName))
 		appErr.Detail = s.buildAvailablePoolsDetail(ctx, input.Namespace, input.Labels[agentsv1alpha1.LabelTeam], input.Labels[agentsv1alpha1.LabelUser])
+		return nil, appErr
+	}
+	if appErr := assertPoolOwnedByCaller(pool, input); appErr != nil {
+		pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 		return nil, appErr
 	}
 	envName = pool.Labels[agentsv1alpha1.LabelEnv]

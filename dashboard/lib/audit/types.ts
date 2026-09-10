@@ -41,8 +41,16 @@ export interface AuditActor {
   user?: string
   /** Team stored in the JWT (e.g. "team-ops") */
   team?: string
-  /** Role of the actual authenticated user — always reflects the real role, never the impersonated one */
-  role: "admin" | "tenant"
+  /**
+   * Role of the actual authenticated user — always reflects the real role,
+   * never the impersonated one.
+   *
+   * Absent when the caller authenticated with a platform API key: only the
+   * cluster API can resolve that key to a tenant and a role, so the BFF has
+   * nothing to put here. Recording a guess would be worse than recording
+   * nothing — an audit line that names the wrong role is read as fact.
+   */
+  role?: "admin" | "tenant"
   /** How the user authenticated: "apikey" | "oidc" | "mock" */
   authMethod?: string
   /** Display name from OIDC claims */

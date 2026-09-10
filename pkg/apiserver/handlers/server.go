@@ -270,6 +270,7 @@ func (s *Server) CreateSandbox(ctx context.Context, req gen.CreateSandboxRequest
 		PoolName:  parsed.PoolName,
 		Namespace: auth.Namespace,
 		Image:     derefString(req.Body.Image),
+		Role:      auth.Role,
 	}
 	if req.Body.ContainerImages != nil {
 		input.ContainerImages = *req.Body.ContainerImages

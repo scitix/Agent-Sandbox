@@ -160,6 +160,8 @@
   "sandboxes.col.podNameTooltip": "承載此沙箱的 Kubernetes Pod，點擊可複製完整名稱。",
   "sandboxes.col.nodeName": "節點",
   "sandboxes.col.nodeNameTooltip": "沙箱 Pod 所排程到的 Kubernetes 節點名稱。",
+  "sandboxes.col.metadata": "中繼資料",
+  "sandboxes.col.metadataTooltip": "建立沙箱時傳入的鍵值對。助手會把對話所屬的人與工作階段記在這裡——沙箱以同一個身分建立時，靠它區分具體是誰的。",
   "sandboxes.col.containerId": "容器 ID",
   "sandboxes.col.containerIdTooltip": "沙箱進入執行狀態時主容器的執行階段 ID（如 docker://abc123…）。",
   "sandboxes.col.duration": "持續時間",

@@ -160,6 +160,8 @@
   "sandboxes.col.podNameTooltip": "The Kubernetes Pod backing this sandbox. Click to copy the full pod name.",
   "sandboxes.col.nodeName": "Node",
   "sandboxes.col.nodeNameTooltip": "The Kubernetes node the sandbox pod was scheduled onto.",
+  "sandboxes.col.metadata": "Metadata",
+  "sandboxes.col.metadataTooltip": "Key/value pairs supplied when the sandbox was created. The assistant records the conversation's owner and thread here, which is what distinguishes sandboxes created under one shared identity.",
   "sandboxes.col.containerId": "Container ID",
   "sandboxes.col.containerIdTooltip": "Runtime container ID (e.g. docker://abc123…) of the primary container, captured when the sandbox entered Running state.",
   "sandboxes.col.duration": "Duration",

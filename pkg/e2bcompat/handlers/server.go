@@ -321,6 +321,7 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 		Namespace: auth.Namespace,
 		User:      auth.User,
 		Image:     parsed.ImageOverride, // Option B: image embedded via "poolName//image" syntax
+		Role:      auth.Role,
 	}
 	if req.Body.Metadata != nil {
 		input.Metadata = map[string]string(*req.Body.Metadata)

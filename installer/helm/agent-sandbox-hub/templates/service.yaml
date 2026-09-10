@@ -14,3 +14,18 @@ spec:
       port: 3000
       targetPort: 3000
       protocol: TCP
+    # The same app on the port a sandbox can actually be injected on.
+    #
+    # A sandbox's egress sidecar iptables-REDIRECTs :80 to its HTTP listener and
+    # :443 to its TLS listener; everything else goes to a passthrough that does
+    # no L7 parsing. Credential injection also matches rules against the port,
+    # defaulting to {80, 443}. So a sandbox reaching the BFF on :3000 gets no
+    # Authorization header written and the call arrives unauthenticated — a 401
+    # whose cause is a port number nothing in the error mentions.
+    #
+    # This is why every other in-cluster host the assistant talks to
+    # (agentbox-control-plane, agentbox-e2b-api) is served on :80.
+    - name: http-sandbox
+      port: 80
+      targetPort: 3000
+      protocol: TCP

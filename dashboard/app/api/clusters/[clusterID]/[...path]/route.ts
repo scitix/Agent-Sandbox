@@ -27,7 +27,7 @@ import { request as undiciRequest } from "undici"
 import { listClusters, getClusterConfig } from "@/lib/cluster-config"
 import { initAudit, writeAuditEvent } from "@/lib/audit"
 import type { AuditAction } from "@/lib/audit"
-import { requireAuth } from "@/lib/server/bff-auth"
+import { requireProxyAuth } from "@/lib/server/bff-auth"
 import { impersonationFromHeaders, withAccessLog } from "@/lib/server/access-log"
 import type { AccessLogContext } from "@/lib/server/access-log"
 
@@ -51,20 +51,31 @@ async function doProxy(
 ) {
   log.cluster = clusterID
 
-  // Verify JWT from Authorization header
-  const authResult = await requireAuth(request.headers.get("Authorization"))
+  // Either a browser session JWT or a platform API key. The second is what
+  // makes this address usable from inside a sandbox: `abx` reaches every
+  // cluster through `/api/clusters/{cluster}/...`, and the only credential it
+  // has is the platform key injected into it.
+  const authResult = await requireProxyAuth(request.headers.get("Authorization"))
   if ("error" in authResult) return authResult.error
-  const { payload } = authResult
-  log.actor = {
-    user: payload.user,
-    team: payload.team,
-    role: payload.role,
-    authMethod: payload.authMethod,
-    ...impersonationFromHeaders(request),
+  const { identity } = authResult
+
+  // Set when the caller is a browser session; null for a platform key, which
+  // carries no resolved identity on this side.
+  const payload = identity.kind === "jwt" ? identity.payload : null
+  if (payload) {
+    log.actor = {
+      user: payload.user,
+      team: payload.team,
+      role: payload.role,
+      authMethod: payload.authMethod,
+      ...impersonationFromHeaders(request),
+    }
+  } else {
+    // The key names its own tenant and the cluster API resolves it, so there is
+    // no user/team to log here. Recording the method keeps the line honest
+    // rather than attributing the call to nobody.
+    log.actor = { authMethod: "api-key", ...impersonationFromHeaders(request) }
   }
-  const apiKey = payload.apiKey
-  const authMethod = payload.authMethod
-  const token = request.headers.get("Authorization")!.slice(7)
 
   // Determine target backend URL
   // clusterID=default → take first cluster (backward compatibility)
@@ -93,16 +104,19 @@ async function doProxy(
   log.upstream = targetUrl
 
   // Forward the request to the backend.
+  // - Platform key: pass it through as the cluster API's own header
   // - OIDC / Mock users: forward the raw JWT as Authorization: Bearer <token>
-  // - API-key users: inject AGENTBOX-API-KEY header
+  // - API-key users: inject the session's bound AGENTBOX-API-KEY
   const headers = new Headers()
-  if (authMethod === "oidc" || authMethod === "mock") {
-    headers.set("Authorization", `Bearer ${token}`)
+  if (identity.kind === "platformKey") {
+    headers.set("AGENTBOX-API-KEY", identity.apiKey)
+  } else if (payload!.authMethod === "oidc" || payload!.authMethod === "mock") {
+    headers.set("Authorization", `Bearer ${identity.token}`)
   } else {
-    if (!apiKey) {
+    if (!payload!.apiKey) {
       return NextResponse.json({ error: "Invalid session: missing api key" }, { status: 401 })
     }
-    headers.set("AGENTBOX-API-KEY", apiKey)
+    headers.set("AGENTBOX-API-KEY", payload!.apiKey)
   }
 
   // Apply extra headers from cluster config (e.g. Host header)
@@ -232,14 +246,20 @@ async function doProxy(
       path: targetPath,
       clusterID,
       statusCode,
-      actor: {
-        user: payload.user,
-        team: payload.team,
-        role: payload.role,
-        authMethod: payload.authMethod,
-        name: payload.name,
-        email: payload.email,
-      },
+      // A platform key resolves to a tenant only upstream, so there is no
+      // user/team to record on this side. The audit line still goes out with
+      // the method named — dropping the event entirely would let key-authed
+      // writes pass unaudited, which is the opposite of what this log is for.
+      actor: payload
+        ? {
+            user: payload.user,
+            team: payload.team,
+            role: payload.role,
+            authMethod: payload.authMethod,
+            name: payload.name,
+            email: payload.email,
+          }
+        : { authMethod: "api-key" },
       ...(impersonateUser && impersonateTeam
         ? { impersonation: { asUser: impersonateUser, asTeam: impersonateTeam } }
         : {}),
