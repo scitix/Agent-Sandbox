@@ -222,3 +222,57 @@ func TestSaturationCooldownScorer_FutureCooldownPenalises(t *testing.T) {
 		t.Errorf("future cooldown score = %d, want %d", got, saturationPenalty)
 	}
 }
+
+// ---------- Regression: warm Pods outrank capacity promises ----------
+
+// Saturation means "cannot grow", not "cannot serve". A Pool that already
+// holds a warm Pod dispatches it instantly whatever the last scale-up
+// probe reported, so the penalty must not apply — otherwise the request
+// is handed to a fixed-size sibling that has nothing to offer at all.
+func TestSaturationCooldown_ExemptWhenIdlePodsAvailable(t *testing.T) {
+	now := time.Now()
+	sat := now.Add(60 * time.Second)
+
+	withIdle := &CandidateContext{Now: now, SaturatedUntil: &sat, ObservedIdle: 1}
+	if got := (SaturationCooldownScorer{}).Score(withIdle); got != 0 {
+		t.Errorf("saturated Pool holding an idle Pod scored %d, want 0", got)
+	}
+
+	noIdle := &CandidateContext{Now: now, SaturatedUntil: &sat}
+	if got := (SaturationCooldownScorer{}).Score(noIdle); got != saturationPenalty {
+		t.Errorf("saturated Pool with no idle Pod scored %d, want %d", got, saturationPenalty)
+	}
+}
+
+// A PoolScheduler only exists in the apiserver process that has already
+// dispatched to that Pool. Ranking must still see warm Pods reported by
+// the Env reconciler, or a cold process routes blind.
+func TestIdleReadyScorer_FallsBackToEnvObservedIdle(t *testing.T) {
+	c := &CandidateContext{ObservedIdle: 5} // zero Snap: no scheduler in this process
+	if got := (IdleReadyScorer{}).Score(c); got != 5 {
+		t.Errorf("Score = %d, want 5 from the Env-observed idle count", got)
+	}
+}
+
+// Headroom is a promise of capacity; an idle Pod is capacity. However
+// large a Pool's ceiling, it must not outrank a sibling holding a warm
+// Pod — that inversion sends every request to the biggest Pool rather
+// than the ready one.
+func TestHeadroom_NeverOutranksASingleIdlePod(t *testing.T) {
+	f := newDefaultFramework()
+	huge := int32(2560)
+
+	roomy := CandidateContext{
+		Member: memberRef{poolName: "roomy", groupMaxReplicas: &huge},
+	}
+	warm := CandidateContext{
+		Member:       memberRef{poolName: "warm"},
+		ObservedIdle: 1,
+	}
+
+	ranked, _ := f.Rank([]CandidateContext{roomy, warm})
+	if ranked[0].Member.poolName != "warm" {
+		t.Errorf("ranked %q first; a Pool with a warm Pod must beat one with only headroom",
+			ranked[0].Member.poolName)
+	}
+}

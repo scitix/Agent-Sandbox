@@ -35,11 +35,12 @@ T = TypeVar("T", bound="PoolScaleDownPolicy")
 
 @_attrs_define
 class PoolScaleDownPolicy:
-    """ Scale-down behaviour for a scaling group.
+    """ Scale-down timing for a scaling group. How many replicas each event removes comes from scaleUpPolicy.mode — scale-
+    down mirrors the scale-up mode so a pool sheds capacity on the same scale it acquired it.
 
         Attributes:
             idle_timeout_seconds (int | Unset): Minimum seconds a pod must remain Idle before it becomes a scale-down
-                candidate.
+                candidate. Also bounds the step: a scale-down never removes more pods than have aged past this.
             stabilization_seconds (int | Unset): Minimum seconds between two consecutive scale-down events.
             protection_window_seconds (int | Unset): Seconds during which a scale-down-marked pod can still be claimed
                 (cancels deletion).

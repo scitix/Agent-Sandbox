@@ -145,9 +145,13 @@ func (s *Snapshot) GroupIdleTotal() int32 {
 
 // IsReactiveDemand reports whether the in-process scheduler currently
 // has at least one claim request queued AND no idle Pod available to
-// serve it. This is the autoscaler's immediate scale-up signal: an
-// unsatisfied claim means the cluster has real, present-tense demand
-// for an additional replica.
+// serve it.
+//
+// This is a raw signal, not a scale-up trigger: it says nothing about
+// whether replicas are already on their way to serve those claims. Use
+// Unmet for the trigger decision — scaling on IsReactiveDemand alone
+// re-orders capacity every cycle until the first Pod finishes starting,
+// which grows the Pool by orders of magnitude past the actual demand.
 //
 // Returns false when no PoolScheduler has been registered for this Pool
 // yet — in that case there can be no queued claims either.
@@ -156,6 +160,95 @@ func (s *Snapshot) IsReactiveDemand() bool {
 		return false
 	}
 	return s.PoolSchedSnap.QueueLen > 0 && s.PoolSchedSnap.IdleReady == 0
+}
+
+// QueueLen returns the number of claim requests the in-process scheduler
+// is holding for this Pool. 0 when no scheduler has been registered.
+func (s *Snapshot) QueueLen() int32 {
+	if s.PoolSchedSnap == nil {
+		return 0
+	}
+	return int32(s.PoolSchedSnap.QueueLen)
+}
+
+// Provisioning returns the number of replicas already ordered but not yet
+// servable: spec.replicas minus the Pods that are either claimed
+// (Running) or dispatchable (Idle). Pods in Starting / Stopping / Failed
+// and Pods that do not exist yet all land here.
+//
+// This is the in-flight capacity the scale-up decision must discount.
+// Without it every reconcile between "ordered" and "Idle" looks like
+// fresh unserved demand.
+func (s *Snapshot) Provisioning() int32 {
+	if s.Pool == nil {
+		return 0
+	}
+	return max(s.Pool.Spec.Replicas-s.Pool.Status.RunningReplicas-s.Pool.Status.IdleReplicas, 0)
+}
+
+// Demand returns the workload the Pool is currently being asked to carry:
+// Pods already claimed by a live Sandbox plus callers still waiting for
+// one. It is the anchor for every scale-up target — the Pool sizes itself
+// against this, never against its own replica count.
+func (s *Snapshot) Demand() int32 {
+	if s.Pool == nil {
+		return s.QueueLen()
+	}
+	return s.Pool.Status.RunningReplicas + s.QueueLen()
+}
+
+// Unmet returns the number of queued claims that nothing already in
+// flight will serve: the queue minus dispatchable Idle Pods minus
+// in-flight Provisioning replicas.
+//
+// Unmet > 0 is the reactive scale-up trigger. It goes to zero as soon as
+// enough replicas have been ordered, which is what stops the autoscaler
+// from re-ordering capacity on every reconcile while Pods are still
+// starting.
+func (s *Snapshot) Unmet() int32 {
+	idle := int32(0)
+	if s.Pool != nil {
+		idle = s.Pool.Status.IdleReplicas
+	}
+	return max(s.QueueLen()-idle-s.Provisioning(), 0)
+}
+
+// SpareCapacity returns how many Pods will be dispatchable and are not
+// already spoken for by a waiting claim: dispatchable-or-soon capacity
+// (Idle + Provisioning) minus the queue.
+//
+// This is the warm reserve the Pool already has, counting Pods that are
+// still starting. The scale-up buffer is a target *level* of spare
+// capacity, so it is measured against this — otherwise every proactive
+// cycle would re-order a full buffer on top of one already in flight,
+// and the Pool would climb to its ceiling with nobody asking for it.
+func (s *Snapshot) SpareCapacity() int32 {
+	idle := int32(0)
+	if s.Pool != nil {
+		idle = s.Pool.Status.IdleReplicas
+	}
+	return max(idle+s.Provisioning()-s.QueueLen(), 0)
+}
+
+// EligibleIdleCount returns how many idle Pods have aged past the
+// policy's idleTimeoutSeconds, i.e. how many the scale-down step is
+// actually allowed to remove this cycle. A timeout of 0 means every idle
+// Pod qualifies immediately.
+func (s *Snapshot) EligibleIdleCount(policy agentsv1alpha1.PoolScaleDownPolicy) int32 {
+	if policy.IdleTimeoutSeconds <= 0 {
+		return int32(len(s.IdlePodAges))
+	}
+	threshold := time.Duration(policy.IdleTimeoutSeconds) * time.Second
+	// IdlePodAges is sorted descending by Load, so the eligible ones are a
+	// prefix and the scan stops at the first Pod that is too young.
+	n := int32(0)
+	for _, age := range s.IdlePodAges {
+		if age < threshold {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // OldestIdleAge returns the age of the oldest idle Pod (longest time

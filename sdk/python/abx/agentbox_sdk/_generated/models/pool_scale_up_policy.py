@@ -39,8 +39,11 @@ class PoolScaleUpPolicy:
     """ Scale-up behaviour for a scaling group (mode + cooldown + idle threshold + saturation cooldown).
 
         Attributes:
-            mode (PoolScaleUpPolicyMode | Unset): Conservative=+1 per decision; Default=+max(1,ceil(N/2)); Aggressive=double
-                up to maxReplicas.
+            mode (PoolScaleUpPolicyMode | Unset): How much warm headroom to keep, and how large a bite each scale-down
+                takes. Sizing is relative to demand (claimed Pods + waiting claims), never to the pool's own replica count;
+                waiting claims are always covered in full regardless of mode. Conservative=1 spare Pod, ceiling demand+1, scale-
+                down -1; Default=ceil(demand/4) spare, ceiling 1.5x demand, scale-down -ceil(replicas/4);
+                Aggressive=ceil(demand/2) spare, ceiling 2x demand, scale-down -ceil(replicas/2).
             cooldown_seconds (int | Unset): Minimum seconds between two consecutive scale-up events (group-level).
             idle_threshold_seconds (int | Unset): Aggregate idleReplicas=0 must persist for this long before the proactive
                 trigger fires. Zero disables proactive scale-up.

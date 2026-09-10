@@ -651,11 +651,23 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		// We NEVER delete running pods
 		sortedPods := r.sortPodsByPhasePriority(pods)
 
-		// Delete the first excessPods Pods (prioritizing idle pods)
+		// Delete the first excessPods Pods (prioritizing idle pods).
+		//
+		// The two-phase protection flow marks every candidate in this pass
+		// before requeueing, rather than one Pod per reconcile. Marking one at
+		// a time would cap the drain rate at one Pod per protection window no
+		// matter how many replicas the autoscaler asked to remove, so a Pool
+		// that grew proportionally could never shrink proportionally. Each Pod
+		// still gets its own full window, and a claim landing during that
+		// window still cancels the intent by clearing the annotation.
 		deletedCount := int32(0)
+		markedCount := 0
+		// waitFor is the shortest remaining protection window across the
+		// candidates we could not delete yet; it becomes the requeue delay.
+		var waitFor time.Duration
 		for i := range sortedPods {
 			pod := &sortedPods[i]
-			if deletedCount >= excessPods {
+			if deletedCount+int32(markedCount) >= excessPods {
 				break
 			}
 
@@ -670,15 +682,19 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 			if protectionWindow > 0 && phase == agentsv1alpha1.SandboxPhaseIdle {
 				protectedAt := pod.Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey]
 				if protectedAt == "" {
-					// Phase A: mark the pod as a scale-down candidate and requeue.
+					// Phase A: mark the pod as a scale-down candidate. Keep
+					// going so the rest of this pass's candidates are marked
+					// too, and let them all age out together.
 					if markErr := r.markScaleDownProtected(ctx, pod); markErr != nil {
 						klog.ErrorS(markErr, "Failed to mark pod as scale-down-protected",
 							"namespace", pod.Namespace, "name", pod.Name)
 						return reconcile.Result{}, markErr
 					}
-					klog.InfoS("Marked idle pod as scale-down candidate",
+					klog.V(2).InfoS("Marked idle pod as scale-down candidate",
 						"namespace", pod.Namespace, "name", pod.Name)
-					return reconcile.Result{RequeueAfter: protectionWindow + time.Second}, nil
+					markedCount++
+					waitFor = minWait(waitFor, protectionWindow+time.Second)
+					continue
 				}
 
 				// Phase B: check whether the protection window has elapsed.
@@ -690,10 +706,12 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 					} else {
 						remaining = protectionWindow
 					}
-					klog.V(4).InfoS("Protection window not yet elapsed, requeuing",
+					klog.V(4).InfoS("Protection window not yet elapsed, deferring pod",
 						"namespace", pod.Namespace, "name", pod.Name,
 						"remaining", remaining.Round(time.Second))
-					return reconcile.Result{RequeueAfter: remaining}, nil
+					markedCount++
+					waitFor = minWait(waitFor, remaining)
+					continue
 				}
 				// Window has elapsed — fall through to actual deletion.
 				klog.V(4).InfoS("Protection window elapsed, proceeding with deletion",
@@ -736,6 +754,14 @@ func (r *SandboxPoolReconciler) reconcilePods(ctx context.Context, sandboxPool *
 		}
 
 		if deletedCount == 0 {
+			if markedCount > 0 {
+				// Candidates are marked and serving out their protection
+				// windows; come back when the earliest one expires.
+				klog.InfoS("Marked Pods as scale-down candidates, waiting out protection window",
+					"namespace", sandboxPool.Namespace, "name", sandboxPool.Name,
+					"marked", markedCount, "requeueAfter", waitFor.Round(time.Second))
+				return reconcile.Result{RequeueAfter: waitFor}, nil
+			}
 			klog.InfoS("No Pods were eligible for deletion", "namespace", sandboxPool.Namespace, "name", sandboxPool.Name,
 				"desired", desiredReplicas, "current", currentReplicas)
 			return reconcile.Result{}, nil

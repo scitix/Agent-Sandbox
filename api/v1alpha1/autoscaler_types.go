@@ -16,10 +16,17 @@ package v1alpha1
 
 // PoolScaleUpPolicy controls scale-up behavior.
 type PoolScaleUpPolicy struct {
-	// Mode controls how aggressively the pool grows on each scale-up decision.
-	//   - Conservative: +1 per decision
-	//   - Default:      +max(1, ceil(currentReplicas/2))
-	//   - Aggressive:   scale to min(currentReplicas*2, maxReplicas)
+	// Mode controls how much warm headroom the pool keeps, and how large a
+	// bite each scale-down decision takes. It does NOT control how fast the
+	// pool grows under load: every scale-up covers waiting claims in full,
+	// because a caller with nothing coming for it is not a matter of policy.
+	//
+	// Sizing is always relative to demand (claimed Pods + waiting claims),
+	// never to the pool's own replica count, and each mode carries a hard
+	// ceiling on replicas per unit of demand:
+	//   - Conservative: keeps 1 spare Pod;      ceiling demand+1;    removes 1 replica per scale-down
+	//   - Default:      keeps ceil(demand/4);   ceiling 1.5×demand;  removes ceil(replicas/4) per scale-down
+	//   - Aggressive:   keeps ceil(demand/2);   ceiling 2×demand;    removes ceil(replicas/2) per scale-down
 	// Defaults to Default.
 	// +optional
 	// +kubebuilder:validation:Enum=Conservative;Default;Aggressive
@@ -81,6 +88,9 @@ type PoolScaleDownPolicy struct {
 
 	// StabilizationSeconds is the minimum number of seconds between two consecutive
 	// scale-down events. Prevents thrashing when load fluctuates around the threshold.
+	// How many replicas each of those events removes comes from
+	// scaleUpPolicy.mode — scale-down mirrors the scale-up mode so a pool
+	// sheds capacity on the same scale it acquired it.
 	// Defaults to 60.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
@@ -102,11 +112,14 @@ type PoolScaleDownPolicy struct {
 type PoolScaleUpMode string
 
 const (
-	// PoolScaleUpModeConservative adds one Pod per scale-up decision.
+	// PoolScaleUpModeConservative keeps a single spare Pod warm, caps the
+	// pool at demand+1 replicas, and removes one replica per scale-down.
 	PoolScaleUpModeConservative PoolScaleUpMode = "Conservative"
-	// PoolScaleUpModeDefault adds max(1, ceil(currentReplicas/2)) Pods per decision.
+	// PoolScaleUpModeDefault keeps ceil(demand/4) Pods warm, caps the pool
+	// at 1.5x demand, and removes ceil(replicas/4) per scale-down.
 	PoolScaleUpModeDefault PoolScaleUpMode = "Default"
-	// PoolScaleUpModeAggressive doubles the replica count up to maxReplicas per decision.
+	// PoolScaleUpModeAggressive keeps ceil(demand/2) Pods warm, caps the
+	// pool at 2x demand, and removes ceil(replicas/2) per scale-down.
 	PoolScaleUpModeAggressive PoolScaleUpMode = "Aggressive"
 )
 

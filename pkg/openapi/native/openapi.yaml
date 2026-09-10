@@ -744,7 +744,7 @@ components:
         lastScaleDownTime:
           type: string
           format: date-time
-          description: "Most recent wall-clock time spec.replicas shrank by one. Drives scaleDownPolicy.stabilizationSeconds."
+          description: "Most recent wall-clock time spec.replicas shrank. Drives scaleDownPolicy.stabilizationSeconds; the step size comes from scaleUpPolicy.mode."
         idleZeroSince:
           type: string
           format: date-time
@@ -1106,7 +1106,7 @@ components:
         mode:
           type: string
           enum: [Conservative, Default, Aggressive]
-          description: "Conservative=+1 per decision; Default=+max(1,ceil(N/2)); Aggressive=double up to maxReplicas."
+          description: "How much warm headroom to keep, and how large a bite each scale-down takes. Sizing is relative to demand (claimed Pods + waiting claims), never to the pool's own replica count; waiting claims are always covered in full regardless of mode. Conservative=1 spare Pod, ceiling demand+1, scale-down -1; Default=ceil(demand/4) spare, ceiling 1.5x demand, scale-down -ceil(replicas/4); Aggressive=ceil(demand/2) spare, ceiling 2x demand, scale-down -ceil(replicas/2)."
         cooldownSeconds:
           type: integer
           format: int32
@@ -1130,13 +1130,13 @@ components:
 
     PoolScaleDownPolicy:
       type: object
-      description: "Scale-down behaviour for a scaling group."
+      description: "Scale-down timing for a scaling group. How many replicas each event removes comes from scaleUpPolicy.mode — scale-down mirrors the scale-up mode so a pool sheds capacity on the same scale it acquired it."
       properties:
         idleTimeoutSeconds:
           type: integer
           format: int32
           minimum: 0
-          description: "Minimum seconds a pod must remain Idle before it becomes a scale-down candidate."
+          description: "Minimum seconds a pod must remain Idle before it becomes a scale-down candidate. Also bounds the step: a scale-down never removes more pods than have aged past this."
         stabilizationSeconds:
           type: integer
           format: int32

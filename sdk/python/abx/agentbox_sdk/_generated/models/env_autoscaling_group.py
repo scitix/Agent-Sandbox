@@ -50,7 +50,9 @@ class EnvAutoscalingGroup:
             max_replicas (int | Unset): Upper bound on the group's aggregate desired replicas.
             scale_up_policy (PoolScaleUpPolicy | Unset): Scale-up behaviour for a scaling group (mode + cooldown + idle
                 threshold + saturation cooldown).
-            scale_down_policy (PoolScaleDownPolicy | Unset): Scale-down behaviour for a scaling group.
+            scale_down_policy (PoolScaleDownPolicy | Unset): Scale-down timing for a scaling group. How many replicas each
+                event removes comes from scaleUpPolicy.mode — scale-down mirrors the scale-up mode so a pool sheds capacity on
+                the same scale it acquired it.
      """
 
     name: str

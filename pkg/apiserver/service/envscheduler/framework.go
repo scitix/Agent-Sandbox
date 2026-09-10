@@ -46,6 +46,17 @@ type CandidateContext struct {
 	// MaxedOut plugins. 0 when the env status hasn't been populated yet.
 	DesiredReplicas int32
 
+	// ObservedIdle mirrors Env.Status.ObservedMember.IdleCount — the idle
+	// Pod count as last observed by the Env reconciler.
+	//
+	// It is the cross-process fallback for Snap.IdleReady. A PoolScheduler
+	// only exists in the apiserver process that has already dispatched to
+	// that Pool, so on a cold process (or any replica that has not served
+	// this member yet) Snap is the zero value and the Pool's warm Pods
+	// would otherwise be invisible to ranking. Lags by one Env reconcile,
+	// which is why Snap.IdleReady wins when both are present.
+	ObservedIdle int32
+
 	// SiblingsDesiredSum is Σ DesiredReplicas of every OTHER member in
 	// the same scalingGroup. Precomputed once per Rank() so each
 	// Headroom call is O(1).
@@ -171,6 +182,17 @@ func (f *Framework) sortByScore(in []CandidateContext) []CandidateContext {
 		out[i] = scored[i].c
 	}
 	return out
+}
+
+// effectiveIdle returns this candidate's best available estimate of how
+// many idle Pods it could dispatch right now: the in-process scheduler's
+// ready queue when it exists, falling back to the Env-observed count.
+//
+// Lives on CandidateContext rather than as a plugin helper so the
+// MaxedOut filter, the IdleReady scorer and the SaturationCooldown scorer
+// all agree on what "has a warm Pod" means.
+func (c *CandidateContext) effectiveIdle() int32 {
+	return max(int32(c.Snap.IdleReady), c.ObservedIdle)
 }
 
 // effectiveMax returns the tightest MaxReplicas cap that applies to

@@ -182,7 +182,9 @@ func evaluateScaleUp(snap *Snapshot, mut *Mutator) bool {
 	if !ok {
 		klog.V(2).InfoS("autoscaler: scale-up not triggered",
 			"pool", key,
-			"reactiveDemand", snap.IsReactiveDemand(),
+			"queueLen", snap.QueueLen(),
+			"provisioning", snap.Provisioning(),
+			"unmet", snap.Unmet(),
 			"idleZeroSince", asStatus(snap).IdleZeroSince,
 			"idleThresholdSeconds", policy.IdleThresholdSeconds,
 			"idleZeroQuietWindowSeconds", policy.IdleZeroQuietWindowSeconds,
@@ -223,6 +225,9 @@ func evaluateScaleUp(snap *Snapshot, mut *Mutator) bool {
 		"trigger", trigger,
 		"current", current,
 		"target", target,
+		"demand", snap.Demand(),
+		"unmet", snap.Unmet(),
+		"provisioning", snap.Provisioning(),
 	)
 	mut.ScaleUpAttempt(current, target)
 	return true
@@ -241,14 +246,22 @@ func asStatus(snap *Snapshot) *agentsv1alpha1.PoolAutoScalingStatus {
 // or returns ok=false when none does.
 //
 // Priority:
-//  1. Reactive — `QueueLen > 0 && IdleReady == 0`. Bypasses every
-//     other gate; a real waiter is the strongest possible signal.
+//  1. Reactive — `Unmet() > 0`, i.e. a queued claim that neither an idle
+//     Pod nor an already-ordered replica will serve. Bypasses every
+//     other gate; a waiter with nothing coming for it is the strongest
+//     possible signal.
 //  2. Proactive idleZero — `idleReplicas==0` has persisted for at
 //     least IdleThresholdSeconds AND a Sandbox.Create has been
 //     observed within IdleZeroQuietWindowSeconds. The quiet window
 //     prevents "warm pool churn" when no user is actually around.
+//
+// The reactive gate deliberately tests Unmet rather than the raw
+// "queue non-empty and no idle Pod" condition. Pods take far longer to
+// reach Idle than one cooldown window, so the raw condition stays true
+// across many reconciles after capacity was already ordered — each of
+// which would order more, compounding until the Pool hits a ceiling.
 func pickScaleUpTrigger(snap *Snapshot, policy agentsv1alpha1.PoolScaleUpPolicy) (string, bool) {
-	if snap.IsReactiveDemand() {
+	if snap.Unmet() > 0 {
 		return "reactiveDemand", true
 	}
 	if policy.IdleThresholdSeconds <= 0 {
@@ -379,17 +392,47 @@ func siblingIsRipeToScaleUp(snap *Snapshot, sib *agentsv1alpha1.SandboxPool) boo
 	return snap.Now.Sub(sib.Status.AutoScaling.IdleZeroSince.Time) >= threshold
 }
 
-// computeScaleUpTarget computes the desired post-scale-up Pool
-// replicas. Steps:
-//  1. Base growth from `current` using the policy's mode.
-//  2. Clamp to member.MaxReplicas (if set).
-//  3. Clamp to the group's MaxReplicas aggregate ceiling — we treat
-//     the group total as the ceiling and let this Pool absorb the
-//     remaining headroom.
+// computeScaleUpTarget computes the desired post-scale-up Pool replicas.
+//
+// The target is anchored on observed demand (claimed Pods + waiting
+// claims), never on the Pool's own replica count. A count-anchored
+// formula compounds: each cycle's growth becomes the next cycle's base,
+// so a Pool serving a dozen sandboxes climbs into the thousands within
+// minutes purely because Pods have not finished starting yet.
+//
+// Steps:
+//  1. Cover every unmet claim outright — that demand is real and present.
+//  2. Top the warm reserve up to the level the mode asks for, counting
+//     the spare capacity already in flight.
+//  3. Cap at the mode's demand ceiling, so the Pool can never provision
+//     wildly more than the workload could use.
+//  4. Clamp to member.MaxReplicas and the group's aggregate ceiling.
 //
 // Returns current when no growth is possible.
 func computeScaleUpTarget(snap *Snapshot, policy agentsv1alpha1.PoolScaleUpPolicy, current int32) int32 {
-	target := applyScaleUpMode(policy.Mode, current)
+	mode := policy.Mode
+	if mode == "" {
+		mode = agentsv1alpha1.PoolScaleUpModeDefault
+	}
+	demand := snap.Demand()
+
+	// The buffer is a target level, not an increment: subtracting the
+	// spare capacity already on its way is what makes repeated proactive
+	// cycles converge instead of stacking a fresh buffer every time.
+	shortfall := max(scaleUpBuffer(mode, demand)-snap.SpareCapacity(), 0)
+
+	// Demand-driven growth is never rate-limited: if 100 callers are
+	// waiting, ordering 100 replicas at once is the correct response.
+	// Only the speculative part — warm capacity nobody has asked for yet
+	// — is capped, at max(current, 1) per step.
+	target := current + snap.Unmet() + min(shortfall, max(current, 1))
+
+	// The demand ceiling is what makes runaway growth structurally
+	// impossible. max(_, current) keeps it from forcing a shrink —
+	// scale-down is evaluated separately and honours its own floors.
+	if ceiling := scaleUpDemandCeiling(mode, demand); target > ceiling {
+		target = max(ceiling, current)
+	}
 
 	if snap.MemberConfig != nil && snap.MemberConfig.MaxReplicas != nil {
 		if mm := *snap.MemberConfig.MaxReplicas; mm > 0 && target > mm {
@@ -409,35 +452,46 @@ func computeScaleUpTarget(snap *Snapshot, policy agentsv1alpha1.PoolScaleUpPolic
 		// All clamps below current → no growth.
 		return current
 	}
-	// Invariant guard: never grow by more than max(current, 1) in
-	// a single step. Default/Aggressive modes already satisfy this
-	// for cur>=2; this defends against future mode additions.
-	delta := target - current
-	cap := max(current, 1)
-	if delta > cap {
-		target = current + cap
-	}
 	return target
 }
 
-// applyScaleUpMode is the textbook mode-based growth function. Pure
-// math, no policy knobs — see the field doc on PoolScaleUpMode.
-func applyScaleUpMode(mode agentsv1alpha1.PoolScaleUpMode, current int32) int32 {
-	if mode == "" {
-		mode = agentsv1alpha1.PoolScaleUpModeDefault
-	}
+// scaleUpBuffer is the warm headroom the mode wants on top of the claims
+// that are already waiting: how many spare Pods to keep ready so the next
+// caller does not have to wait for a cold start. Sized as a fraction of
+// demand so an idle Pool stays small and a busy one keeps a proportionate
+// reserve.
+func scaleUpBuffer(mode agentsv1alpha1.PoolScaleUpMode, demand int32) int32 {
 	switch mode {
 	case agentsv1alpha1.PoolScaleUpModeConservative:
-		return current + 1
+		return 1
 	case agentsv1alpha1.PoolScaleUpModeAggressive:
-		if current == 0 {
-			return 1
-		}
-		return current * 2
+		return max(divCeil(demand, 2), 1)
 	default: // PoolScaleUpModeDefault
-		add := max(int32(math.Ceil(float64(current)/2.0)), 1)
-		return current + add
+		return max(divCeil(demand, 4), 1)
 	}
+}
+
+// scaleUpDemandCeiling is the hard upper bound on replicas for the given
+// demand. It is what a single scale-up decision may never exceed,
+// regardless of how many cycles fire — the reason a Pool serving a dozen
+// sandboxes cannot reach four figures.
+func scaleUpDemandCeiling(mode agentsv1alpha1.PoolScaleUpMode, demand int32) int32 {
+	switch mode {
+	case agentsv1alpha1.PoolScaleUpModeConservative:
+		return demand + 1
+	case agentsv1alpha1.PoolScaleUpModeAggressive:
+		return demand*2 + 2
+	default: // PoolScaleUpModeDefault
+		return divCeil(demand*3, 2) + 1
+	}
+}
+
+// divCeil is integer ceiling division for non-negative numerators.
+func divCeil(n, d int32) int32 {
+	if d == 0 {
+		return 0
+	}
+	return int32(math.Ceil(float64(n) / float64(d)))
 }
 
 // stuckEventInterval rate-limits the AutoscalerScaleDownStuck warning so a
@@ -447,12 +501,16 @@ func applyScaleUpMode(mode agentsv1alpha1.PoolScaleUpMode, current int32) int32 
 // decrement cadence, not how often to re-warn about a stall.
 const stuckEventInterval = 5 * time.Minute
 
-// evaluateScaleDown runs the scale-down decision pipeline. It decrements
-// Pool.Spec.Replicas by exactly one when every gate clears — multi-step
-// scale-down is intentionally not done, giving the next reconcile a chance
-// to observe the new state before going further — and it drives a
-// Started / Completed / Stuck event lifecycle (one pair per drain) instead
-// of one event per replica removed.
+// evaluateScaleDown runs the scale-down decision pipeline. It shrinks
+// Pool.Spec.Replicas by a proportional step when every gate clears, and
+// drives a Started / Completed / Stuck event lifecycle (one pair per
+// drain) instead of one event per replica removed.
+//
+// The step mirrors the group's scaleUpPolicy.mode (see scaleDownStep), so
+// a Pool shrinks on the same scale it grew. Removing a fixed single
+// replica per stabilization window cannot keep up with proportional
+// growth: a Pool that reached several hundred replicas would need most of
+// a day to drain, holding the quota the whole time.
 //
 // Each gate early-return below maps to exactly one session transition; the
 // mapping must be preserved if the gate order is ever changed:
@@ -462,8 +520,8 @@ const stuckEventInterval = 5 * time.Minute
 //	current <= 0           → Completed (drained to zero)
 //	group MinReplicas floor→ Stuck (idle pods remain but a hard floor blocks)
 //	no idle pod aged enough→ Completed (nothing left to remove — natural end)
-//	RunningReplicas floor  → Stuck (idle pods remain but a hard floor blocks)
-//	decrement staged       → Started (first step) or Stepped (subsequent, silent)
+//	step driven to zero    → Stuck (idle pods remain but a hard floor blocks)
+//	shrink staged          → Started (first step) or Stepped (subsequent, silent)
 func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 	key := poolKeyFor(snap)
 	sess := snap.ScaleDownSession
@@ -496,7 +554,7 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 		completeScaleDownSession(snap, mut)
 		return
 	}
-	if !groupMinReplicasHeadroomAvailable(snap, current) {
+	if groupMinReplicasHeadroom(snap) <= 0 {
 		klog.V(3).InfoS("autoscaler: scale-down gated by group MinReplicas",
 			"pool", key,
 			"groupDesiredTotal", snap.GroupDesiredTotal(),
@@ -505,7 +563,8 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 		maybeEmitScaleDownStuck(snap, mut, current, "group MinReplicas")
 		return
 	}
-	if !oldestIdleEligible(snap, policy) {
+	eligible := snap.EligibleIdleCount(policy)
+	if eligible == 0 {
 		// No idle Pod has aged past the timeout: there is genuinely
 		// nothing more to remove right now. This is the natural end of a
 		// drain, not a stall.
@@ -518,30 +577,41 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 		return
 	}
 
-	target := current - 1
-	// Per-member floor: the owning Env member may declare its own
-	// MinReplicas (Config.MinReplicas), independent of the group's
-	// aggregate MinReplicas. Never shrink this Pool below it.
-	if memberMin := memberMinReplicasFloor(snap); target < memberMin {
-		klog.V(3).InfoS("autoscaler: scale-down blocked by member MinReplicas floor",
-			"pool", key, "wantTarget", target, "memberMinReplicas", memberMin)
-		maybeEmitScaleDownStuck(snap, mut, current, "member MinReplicas")
+	// Never remove more Pods than have actually aged out of their idle
+	// timeout, whatever the mode's proportional step says.
+	step := min(scaleDownStep(snap.Group.ScaleUpPolicy.Mode, current), eligible)
+
+	// Each floor shrinks the step rather than vetoing the whole decision:
+	// a step that overshoots a floor should still remove everything above
+	// it. Only a step driven to zero means the drain is truly blocked.
+	if room := current - memberMinReplicasFloor(snap); step > room {
+		step = room
+	}
+	if room := current - snap.Pool.Status.RunningReplicas; step > room {
+		step = room
+	}
+	if room := groupMinReplicasHeadroom(snap); step > room {
+		step = room
+	}
+	if step <= 0 {
+		klog.V(3).InfoS("autoscaler: scale-down blocked by a replica floor",
+			"pool", key,
+			"current", current,
+			"memberMinReplicas", memberMinReplicasFloor(snap),
+			"running", snap.Pool.Status.RunningReplicas,
+			"groupHeadroom", groupMinReplicasHeadroom(snap),
+		)
+		maybeEmitScaleDownStuck(snap, mut, current, "a replica floor")
 		return
 	}
-	// Defensive: never lower the target below RunningReplicas. The
-	// top-of-Decide self-heal usually keeps current >= running so this
-	// branch is rarely reached, but keeping the invariant adjacent to
-	// the scale-down site documents the rule for future edits.
-	if running := snap.Pool.Status.RunningReplicas; target < running {
-		klog.V(3).InfoS("autoscaler: scale-down blocked by RunningReplicas floor",
-			"pool", key, "wantTarget", target, "running", running)
-		maybeEmitScaleDownStuck(snap, mut, current, "RunningReplicas floor")
-		return
-	}
+
+	target := current - step
 	klog.V(2).InfoS("autoscaler: scaling down",
 		"pool", key,
 		"current", current,
 		"target", target,
+		"step", step,
+		"eligibleIdle", eligible,
 		"sessionActive", sess.Active,
 	)
 	mut.SetTargetReplicas(target)
@@ -632,10 +702,6 @@ func lastScaleDownReference(snap *Snapshot) time.Time {
 	return t
 }
 
-// groupMinReplicasHeadroomAvailable returns true when the group's
-// aggregate desired (minus 1 for our planned decrement) is still at
-// or above MinReplicas. The min is a group-level invariant; per-Pool
-// min would conflate group policy with individual Pool state.
 // memberMinReplicasFloor returns the per-member scale-down floor declared on
 // the owning Env member (Config.MinReplicas). 0 when unset — in that case only
 // the group aggregate MinReplicas applies.
@@ -648,37 +714,38 @@ func memberMinReplicasFloor(snap *Snapshot) int32 {
 	return 0
 }
 
-func groupMinReplicasHeadroomAvailable(snap *Snapshot, currentSelf int32) bool {
+// scaleDownStep is how many replicas one scale-down decision removes,
+// mirroring the group's scaleUpPolicy.mode so a Pool shrinks on the same
+// scale it grew. Damped relative to the equivalent scale-up buffer: giving
+// up warm capacity is the riskier direction, and the idleTimeout gate has
+// already proven these Pods went unused.
+//
+// Callers clamp the result down to the eligible idle count and to every
+// replica floor.
+func scaleDownStep(mode agentsv1alpha1.PoolScaleUpMode, current int32) int32 {
+	switch mode {
+	case agentsv1alpha1.PoolScaleUpModeConservative:
+		return 1
+	case agentsv1alpha1.PoolScaleUpModeAggressive:
+		return max(divCeil(current, 2), 1)
+	default: // PoolScaleUpModeDefault
+		return max(divCeil(current, 4), 1)
+	}
+}
+
+// groupMinReplicasHeadroom returns how many replicas the group can still
+// give up before its aggregate desired would fall below MinReplicas. The
+// min is a group-level invariant; a per-Pool min would conflate group
+// policy with individual Pool state.
+//
+// Returned as a count rather than a boolean so a step that overshoots the
+// floor gets trimmed to fit instead of vetoing the whole decision.
+func groupMinReplicasHeadroom(snap *Snapshot) int32 {
 	minR := int32(0)
 	if snap.Group.MinReplicas != nil {
 		minR = *snap.Group.MinReplicas
 	}
-	aggregate := snap.GroupDesiredTotal()
-	postShrink := aggregate - 1
-	if postShrink < minR {
-		return false
-	}
-	_ = currentSelf // currentSelf is implicit in aggregate; explicit signature is for readability at call sites.
-	return true
-}
-
-// oldestIdleEligible returns true when at least one idle Pod has
-// been sitting at idle for >= idleTimeoutSeconds. Pool reconciler
-// downstream picks which specific Pod to evict (it already has the
-// scale-down-protected two-phase flow).
-func oldestIdleEligible(snap *Snapshot, policy agentsv1alpha1.PoolScaleDownPolicy) bool {
-	if policy.IdleTimeoutSeconds <= 0 {
-		// Treat 0 as "any idle pod is eligible immediately" — useful
-		// for tests and aggressive shrinkage. Negative is impossible
-		// thanks to the CRD's Minimum=0 validation.
-		return len(snap.IdlePodAges) > 0
-	}
-	threshold := time.Duration(policy.IdleTimeoutSeconds) * time.Second
-	oldest, ok := snap.OldestIdleAge()
-	if !ok {
-		return false
-	}
-	return oldest >= threshold
+	return max(snap.GroupDesiredTotal()-minR, 0)
 }
 
 // poolIdleReplicas reads the live idle count out of the Pool's

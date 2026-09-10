@@ -1151,7 +1151,7 @@ export interface components {
             lastScaleUpTime?: string;
             /**
              * Format: date-time
-             * @description Most recent wall-clock time spec.replicas shrank by one. Drives scaleDownPolicy.stabilizationSeconds.
+             * @description Most recent wall-clock time spec.replicas shrank. Drives scaleDownPolicy.stabilizationSeconds; the step size comes from scaleUpPolicy.mode.
              */
             lastScaleDownTime?: string;
             /**
@@ -1430,7 +1430,7 @@ export interface components {
         /** @description Scale-up behaviour for a scaling group (mode + cooldown + idle threshold + saturation cooldown). */
         PoolScaleUpPolicy: {
             /**
-             * @description Conservative=+1 per decision; Default=+max(1,ceil(N/2)); Aggressive=double up to maxReplicas.
+             * @description How much warm headroom to keep, and how large a bite each scale-down takes. Sizing is relative to demand (claimed Pods + waiting claims), never to the pool's own replica count; waiting claims are always covered in full regardless of mode. Conservative=1 spare Pod, ceiling demand+1, scale-down -1; Default=ceil(demand/4) spare, ceiling 1.5x demand, scale-down -ceil(replicas/4); Aggressive=ceil(demand/2) spare, ceiling 2x demand, scale-down -ceil(replicas/2).
              * @enum {string}
              */
             mode?: "Conservative" | "Default" | "Aggressive";
@@ -1455,11 +1455,11 @@ export interface components {
              */
             saturationCooldownSeconds?: number;
         };
-        /** @description Scale-down behaviour for a scaling group. */
+        /** @description Scale-down timing for a scaling group. How many replicas each event removes comes from scaleUpPolicy.mode — scale-down mirrors the scale-up mode so a pool sheds capacity on the same scale it acquired it. */
         PoolScaleDownPolicy: {
             /**
              * Format: int32
-             * @description Minimum seconds a pod must remain Idle before it becomes a scale-down candidate.
+             * @description Minimum seconds a pod must remain Idle before it becomes a scale-down candidate. Also bounds the step: a scale-down never removes more pods than have aged past this.
              */
             idleTimeoutSeconds?: number;
             /**

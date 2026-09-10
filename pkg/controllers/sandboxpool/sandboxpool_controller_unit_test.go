@@ -1908,3 +1908,57 @@ func TestScaleDownGuard_SkipsWhenExpectationsUnsatisfied(t *testing.T) {
 		t.Errorf("expected 4 pods (scale-down blocked), got %d", len(podList.Items))
 	}
 }
+
+// A scale-down that removes many replicas marks every candidate in one pass.
+// Marking a single Pod per reconcile would cap the drain rate at one Pod per
+// protection window, so a Pool that grew proportionally could never shrink
+// proportionally.
+func TestScaleDown_MarksEveryCandidateInOnePass(t *testing.T) {
+	scheme := setupScheme(t)
+	const (
+		total   = 10
+		desired = 4
+	)
+
+	pool := &agentsv1alpha1.SandboxPool{
+		ObjectMeta: metav1.ObjectMeta{Name: "pool", Namespace: "default"},
+		Spec:       agentsv1alpha1.SandboxPoolSpec{Replicas: desired},
+	}
+
+	objs := make([]client.Object, 0, total+1)
+	objs = append(objs, pool)
+	for i := range total {
+		objs = append(objs, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("idle-%02d", i),
+				Namespace: "default",
+				Labels: map[string]string{
+					agentsv1alpha1.SandboxPoolLabelKey:  "pool",
+					agentsv1alpha1.SandboxPhaseLabelKey: agentsv1alpha1.SandboxPhaseIdle,
+				},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		})
+	}
+
+	cli := newTestClientBuilder(t).WithObjects(objs...).Build()
+	r := &SandboxPoolReconciler{Client: cli, Scheme: scheme}
+
+	if _, err := r.reconcilePods(context.Background(), pool); err != nil {
+		t.Fatalf("reconcilePods: %v", err)
+	}
+
+	podList := &corev1.PodList{}
+	if err := cli.List(context.Background(), podList, client.InNamespace("default")); err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	marked := 0
+	for i := range podList.Items {
+		if podList.Items[i].Annotations[agentsv1alpha1.SandboxScaleDownProtectedAnnotationKey] != "" {
+			marked++
+		}
+	}
+	if want := total - desired; marked != want {
+		t.Errorf("marked %d pods as scale-down candidates, want %d (one reconcile must mark the whole excess)", marked, want)
+	}
+}

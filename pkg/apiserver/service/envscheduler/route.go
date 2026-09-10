@@ -69,6 +69,7 @@ func (m *Manager) buildCandidates(envKey types.NamespacedName, entry *envEntry, 
 	// DesiredReplicas to score Headroom, and Σ-siblings to apply the
 	// group cap.
 	desiredByMember := map[string]int32{}
+	idleByMember := map[string]int32{}
 	saturatedByMember := map[string]*time.Time{}
 	if m.envGetter != nil {
 		if env, ok := m.envGetter.GetEnv(envKey.Namespace, envKey.Name); ok {
@@ -79,6 +80,7 @@ func (m *Manager) buildCandidates(envKey types.NamespacedName, entry *envEntry, 
 				for i := range c.ObservedMembers {
 					om := &c.ObservedMembers[i]
 					desiredByMember[om.Name] = om.DesiredReplicas
+					idleByMember[om.Name] = om.IdleCount
 					if om.SaturatedUntil != nil && om.SaturatedUntil.After(now) {
 						t := om.SaturatedUntil.Time
 						saturatedByMember[om.Name] = &t
@@ -121,6 +123,7 @@ func (m *Manager) buildCandidates(envKey types.NamespacedName, entry *envEntry, 
 			Member:             mr,
 			Snap:               snap,
 			DesiredReplicas:    desired,
+			ObservedIdle:       idleByMember[mr.poolName],
 			SiblingsDesiredSum: siblings,
 			SaturatedUntil:     saturatedByMember[mr.poolName],
 		})

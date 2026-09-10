@@ -269,8 +269,11 @@ func TestScaleUp_ReactiveDemand_FromZero(t *testing.T) {
 		poolIdle:     0,
 		schedSnap:    &schedule.Snapshot{QueueLen: 3, IdleReady: 0},
 	})
-	if !ok || target != 1 {
-		t.Fatalf("expected target=1 with reactive demand from 0, got ok=%v target=%d", ok, target)
+	// 3 unmet claims are covered outright, plus a 1-replica warm buffer
+	// (Default's ceil(demand/4)=1, and the speculative part is capped at
+	// max(current,1)=1 anyway). Growth tracks the waiters, not the count.
+	if !ok || target != 4 {
+		t.Fatalf("expected target=4 with 3 queued claims from 0, got ok=%v target=%d", ok, target)
 	}
 	// LastScaleUpTime / LastScaleUpAttemptResult are written by
 	// Mutator.Commit after the Prober runs. See
@@ -390,7 +393,7 @@ func TestScaleUp_Cooldown_BlocksProactive(t *testing.T) {
 
 // ---------- Scale-up: target math ----------
 
-func TestScaleUp_DefaultMode_HalfGrowth(t *testing.T) {
+func TestScaleUp_DefaultMode_AddsDemandProportionalBuffer(t *testing.T) {
 	g := defaultGroupEnabled()
 	idleSince := metav1.NewTime(time.Date(2026, 5, 27, 11, 59, 0, 0, time.UTC))
 	recent := time.Date(2026, 5, 27, 11, 58, 0, 0, time.UTC)
@@ -398,13 +401,58 @@ func TestScaleUp_DefaultMode_HalfGrowth(t *testing.T) {
 		withEnv:      true,
 		group:        &g,
 		poolReplicas: 10,
+		poolRunning:  10, // every Pod claimed, none idle
 		poolIdle:     0,
 		poolStatus:   &agentsv1alpha1.PoolAutoScalingStatus{IdleZeroSince: &idleSince},
 		lastCreateAt: &recent,
 	})
-	// Default = +max(1, ceil(10/2)) = +5 → 15
-	if !ok || target != 15 {
-		t.Errorf("Default growth from 10 → expected 15, got ok=%v target=%d", ok, target)
+	// demand=10, nothing queued → 10 + 0 unmet + ceil(10/4) buffer = 13.
+	if !ok || target != 13 {
+		t.Errorf("Default growth at demand 10 → expected 13, got ok=%v target=%d", ok, target)
+	}
+}
+
+// A Pool that has already ordered enough replicas to cover its queue does
+// not order more, however many reconciles pass before those Pods reach
+// Idle. This is what stops a Pool serving a dozen sandboxes from climbing
+// into the thousands: the in-flight count is discounted from demand.
+func TestScaleUp_InFlightCapacityCoversQueue_NoGrowth(t *testing.T) {
+	g := defaultGroupEnabled()
+	idleSince := metav1.NewTime(time.Date(2026, 5, 27, 11, 59, 0, 0, time.UTC))
+	recent := time.Date(2026, 5, 27, 11, 58, 0, 0, time.UTC)
+	_, ok, _ := runDecide(t, scenario{
+		withEnv: true,
+		group:   &g,
+		// 18 ordered, 13 claimed, 0 idle → 5 still starting, and only one
+		// caller waiting. That waiter is already covered.
+		poolReplicas: 18,
+		poolRunning:  13,
+		poolIdle:     0,
+		schedSnap:    &schedule.Snapshot{QueueLen: 1, IdleReady: 0},
+		poolStatus:   &agentsv1alpha1.PoolAutoScalingStatus{IdleZeroSince: &idleSince},
+		lastCreateAt: &recent,
+	})
+	if ok {
+		t.Errorf("expected no scale-up while 5 replicas are already in flight for 1 waiter")
+	}
+}
+
+// Demand-driven growth is not rate-limited: a burst of waiters is covered
+// in one step rather than dribbled out over many cooldown windows.
+func TestScaleUp_BurstCoveredInOneStep(t *testing.T) {
+	g := defaultGroupEnabled()
+	target, ok, _ := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 2,
+		poolRunning:  0,
+		poolIdle:     0,
+		schedSnap:    &schedule.Snapshot{QueueLen: 100, IdleReady: 0},
+	})
+	// unmet = 100 - 0 idle - 2 in flight = 98; buffer ceil(100/4)=25 capped
+	// at max(current,1)=2 → 2 + 98 + 2 = 102.
+	if !ok || target != 102 {
+		t.Errorf("expected a 100-claim burst covered in one step (102), got ok=%v target=%d", ok, target)
 	}
 }
 
@@ -416,6 +464,7 @@ func TestScaleUp_MemberMaxClamps(t *testing.T) {
 		withEnv:      true,
 		group:        &g,
 		poolReplicas: 10,
+		poolRunning:  10,
 		poolIdle:     0,
 		memberCfg: &agentsv1alpha1.EnvClusterMemberConfig{
 			ScalingGroup: testGroup,
@@ -434,14 +483,15 @@ func TestScaleUp_GroupMaxClamps(t *testing.T) {
 	g.MaxReplicas = ptr.To(int32(12))
 	idleSince := metav1.NewTime(time.Date(2026, 5, 27, 11, 59, 0, 0, time.UTC))
 	recent := time.Date(2026, 5, 27, 11, 58, 0, 0, time.UTC)
-	// Self=8, sibling=3, ceiling=12.
-	// Default mode would push self to 8 + max(1, ceil(8/2)) = 12.
+	// Self=8 (all claimed), sibling=3, ceiling=12.
+	// Demand 8 would push self to 8 + ceil(8/4) = 10.
 	// Group headroom = ceiling - sibling = 12 - 3 = 9 → self clamped to 9.
 	sib := poolFixture{name: "sibling", replicas: 3, idle: 1}.build()
 	target, ok, _ := runDecide(t, scenario{
 		withEnv:      true,
 		group:        &g,
 		poolReplicas: 8,
+		poolRunning:  8,
 		poolIdle:     0,
 		siblings:     []*agentsv1alpha1.SandboxPool{sib},
 		poolStatus:   &agentsv1alpha1.PoolAutoScalingStatus{IdleZeroSince: &idleSince},
@@ -748,24 +798,47 @@ func TestDecide_NilInputs_NoPanic(t *testing.T) {
 	Decide(nil, &Mutator{})
 }
 
-func TestApplyScaleUpMode(t *testing.T) {
+func TestScaleUpBufferAndCeiling(t *testing.T) {
+	cases := []struct {
+		mode        agentsv1alpha1.PoolScaleUpMode
+		demand      int32
+		wantBuffer  int32
+		wantCeiling int32
+	}{
+		{agentsv1alpha1.PoolScaleUpModeConservative, 0, 1, 1},
+		{agentsv1alpha1.PoolScaleUpModeConservative, 10, 1, 11},
+		{agentsv1alpha1.PoolScaleUpModeDefault, 0, 1, 1},
+		{agentsv1alpha1.PoolScaleUpModeDefault, 1, 1, 3},
+		{agentsv1alpha1.PoolScaleUpModeDefault, 14, 4, 22},
+		{agentsv1alpha1.PoolScaleUpModeAggressive, 0, 1, 2},
+		{agentsv1alpha1.PoolScaleUpModeAggressive, 10, 5, 22},
+		{"", 8, 2, 13}, // empty mode → Default
+	}
+	for _, tc := range cases {
+		if got := scaleUpBuffer(tc.mode, tc.demand); got != tc.wantBuffer {
+			t.Errorf("scaleUpBuffer(%q, %d) = %d, want %d", tc.mode, tc.demand, got, tc.wantBuffer)
+		}
+		if got := scaleUpDemandCeiling(tc.mode, tc.demand); got != tc.wantCeiling {
+			t.Errorf("scaleUpDemandCeiling(%q, %d) = %d, want %d", tc.mode, tc.demand, got, tc.wantCeiling)
+		}
+	}
+}
+
+func TestScaleDownStep(t *testing.T) {
 	cases := []struct {
 		mode    agentsv1alpha1.PoolScaleUpMode
 		current int32
 		want    int32
 	}{
-		{agentsv1alpha1.PoolScaleUpModeConservative, 0, 1},
-		{agentsv1alpha1.PoolScaleUpModeConservative, 10, 11},
-		{agentsv1alpha1.PoolScaleUpModeDefault, 0, 1},
-		{agentsv1alpha1.PoolScaleUpModeDefault, 1, 2},
-		{agentsv1alpha1.PoolScaleUpModeDefault, 10, 15},
-		{agentsv1alpha1.PoolScaleUpModeAggressive, 0, 1},
-		{agentsv1alpha1.PoolScaleUpModeAggressive, 5, 10},
-		{"", 4, 6}, // empty mode → Default
+		{agentsv1alpha1.PoolScaleUpModeConservative, 800, 1},
+		{agentsv1alpha1.PoolScaleUpModeDefault, 800, 200},
+		{agentsv1alpha1.PoolScaleUpModeDefault, 3, 1},
+		{agentsv1alpha1.PoolScaleUpModeAggressive, 800, 400},
+		{"", 8, 2}, // empty mode → Default
 	}
 	for _, tc := range cases {
-		if got := applyScaleUpMode(tc.mode, tc.current); got != tc.want {
-			t.Errorf("applyScaleUpMode(%q, %d) = %d, want %d", tc.mode, tc.current, got, tc.want)
+		if got := scaleDownStep(tc.mode, tc.current); got != tc.want {
+			t.Errorf("scaleDownStep(%q, %d) = %d, want %d", tc.mode, tc.current, got, tc.want)
 		}
 	}
 }
@@ -1076,4 +1149,138 @@ func TestScaleDown_RestartSafety_FreshSessionStarts(t *testing.T) {
 	if tr := transitionOf(mut); tr.Kind != ScaleDownStarted || tr.StartReplicas != 4 {
 		t.Errorf("expected fresh Started{4}, got %+v", tr)
 	}
+}
+
+// ---------- Regression: growth stays proportional to demand ----------
+
+// The reported production failure: a steady handful of concurrent
+// sandboxes drove a Pool from single digits into four figures within
+// minutes, because the target was computed from the Pool's own replica
+// count and nothing discounted the replicas already starting.
+//
+// Growth must converge on a small multiple of demand and then stop, no
+// matter how many cycles fire while Pods are still coming up.
+func TestScaleUp_ConvergesOnDemand_NoRunaway(t *testing.T) {
+	const (
+		concurrentSandboxes = 13
+		groupMax            = 2560
+	)
+	g := defaultGroupEnabled()
+	g.MaxReplicas = ptr.To(int32(groupMax))
+
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	created := now
+	replicas := int32(concurrentSandboxes)
+	idleSince := metav1.NewTime(now.Add(-10 * time.Minute))
+
+	var curve []int32
+	for range 30 {
+		// One cooldown window per cycle, with nothing yet reaching Idle:
+		// scheduling, image pull and startup all outlast the 30s cooldown.
+		now = now.Add(31 * time.Second)
+		target, ok, _ := runDecide(t, scenario{
+			now:          now,
+			withEnv:      true,
+			group:        &g,
+			poolReplicas: replicas,
+			poolRunning:  concurrentSandboxes,
+			poolIdle:     0,
+			schedSnap:    &schedule.Snapshot{QueueLen: 1, IdleReady: 0},
+			lastCreateAt: &created,
+			poolStatus:   &agentsv1alpha1.PoolAutoScalingStatus{IdleZeroSince: &idleSince},
+		})
+		if !ok {
+			break
+		}
+		curve = append(curve, target)
+		replicas = target
+	}
+
+	if replicas > 2*concurrentSandboxes {
+		t.Errorf("pool grew to %d replicas for %d concurrent sandboxes (curve %v)",
+			replicas, concurrentSandboxes, curve)
+	}
+	if len(curve) > 3 {
+		t.Errorf("growth did not converge: %d consecutive scale-ups (curve %v)", len(curve), curve)
+	}
+}
+
+// ---------- Regression: draining scales with the Pool ----------
+
+// Removing a single replica per stabilization window cannot undo
+// proportional growth — a Pool that reached several hundred replicas
+// would hold the quota for most of a day. The step mirrors the group's
+// scale-up mode instead.
+func TestScaleDown_ProportionalStep_DrainsPromptly(t *testing.T) {
+	g := scaleDownGroup()
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	replicas := int32(800)
+
+	windows := 0
+	for replicas > 0 && windows < 200 {
+		now = now.Add(time.Duration(g.ScaleDownPolicy.StabilizationSeconds+1) * time.Second)
+		target, ok, _ := runDecide(t, scenario{
+			now:          now,
+			withEnv:      true,
+			group:        &g,
+			poolReplicas: replicas,
+			poolIdle:     replicas,
+			idlePodAges:  idleAgesFixture(int(replicas), time.Hour),
+		})
+		if !ok {
+			t.Fatalf("window %d: no scale-down decision at %d replicas", windows, replicas)
+		}
+		windows++
+		replicas = target
+	}
+
+	drain := time.Duration(windows) * time.Duration(g.ScaleDownPolicy.StabilizationSeconds) * time.Second
+	if drain > 30*time.Minute {
+		t.Errorf("draining 800 idle replicas took %d windows (~%s)", windows, drain.Round(time.Minute))
+	}
+}
+
+// A step that overshoots a floor is trimmed to fit rather than abandoned:
+// the Pool still sheds everything above the floor in one go.
+func TestScaleDown_StepTrimmedToFloor(t *testing.T) {
+	g := scaleDownGroup()
+	g.MinReplicas = ptr.To(int32(90))
+	target, ok, _ := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 100,
+		poolIdle:     100,
+		idlePodAges:  idleAgesFixture(100, time.Hour),
+	})
+	// Default step at 100 is 25, but the group floor only allows 10.
+	if !ok || target != 90 {
+		t.Errorf("expected step trimmed to the group floor (90), got ok=%v target=%d", ok, target)
+	}
+}
+
+// The step never removes more Pods than have actually aged out of the
+// idle timeout, however large the proportional step is.
+func TestScaleDown_StepBoundedByEligibleIdle(t *testing.T) {
+	g := scaleDownGroup()
+	ages := append(idleAgesFixture(3, time.Hour), idleAgesFixture(97, time.Second)...)
+	target, ok, _ := runDecide(t, scenario{
+		withEnv:      true,
+		group:        &g,
+		poolReplicas: 100,
+		poolIdle:     100,
+		idlePodAges:  ages,
+	})
+	// Default step at 100 is 25, but only 3 Pods have aged past 60s.
+	if !ok || target != 97 {
+		t.Errorf("expected step bounded by the 3 eligible Pods (97), got ok=%v target=%d", ok, target)
+	}
+}
+
+// idleAgesFixture builds an IdlePodAges slice of n Pods all at the same age.
+func idleAgesFixture(n int, age time.Duration) []time.Duration {
+	out := make([]time.Duration, n)
+	for i := range out {
+		out[i] = age
+	}
+	return out
 }

@@ -269,3 +269,12 @@ func (r *SandboxPoolReconciler) unmarkStaleScaleDownProtected(ctx context.Contex
 	}
 	return cleared
 }
+
+// minWait returns the shorter of two requeue delays, treating a zero
+// current value as "unset" so the first candidate always wins.
+func minWait(cur, next time.Duration) time.Duration {
+	if cur == 0 || next < cur {
+		return next
+	}
+	return cur
+}

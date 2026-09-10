@@ -543,7 +543,7 @@ type EnvAutoscalingSpec struct {
 // EnvAutoscalingGroup is one Env-level autoscaling unit, applied jointly to
 // every member referencing this group.
 //
-// +kubebuilder:validation:XValidation:rule="self.scaleUpPolicy.mode != 'Aggressive' || has(self.maxReplicas)",message="Aggressive scaleUpPolicy.mode requires maxReplicas to be set on the group — Aggressive doubles the replica count each cooldown and would otherwise grow without bound"
+// +kubebuilder:validation:XValidation:rule="self.scaleUpPolicy.mode != 'Aggressive' || has(self.maxReplicas)",message="Aggressive scaleUpPolicy.mode requires maxReplicas to be set on the group — Aggressive provisions up to twice the observed demand, so an unbounded group cedes the only absolute limit on how much quota a demand spike can claim"
 type EnvAutoscalingGroup struct {
 	// Name matches EnvClusterMember.ScalingGroup. Required. The Env
 	// rejects groups whose Name does not match the ScalingGroup of at
@@ -568,10 +568,11 @@ type EnvAutoscalingGroup struct {
 
 	// MaxReplicas is the upper bound for the aggregate (group) replica
 	// count. When unset, the group has NO ceiling and grows until each
-	// member's own MaxReplicas, the cluster's capacity, or external
-	// quotas stop it. Aggressive scaleUpPolicy.mode REQUIRES this field
-	// to be set (validated via CEL) because doubling each cooldown
-	// without an upper bound is unsafe.
+	// member's own MaxReplicas, the mode's per-demand ceiling, the
+	// cluster's capacity, or external quotas stop it. Aggressive
+	// scaleUpPolicy.mode REQUIRES this field to be set (validated via
+	// CEL): it provisions up to twice the observed demand, so leaving the
+	// group unbounded removes the only absolute cap on a demand spike.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`

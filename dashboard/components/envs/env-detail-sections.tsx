@@ -497,8 +497,12 @@ export function ScaleDownCell({ group }: { group: AgentEnvAutoscalingGroup }) {
   const { t } = useTranslation()
   const idle = group.scaleDownPolicy?.idleTimeoutSeconds
   const stab = group.scaleDownPolicy?.stabilizationSeconds
+  // The step size is governed by scaleUpPolicy.mode — scale-down mirrors
+  // the scale-up mode — so it is shown here too, where it applies.
+  const mode = group.scaleUpPolicy?.mode
   return (
     <div className="font-mono text-[11px] leading-tight">
+      {mode && <div className="text-foreground">{mode}</div>}
       <div className="text-muted-foreground">
         {t("envs.detail.autoscaling.idleTimeout")}: {fmt(idle, "s")}
       </div>

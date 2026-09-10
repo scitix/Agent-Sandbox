@@ -108,15 +108,19 @@ spec:
                             count. When unset, the group has NO ceiling and grows
                             until each
 
-                            member''s own MaxReplicas, the cluster''s capacity, or
-                            external
+                            member''s own MaxReplicas, the mode''s per-demand ceiling,
+                            the
 
-                            quotas stop it. Aggressive scaleUpPolicy.mode REQUIRES
-                            this field
+                            cluster''s capacity, or external quotas stop it. Aggressive
 
-                            to be set (validated via CEL) because doubling each cooldown
+                            scaleUpPolicy.mode REQUIRES this field to be set (validated
+                            via
 
-                            without an upper bound is unsafe.'
+                            CEL): it provisions up to twice the observed demand, so
+                            leaving the
+
+                            group unbounded removes the only absolute cap on a demand
+                            spike.'
                           format: int32
                           minimum: 0
                           type: integer
@@ -171,13 +175,13 @@ spec:
                               type: integer
                             stabilizationSeconds:
                               default: 60
-                              description: 'StabilizationSeconds is the minimum number
-                                of seconds between two consecutive
-
-                                scale-down events. Prevents thrashing when load fluctuates
-                                around the threshold.
-
-                                Defaults to 60.'
+                              description: "StabilizationSeconds is the minimum number\
+                                \ of seconds between two consecutive\nscale-down events.\
+                                \ Prevents thrashing when load fluctuates around the\
+                                \ threshold.\nHow many replicas each of those events\
+                                \ removes comes from\nscaleUpPolicy.mode \u2014 scale-down\
+                                \ mirrors the scale-up mode so a pool\nsheds capacity\
+                                \ on the same scale it acquired it.\nDefaults to 60."
                               format: int32
                               minimum: 0
                               type: integer
@@ -247,11 +251,22 @@ spec:
                                 - Default
                                 - Aggressive
                               default: Default
-                              description: "Mode controls how aggressively the pool\
-                                \ grows on each scale-up decision.\n  - Conservative:\
-                                \ +1 per decision\n  - Default:      +max(1, ceil(currentReplicas/2))\n\
-                                \  - Aggressive:   scale to min(currentReplicas*2,\
-                                \ maxReplicas)\nDefaults to Default."
+                              description: "Mode controls how much warm headroom the\
+                                \ pool keeps, and how large a\nbite each scale-down\
+                                \ decision takes. It does NOT control how fast the\n\
+                                pool grows under load: every scale-up covers waiting\
+                                \ claims in full,\nbecause a caller with nothing coming\
+                                \ for it is not a matter of policy.\n\nSizing is always\
+                                \ relative to demand (claimed Pods + waiting claims),\n\
+                                never to the pool's own replica count, and each mode\
+                                \ carries a hard\nceiling on replicas per unit of\
+                                \ demand:\n  - Conservative: keeps 1 spare Pod;  \
+                                \    ceiling demand+1;    removes 1 replica per scale-down\n\
+                                \  - Default:      keeps ceil(demand/4);   ceiling\
+                                \ 1.5\xD7demand;  removes ceil(replicas/4) per scale-down\n\
+                                \  - Aggressive:   keeps ceil(demand/2);   ceiling\
+                                \ 2\xD7demand;    removes ceil(replicas/2) per scale-down\n\
+                                Defaults to Default."
                               type: string
                             saturationCooldownSeconds:
                               default: 60
@@ -276,8 +291,10 @@ spec:
                       type: object
                       x-kubernetes-validations:
                       - message: "Aggressive scaleUpPolicy.mode requires maxReplicas\
-                          \ to be set on the group \u2014 Aggressive doubles the replica\
-                          \ count each cooldown and would otherwise grow without bound"
+                          \ to be set on the group \u2014 Aggressive provisions up\
+                          \ to twice the observed demand, so an unbounded group cedes\
+                          \ the only absolute limit on how much quota a demand spike\
+                          \ can claim"
                         rule: self.scaleUpPolicy.mode != 'Aggressive' || has(self.maxReplicas)
                     type: array
                     x-kubernetes-list-map-keys:

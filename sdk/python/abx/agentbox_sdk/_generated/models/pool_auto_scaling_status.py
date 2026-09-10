@@ -44,8 +44,8 @@ class PoolAutoScalingStatus:
         Attributes:
             last_scale_up_time (datetime.datetime | Unset): Most recent wall-clock time spec.replicas grew (probe accepted
                 at least one additional replica). Drives the success cooldown gate (scaleUpPolicy.cooldownSeconds).
-            last_scale_down_time (datetime.datetime | Unset): Most recent wall-clock time spec.replicas shrank by one.
-                Drives scaleDownPolicy.stabilizationSeconds.
+            last_scale_down_time (datetime.datetime | Unset): Most recent wall-clock time spec.replicas shrank. Drives
+                scaleDownPolicy.stabilizationSeconds; the step size comes from scaleUpPolicy.mode.
             idle_zero_since (datetime.datetime | Unset): When the Pool's idle replica count first hit zero in the current
                 continuous-zero window; cleared when idle > 0. Drives the proactive scaleUpPolicy.idleThresholdSeconds trigger.
             last_scale_up_attempt_time (datetime.datetime | Unset): Most recent wall-clock time the admission probe ran for

@@ -21,6 +21,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/schedule"
@@ -272,5 +273,70 @@ func TestRouteMulti_DeterministicTiebreakerByName(t *testing.T) {
 	}
 	if got := pools.GetScheduler("ns", "zzz"); got != nil && got.Snapshot().QueueLen != 0 {
 		t.Errorf("zzz should not have received the request")
+	}
+}
+
+// ---------- Regression: mixed-spec Env picks the pool that can serve ----------
+
+// mixedSpecEnv builds the reported shape: one fixed-size member with no
+// autoscaling alongside one autoscaled member, with the Env status
+// describing each member's live counts.
+func mixedSpecEnv(fixed, scalable string, fixedDesired, scalableIdle int32, satUntil *metav1.Time) *agentsv1alpha1.SandboxEnv {
+	return &agentsv1alpha1.SandboxEnv{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "e"},
+		Spec: agentsv1alpha1.SandboxEnvSpec{
+			Autoscaling: &agentsv1alpha1.EnvAutoscalingSpec{
+				Groups: []agentsv1alpha1.EnvAutoscalingGroup{
+					{Name: "big", Enabled: true, MaxReplicas: ptr.To(int32(2560))},
+				},
+			},
+			Clusters: []agentsv1alpha1.EnvClusterSpec{{
+				ClusterID: localID,
+				Members: []agentsv1alpha1.EnvClusterMember{
+					{Name: fixed, Config: agentsv1alpha1.EnvClusterMemberConfig{}},
+					{Name: scalable, Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "big"}},
+				},
+			}},
+		},
+		Status: agentsv1alpha1.SandboxEnvStatus{
+			Clusters: []agentsv1alpha1.EnvClusterStatus{{
+				ClusterID: localID, IsLocal: true,
+				ObservedMembers: []agentsv1alpha1.EnvObservedMember{
+					{Name: fixed, DesiredReplicas: fixedDesired, RunningCount: fixedDesired},
+					{Name: scalable, DesiredReplicas: 1, IdleCount: scalableIdle,
+						AutoscalingEnabled: true, SaturatedUntil: satUntil},
+				},
+			}},
+		},
+	}
+}
+
+func selectFrom(t *testing.T, env *agentsv1alpha1.SandboxEnv) string {
+	t.Helper()
+	key := types.NamespacedName{Namespace: "ns", Name: "e"}
+	mgr := New(localID, newFakePools(), &fakeEnvGetter{
+		envs: map[types.NamespacedName]*agentsv1alpha1.SandboxEnv{key: env},
+	})
+	mgr.OnEnvUpsert(env)
+	return mgr.SelectPool(key, "")
+}
+
+// The fixed member is fully claimed and cannot grow; the autoscaled member
+// holds the only warm Pod. Name ordering points at the wrong one, so this
+// also proves the choice is made on capacity rather than the alphabetical
+// tie-break.
+func TestSelectPool_MixedSpec_PrefersMemberWithIdlePod(t *testing.T) {
+	if got := selectFrom(t, mixedSpecEnv("aaa-fixed", "zzz-scalable", 2, 1, nil)); got != "zzz-scalable" {
+		t.Errorf("SelectPool = %q, want zzz-scalable (holds the only idle Pod)", got)
+	}
+}
+
+// Same shape, but the autoscaled member's last scale-up probe was
+// rejected so the Env stamped SaturatedUntil on it. It still holds the
+// only dispatchable Pod, so it must still win.
+func TestSelectPool_MixedSpec_SaturatedMemberWithIdleStillWins(t *testing.T) {
+	sat := metav1.NewTime(time.Now().Add(60 * time.Second))
+	if got := selectFrom(t, mixedSpecEnv("pool-a", "pool-b", 2, 1, &sat)); got != "pool-b" {
+		t.Errorf("SelectPool = %q, want pool-b (saturated but holds the only idle Pod)", got)
 	}
 }
