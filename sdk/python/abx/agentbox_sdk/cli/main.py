@@ -128,6 +128,19 @@ REPLICAS = Param("replicas", "int", "Initial replica count.")
 MIN_REPLICAS = Param("minReplicas", "int", "Scale-down floor.")
 MAX_REPLICAS = Param("maxReplicas", "int", "Scale-up ceiling.")
 QUOTA = Param("quota", "string", "Quota URL to charge the reservation against.")
+# The pod may REQUEST less than the reservation holds. The instance type is a
+# fixed catalog and the reservation is charged for the whole envelope either
+# way, so these do not buy a cheaper pool — they stop a small workload from
+# being handed resources it will not use, which is what the scheduler and the
+# workload itself both see. Without them the CLI could not express something
+# the console has always been able to, and an agent working from the CLI alone
+# would report it as impossible.
+CPU = Param(
+    "cpu", "string", "Actual CPU request, e.g. 100m or 2 (needs --memory)."
+)
+MEMORY = Param(
+    "memory", "string", "Actual memory request, e.g. 500Mi (needs --cpu)."
+)
 
 GLOBAL = (
     HELP,
@@ -180,6 +193,8 @@ POOL_CREATE = (
     ENV,
     INSTANCE_TYPE,
     MULTIPLIER,
+    CPU,
+    MEMORY,
     REPLICAS,
     MIN_REPLICAS,
     MAX_REPLICAS,
@@ -248,6 +263,40 @@ def root_help() -> str:
         "A suggested first pass: `abx templates` -> `abx envs create` -> "
         "`abx quotas` -> `abx pools create`.",
     ]
+    return "\n".join(out)
+
+
+def verb_help(
+    ctx: Context | None, kind: ResourceKind, verb: str | None
+) -> str:
+    """Help for `abx <kind> [verb] --help`.
+
+    A verb narrows it: someone who typed `create` wants the flags for creating,
+    not the columns they could filter a list by.
+    """
+    if verb != "create":
+        return kind_help(ctx, kind)
+    params = ENV_CREATE if kind.kind == "env" else POOL_CREATE
+    usage = {
+        "env": "  abx envs create --name N --template T [--gateway]",
+        "pool": (
+            "  abx pools create --env E --instance-type IT "
+            "--replicas N [--quota URL]"
+        ),
+    }.get(kind.kind)
+    if usage is None:
+        return kind_help(ctx, kind)
+    out = [
+        f"abx {kind.plural} create — create {kind.label.lower()}",
+        "",
+        "Usage:",
+        usage,
+        "",
+        "Flags:",
+    ]
+    # The create sets already begin with GLOBAL, so listing them again below
+    # would print every global flag twice.
+    out += _flag_help(params)
     return "\n".join(out)
 
 
@@ -665,6 +714,23 @@ def create_pool(ctx: Context, values: dict[str, Any]) -> Result:
     ):
         if values.get(key) is not None:
             body[field] = values[key]
+    cpu, memory = values.get("cpu"), values.get("memory")
+    if bool(cpu) != bool(memory):
+        # All or nothing: the server uses inlineResources verbatim, so a request
+        # naming one dimension silently drops the other rather than defaulting
+        # it — the pod would come up with no limit on the one you left out.
+        missing = "--memory" if cpu else "--cpu"
+        raise UsageError(
+            f"--cpu and --memory go together; {missing} is missing",
+            [f"abx instancetypes{_cl(ctx)}"],
+        )
+    if cpu and memory:
+        # Requests and limits alike, matching what the console sends: a burst
+        # above the request would be charged to an envelope the reservation has
+        # already paid for, so there is nothing to gain by letting it.
+        requests = {"cpu": cpu, "memory": memory}
+        body["inlineResources"] = {"requests": requests, "limits": dict(requests)}
+
     if values.get("quota"):
         # The quota is selected by a label the server parses, not by a field.
         body["labels"] = {"quota.scitix.ai/url": values["quota"]}
@@ -672,7 +738,10 @@ def create_pool(ctx: Context, values: dict[str, Any]) -> Result:
     payload = ctx.post_json(f"/envs/{env}/sandboxpools", body)
     if _fmt(values) == "json":
         return Result(R.render_json(payload))
-    out = [f"created pool in env {env} (instanceType={it})", ""]
+    spec = f"instanceType={it}"
+    if cpu and memory:
+        spec += f", requests={cpu}/{memory}"
+    out = [f"created pool in env {env} ({spec})", ""]
     out += R.yaml_lite(
         payload if isinstance(payload, dict) else {"result": payload}
     )
@@ -924,14 +993,23 @@ def run(argv: Sequence[str]) -> Result:
     rest = positionals[1:]
     verb = rest[0] if rest and rest[0] in WRITE_VERBS else None
 
-    if want_help and verb is None:
+    if want_help:
+        # BEFORE the verb is acted on, and for every verb.
+        #
+        # `--help` asks what a command would do; it must never be the thing
+        # that does it. This check used to sit after the write dispatch and
+        # only apply when there was no verb, so `abx envs create --name x
+        # --help` skipped the help and CREATED THE ENVIRONMENT — someone
+        # reading the manual got a real object, and, with the approval gate on,
+        # a request for a person to approve one they never asked for.
+        #
         # Cluster-scoped help reaches the API for live values; it must still
         # render without one.
         try:
             ctx = _build_ctx(values)
         except UsageError:
             ctx = None
-        return Result(kind_help(ctx, kind))
+        return Result(verb_help(ctx, kind, verb))
 
     ctx = _build_ctx(values)
     # Before any read or write: a --cluster this endpoint cannot answer for is
