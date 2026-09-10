@@ -76,6 +76,7 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.7",
     "eslint-config-prettier": "^10.1.8",
+    "jsdom": "^30.0.1",
     "openapi-typescript": "^7.13.0",
     "playwright-core": "^1.63.0",
     "postcss": "^8.5",

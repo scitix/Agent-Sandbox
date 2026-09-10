@@ -16,7 +16,7 @@
 
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
@@ -30,9 +30,10 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
+import { useCollapsiblePanel } from "@/hooks/use-collapsible-panel"
 import { usePersistedLayout } from "@/hooks/use-persisted-layout"
 import { cn } from "@/lib/utils"
-import type { Layout, PanelImperativeHandle } from "react-resizable-panels"
+import type { Layout } from "react-resizable-panels"
 
 /** Where the page/assistant split is remembered. Versioned so a future change
  *  to the panel ids does not restore a layout that no longer fits them. */
@@ -107,7 +108,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { open, setOpen } = useCommandPalette()
   const { open: assistantOpen, everOpened } = useAssistantPanelState()
   const split = usePersistedLayout(ASSISTANT_SPLIT_KEY)
-  const panelRef = useRef<PanelImperativeHandle | null>(null)
+  // Collapsed rather than removed. Taking the panel out of the group would
+  // unmount the assistant, and with it the in-memory conversation and any
+  // question waiting on an answer — the whole reason it lives up here.
+  const panelRef = useCollapsiblePanel(assistantOpen, everOpened)
 
   // Closing the column reports a layout with the assistant at zero, and saving
   // that would throw away the width the person chose the moment they shut it —
@@ -120,17 +124,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     },
     [split]
   )
-
-  // Collapsed rather than removed. Taking the panel out of the group would
-  // unmount the assistant, and with it the in-memory conversation and any
-  // question waiting on an answer — the whole reason it lives up here.
-  useEffect(() => {
-    if (!everOpened) return
-    const panel = panelRef.current
-    if (!panel) return
-    if (assistantOpen) panel.expand()
-    else panel.collapse()
-  }, [assistantOpen, everOpened])
 
   return (
     <SidebarProvider

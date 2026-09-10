@@ -19,6 +19,10 @@ import path from "path"
 
 export default defineConfig({
   test: {
+    // Node by default: almost everything under test here is pure logic, and a
+    // DOM per file would cost every one of them. Files that genuinely need a
+    // browser opt in with `// @vitest-environment jsdom` — see __tests__/ui,
+    // where the panel toggle is only reproducible against a real layout engine.
     environment: "node",
     globals: false,
     isolate: true,
