@@ -182,6 +182,13 @@ points at the credential rather than at the missing rule.
 
 The data-plane host is allowed but never injected: envd traffic carries its
 own credential.
+
+Every cluster in `.Values.clusters` contributes its PUBLIC gateway too. Those
+addresses are how a sandbox reaches another cluster at all — the in-cluster
+Service names resolve only in the cluster the sandbox happens to be in — and a
+host with no rule gets the decoy verbatim. The failure that produces is
+"401 invalid api key" from an address that is plainly reachable, which reads as
+a credential problem and sends everyone looking at the key.
 */}}
 {{- define "agent-sandbox-hub.assistantSandboxNetwork" -}}
 {{- $s := (.Values.assistant | default dict).sandbox | default dict -}}
@@ -214,6 +221,34 @@ own credential.
 {{- end -}}
 {{- if $inj.dataHost -}}
 {{- $allow = append $allow $inj.dataHost -}}
+{{- end -}}
+{{- /* Every configured cluster's public gateway.
+
+       Hosts can repeat — one deployment serves native, e2b and data from the
+       same address — so headers are MERGED per host rather than assigned.
+       Assigning would leave whichever ran last, and the symptom is one of the
+       two APIs working while the other answers 401. */ -}}
+{{- $nativeHdr := printf "${e2b.secrets.%s}" (include "agent-sandbox-hub.assistantNativeSecretName" $) -}}
+{{- range $c := (.Values.clusters | default list) -}}
+{{- $gw := $c.gateway | default dict -}}
+{{- range $pair := (list (list $gw.nativeURL "AGENTBOX-API-KEY") (list $gw.e2bURL "X-API-Key") (list $gw.dataURL "")) -}}
+{{- $url := index $pair 0 -}}
+{{- if $url -}}
+{{- $h := regexReplaceAll "^https?://([^/:]+).*$" $url "${1}" -}}
+{{- if not (has $h $allow) -}}
+{{- $allow = append $allow $h -}}
+{{- end -}}
+{{- $header := index $pair 1 -}}
+{{- if $header -}}
+{{- $existing := dict -}}
+{{- range $r := (index $rules $h | default list) -}}
+{{- $existing = merge $existing (($r.transform | default dict).headers | default dict) -}}
+{{- end -}}
+{{- $_ := set $existing $header $nativeHdr -}}
+{{- $_ := set $rules $h (list (dict "transform" (dict "headers" $existing))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- toJson (dict "allowOut" $allow "rules" $rules) -}}
 {{- end -}}

@@ -42,6 +42,7 @@ import {
   fetchPrometheusRange,
   rangeResultToSeries,
   buildClusterMatcher,
+  sandboxPodJoin,
 } from "../_shared"
 
 export const GET = withPrometheusRoute(
@@ -88,12 +89,13 @@ export const GET = withPrometheusRoute(
         ? `irate(container_cpu_usage_seconds_total{${baseSelector}}[${rateWindow}])`
         : `rate(container_cpu_usage_seconds_total{${baseSelector}}[${rateWindow}])`
 
-    // Join container_cpu_usage_seconds_total with agentbox_sandbox_running_info on pod.
-    // This scopes the result to exactly the pod running the given sandbox_id.
+    // Scoped to the pod running this sandbox. See sandboxPodJoin: the join
+    // metric's own `pod` label is relabelled on scrape, so joining on `pod`
+    // without it reports the controller's CPU under the sandbox's id.
     const query = `sum by (sandbox_id) (
   ${rateExpr}
   * on(pod) group_left(sandbox_id)
-  agentbox_sandbox_running_info{${sandboxSelector}}
+  ${sandboxPodJoin(sandboxSelector)}
 )`
 
     const result = await fetchPrometheusRange(config, query, start, end, step).catch(() => null)

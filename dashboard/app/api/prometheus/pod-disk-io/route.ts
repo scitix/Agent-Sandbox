@@ -43,6 +43,7 @@ import {
   fetchPrometheusRange,
   rangeResultToSeries,
   buildClusterMatcher,
+  sandboxPodJoin,
 } from "../_shared"
 
 export const GET = withPrometheusRoute(
@@ -89,7 +90,7 @@ export const GET = withPrometheusRoute(
         ? `irate(${metric}{${fsSelector}}[${rateWindow}])`
         : `rate(${metric}{${fsSelector}}[${rateWindow}])`
 
-    const joinExpr = `label_replace(agentbox_sandbox_running_info{${sandboxSelector}}, "pod", "$1", "exported_pod", "(.*)")`
+    const joinExpr = sandboxPodJoin(sandboxSelector)
 
     const readQuery = `sum by (sandbox_id) (
   ${rateExpr("container_fs_reads_bytes_total")}

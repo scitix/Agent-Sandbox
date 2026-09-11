@@ -32,11 +32,30 @@ sbx = Sandbox.connect(sandbox_id)
 metrics = sbx.get_metrics()          # cpu, memory, disk over the sandbox's life
 ```
 
-Team-wide and per-sandbox variants exist on the same surface
-(`/sandboxes/metrics`, `/sandboxes/{id}/metrics`, `/teams/{id}/metrics`).
-Deliberately no new convention: a caller that already speaks E2B needs nothing
-extra, and one that does not is better served learning E2B than a bespoke
-metrics dialect.
+Two endpoints, both E2B's own:
+
+| | |
+|---|---|
+| `GET /sandboxes/{id}/metrics` | a time series for one sandbox |
+| `GET /sandboxes/metrics?sandbox_ids=…` | the latest point for several |
+
+**`/teams/{id}/metrics` is not implemented** — it answers `501`, deliberately:
+team and cluster administration is not exposed through the E2B surface. For
+usage across a team, read `abx statistics` or the console.
+
+Deliberately no new convention for the two that do exist: a caller who already
+speaks E2B needs nothing extra, and one who does not is better served learning
+E2B than a bespoke metrics dialect.
+
+**Units, because the two surfaces differ and it has caught people out:**
+
+- `cpuUsedPct` from the API is a **percentage of the sandbox's own cores**
+  (`cores_used / cpuCount * 100`). A 16-core sandbox with 8 busy cores reads
+  `50.08`, not `8` and not `5008`.
+- The console's charts plot **cores**, not a percentage. The same moment reads
+  `50%` in one place and `8` in the other, and both are right.
+- `diskTotal` / `diskUsed` are `0` wherever the backend does not collect
+  `container_fs_*`. Zero here means "not collected", not "empty disk".
 
 Time-series **charts** live in the console. `abx` prints a `view:` link on
 every command, and for an env or pool that link lands on the page with the

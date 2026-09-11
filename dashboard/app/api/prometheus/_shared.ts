@@ -536,3 +536,26 @@ export function withPrometheusRoute(
     })
   }
 }
+
+/**
+ * The join that turns a sandbox id into the pod running it.
+ *
+ * `agentbox_sandbox_running_info` is exported by the CONTROLLER, so when
+ * Prometheus scrapes it the target's own `pod` label is already taken — the
+ * metric's `pod` is relabelled to `exported_pod`, and the `pod` that survives
+ * names the controller. A plain `on(pod)` join therefore matches the
+ * controller's container and reports its CPU, its memory, its traffic, under
+ * the sandbox's id. The numbers look plausible and are simply about something
+ * else: a busy sandbox read 0.007 cores while it was burning 8.
+ *
+ * `(.+)` rather than `(.*)` is the whole robustness of this: the replacement
+ * fires only when `exported_pod` is non-empty, so a scrape config that does
+ * NOT collide (the metric keeps its own `pod`) is left alone. With `(.*)` the
+ * empty match overwrites `pod` with "" and the join silently returns nothing.
+ *
+ * One helper rather than four copies, because two of the four had already
+ * drifted from the other two by the time this was found.
+ */
+export function sandboxPodJoin(sandboxSelector: string): string {
+  return `label_replace(agentbox_sandbox_running_info{${sandboxSelector}}, "pod", "$1", "exported_pod", "(.+)")`
+}

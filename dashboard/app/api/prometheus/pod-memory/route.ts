@@ -41,6 +41,7 @@ import {
   fetchPrometheusRange,
   rangeResultToSeries,
   buildClusterMatcher,
+  sandboxPodJoin,
 } from "../_shared"
 
 export const GET = withPrometheusRoute(
@@ -78,11 +79,11 @@ export const GET = withPrometheusRoute(
     const baseSelector = [clusterMatcher, `container!=""`, `container!="POD"`].join(",")
     const sandboxSelector = [clusterMatcher, `sandbox_id="${sandboxId}"`].join(",")
 
-    // Join container_memory_working_set_bytes with agentbox_sandbox_running_info on pod.
+    // Scoped to the pod running this sandbox — see sandboxPodJoin.
     const query = `sum by (sandbox_id) (
   container_memory_working_set_bytes{${baseSelector}}
   * on(pod) group_left(sandbox_id)
-  agentbox_sandbox_running_info{${sandboxSelector}}
+  ${sandboxPodJoin(sandboxSelector)}
 )`
 
     const result = await fetchPrometheusRange(config, query, start, end, step).catch(() => null)

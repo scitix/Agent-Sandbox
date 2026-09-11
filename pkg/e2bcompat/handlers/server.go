@@ -147,7 +147,38 @@ func authFrom(ctx context.Context) apidomain.AuthInfo {
 // responses always have a matching server-side log line.
 func errRespAppErr(ctx context.Context, appErr *apidomain.AppError) e2bgen.Error {
 	httplog.LogAppError(httpctx.GinFromCtx(ctx), appErr)
-	return e2bgen.Error{Code: int32(appErr.Code), Message: appErr.Message}
+	out := e2bgen.Error{Code: int32(appErr.Code), Message: appErr.Message}
+	if c := e2bErrorCode(appErr); c != "" {
+		out.ErrorCode = &c
+	}
+	return out
+}
+
+// e2bErrorCode names the failure in the field E2B defined for it.
+//
+// The HTTP status is constrained by what the operation declares — the create
+// has no 429, and adding one would diverge from a spec whose whole value is
+// that real E2B client code runs against it unchanged. So the precision goes
+// where upstream put it: `error_code`, documented in their own schema as
+// machine-readable, open-ended, and with `sandbox_capacity_unavailable` among
+// its initial values.
+//
+// The distinction it carries is the one that decides what a caller does next.
+// A pool with nothing idle answers the identical request successfully a minute
+// later; a malformed one never will. Both arrive as a 5xx otherwise, and an
+// agent that cannot tell them apart either retries forever or gives up on the
+// first attempt.
+func e2bErrorCode(appErr *apidomain.AppError) string {
+	switch appErr.Code {
+	case apidomain.ErrCodeTooManyRequests, apidomain.ErrCodeServiceUnavailable:
+		return "sandbox_capacity_unavailable"
+	case apidomain.ErrCodeGatewayTimeout:
+		return "sandbox_placement_timeout"
+	case apidomain.ErrCodeInternal:
+		return "sandbox_create_failed"
+	default:
+		return ""
+	}
 }
 
 // errResp is retained for places that only have a string message (no
@@ -411,7 +442,15 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 			return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(errRespCode(400, appErr.Message))}, nil
 		// Capacity, not correctness: retrying the identical request can succeed
 		// once a pool has an idle Pod again, which 500 would not tell a client.
-		case apidomain.ErrCodeServiceUnavailable:
+		//
+		// A pool with nothing idle (429 internally) lands here too, and keeps
+		// its own `code` and `error_code` in the body. It does NOT get an HTTP
+		// 429: this operation declares no such response, and a status a real
+		// E2B client has never seen is exactly the breakage this compatibility
+		// surface exists to avoid. 503 is the declared status that means the
+		// same thing to a client — try again — and the body says which kind of
+		// "try again" it is.
+		case apidomain.ErrCodeTooManyRequests, apidomain.ErrCodeServiceUnavailable:
 			return e2bgen.PostSandboxes503JSONResponse{N503JSONResponse: e2bgen.N503JSONResponse(errRespAppErr(ctx, appErr))}, nil
 		case apidomain.ErrCodeGatewayTimeout:
 			return e2bgen.PostSandboxes504JSONResponse{N504JSONResponse: e2bgen.N504JSONResponse(errRespAppErr(ctx, appErr))}, nil

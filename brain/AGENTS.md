@@ -289,6 +289,19 @@ the right page at the end.
   which turns a working request into a certificate error.
 - `python3` has `e2b` and `agent_sandbox_e2b` installed system-wide. Run scripts
   directly with `python3 script.py`; there is no venv to activate.
+- **The credentials in your environment are DECOYS.** `E2B_API_KEY`,
+  `AGENTBOX_API_KEY` and friends hold placeholder values; the egress proxy
+  substitutes the real ones on the way out, for specific hosts and specific
+  headers. **`/opt/agentbox/egress.json` lists exactly which** — read it before
+  reasoning about any credential problem.
+
+  This matters because the failure it produces looks like something else. A
+  host resolves, TLS verifies, and a well-formed `401 invalid api key` comes
+  back — so the natural conclusion is "the network is fine, the key is wrong",
+  and the next hour goes into a key that was never yours. The real causes are:
+  the host is not in the rules, the request went to a port other than 80/443,
+  or the vault entry the rule references is missing. **There is no real
+  credential in the sandbox to find, print, or fix.**
 - **`./source` is the platform's own open-source tree**, write-protected. The API
   contract (`pkg/openapi/native/openapi.yaml`), the CRD types (`api/`), the
   SDKs (`sdk/`), the CLI and the resource registry it dispatches on

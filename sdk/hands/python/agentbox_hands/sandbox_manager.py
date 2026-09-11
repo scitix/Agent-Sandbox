@@ -445,6 +445,59 @@ def _session_user(sid: str) -> Optional[str]:
 STAGE_SUBDIR = ".pending-attachments"
 
 
+def _egress_manifest() -> str:
+    """What the sandbox is told about its own credentials, as JSON.
+
+    A sandbox holds DECOY values and the egress sidecar substitutes the real
+    ones on the way out. That is invisible from inside, and the shape of the
+    confusion it causes is specific: an agent sees a well-formed 401 from a
+    host that plainly resolves and whose TLS verified, concludes the network is
+    fine and the credential is wrong, and starts debugging the key it was never
+    holding. Writing the arrangement down where it can be read turns that into
+    one file lookup.
+
+    Only names and the decoy values go in — the decoys are already in the
+    sandbox's environment, and the real credentials are never in it at all. The
+    header VALUES are printed as their `${e2b.secrets.*}` references, which is
+    what the rule literally says rather than what it resolves to.
+    """
+    env = {}
+    try:
+        env = json.loads(os.environ.get("SBX_SANDBOX_ENV", "") or "{}")
+    except Exception:
+        env = {}
+    hosts: Dict[str, List[str]] = {}
+    net = SANDBOX_NETWORK or {}
+    for host, rules in (net.get("rules") or {}).items():
+        headers: List[str] = []
+        for r in rules or []:
+            headers.extend(((r.get("transform") or {}).get("headers") or {}).keys())
+        hosts[host] = sorted(set(headers))
+    return json.dumps(
+        {
+            "summary": (
+                "Credentials in this sandbox are DECOYS. The egress proxy replaces them "
+                "with the real values on the way out, for the hosts and headers listed "
+                "below. A 401 from one of these hosts means the rule did not fire or the "
+                "vault entry is missing - not that the key in your environment is wrong. "
+                "There is no real credential in here to find."
+            ),
+            "decoyEnv": {k: v for k, v in env.items() if "KEY" in k or "TOKEN" in k},
+            "injectedHeadersByHost": hosts,
+            "allowedHosts": sorted(net.get("allowOut") or []),
+            "note": (
+                "Hosts not listed in allowedHosts are unreachable. Only :80 and :443 are "
+                "parsed, so a rule never fires on another port."
+            ),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+
+EGRESS_MANIFEST_PATH = "/opt/agentbox/egress.json"
+
+
 def _source_dir() -> str:
     """The read-only copy of the platform's own source, if this image has one.
 
@@ -697,6 +750,17 @@ class SandboxManager:
             entry.sandbox.commands.run(script, user=SBX_USER, timeout=20)
         except Exception as e:
             print(f"[sbxmgr] ensure_workspace symlinks failed: {e}", flush=True)
+
+        # What this sandbox's credentials actually are. Written as root outside
+        # the writable workspace so the agent reads it and cannot edit it into
+        # something untrue. Best-effort: a sandbox without it still works, it
+        # just has to be told the same thing in the prompt.
+        try:
+            entry.sandbox.files.write(
+                EGRESS_MANIFEST_PATH, _egress_manifest(), user="root"
+            )
+        except Exception as e:
+            print(f"[sbxmgr] egress manifest write failed: {e}", flush=True)
 
     def ensure_attachments(self, sid: str, entry: SessionEntry) -> None:
         """Flush any not-yet-synced staged attachments into the sandbox as root.

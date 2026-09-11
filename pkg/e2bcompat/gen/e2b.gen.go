@@ -5356,6 +5356,15 @@ func (response PostSandboxes401JSONResponse) VisitPostSandboxesResponse(w http.R
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostSandboxes429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxes429JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostSandboxes500JSONResponse struct{ N500JSONResponse }
 
 func (response PostSandboxes500JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
