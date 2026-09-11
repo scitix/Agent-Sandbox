@@ -49,7 +49,7 @@ import {
   type Address,
   type Verb,
 } from '@headless/index'
-import { CliError, routesByPath, type Context } from './context'
+import { CliError, configPath, readConfig, routesByPath, type Context, type FileConfig } from './context'
 import { request } from './api'
 import { applyFilters, hints, renderCsv, renderTable, visibleColumns } from './render'
 import { agentContext } from './agent-context'
@@ -95,7 +95,7 @@ function parseArgs(argv: string[]): Parsed {
   return { positional, flags, filters }
 }
 
-function contextFrom(flags: Record<string, string | boolean>): Context {
+function contextFrom(flags: Record<string, string | boolean>, file: FileConfig = {}): Context {
   const env = (k: string) => process.env[k] ?? ''
   const str = (k: string, fallback = '') =>
     typeof flags[k] === 'string' ? (flags[k] as string) : fallback
@@ -108,21 +108,28 @@ function contextFrom(flags: Record<string, string | boolean>): Context {
   else if (flags.csv) format = 'csv'
   else if (str('format')) format = str('format') as Context['format']
 
+  // Flag, then environment, then the config file a plugin hook wrote. The
+  // order is the usual one and stated once here rather than per setting.
   const ctx: Context = {
-    endpoint: str('endpoint', env('AGENTBOX_ENDPOINT')),
-    apiKey: str('api-key', env('AGENTBOX_API_KEY')),
-    cluster: str('cluster', env('AGENTBOX_CLUSTER')) || undefined,
-    authScheme: (str('auth-scheme', env('AGENTBOX_AUTH_SCHEME')) || 'api-key') as
-      | 'api-key'
-      | 'bearer',
+    endpoint: str('endpoint', env('AGENTBOX_ENDPOINT') || file.endpoint || ''),
+    apiKey: str('api-key', env('AGENTBOX_API_KEY') || file.apiKey || ''),
+    cluster: str('cluster', env('AGENTBOX_CLUSTER') || file.cluster || '') || undefined,
+    authScheme: (str('auth-scheme', env('AGENTBOX_AUTH_SCHEME') || file.authScheme || '') ||
+      'api-key') as 'api-key' | 'bearer',
     format,
-    webBase: str('web-base', env('AGENTBOX_WEB_BASE')) || undefined,
+    webBase: str('web-base', env('AGENTBOX_WEB_BASE') || file.webBase || '') || undefined,
   }
   if (!ctx.endpoint) {
-    throw new CliError('no endpoint configured', 'set AGENTBOX_ENDPOINT or pass --endpoint')
+    throw new CliError(
+      'no endpoint configured',
+      `pass --endpoint, set AGENTBOX_ENDPOINT, or write it to ${configPath()}`,
+    )
   }
   if (!ctx.apiKey) {
-    throw new CliError('no API key configured', 'set AGENTBOX_API_KEY or pass --api-key')
+    throw new CliError(
+      'no API key configured',
+      `pass --api-key, set AGENTBOX_API_KEY, or write it to ${configPath()}\nkeys are issued in the console under API keys`,
+    )
   }
   return ctx
 }
@@ -251,6 +258,8 @@ export async function run(argv: string[]): Promise<number> {
     console.log(usage())
     return 0
   }
+  const fileConfig: FileConfig = await readConfig()
+
   if (positional[0] === 'version') {
     console.log(VERSION)
     return 0
@@ -260,7 +269,11 @@ export async function run(argv: string[]): Promise<number> {
     // the whole CLI, it just cannot narrow itself to this deployment.
     let gates: Record<string, boolean> | null = null
     try {
-      gates = await request<Record<string, boolean>>(contextFrom(flags), 'GET', '/feature-gates')
+      gates = await request<Record<string, boolean>>(
+        contextFrom(flags, fileConfig),
+        'GET',
+        '/feature-gates',
+      )
     } catch {
       gates = null
     }
@@ -268,7 +281,7 @@ export async function run(argv: string[]): Promise<number> {
     return 0
   }
 
-  const ctx = contextFrom(flags)
+  const ctx = contextFrom(flags, fileConfig)
 
   if (positional[0] === 'whoami') {
     const who = await request<Record<string, unknown>>(ctx, 'GET', '/auth/whoami')
