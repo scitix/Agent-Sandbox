@@ -439,6 +439,12 @@ export function createSandboxColumns(
   // sandboxes apart when they were created under one shared identity.
   const metadataColumn: ColumnDef<AgentSandbox> = {
     id: "metadata",
+    // Off unless asked for. Metadata is free-form and often long — the
+    // assistant alone writes two keys into it — so on by default it is the
+    // widest column in the table for the few rows that carry anything, and
+    // blank for the rest. The view menu turns it on when the question is
+    // "which conversation was this".
+    meta: { hiddenByDefault: true },
     accessorFn: (row) =>
       Object.entries(row.metadata ?? {})
         .map(([k, v]) => `${k}=${v}`)

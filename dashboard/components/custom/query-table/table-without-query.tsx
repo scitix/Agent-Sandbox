@@ -249,9 +249,28 @@ export const TableContent = <TData,>({
     ]
   }, [columns, expandedConfig, expandedRows, hasSelect, idFn, t])
 
+  // Columns a table starts with hidden, declared on the column itself rather
+  // than listed here.
+  //
+  // The alternative is a list of ids in every consumer, which drifts from the
+  // columns it names — rename a column and the list silently stops hiding
+  // anything. `initialState` rather than controlled state on purpose: this is a
+  // starting point the reader is free to change from the view menu, and it must
+  // not be re-imposed on every render.
+  const initialColumnVisibility = useMemo(() => {
+    const hidden: Record<string, boolean> = {}
+    for (const c of extendedColumns) {
+      const meta = c.meta as { hiddenByDefault?: boolean } | undefined
+      const id = c.id ?? ("accessorKey" in c ? String(c.accessorKey) : undefined)
+      if (meta?.hiddenByDefault && id) hidden[id] = false
+    }
+    return hidden
+  }, [extendedColumns])
+
   const table = useReactTable({
     data: data,
     columns: extendedColumns,
+    initialState: { columnVisibility: initialColumnVisibility },
     state: {
       ...(externalState?.columnFilters?.state
         ? { columnFilters: externalState.columnFilters.state }

@@ -285,6 +285,13 @@ the right page at the end.
   which turns a working request into a certificate error.
 - `python3` has `e2b` and `agent_sandbox_e2b` installed system-wide. Run scripts
   directly with `python3 script.py`; there is no venv to activate.
+- **`./source` is the platform's own open-source tree**, read-only. The API
+  contract (`pkg/openapi/native/openapi.yaml`), the CRD types (`api/`), the
+  SDKs (`sdk/`), the CLI and the resource registry it dispatches on
+  (`cli/`, `headless/`), and the skills (`plugin/skills/`). When a question is
+  about what the platform does or what a field means, read it there rather than
+  guessing — and quote the file you read. If the link is absent this image does
+  not carry it; say so instead of looking for it elsewhere.
 - The sandbox is reclaimed after its idle timeout (an hour by default) and
   everything in it is lost. Say so before someone puts work there.
 - **`kill()` every sandbox you create, including on the failure path.** They

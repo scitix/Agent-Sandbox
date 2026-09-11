@@ -445,6 +445,17 @@ def _session_user(sid: str) -> Optional[str]:
 STAGE_SUBDIR = ".pending-attachments"
 
 
+def _source_dir() -> str:
+    """The read-only copy of the platform's own source, if this image has one.
+
+    Baked in by the sandbox image so an agent can read the API contract, the
+    SDKs and the CLI's registry instead of guessing at them. Empty when the
+    image carries none, which is a normal state — the link is then not made at
+    all rather than made and broken.
+    """
+    return os.environ.get("SBX_SOURCE_DIR", "/opt/agentbox/source").strip()
+
+
 def _attach_root() -> str:
     """Root-owned, world-readable dir the attachments land in (matches fs.py)."""
     return os.environ.get("SBX_ATTACH_ROOT", "/opt/agentbox/attachments").rstrip("/")
@@ -661,18 +672,29 @@ class SandboxManager:
         except Exception as e:
             print(f"[sbxmgr] ensure_workspace mkdir {ws} failed: {e}", flush=True)
             return
-        # Convenience symlinks in the agent's cwd (as SBX_USER, so they're owned by
-        # the agent): the baked-in read-only Volcano source and the attachments dir,
-        # reachable as ./volcano and ./attachments. Best-effort — a failure here must
-        # not block the workspace. Idempotent (`ln -sfn`), recreated per sandbox.
+        # Convenience symlinks in the agent's cwd (as SBX_USER, so they are owned
+        # by the agent). Best-effort — a failure here must not block the
+        # workspace. Idempotent (`ln -sfn`), recreated per sandbox.
+        #
+        # Only links whose target EXISTS are made. A dangling link is worse than
+        # a missing one: the agent lists the directory, sees a name, follows it,
+        # and gets "No such file or directory" for something the workspace
+        # appeared to offer — which reads as a broken sandbox rather than as a
+        # feature this image does not carry.
+        #
+        # The source tree is whatever the image baked in, named after the
+        # platform rather than hardcoded, so an image without it simply has no
+        # link. `SBX_SOURCE_DIR` overrides for an image that puts it elsewhere.
         attach = _attach_root()
+        links = [(_source_dir(), "source"), (attach, "attachments")]
+        script = "; ".join(
+            f"test -e {shlex.quote(target)} && "
+            f"ln -sfn {shlex.quote(target)} {shlex.quote(ws + '/' + name)} || true"
+            for target, name in links
+            if target
+        )
         try:
-            entry.sandbox.commands.run(
-                f"ln -sfn /opt/volcano {shlex.quote(ws + '/volcano')}; "
-                f"ln -sfn {shlex.quote(attach)} {shlex.quote(ws + '/attachments')}",
-                user=SBX_USER,
-                timeout=20,
-            )
+            entry.sandbox.commands.run(script, user=SBX_USER, timeout=20)
         except Exception as e:
             print(f"[sbxmgr] ensure_workspace symlinks failed: {e}", flush=True)
 

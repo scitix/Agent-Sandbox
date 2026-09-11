@@ -32,6 +32,15 @@ declare module "@tanstack/react-table" {
       variant?: "text" | "number_range" | string
       options?: { value: string; label?: string }[]
     }
+    /**
+     * Start hidden; the view menu turns it on.
+     *
+     * Declared on the column rather than as a list of ids passed to the table,
+     * because a list drifts from the columns it names — rename a column and it
+     * silently stops hiding anything, which nobody notices until the table is
+     * suddenly wide.
+     */
+    hiddenByDefault?: boolean
   }
 }
 
