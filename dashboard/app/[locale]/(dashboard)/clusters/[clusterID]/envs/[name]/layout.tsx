@@ -83,7 +83,7 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
   const tabs = [
     { value: "", label: t("envs.tab.overview"), icon: InfoIcon },
     { value: "pools", label: t("envs.tab.pools"), icon: DatabaseIcon },
-    { value: "autoscaling", label: t("envs.tab.autoscaling"), icon: TrendingUp },
+    { value: "scaling-groups", label: t("envs.tab.autoscaling"), icon: TrendingUp },
     { value: "metrics", label: t("envs.tab.metrics"), icon: ActivityIcon },
   ]
 

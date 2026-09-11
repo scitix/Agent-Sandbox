@@ -94,7 +94,7 @@ export default function AutoscalingGroupPage({ params }: PageProps) {
             label: t("envs.tab.autoscaling"),
             value: (
               <Link
-                href={`${envPath}/autoscaling`}
+                href={`${envPath}/scaling-groups`}
                 className="text-foreground hover:text-brand underline-offset-2 hover:underline"
               >
                 {name}

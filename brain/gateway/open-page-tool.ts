@@ -51,7 +51,7 @@ export const OPEN_PAGE_VALUES = [
   'datasets',
   'vault',
   'approvals',
-  'quota',
+  'quotas',
   'api-keys',
   'general',
   // Detail pages, which need `name` (and `pool` for a pool).

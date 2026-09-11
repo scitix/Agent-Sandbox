@@ -250,7 +250,7 @@ function ScalingCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScalingCo
 
   const cid = row.owningClusterID || currentCluster
   const href = pool.owningEnv
-    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/autoscaling/${encodeURIComponent(group)}`
+    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/scaling-groups/${encodeURIComponent(group)}`
     : undefined
 
   const badge = (
@@ -327,7 +327,7 @@ function ScalingGroupCell({ pool, ctx }: { pool: AgentSandboxPool; ctx: PoolScal
   if (!group) return <span className="text-muted-foreground text-xs">—</span>
   const cid = row.owningClusterID || currentCluster
   const href = pool.owningEnv
-    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/autoscaling/${encodeURIComponent(group)}`
+    ? `${clusterPath(cid, "envs", locale)}/${encodeURIComponent(pool.owningEnv)}/scaling-groups/${encodeURIComponent(group)}`
     : undefined
   return <ResourceLink value={group} href={href} copyable={false} tone="muted" />
 }

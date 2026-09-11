@@ -68,7 +68,7 @@ const LIST_PAGES = new Set([
   "datasets",
   "vault",
   "approvals",
-  "quota",
+  "quotas",
   "api-keys",
   "general",
 ])

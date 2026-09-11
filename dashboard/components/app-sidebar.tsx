@@ -118,7 +118,7 @@ export const navSectionDefs: NavSectionDef[] = [
   {
     groupKey: "nav.billing",
     tenantOnly: true,
-    items: [{ labelKey: "nav.quota", page: "quota", icon: ReceiptTextIcon }],
+    items: [{ labelKey: "nav.quota", page: "quotas", icon: ReceiptTextIcon }],
   },
   {
     groupKey: "nav.admin",

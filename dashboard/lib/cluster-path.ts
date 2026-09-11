@@ -35,8 +35,7 @@ export type DashboardPage =
   | "general"
   | "api-keys"
   | "admin-api-keys"
-  | "quota"
-  | "admin-users"
+  | "quotas"
 
 /**
  * Returns the locale prefix for a URL. Default locale ("en") has no prefix.

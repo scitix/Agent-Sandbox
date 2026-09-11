@@ -295,7 +295,7 @@ export function EnvPoolsSection({
 function GroupNameCell({ envName, group }: { envName: string; group: string }) {
   const clusterID = useClusterID()
   const locale = useLocale()
-  const href = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}/autoscaling/${encodeURIComponent(group)}`
+  const href = `${clusterPath(clusterID, "envs", locale)}/${encodeURIComponent(envName)}/scaling-groups/${encodeURIComponent(group)}`
   return <ResourceLink value={group} href={href} />
 }
 

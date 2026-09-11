@@ -146,16 +146,24 @@ def view_url(view: dict[str, Any], web_base: str) -> str | None:
     if not page:
         return None
     base = web_base.rstrip("/")
+    # The console's route segments. Every entry here is a page that exists:
+    # `instancetypes` used to map to `templates`, which produced a confident
+    # link to a different resource, and `quotas` used to map to a singular
+    # `quota` that has since been renamed to match the CLI. A page with no
+    # route belongs in NO_ROUTE rather than borrowing someone else's.
     seg = {
         "envs": "envs",
         "env_detail": "envs",
         "pools": "pools",
         "templates": "templates",
         "sandboxes": "sandboxes",
-        "quotas": "quota",
-        "instancetypes": "templates",
+        "quotas": "quotas",
         "clusters": "clusters",
-    }.get(page, page)
+    }.get(page)
+    if seg is None:
+        # No console page addresses this resource. Emitting a link anyway sends
+        # the reader somewhere that either 404s or, worse, looks plausible.
+        return None
     path = f"{base}/clusters/{cluster}/{seg}" if cluster else f"{base}/{seg}"
     params = view.get("params") or {}
     ident = params.get("name") or params.get("id")
