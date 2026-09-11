@@ -141,6 +141,14 @@ the other either hands the agent a useless token (no rules) or a real one
 {{- $_ := set $env "AGENTBOX_ENDPOINT" $inj.bffEndpoint -}}
 {{- $_ := set $env "AGENTBOX_AUTH_SCHEME" "bearer" -}}
 {{- $_ := set $env "AGENTBOX_API_KEY" ($inj.bffDecoy | default "") -}}
+{{- /* Which cluster the sandbox is in, so ordinary commands need no --cluster.
+       Without it a path-routing endpoint can reach several clusters and names
+       none, so every command — including `whoami` — has to be told which one,
+       which reads as the tool being broken rather than unconfigured.
+       `--cluster X` still reaches any other. */ -}}
+{{- with $inj.clusterID -}}
+{{- $_ := set $env "AGENTBOX_CLUSTER" . -}}
+{{- end -}}
 {{- else if $inj.nativeHost -}}
 {{- $_ := set $env "AGENTBOX_ENDPOINT" (printf "http://%s" $inj.nativeHost) -}}
 {{- $_ := set $env "AGENTBOX_API_KEY" ($inj.decoy | default "") -}}

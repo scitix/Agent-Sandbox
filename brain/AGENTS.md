@@ -156,7 +156,11 @@ Rules that matter:
   instead of guessing ids.
 - `--json` for machine output, `--csv` for something flat, `--wide` for the
   columns held back by default, `--limit` for more rows.
-- `--cluster <id>` selects the cluster; get the list from `abx clusters`.
+- `--cluster <id>` selects the cluster; get the list from `abx clusters`, which
+  is the one command that never needs one. Your environment normally sets a
+  default, so you rarely pass it — if a command refuses because several
+  clusters are reachable, that is a deployment that has not set one, and the
+  error lists the ids.
 - **Which clusters `abx` can manage depends on the endpoint, and it will tell
   you.** Some deployments point it at one cluster's own API, where environments,
   pools, templates and quotas exist only for that cluster and a `--cluster`

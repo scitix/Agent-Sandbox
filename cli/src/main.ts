@@ -49,7 +49,7 @@ import {
   type Address,
   type Verb,
 } from '@headless/index'
-import { CliError, routesByPath, type Context } from './context'
+import { CliError, clusterListUrl, routesByPath, type Context } from './context'
 import {
   AmbiguousContextError,
   UnknownContextError,
@@ -61,7 +61,7 @@ import {
   type ContextEntry,
   type FileConfig,
 } from './contexts'
-import { request } from './api'
+import { request, requestAt } from './api'
 import { applyFilters, hints, renderCsv, renderTable, visibleColumns } from './render'
 import { agentContext } from './agent-context'
 
@@ -330,6 +330,26 @@ export async function run(argv: string[]): Promise<number> {
 
   const ctx = contextFrom(flags, fileConfig)
 
+  // Two questions that precede picking a cluster, and must not require one.
+  //
+  // "Which clusters are there" cannot be answered by first naming one, and an
+  // endpoint that routes by path publishes the list one level above its
+  // placeholder — so that is where it is asked. `whoami` is about the
+  // credential rather than a cluster, but the API that answers it is per
+  // cluster, so it borrows a default: the only cluster when there is one, and
+  // a refusal naming them when there are several. Guessing between them would
+  // report a namespace resolved somewhere the caller did not ask about.
+  if (positional[0] === 'clusters' && !ctx.cluster) {
+    const listUrl = clusterListUrl(ctx)
+    if (listUrl) {
+      const rows = normalize(await requestAt<unknown>(listUrl, ctx, 'GET'))
+      return printRows(resourceOf('clusters')!, rows, ctx, { resource: 'clusters' }, flags, filters)
+    }
+  }
+  if (!ctx.cluster && routesByPath(ctx)) {
+    ctx.cluster = await soleCluster(ctx)
+  }
+
   if (positional[0] === 'whoami') {
     const who = await request<Record<string, unknown>>(ctx, 'GET', '/auth/whoami')
     console.log(ctx.format === 'json' ? JSON.stringify(who) : JSON.stringify(who, null, 2))
@@ -374,27 +394,13 @@ export async function run(argv: string[]): Promise<number> {
   if (verb) return await write(ctx, verb, address, resolved, flags)
 
   const payload = await request<unknown>(ctx, 'GET', resolved.path)
-  let rows = normalize(payload, resolved.listField)
-  // A list of bare strings — teams, namespaces — is still a table with one
-  // column. Naming that column here rather than special-casing the renderer
-  // keeps `--filter name=…` and the CSV header working the same as everywhere.
-  const first = resolved.spec.columns[0].id
-  rows = rows.map((r) => (r !== null && typeof r === 'object' ? r : { [first]: r }))
-  rows = applyFilters(resolved.spec, rows, filters)
-
-  if (ctx.format === 'json') {
-    console.log(JSON.stringify(resolved.collection ? rows : (rows[0] ?? null)))
+  const rows = normalize(payload, resolved.listField)
+  if (ctx.format === 'json' && !resolved.collection) {
+    // A `get` answers with the object, not a one-element list.
+    console.log(JSON.stringify(rows[0] ?? null))
     return 0
   }
-  if (ctx.format === 'csv') {
-    console.log(renderCsv(resolved.spec, rows, Boolean(flags.wide)))
-    return 0
-  }
-  const limit = typeof flags.limit === 'string' ? Number(flags.limit) : undefined
-  console.log(renderTable(resolved.spec, rows, ctx, { wide: Boolean(flags.wide), limit }))
-  console.log('')
-  console.log(hints(resolved.spec, ctx, address))
-  return 0
+  return printRows(resolved.spec, rows, ctx, address, flags, filters)
 }
 
 /**
@@ -486,6 +492,63 @@ async function contextCommand(
   }
 
   throw new CliError(`unknown context command "${verb}"`, 'try: list, use, set, remove')
+}
+
+/**
+ * The one cluster this endpoint reaches, when there is exactly one.
+ *
+ * A deployment with a single cluster should not have to name it on every
+ * command; one with several must, because picking for the caller would report
+ * one cluster's answer under no label at all. The refusal lists them, so the
+ * next command is a copy-paste rather than another lookup.
+ */
+async function soleCluster(ctx: Context): Promise<string> {
+  const listUrl = clusterListUrl(ctx)
+  let rows: Record<string, unknown>[] = []
+  if (listUrl) {
+    try {
+      rows = normalize(await requestAt<unknown>(listUrl, ctx, 'GET'))
+    } catch {
+      rows = []
+    }
+  }
+  const ids = rows.map((c) => String(c.id ?? '')).filter(Boolean)
+  if (ids.length === 1) return ids[0]
+  throw new CliError(
+    ids.length
+      ? 'this endpoint reaches several clusters and this command needs one'
+      : 'this endpoint reaches several clusters and this command needs one',
+    ids.length
+      ? `pass --cluster, or set a default with \`abx context set <name> --cluster <id>\`\nreachable: ${ids.join(', ')}`
+      : 'pass --cluster, or set a default with `abx context set <name> --cluster <id>`',
+  )
+}
+
+/** Print a result set in whichever format was asked for. */
+function printRows(
+  spec: (typeof RESOURCES)[number],
+  rows: Record<string, unknown>[],
+  ctx: Context,
+  address: Address,
+  flags: Record<string, string | boolean>,
+  filters: [string, string][],
+): number {
+  const first = spec.columns[0].id
+  let out = rows.map((r) => (r !== null && typeof r === 'object' ? r : { [first]: r }))
+  out = applyFilters(spec, out, filters)
+  if (ctx.format === 'json') {
+    console.log(JSON.stringify(out))
+    return 0
+  }
+  if (ctx.format === 'csv') {
+    console.log(renderCsv(spec, out, Boolean(flags.wide)))
+    return 0
+  }
+  const limit = typeof flags.limit === 'string' ? Number(flags.limit) : undefined
+  console.log(renderTable(spec, out, ctx, { wide: Boolean(flags.wide), limit }))
+  console.log('')
+  console.log(hints(spec, ctx, address))
+  return 0
 }
 
 /**

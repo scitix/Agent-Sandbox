@@ -375,6 +375,14 @@ assistant:
       # The host to allow out, when it differs from the endpoint's own host
       # (it usually does not). Derived from bffEndpoint when empty.
       bffHost: ""
+      # Which cluster the sandbox itself is in, used as the DEFAULT for `abx`
+      # so ordinary commands need no --cluster. Only meaningful alongside
+      # bffEndpoint: a path-routing address reaches several clusters and names
+      # none of them, so without this every command has to be told which one —
+      # including `whoami`, which is about the credential rather than a cluster
+      # and reads as the tool being broken. `--cluster X` still reaches any
+      # other cluster.
+      clusterID: ""
       # A decoy of JWT shape, so a client that inspects it before sending does
       # not reject it out of hand.
       bffDecoy: "eyJhbGciOiJIUzI1NiJ9.decoy.decoy"

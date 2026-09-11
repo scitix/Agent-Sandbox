@@ -42,7 +42,7 @@ import {
   type FileConfig,
 } from '../src/contexts'
 import { agentContext } from '../src/agent-context'
-import { CliError, type Context } from '../src/context'
+import { CliError, baseUrl, clusterListUrl, type Context } from '../src/context'
 
 const ctx: Context = {
   endpoint: 'https://example.test/api',
@@ -262,5 +262,38 @@ describe('contexts name deployments, clusters name their clusters', () => {
       }
     }
     expect(selectContext({}).entry).toEqual({})
+  })
+})
+
+describe('which cluster is a question, not a precondition', () => {
+  const bff: Context = { ...ctx, endpoint: 'https://c.test/agentbox/api/clusters/{cluster}', cluster: undefined }
+
+  it('asks for the cluster list one level above the placeholder', () => {
+    // "Which clusters are there" cannot be answered by first naming one. A
+    // path-routing endpoint publishes the list at the level its placeholder
+    // sits in, so that is where it is asked — and `abx clusters` therefore
+    // needs no --cluster at all.
+    expect(clusterListUrl(bff)).toBe('https://c.test/agentbox/api/clusters')
+  })
+
+  it('has no such level when the endpoint serves one cluster', () => {
+    expect(clusterListUrl({ ...ctx, endpoint: 'https://one.test/api' })).toBeNull()
+  })
+
+  it('refuses with the next command rather than a bare demand', () => {
+    try {
+      baseUrl(bff)
+      throw new Error('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError)
+      // Not "pass --cluster" and nothing else: the durable fix is a default on
+      // the context, and `abx clusters` is how you find the id to put there.
+      expect((e as CliError).hint).toContain('abx context set')
+      expect((e as CliError).hint).toContain('abx clusters')
+    }
+  })
+
+  it('still substitutes when a cluster is known', () => {
+    expect(baseUrl({ ...bff, cluster: 'x' })).toBe('https://c.test/agentbox/api/clusters/x/v1')
   })
 })

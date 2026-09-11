@@ -39,11 +39,28 @@ export interface Context {
  */
 export const routesByPath = (ctx: Context): boolean => ctx.endpoint.includes('{cluster}')
 
+/**
+ * Where to ask WHICH clusters exist, when the endpoint routes by path.
+ *
+ * The placeholder segment is what makes one address reach every cluster, so
+ * the level above it is the question "which are there" — and that question
+ * cannot be answered by first naming one. Returns null for a single-cluster
+ * endpoint, which answers it from its own API like anything else.
+ */
+export function clusterListUrl(ctx: Context): string | null {
+  if (!routesByPath(ctx)) return null
+  const stripped = ctx.endpoint.replace(/\/*\{cluster\}\/*$/, '')
+  return stripped === ctx.endpoint ? null : stripped
+}
+
 export function baseUrl(ctx: Context): string {
   let e = ctx.endpoint
   if (routesByPath(ctx)) {
     if (!ctx.cluster) {
-      throw new CliError('this endpoint routes by cluster and needs one: pass --cluster')
+      throw new CliError(
+        'this endpoint reaches several clusters and this command needs one',
+        'pass --cluster, or set a default:\n  abx context set <name> --cluster <id>\n`abx clusters` lists them and needs none.',
+      )
     }
     e = e.replaceAll('{cluster}', ctx.cluster)
   }

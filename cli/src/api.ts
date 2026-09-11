@@ -36,7 +36,16 @@ export async function request<T = unknown>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const url = `${baseUrl(ctx)}${path}`
+  return requestAt(`${baseUrl(ctx)}${path}`, ctx, method, body)
+}
+
+/** The same request, against an absolute URL that is not under `/v1`. */
+export async function requestAt<T = unknown>(
+  url: string,
+  ctx: Context,
+  method: string,
+  body?: unknown,
+): Promise<T> {
   const res = await fetch(url, {
     method,
     headers: {
