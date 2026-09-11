@@ -77,6 +77,11 @@ export async function request<T = unknown>(
 }
 
 function hintFor403(msg: string): string | undefined {
+  if (/impersonat/i.test(msg)) {
+    // Not a permission problem: the read is tenant-scoped and an admin key has
+    // no tenant. Saying which flags supply one turns the refusal into an answer.
+    return 'this read is per-tenant and an admin key names no tenant — add --as-team <t> --as-user <u>'
+  }
   if (/api key|credential/i.test(msg)) {
     // Not an approval path: this one is never granted to an agent at all.
     return 'issuing credentials is not something an agent key can do, with or without approval — open the console and do it as yourself'

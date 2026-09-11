@@ -108,36 +108,55 @@ looking at.
 
 Run it with `bash`. There is no in-process tool; you type command lines.
 
+The whole grammar is an address followed, for a write, by one verb:
+
 ```
-abx --help                             # what resources exist
-abx <resource> --help                  # its filters, columns, sub-resources, and
-                                       #   the LIVE values present in this cluster
-abx <resource>                         # list (aligned table)
-abx <resource> <id>                    # one item: brief + sections + hints
-abx <resource> <id> <section>          # a sub-resource (e.g. `abx envs my-env pools`)
-abx whoami                             # who this credential is — run it before
-                                       #   describing whose data you are showing
-abx agent-context                      # the whole CLI's shape, as JSON
+abx <resource>                              list
+abx <resource> <id>                         one item
+abx <resource> <id> <sub>                   a child collection
+abx <resource> <id> <sub> <sub-id>          one child
+abx <resource> <id> [<sub> <sub-id>] <view> a view (logs)
+
+abx <path…> apply -f FILE                   write the desired state
+abx <path…> delete
+abx <path…> scale --replicas N              pools only
 ```
 
-Resources: `templates` `envs` `pools` `instancetypes` `quotas` `clusters`
-`sandboxes`. **`abx --help` is authoritative** — prefer running it over trusting
-this list.
+Reading and writing share the same address, so having just listed something you
+append a word rather than learning a second grammar. The address also matches
+the console URL segment for segment.
+
+```
+abx agent-context      # THE WHOLE CLI AS JSON — resources, filters, columns,
+                       #   writes, grammar. Read this once instead of running
+                       #   --help three times.
+abx --help             # the resources
+abx <resource> --help  # its filters, columns, sub-resources, actions, writes
+abx whoami             # who this credential is, and whether it is an `agent`
+                       #   key whose writes wait for a person
+```
+
+Resources: `clusters` `envs` `pools` `scaling-groups` `events` `sandboxes`
+`templates` `instancetypes` `quotas` `volumes` `api-keys` `approvals` `grants`
+`teams` `namespaces` `statistics`. **`abx agent-context` is authoritative** —
+prefer it over trusting this list.
+
+`pools`, `scaling-groups` and `events` belong to an env and are addressed under
+one: `abx envs <env> pools`. Asking for them at the top level is refused, with
+the form that works.
 
 Rules that matter:
 
 - **The column headers ARE the `--filter` keys.** What you read is what you type.
 - **An undeclared `--filter` key fails the command**, naming the keys that do
-  exist. It does not silently return everything. So a failure here is information,
-  not an obstacle — read the message and retry.
-- **Follow the `hint:` block.** Every result ends with ready-to-run commands: an
-  item's sub-resources and its related resources. Run them verbatim to chain
-  across resources instead of guessing ids.
-- **`sections:`** lists a detail's sub-resources. `abx envs <name> pools` is the
-  one you will use most.
-- `--cluster <id>` selects the cluster; get the list from `abx clusters`. Omit
-  it and the endpoint answers for its own cluster, which is usually what you
-  want — see the marker below for when it is not.
+  exist, and a closed-set filter names its valid values. A failure here is
+  information, not an obstacle — read the message and retry once.
+- **Follow the `hint:` block.** Every result ends with ready-to-run commands for
+  the item's children and views. Run them verbatim to chain across resources
+  instead of guessing ids.
+- `--json` for machine output, `--csv` for something flat, `--wide` for the
+  columns held back by default, `--limit` for more rows.
+- `--cluster <id>` selects the cluster; get the list from `abx clusters`.
 - **Which clusters `abx` can manage depends on the endpoint, and it will tell
   you.** Some deployments point it at one cluster's own API, where environments,
   pools, templates and quotas exist only for that cluster and a `--cluster`
@@ -149,11 +168,38 @@ Rules that matter:
   reaches another cluster's environment from here, because the E2B surface
   forwards it. So "run something on cluster X" always works; "list the envs on
   cluster X" depends on the endpoint.
-- Before piping a large payload into `jq`, ask for `--schema` first: it describes
-  the shape (jq paths + types) so the expression is right the first time.
-- Reads are tenant-scoped. If a command answers *"requires user and team
-  context"*, that is the server telling you the key is an admin key — pass
-  `--as-team` / `--as-user`. Do not treat it as an empty result.
+- Reads are tenant-scoped. `--as-team` / `--as-user` exist for an administrator
+  driving the CLI by hand, and are **not yours to use** — see the 403 note
+  above: in this sandbox that error means the front door handed you the wrong
+  credential, and covering it up hides a deployment fault.
+
+### Writing
+
+**`apply` is a PUT of the whole object. A field the file leaves out is a field
+you are asking to REMOVE.** So the shape of every edit is read, change, send:
+
+```bash
+abx envs demo pools demo-1c2gi --json > pool.json
+# edit pool.json
+abx envs demo pools demo-1c2gi apply -f pool.json
+```
+
+Never hand-write that file from scratch unless you mean to clear what you
+omitted. Creating is the same verb against the collection:
+`abx envs apply -f env.json`.
+
+`scale --replicas N` is the exception — one field, and it re-sends the current
+bounds unchanged. Use it when size is all that changes. A pool whose scaling
+group has autoscaling enabled does not take a manual size; change the group's
+bounds instead.
+
+**If a write comes back saying it is held for approval, it is.** A person
+releases it in the console at the link given; re-run the command afterwards. Do
+not look for a flag.
+
+**Three writes are refused outright and have no approval to wait for**: issuing
+an API key, promoting one, and deciding an approval. The answer is a console
+link for the user to act on themselves. Say so and hand over the link.
 
 ## Onboarding a new user — the standard path
 
@@ -163,17 +209,33 @@ read steps yourself and report; **confirm before each write.**
 1. **`abx clusters`** — which cluster are we working in.
 2. **`abx templates`** — show what a sandbox can be built from, and *recommend
    one with a reason*. For general code execution that means a template with an
-   `envd` runtime. Mention cpu/memory so the choice is informed.
-3. **`abx envs create --name <n> --template <t>`** — the environment. Add
-   `--gateway` when their sandboxes will need outbound credential injection;
-   it changes the Pod spec, so it is far cheaper to decide now than later.
+   `envd` runtime.
+3. **Create the environment.** Add `overrides.gateway.enabled` when their
+   sandboxes will need outbound credential injection; it changes the Pod spec,
+   so it is far cheaper to decide now than later.
+
+   ```bash
+   cat > env.json <<'JSON'
+   {"name": "<n>", "mode": "WarmPool", "templateRef": {"name": "<t>"}}
+   JSON
+   abx envs apply -f env.json
+   ```
 4. **`abx quotas --as-team <t> --as-user <u>`** — what they may charge against.
    **An empty list is a normal answer, not an error**: it means no quota is
    configured for that team, and a pool can still be created without one. Say
    exactly that rather than treating it as a failure.
 5. **`abx instancetypes`** — pick a size. Explain the cost column.
-6. **`abx pools create --env <n> --instance-type <it> --replicas 1 [--quota <url>]`**
-   — the capacity. Without this the Env hands out nothing.
+6. **Add capacity.** Without a pool the Env hands out nothing.
+
+   ```bash
+   cat > pool.json <<'JSON'
+   {"instanceType": "<it>", "multiplier": 1, "replicas": 1}
+   JSON
+   abx envs <n> pools apply -f pool.json
+   ```
+
+   The server names the pool after the resource shape, so read the name back
+   from `abx envs <n> pools` rather than assuming the one you asked for.
 7. **`abx envs <n> pools`** — watch `phase` reach `Ready` and `idleReplicas` reach
    the replica count. Only then is the Env usable.
 8. **Hand them working code.** The Env name is the `template` argument:
