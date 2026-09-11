@@ -619,6 +619,10 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 		}
 		input.Overrides = ov
 		input.ImagePullSecret = req.Body.Overrides.ImagePullSecret
+		// The keep signal. Echoing back what GET returned preserves the
+		// credentials; dropping it revokes them, which is what makes "remove
+		// these" expressible at all.
+		input.KeepImagePullSecret = ptr.Deref(req.Body.Overrides.ImagePullSecretConfigured, false)
 	}
 	// No "at least one field" guard: under desired-state semantics an empty
 	// body is a meaningful request — it asks for an Env with no overrides —

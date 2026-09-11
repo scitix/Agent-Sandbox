@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentbox-sdk"
 version = "0.0.0"
-description = "AgentBox Python SDK — manage Sandboxes, Pools, and Templates via async/await"
+description = "AgentBox Python SDK — manage Sandboxes, Pools, and Templates via async/await. The `abx` CLI is a separate, compiled binary; this package is the library only."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
@@ -17,18 +17,9 @@ dependencies = [
     "python-dateutil>=2.8.0",
 ]
 
-[project.scripts]
-abx = "agentbox_sdk.cli.main:main"
-
 [project.optional-dependencies]
 dev = [
     "openapi-python-client>=0.21.0",
-    # For scripts/gen_body_docs.py, which reads the OpenAPI spec. A DEV
-    # dependency only: what it emits is plain Python, so the CLI itself never
-    # parses YAML. It is here rather than left to `uv run --with` so the
-    # staleness check can actually run in CI — a guard that skips itself where
-    # it matters is not a guard.
-    "pyyaml>=6.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "respx>=0.21.0",
@@ -52,10 +43,6 @@ line-length = 80
 target-version = "py39"
 exclude = [
     "agentbox_sdk/_generated",
-    # Generated from the OpenAPI spec (scripts/gen_body_docs.py). Its long
-    # lines are the schema's own descriptions, and reflowing them would be
-    # editing a generated file.
-    "agentbox_sdk/cli/_body_docs.py",
     "__pycache__",
     ".git",
     ".venv",

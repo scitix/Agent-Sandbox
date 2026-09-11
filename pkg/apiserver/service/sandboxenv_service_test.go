@@ -18,6 +18,10 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -62,6 +66,17 @@ func newEnv(name, team, user string) *agentsv1alpha1.SandboxEnv {
 
 func newEnvService(t *testing.T, envs ...*agentsv1alpha1.SandboxEnv) SandboxEnvService {
 	t.Helper()
+	svc, _ := newEnvServiceWithClient(t, envs...)
+	return svc
+}
+
+// Some assertions are about objects the service writes BESIDE the Env — the
+// image-pull Secret, say — which no API response mentions. Handing back the
+// same fake client is how those get checked at all.
+func newEnvServiceWithClient(
+	t *testing.T, envs ...*agentsv1alpha1.SandboxEnv,
+) (SandboxEnvService, client.Client) {
+	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
 	if err != nil {
 		t.Fatalf("client builder: %v", err)
@@ -69,7 +84,8 @@ func newEnvService(t *testing.T, envs ...*agentsv1alpha1.SandboxEnv) SandboxEnvS
 	for _, e := range envs {
 		cb = cb.WithObjects(e)
 	}
-	return NewSandboxEnvService(cb.Build(), nil, nil, nil, nil, nil, VolumeConfig{Enabled: true})
+	c := cb.Build()
+	return NewSandboxEnvService(c, nil, nil, nil, nil, nil, VolumeConfig{Enabled: true}), c
 }
 
 func TestSandboxEnvService_List_FiltersByTeamAndUser(t *testing.T) {
@@ -259,5 +275,62 @@ func TestSandboxEnvService_Update_OverridesAreDesiredState(t *testing.T) {
 	}
 	if cleared.Spec.Overrides != nil {
 		t.Fatalf("omitting overrides should remove them, got %+v", cleared.Spec.Overrides)
+	}
+}
+
+// Clearing the registry credentials has to remove the Secret, not just the
+// reference to it.
+//
+// While there was no delete path, a password the user believed they had
+// revoked went on existing in the cluster and the form reported success.
+// "No longer referenced" is not "revoked", and only one of those was true.
+func TestSandboxEnvService_Update_ClearingRegistryCredentialsDeletesTheSecret(t *testing.T) {
+	env := newEnv(envTestName, "k8s", "ylli")
+	svc, k8s := newEnvServiceWithClient(t, env)
+	ctx := context.Background()
+
+	if _, appErr := svc.Update(ctx, UpdateSandboxEnvInput{
+		Name:      envTestName,
+		Namespace: envTestNamespace,
+		ImagePullSecret: &gen.ImagePullSecretInput{
+			Registries: []gen.RegistryCredential{
+				{Registry: "registry.example", Username: "u", Password: "p"},
+			},
+		},
+	}); appErr != nil {
+		t.Fatalf("update with credentials: %v", appErr)
+	}
+
+	name := agentsv1alpha1.EnvImagePullSecretName(envTestName)
+	key := types.NamespacedName{Namespace: envTestNamespace, Name: name}
+	sec := &corev1.Secret{}
+	if err := k8s.Get(ctx, key, sec); err != nil {
+		t.Fatalf("secret should exist after an update that supplied credentials: %v", err)
+	}
+
+	// An edit to something else echoes the keep flag back, exactly as GET
+	// returned it, and the credentials survive. This is the common case: the
+	// passwords cannot be read back, so without it every unrelated edit would
+	// revoke them.
+	if _, appErr := svc.Update(ctx, UpdateSandboxEnvInput{
+		Name:                envTestName,
+		Namespace:           envTestNamespace,
+		KeepImagePullSecret: true,
+	}); appErr != nil {
+		t.Fatalf("update that keeps credentials: %v", appErr)
+	}
+	if err := k8s.Get(ctx, key, sec); err != nil {
+		t.Fatalf("the keep flag should preserve the secret: %v", err)
+	}
+
+	// Dropping the flag is how "remove these credentials" is said.
+	if _, appErr := svc.Update(ctx, UpdateSandboxEnvInput{
+		Name:      envTestName,
+		Namespace: envTestNamespace,
+	}); appErr != nil {
+		t.Fatalf("update without credentials: %v", appErr)
+	}
+	if err := k8s.Get(ctx, key, sec); !k8serrors.IsNotFound(err) {
+		t.Fatalf("omitting credentials and the keep flag should delete the secret, got err=%v", err)
 	}
 }

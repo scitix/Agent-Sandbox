@@ -350,12 +350,6 @@ gen-all-api: generate-api gen-internal-proto ## Regenerate all API clients from 
 	rm -rf sdk/python/abx/agentbox_sdk/_generated
 	mv /tmp/agentbox_sdk_gen/agentbox_sdk._generated sdk/python/abx/agentbox_sdk/_generated
 	rm -rf /tmp/agentbox_sdk_gen
-	@# The `-f` body reference the CLI prints, from the same spec. Generated
-	@# rather than written: a hand-kept description of a schema is a copy, and
-	@# a copy stops being true without anyone noticing.
-	uv run --with pyyaml python sdk/python/abx/scripts/gen_body_docs.py \
-		pkg/openapi/native/openapi.yaml \
-		sdk/python/abx/agentbox_sdk/cli/_body_docs.py
 	$(MAKE) add-license
 	@echo "All API code regenerated:"
 	@echo "  Go     → pkg/apiserver/gen/agentbox.gen.go"

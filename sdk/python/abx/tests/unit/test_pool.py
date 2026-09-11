@@ -26,9 +26,6 @@ from agentbox_sdk._generated.client import AuthenticatedClient
 from agentbox_sdk.pool import PoolsAPI, SandboxPool
 from agentbox_sdk.models import SandboxPoolData
 from agentbox_sdk.exceptions import PoolNotFoundError
-from agentbox_sdk.cli import main as M
-from agentbox_sdk.cli.context import Context
-from agentbox_sdk.cli.parser import UsageError
 
 
 BASE_URL = "http://agentbox.test/v1"
@@ -267,66 +264,3 @@ async def test_server_error_raises():
         api = make_api()
         with pytest.raises(ServerError):
             await api.get(ENV_NAME, "bad")
-
-
-# ── requesting less than the reservation holds ───────────────────────────────
-#
-# The instance type is a fixed catalog and the reservation is charged for the
-# whole envelope either way, so these flags do not buy a cheaper pool. What
-# they stop is a small workload being handed resources it will not use. The
-# console has always been able to express this; the CLI could not, so an agent
-# working from the CLI alone reported it as impossible.
-
-
-def _body(monkeypatch, argv):
-    """Run `pools create` and return the body it would POST."""
-    sent = {}
-
-    def fake_post(self, path, body):
-        sent["path"] = path
-        sent["body"] = body
-        return {"name": "p"}
-
-    monkeypatch.setattr(Context, "post_json", fake_post)
-    monkeypatch.setenv("AGENTBOX_API_KEY", "agbx_test")
-    monkeypatch.setenv("AGENTBOX_ENDPOINT", "http://example.invalid")
-    M.run(argv)
-    return sent["body"]
-
-
-BASE = ["pools", "create", "--env", "e", "--instance-type", "sci.c23-2"]
-
-
-def test_a_pool_without_the_flags_sends_no_inline_resources(monkeypatch):
-    body = _body(monkeypatch, BASE)
-    assert "inlineResources" not in body
-    assert body["instanceType"] == "sci.c23-2"
-
-
-def test_requests_are_sent_as_both_requests_and_limits(monkeypatch):
-    body = _body(monkeypatch, [*BASE, "--cpu", "100m", "--memory", "500Mi"])
-    assert body["inlineResources"] == {
-        "requests": {"cpu": "100m", "memory": "500Mi"},
-        "limits": {"cpu": "100m", "memory": "500Mi"},
-    }
-    # The instance type still rides along: the reservation is charged for the
-    # envelope, and the request only says what the pod asks of the node.
-    assert body["instanceType"] == "sci.c23-2"
-
-
-@pytest.mark.parametrize(
-    "extra,missing",
-    [
-        (["--cpu", "100m"], "--memory"),
-        (["--memory", "500Mi"], "--cpu"),
-    ],
-)
-def test_one_without_the_other_is_refused(monkeypatch, extra, missing):
-    # The server uses inlineResources verbatim, so a half-specified request
-    # drops the other dimension rather than defaulting it — the pod comes up
-    # with no limit on whichever was left out.
-    monkeypatch.setenv("AGENTBOX_API_KEY", "agbx_test")
-    monkeypatch.setenv("AGENTBOX_ENDPOINT", "http://example.invalid")
-    with pytest.raises(UsageError) as e:
-        M.run([*BASE, *extra])
-    assert missing in str(e.value)

@@ -1620,8 +1620,23 @@ export interface components {
              *     imagePullSecretConfigured for read-state.
              */
             imagePullSecret?: components["schemas"]["ImagePullSecretInput"];
-            /** @description Server-set on GET: true when the ips-{envName} Secret exists in the Env's namespace. Write attempts via PATCH are ignored. */
-            readonly imagePullSecretConfigured?: boolean;
+            /**
+             * @description Server-set on GET: true when the `ips-{envName}` Secret exists in the
+             *     Env's namespace.
+             *
+             *     On PUT it is the KEEP signal, and the only way to say it. The
+             *     request is desired state, and the credentials cannot be read back to
+             *     be echoed — so a PUT carrying neither `imagePullSecret` nor this flag
+             *     is asking for the Secret to be DELETED. Sending back what GET
+             *     returned therefore preserves the stored material, exactly as it does
+             *     for every other field; a client that strips this flag while editing
+             *     an unrelated setting revokes the registry credentials as a side
+             *     effect.
+             *
+             *     `imagePullSecret` present wins: new credentials replace the old
+             *     ones whatever this says.
+             */
+            imagePullSecretConfigured?: boolean;
             /**
              * @description Egress gateway for every member Pool's sandbox Pods. Enabling it injects a
              *     transparent proxy sidecar, which is what makes per-sandbox egress filtering
@@ -1911,6 +1926,11 @@ export interface components {
          *     clears every override. Write-only credential values need not be echoed:
          *     their references round-trip through GET, so re-sending what GET returned
          *     preserves the stored material.
+         *
+         *     A request carrying no `imagePullSecret` DELETES the backing Secret, not
+         *     just the reference to it. Previously there was no call that could,
+         *     so a registry password the user had cleared in the console went on
+         *     existing in the cluster while the form reported success.
          *
          *     It was a PATCH while the request carried a single wholesale-replaced
          *     object, which meant the verb promised merge semantics the body never

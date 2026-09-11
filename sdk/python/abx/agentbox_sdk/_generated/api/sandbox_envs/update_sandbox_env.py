@@ -130,6 +130,11 @@ def sync_detailed(
             their references round-trip through GET, so re-sending what GET returned
             preserves the stored material.
 
+            A request carrying no `imagePullSecret` DELETES the backing Secret, not
+            just the reference to it. Previously there was no call that could,
+            so a registry password the user had cleared in the console went on
+            existing in the cluster while the form reported success.
+
             It was a PATCH while the request carried a single wholesale-replaced
             object, which meant the verb promised merge semantics the body never
             had. One verb per meaning: every editable object on this API is now a
@@ -179,6 +184,11 @@ def sync(
             their references round-trip through GET, so re-sending what GET returned
             preserves the stored material.
 
+            A request carrying no `imagePullSecret` DELETES the backing Secret, not
+            just the reference to it. Previously there was no call that could,
+            so a registry password the user had cleared in the console went on
+            existing in the cluster while the form reported success.
+
             It was a PATCH while the request carried a single wholesale-replaced
             object, which meant the verb promised merge semantics the body never
             had. One verb per meaning: every editable object on this API is now a
@@ -222,6 +232,11 @@ async def asyncio_detailed(
             clears every override. Write-only credential values need not be echoed:
             their references round-trip through GET, so re-sending what GET returned
             preserves the stored material.
+
+            A request carrying no `imagePullSecret` DELETES the backing Secret, not
+            just the reference to it. Previously there was no call that could,
+            so a registry password the user had cleared in the console went on
+            existing in the cluster while the form reported success.
 
             It was a PATCH while the request carried a single wholesale-replaced
             object, which meant the verb promised merge semantics the body never
@@ -271,6 +286,11 @@ async def asyncio(
             clears every override. Write-only credential values need not be echoed:
             their references round-trip through GET, so re-sending what GET returned
             preserves the stored material.
+
+            A request carrying no `imagePullSecret` DELETES the backing Secret, not
+            just the reference to it. Previously there was no call that could,
+            so a registry password the user had cleared in the console went on
+            existing in the cluster while the form reported success.
 
             It was a PATCH while the request carried a single wholesale-replaced
             object, which meant the verb promised merge semantics the body never

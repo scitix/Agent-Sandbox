@@ -149,6 +149,7 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
     reset,
     trigger,
     getValues,
+    watch,
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
@@ -409,7 +410,12 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
 
                       <Separator />
 
-                      <ImagePullSecretSection control={control} register={register} />
+                      <ImagePullSecretSection
+                        control={control}
+                        register={register}
+                        watch={watch}
+                        setValue={setValue}
+                      />
                     </div>
                   </AccordionContent>
                 </AccordionItem>
@@ -846,11 +852,23 @@ function VolumeSection({ control, register, setValue, errors }: VolumeSectionPro
 interface ImagePullSecretSectionProps {
   control: ReturnType<typeof useForm<FormValues>>["control"]
   register: ReturnType<typeof useForm<FormValues>>["register"]
+  watch: ReturnType<typeof useForm<FormValues>>["watch"]
+  setValue: ReturnType<typeof useForm<FormValues>>["setValue"]
 }
 
-function ImagePullSecretSection({ control, register }: ImagePullSecretSectionProps) {
+function ImagePullSecretSection({
+  control,
+  register,
+  watch,
+  setValue,
+}: ImagePullSecretSectionProps) {
   const { t } = useTranslation()
   const { fields, append, remove } = useFieldArray({ control, name: "imagePullSecretRows" })
+  // Stored credentials cannot be read back, so the boxes are blank even when
+  // an Env has them. Without this banner the form would look identical whether
+  // credentials existed or not — and saving would then either revoke them
+  // silently or keep them invisibly, depending on which way the contract went.
+  const configured = watch("imagePullSecretConfigured")
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
@@ -869,7 +887,28 @@ function ImagePullSecretSection({ control, register }: ImagePullSecretSectionPro
         </Button>
       </div>
       <p className="text-muted-foreground text-xs">{t("envs.form.imagePullSecret.hint")}</p>
-      {fields.length === 0 && (
+      {configured && (
+        <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+          <span className="text-muted-foreground">
+            {fields.length > 0
+              ? t("envs.form.imagePullSecret.willReplace")
+              : t("envs.form.imagePullSecret.stored")}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-destructive h-7 font-mono text-[11px]"
+            onClick={() => {
+              setValue("imagePullSecretConfigured", false, { shouldDirty: true })
+              for (let i = fields.length - 1; i >= 0; i--) remove(i)
+            }}
+          >
+            {t("envs.form.imagePullSecret.removeStored")}
+          </Button>
+        </div>
+      )}
+      {fields.length === 0 && !configured && (
         <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-center text-xs">
           {t("envs.form.imagePullSecret.empty")}
         </p>

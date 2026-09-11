@@ -39,6 +39,10 @@ import (
 // Upsert semantics: when no Secret exists, create. When one already exists,
 // patch its Data with the new dockerconfigjson payload (does NOT touch
 // labels / annotations the user may have added out of band).
+//
+// Callers that are expressing DESIRED state — the Env PUT — should use
+// reconcileEnvImagePullSecret instead, which also removes the Secret when the
+// request no longer asks for one.
 func (s *k8sSandboxEnvService) upsertEnvImagePullSecret(
 	ctx context.Context,
 	env *agentsv1alpha1.SandboxEnv,
@@ -114,4 +118,55 @@ func (s *k8sSandboxEnvService) upsertEnvImagePullSecret(
 		return domain.NewInternal(fmt.Sprintf("update image pull secret: %v", err), err)
 	}
 	return nil
+}
+
+// reconcileEnvImagePullSecret brings the backing Secret in line with what the
+// request asks for, in both directions.
+//
+// The second direction is the one that was missing. Clearing the credentials
+// in the console removed them from the CR and left the Secret in place
+// forever: there was no API call that could delete it, so a registry password
+// a user believed they had revoked went on existing in the cluster, and the
+// form said the change had been saved. "Revoked" and "no longer referenced"
+// are not the same claim, and only one of them was true.
+//
+// Deletion is restricted to a Secret this service owns. A Secret of the same
+// name that somebody created by hand — no owner reference back to this Env —
+// is left alone: name collision is not consent.
+func (s *k8sSandboxEnvService) reconcileEnvImagePullSecret(
+	ctx context.Context,
+	env *agentsv1alpha1.SandboxEnv,
+	input *gen.ImagePullSecretInput,
+) *domain.AppError {
+	if input != nil && len(input.Registries) > 0 {
+		return s.upsertEnvImagePullSecret(ctx, env, input)
+	}
+
+	key := client.ObjectKey{
+		Namespace: env.Namespace,
+		Name:      agentsv1alpha1.EnvImagePullSecretName(env.Name),
+	}
+	existing := &corev1.Secret{}
+	if err := s.client.Get(ctx, key, existing); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return domain.NewInternal(fmt.Sprintf("lookup image pull secret: %v", err), err)
+	}
+	if !ownedByEnv(existing, env) {
+		return nil
+	}
+	if err := s.client.Delete(ctx, existing); err != nil && !k8serrors.IsNotFound(err) {
+		return domain.NewInternal(fmt.Sprintf("delete image pull secret: %v", err), err)
+	}
+	return nil
+}
+
+func ownedByEnv(obj *corev1.Secret, env *agentsv1alpha1.SandboxEnv) bool {
+	for _, ref := range obj.OwnerReferences {
+		if ref.Kind == agentsv1alpha1.SandboxEnvOwnerKind && ref.Name == env.Name {
+			return true
+		}
+	}
+	return false
 }

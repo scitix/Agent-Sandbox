@@ -67,6 +67,15 @@ export const baseSchema = z.object({
   image: z.preprocess(emptyToUndef, z.string().optional()),
   podCreationImagePolicy: z.enum(["PoolDefaultImage", "IdleImage"]).optional(),
   imagePullSecretRows: z.array(registryRowSchema),
+  /**
+   * Whether this Env already has registry credentials stored.
+   *
+   * They cannot be read back — only their existence is reported — so this is
+   * the only thing the form can echo to mean "leave them alone". Dropping it
+   * while editing an unrelated setting revokes them, which is precisely the
+   * accident this field exists to prevent.
+   */
+  imagePullSecretConfigured: z.boolean(),
   defaultStartupTimeout: z.preprocess(emptyToUndef, z.string().optional()),
   defaultIdleTimeout: z.preprocess(emptyToUndef, z.string().optional()),
   // The egress gateway is the environment's whole network decision: whether its
@@ -103,6 +112,7 @@ export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
       defaultStartupTimeout: undefined,
       defaultIdleTimeout: undefined,
       imagePullSecretRows: [],
+      imagePullSecretConfigured: false,
       gatewayEnabled: false,
       autoUpdate: true,
       maxUnavailable: undefined,
@@ -117,7 +127,10 @@ export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
     podCreationImagePolicy: overrides?.podCreationImagePolicy ?? "IdleImage",
     defaultStartupTimeout: overrides?.defaultStartupTimeout,
     defaultIdleTimeout: overrides?.defaultIdleTimeout,
+    // Always empty: the passwords are write-only, so the boxes start blank
+    // even when credentials exist. What exists is carried by the flag below.
     imagePullSecretRows: [],
+    imagePullSecretConfigured: overrides?.imagePullSecretConfigured ?? false,
     gatewayEnabled: overrides?.gateway?.enabled ?? false,
     autoUpdate: overrides?.updateStrategy?.autoUpdate ?? true,
     maxUnavailable: overrides?.updateStrategy?.maxUnavailable,
@@ -154,11 +167,15 @@ function buildOverrides(v: FormValues) {
   if (v.podCreationImagePolicy) o.podCreationImagePolicy = v.podCreationImagePolicy
   if (v.defaultStartupTimeout) o.defaultStartupTimeout = v.defaultStartupTimeout
   if (v.defaultIdleTimeout) o.defaultIdleTimeout = v.defaultIdleTimeout
+  // Three intents, three shapes. New rows replace; the flag alone keeps; and
+  // neither — which is what the user gets by clicking "remove" — revokes.
   const registries = v.imagePullSecretRows
     .filter((r) => r.registry && r.username && r.password)
     .map((r) => ({ registry: r.registry!, username: r.username!, password: r.password! }))
   if (registries.length > 0) {
     o.imagePullSecret = { registries }
+  } else if (v.imagePullSecretConfigured) {
+    o.imagePullSecretConfigured = true
   }
   // Emitted only when on. An explicit `{enabled: false}` and an omitted key mean
   // the same thing to the server, and omitting keeps the stored CR clean.

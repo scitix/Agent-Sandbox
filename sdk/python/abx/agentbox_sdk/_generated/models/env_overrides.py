@@ -56,8 +56,21 @@ class EnvOverrides:
             default_idle_timeout (str | Unset): Mirrored onto every member Pool's spec.defaultIdleTimeout. Duration string,
                 e.g. '30m'.
             image_pull_secret (ImagePullSecretInput | Unset):
-            image_pull_secret_configured (bool | Unset): Server-set on GET: true when the ips-{envName} Secret exists in the
-                Env's namespace. Write attempts via PATCH are ignored.
+            image_pull_secret_configured (bool | Unset): Server-set on GET: true when the `ips-{envName}` Secret exists in
+                the
+                Env's namespace.
+
+                On PUT it is the KEEP signal, and the only way to say it. The
+                request is desired state, and the credentials cannot be read back to
+                be echoed — so a PUT carrying neither `imagePullSecret` nor this flag
+                is asking for the Secret to be DELETED. Sending back what GET
+                returned therefore preserves the stored material, exactly as it does
+                for every other field; a client that strips this flag while editing
+                an unrelated setting revokes the registry credentials as a side
+                effect.
+
+                `imagePullSecret` present wins: new credentials replace the old
+                ones whatever this says.
             gateway (GatewaySpec | Unset): Egress gateway switch. Enabling it adds a transparent proxy sidecar and an
                 iptables redirect to every sandbox Pod of the environment; the rules it
                 enforces are supplied per sandbox on the create call.

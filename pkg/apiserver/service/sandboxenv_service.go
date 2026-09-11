@@ -119,10 +119,18 @@ type UpdateSandboxEnvInput struct {
 	Namespace string
 
 	Overrides *agentsv1alpha1.EnvOverridesSpec
-	// ImagePullSecret, when non-nil, upserts the dockerconfigjson Secret
-	// backing this Env's image-pull credentials. Nil means leave existing
-	// Secret untouched.
+	// ImagePullSecret, when non-nil, replaces the dockerconfigjson Secret
+	// backing this Env's image-pull credentials.
 	ImagePullSecret *gen.ImagePullSecretInput
+	// KeepImagePullSecret preserves an existing Secret when the request
+	// carries no credentials.
+	//
+	// It exists because this one field cannot be read back and echoed like
+	// every other: the request is desired state, and a caller editing an
+	// unrelated setting has nothing to re-send. Without an explicit keep, the
+	// only two expressible intents would be "replace" and "revoke", and every
+	// ordinary edit would mean the second.
+	KeepImagePullSecret bool
 }
 
 // k8sSandboxEnvService is the default SandboxEnvService implementation. The
@@ -374,8 +382,12 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 	if err := s.client.Get(ctx, key, updated); err != nil {
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	if input.ImagePullSecret != nil && len(input.ImagePullSecret.Registries) > 0 {
-		if appErr := s.upsertEnvImagePullSecret(ctx, updated, input.ImagePullSecret); appErr != nil {
+	// Unconditional, like the overrides above: a PUT that carries neither
+	// credentials nor the keep flag is asking for none, and the Secret has to
+	// go with them.
+	keepingExisting := input.KeepImagePullSecret && input.ImagePullSecret == nil
+	if !keepingExisting {
+		if appErr := s.reconcileEnvImagePullSecret(ctx, updated, input.ImagePullSecret); appErr != nil {
 			return nil, appErr
 		}
 	}
