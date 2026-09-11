@@ -71,12 +71,20 @@ type AutoscalerService interface {
 	GetAutoscalingGroup(ctx context.Context, namespace, envName, groupName string) (*gen.EnvAutoscalingGroup, *domain.AppError)
 }
 
-// GroupPatch is the editable subset of EnvAutoscalingGroup. Pointer fields
-// disambiguate "leave unchanged" from "explicit zero/empty".
+// GroupPatch is the editable subset of EnvAutoscalingGroup, carried by a PUT
+// that means what PUT means: the request is the DESIRED STATE, so a field left
+// out is one the caller wants gone.
 //
-// Enabled / MinReplicas / MaxReplicas: nil = unchanged, non-nil = replace.
-// ScaleUpPolicy / ScaleDownPolicy: nil = unchanged; non-nil = REPLACE the
-// entire policy (callers must echo back any fields they want to preserve).
+// MinReplicas / MaxReplicas: nil = cleared. This is the field that mattered —
+// a group's maxReplicas is a live ceiling, and under the previous
+// "nil = unchanged" reading there was no request that could take it back off
+// once set. An operator who had capped a group at 64 could lower it, raise it,
+// or leave it, but never return the group to "no ceiling".
+//
+// Enabled is a plain bool: false is expressible, so it needs no third state.
+// ScaleUpPolicy / ScaleDownPolicy replace the whole policy; the CRD's
+// kubebuilder defaults refill any field the caller omits, so an absent policy
+// clears back to defaults rather than to nothing.
 type GroupPatch struct {
 	Enabled         *bool
 	MinReplicas     *int32
@@ -138,20 +146,23 @@ func (s *k8sService) UpdateAutoscalingGroup(ctx context.Context, namespace, envN
 		if patch.Enabled != nil {
 			g.Enabled = *patch.Enabled
 		}
+		// Assigned unconditionally — nil is "clear this", not "say nothing".
+		// MergeFrom renders a nil that previously held a value as an explicit
+		// JSON null, which is what removes the field on the API server.
 		if patch.MinReplicas != nil {
 			v := *patch.MinReplicas
 			g.MinReplicas = &v
+		} else {
+			g.MinReplicas = nil
 		}
 		if patch.MaxReplicas != nil {
 			v := *patch.MaxReplicas
 			g.MaxReplicas = &v
+		} else {
+			g.MaxReplicas = nil
 		}
-		if patch.ScaleUpPolicy != nil {
-			g.ScaleUpPolicy = scaleUpPolicyFromGen(patch.ScaleUpPolicy)
-		}
-		if patch.ScaleDownPolicy != nil {
-			g.ScaleDownPolicy = scaleDownPolicyFromGen(patch.ScaleDownPolicy)
-		}
+		g.ScaleUpPolicy = scaleUpPolicyFromGen(patch.ScaleUpPolicy)
+		g.ScaleDownPolicy = scaleDownPolicyFromGen(patch.ScaleDownPolicy)
 		updated = *g.DeepCopy()
 		return nil
 	}); appErr != nil {

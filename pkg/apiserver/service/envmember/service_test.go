@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
@@ -448,11 +449,67 @@ func TestUpdate_MinReplicasPersistsAndValidates(t *testing.T) {
 		t.Fatalf("expected persisted Config.MinReplicas=2, got %+v", mr)
 	}
 
-	// min > max is rejected (existing max=10).
+	// min > max is rejected. Both bounds are supplied because the request is the
+	// desired state: sending minReplicas alone would CLEAR maxReplicas, and 11
+	// against no ceiling is a perfectly good pool.
 	tooBig := int32(11)
+	ceiling := int32(10)
 	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
-		envmember.MemberPoolPatch{MinReplicas: &tooBig}); err == nil || err.Code != domain.ErrCodeBadRequest {
+		envmember.MemberPoolPatch{MinReplicas: &tooBig, MaxReplicas: &ceiling}); err == nil || err.Code != domain.ErrCodeBadRequest {
 		t.Fatalf("expected BadRequest for minReplicas>maxReplicas, got %+v", err)
+	}
+}
+
+// A bound left out of the request is a bound the caller wants gone.
+//
+// The reported symptom was a user emptying the maxReplicas box, being shown a
+// success toast, and finding the ceiling still in force — there was no request
+// that could remove it. The placeholder on that input is "—", which reads as
+// "empty means no ceiling": the one thing the API could not express.
+func TestUpdate_OmittedBoundsAreCleared(t *testing.T) {
+	minR, maxR := int32(2), int32(10)
+	env := newEnvForPoolOps()
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{
+		{
+			Name: "m1",
+			Spec: agentsv1alpha1.SandboxPoolSpec{Replicas: 4},
+			Config: agentsv1alpha1.EnvClusterMemberConfig{
+				ScalingGroup: "1c4Gi",
+				MinReplicas:  &minR,
+				MaxReplicas:  &maxR,
+				UpdateStrategy: &agentsv1alpha1.EnvUpdateStrategy{
+					AutoUpdate: ptr.To(false),
+				},
+			},
+		},
+	}
+	cli := newClient(t, env)
+	svc := envmember.New(cli, plugins.NewPluginManager(&capturingPlugin{}), nil, nil)
+
+	// An empty desired state: every optional bound should come off.
+	if _, err := svc.UpdateMember(context.Background(), envTestNamespace, testEnvName, "m1", envLocalCluster,
+		envmember.MemberPoolPatch{}); err != nil {
+		t.Fatalf("empty desired state must be accepted, got %+v", err)
+	}
+
+	got := &agentsv1alpha1.SandboxEnv{}
+	if err := cli.Get(context.Background(), types.NamespacedName{Namespace: envTestNamespace, Name: testEnvName}, got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	cfg := got.Spec.Clusters[0].Members[0].Config
+	if cfg.MinReplicas != nil {
+		t.Errorf("minReplicas should be cleared, got %d", *cfg.MinReplicas)
+	}
+	if cfg.MaxReplicas != nil {
+		t.Errorf("maxReplicas should be cleared, got %d", *cfg.MaxReplicas)
+	}
+	if cfg.UpdateStrategy != nil {
+		t.Errorf("updateStrategy should be cleared, got %+v", cfg.UpdateStrategy)
+	}
+	// Size is not part of that bucket: omitting replicas means "leave the pool
+	// the size it is", never "scale to zero".
+	if r := got.Spec.Clusters[0].Members[0].Spec.Replicas; r != 4 {
+		t.Errorf("replicas must be untouched when omitted, got %d", r)
 	}
 }
 

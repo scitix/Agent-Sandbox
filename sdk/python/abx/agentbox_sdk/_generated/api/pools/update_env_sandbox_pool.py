@@ -128,8 +128,19 @@ def sync_detailed(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
-            instanceType, labels and
+        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
+            is a PUT and it
+            means it: a field left out is one the caller wants REMOVED. That is the
+            only way "take the ceiling off" can be expressed — while an omitted
+            field meant "leave unchanged" there was no request that could clear
+            minReplicas, maxReplicas or updateStrategy, and the form's empty box
+            reported success without doing anything.
+
+            `replicas` is the exception: it is the pool's size rather than a bound,
+            an autoscaling group may own it outright, and omitting it leaves the
+            pool the size it is — never scales it to zero.
+
+            Update a member SandboxPool. Resource shape, instanceType, labels and
             annotations are immutable post-create; this PUT accepts replica
             adjustments and updateStrategy changes. When the scalingGroup has
             autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
@@ -170,8 +181,19 @@ def sync(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
-            instanceType, labels and
+        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
+            is a PUT and it
+            means it: a field left out is one the caller wants REMOVED. That is the
+            only way "take the ceiling off" can be expressed — while an omitted
+            field meant "leave unchanged" there was no request that could clear
+            minReplicas, maxReplicas or updateStrategy, and the form's empty box
+            reported success without doing anything.
+
+            `replicas` is the exception: it is the pool's size rather than a bound,
+            an autoscaling group may own it outright, and omitting it leaves the
+            pool the size it is — never scales it to zero.
+
+            Update a member SandboxPool. Resource shape, instanceType, labels and
             annotations are immutable post-create; this PUT accepts replica
             adjustments and updateStrategy changes. When the scalingGroup has
             autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
@@ -207,8 +229,19 @@ async def asyncio_detailed(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
-            instanceType, labels and
+        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
+            is a PUT and it
+            means it: a field left out is one the caller wants REMOVED. That is the
+            only way "take the ceiling off" can be expressed — while an omitted
+            field meant "leave unchanged" there was no request that could clear
+            minReplicas, maxReplicas or updateStrategy, and the form's empty box
+            reported success without doing anything.
+
+            `replicas` is the exception: it is the pool's size rather than a bound,
+            an autoscaling group may own it outright, and omitting it leaves the
+            pool the size it is — never scales it to zero.
+
+            Update a member SandboxPool. Resource shape, instanceType, labels and
             annotations are immutable post-create; this PUT accepts replica
             adjustments and updateStrategy changes. When the scalingGroup has
             autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
@@ -249,8 +282,19 @@ async def asyncio(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Update a member SandboxPool. Resource shape,
-            instanceType, labels and
+        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
+            is a PUT and it
+            means it: a field left out is one the caller wants REMOVED. That is the
+            only way "take the ceiling off" can be expressed — while an omitted
+            field meant "leave unchanged" there was no request that could clear
+            minReplicas, maxReplicas or updateStrategy, and the form's empty box
+            reported success without doing anything.
+
+            `replicas` is the exception: it is the pool's size rather than a bound,
+            an autoscaling group may own it outright, and omitting it leaves the
+            pool the size it is — never scales it to zero.
+
+            Update a member SandboxPool. Resource shape, instanceType, labels and
             annotations are immutable post-create; this PUT accepts replica
             adjustments and updateStrategy changes. When the scalingGroup has
             autoscaling enabled (via env.spec.autoscaling.enabled + a matching group

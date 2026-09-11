@@ -86,10 +86,24 @@ type MemberPoolService interface {
 }
 
 // MemberPoolPatch is the editable subset of EnvClusterMember exposed to
-// PUT /v1/sandboxenvs/{name}/sandboxpools/{poolName}. Pointer fields
-// disambiguate "leave unchanged" from "explicit zero".
+// PUT /v1/sandboxenvs/{name}/sandboxpools/{poolName}.
+//
+// This is a PUT and it means it: the request carries the DESIRED STATE of the
+// fields below, so a field left out is a field the caller wants gone. That is
+// the only way "remove the ceiling" can be expressed at all — with absent
+// meaning "leave alone" there is no third state, and clearing minReplicas,
+// maxReplicas or updateStrategy silently did nothing while the form reported
+// success. The maxReplicas input is even placeholder "—", which reads as "empty
+// means no ceiling": the one thing it could not do.
+//
+// Replicas is the exception and stays a pointer, because it is not part of the
+// same bucket. It lands on Member.Spec (desired size) rather than
+// Member.Config (user intent), an autoscaling group may own it outright, and a
+// caller who omits it means "leave the size alone" — never "scale to zero".
 type MemberPoolPatch struct {
-	Replicas       *int32
+	// Replicas: nil = leave the current size alone.
+	Replicas *int32
+	// The desired-state fields. nil = the caller wants this cleared.
 	MinReplicas    *int32
 	MaxReplicas    *int32
 	UpdateStrategy *agentsv1alpha1.EnvUpdateStrategy
@@ -275,16 +289,33 @@ func applyMemberPoolPatch(env *agentsv1alpha1.SandboxEnv, member *agentsv1alpha1
 	if patch.Replicas != nil {
 		member.Spec.Replicas = *patch.Replicas
 	}
+	// Assigned unconditionally: the request is the desired state, so nil here
+	// is an instruction to clear, not an absence of instruction. client.Patch
+	// with MergeFrom turns a nil that used to hold a value into an explicit
+	// JSON null, which is what actually removes the field on the API server.
 	if patch.MinReplicas != nil {
 		v := *patch.MinReplicas
 		member.Config.MinReplicas = &v
+	} else {
+		member.Config.MinReplicas = nil
 	}
 	if patch.MaxReplicas != nil {
 		v := *patch.MaxReplicas
 		member.Config.MaxReplicas = &v
+	} else {
+		member.Config.MaxReplicas = nil
 	}
-	if patch.UpdateStrategy != nil {
-		member.Config.UpdateStrategy = patch.UpdateStrategy
+	strategyChanged := !equality.Semantic.DeepEqual(member.Config.UpdateStrategy, patch.UpdateStrategy)
+	member.Config.UpdateStrategy = patch.UpdateStrategy
+	// MaxUnavailable is derived from the strategy, so recompute it whenever the
+	// strategy moved — including when it was cleared, which otherwise leaves the
+	// old rollout budget stamped on the live Pool.
+	//
+	// Only when it moved, though. This writes Member.Spec, and a Spec change is
+	// what gates PreUpdatePool admission below; touching it on a
+	// minReplicas-only edit would re-submit the scheduler reservation for an
+	// unchanged replica count and can spuriously fail on quota.
+	if strategyChanged {
 		mu := agentsv1alpha1.ResolveMaxUnavailable(env, *member)
 		member.Spec.MaxUnavailable = &mu
 	}
@@ -295,9 +326,9 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
-	if patch.Replicas == nil && patch.MinReplicas == nil && patch.MaxReplicas == nil && patch.UpdateStrategy == nil {
-		return nil, domain.NewBadRequest("at least one of replicas, minReplicas, maxReplicas or updateStrategy must be provided")
-	}
+	// No emptiness guard: an all-nil body is now a legitimate request — it means
+	// "clear every optional bound on this member". Rejecting it was the last
+	// thing standing between a user and returning a pool to its defaults.
 	key := types.NamespacedName{Namespace: namespace, Name: envName}
 
 	env := &agentsv1alpha1.SandboxEnv{}
