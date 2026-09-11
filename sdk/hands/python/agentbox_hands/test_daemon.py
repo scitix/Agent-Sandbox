@@ -563,3 +563,43 @@ class GlobPatternTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActingIdentityTest(unittest.TestCase):
+    """`static` mode has to ignore the session's credential, not merely survive
+    its absence.
+
+    While it read the session key whenever one was bound, the mode worked only
+    on a deployment with no front door — exactly the case nobody runs. With a
+    console in front, every sandbox went on being created as the person talking,
+    and the failure surfaced far from the cause: creates refused with "pool
+    belongs to <someone else>", because the pool belongs to the identity the
+    mode was supposed to act as.
+    """
+
+    def setUp(self):
+        self._mode = sandbox_manager.SANDBOX_IDENTITY_MODE
+        self._env = os.environ.get("E2B_API_KEY")
+        os.environ["E2B_API_KEY"] = "agbx_deployment_own_key"
+        sandbox_manager._BOUND["ses_x"] = {
+            "api_key": "agbx_the_person",
+            "identity": "team1/person",
+        }
+
+    def tearDown(self):
+        sandbox_manager._BOUND.pop("ses_x", None)
+        sandbox_manager.SANDBOX_IDENTITY_MODE = self._mode
+        if self._env is None:
+            os.environ.pop("E2B_API_KEY", None)
+        else:
+            os.environ["E2B_API_KEY"] = self._env
+
+    def test_static_uses_the_deployments_key_even_when_a_session_is_bound(self):
+        sandbox_manager.SANDBOX_IDENTITY_MODE = "static"
+        self.assertEqual(
+            sandbox_manager.acting_api_key("ses_x"), "agbx_deployment_own_key"
+        )
+
+    def test_session_uses_the_persons_key(self):
+        sandbox_manager.SANDBOX_IDENTITY_MODE = "session"
+        self.assertEqual(sandbox_manager.acting_api_key("ses_x"), "agbx_the_person")

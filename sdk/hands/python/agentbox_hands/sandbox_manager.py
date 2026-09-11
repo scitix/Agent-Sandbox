@@ -151,9 +151,13 @@ SANDBOX_NETWORK = _sandbox_network_from_environ()
 #                       ${e2b.secrets.*} reference against the identity that
 #                       created the sandbox). A session with no credential gets
 #                       no sandbox.
-#   static          — every sandbox is created with this process's E2B_API_KEY.
-#                       For a deployment with no authenticating front door, and
-#                       for smoke-testing with curl.
+#   static          — every sandbox is created with this process's E2B_API_KEY,
+#                       EVEN when the front door bound a credential for the
+#                       session. That is the whole of the mode: a deployment
+#                       that wants every conversation's sandbox to belong to one
+#                       identity — the env's owner — so the pool it claims from
+#                       is that identity's own. Who the conversation is actually
+#                       for is recorded in `hands.user` metadata instead.
 #
 # `session` is the default because the failure mode of the other direction is
 # invisible: an administrator's conversation would silently get a sandbox with
@@ -161,6 +165,28 @@ SANDBOX_NETWORK = _sandbox_network_from_environ()
 SANDBOX_IDENTITY_MODE = (
     os.environ.get("SBX_IDENTITY_MODE", "session").strip().lower() or "session"
 )
+
+
+def acting_api_key(sid: str) -> Optional[str]:
+    """The credential a sandbox for `sid` is created and armed with.
+
+    In `static` mode this is the process's own key and nothing else. Reading
+    the session's key here anyway — which is what happened while this returned
+    `session_api_key(sid)` unconditionally — made the mode half-work: it
+    stopped the "no credential" refusal, but a front door that DID bind one
+    still had its key used, so sandboxes went on being created as the person
+    talking. The symptom was remote from the cause: creates refused with
+    "pool belongs to <someone else>", because the pool belongs to the identity
+    the mode was supposed to be acting as.
+
+    Returning None is not a failure mode here: the E2B SDK falls back to
+    E2B_API_KEY from the environment, which in `static` mode is the answer.
+    It is returned explicitly so the vault is armed under the same identity the
+    create will resolve `${e2b.secrets.*}` against.
+    """
+    if SANDBOX_IDENTITY_MODE == "static":
+        return os.environ.get("E2B_API_KEY") or None
+    return session_api_key(sid)
 
 
 # Vault entry names the egress injection references, e.g. "abx-key,e2b-key".
@@ -834,7 +860,7 @@ class SandboxManager:
         # Resolve FIRST: every id below (the lock, the cache key, the staging dir
         # ensure_attachments reads) has to be the same one the browser uses.
         sid = resolve_sid(sid)
-        api_key = session_api_key(sid)
+        api_key = acting_api_key(sid)
         identity = session_identity(sid)
         if SANDBOX_IDENTITY_MODE == "session" and not api_key:
             # No credential means no sandbox. The alternative is creating one
