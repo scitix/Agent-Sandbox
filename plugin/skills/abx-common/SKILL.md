@@ -129,6 +129,11 @@ the token field is absent. An env's rendered docs come back with
 `${AGBX_API_KEY}` intact rather than a live token. Relay the template and tell
 the person where to get their key; there is nothing missing to hunt for.
 
+The refusal and the wait are different answers and the error codes say which:
+`APPROVAL_REQUIRED` means a person is about to decide, so re-run it shortly.
+`FORBIDDEN_FOR_AGENT` means no approval exists or ever will — stop, and hand
+over the link.
+
 ## Errors carry the recovery
 
 A rejection names the valid set and the next command. Read it before
