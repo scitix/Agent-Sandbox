@@ -149,6 +149,7 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 			svcs.Approvals,
 			approvalIdentity,
 			approvalConsoleURL(svcs.ConsoleBaseURL, svcs.ConsoleBaseURLFn, svcs.ClusterID),
+			approvalPageURL(svcs.ConsoleBaseURL, svcs.ConsoleBaseURLFn, svcs.ClusterID),
 		)))
 	}
 	gen.RegisterHandlersWithOptions(r, strictHandler, gen.GinServerOptions{
@@ -223,5 +224,26 @@ func approvalConsoleURL(base string, live func() string, clusterID string) appro
 		}
 		return strings.TrimSuffix(b, "/") + "/clusters/" + clusterID +
 			"/approvals?id=" + url.QueryEscape(id)
+	}
+}
+
+// approvalPageURL builds a link to a console page, for a refusal that has no
+// approval to point at. Same live-address rules as approvalConsoleURL.
+func approvalPageURL(base string, live func() string, clusterID string) approval.PageURLFunc {
+	if clusterID == "" {
+		return nil
+	}
+	return func(page string) string {
+		b := ""
+		if live != nil {
+			b = live()
+		}
+		if b == "" {
+			b = base
+		}
+		if b == "" || page == "" {
+			return ""
+		}
+		return strings.TrimSuffix(b, "/") + "/clusters/" + clusterID + "/" + page
 	}
 }

@@ -40,6 +40,8 @@ func newGatedRouter(s *Store, gatedCaller bool) (*gin.Engine, *[]string) {
 	}
 	mw := New(s, identity, func(id string) string {
 		return "https://console.example.com/approvals/" + id
+	}, func(page string) string {
+		return "https://console.example.com/" + page
 	})
 
 	handler := func(c *gin.Context) {
@@ -52,6 +54,7 @@ func newGatedRouter(s *Store, gatedCaller bool) (*gin.Engine, *[]string) {
 	r.GET("/v1/envs", mw, handler)
 	r.DELETE("/v1/envs/:name", mw, handler)
 	r.POST("/v1/unlisted", mw, handler)
+	r.POST("/v1/api-keys", mw, handler)
 	// The E2B surface, mounted with no /v1 prefix exactly as the real one is.
 	r.POST("/sandboxes", mw, handler)
 	return r, &seen
@@ -197,5 +200,50 @@ func TestSessionGrantLetsLaterCallsThrough(t *testing.T) {
 	// A delete in the same session: still asked, because deletes are once-only.
 	if w := post(r, "DELETE", "/v1/envs/a", "", "s1"); w.Code != StatusApprovalRequired {
 		t.Fatalf("a delete must still be challenged, got %d", w.Code)
+	}
+}
+
+// Issuing a credential is refused outright — no approval is created, because
+// there is nothing here a person should be able to wave through from a prompt.
+//
+// An approval card reading "create an API key" does not say what is actually
+// being decided, which is whether this agent may hold a credential without the
+// restriction it is running under. So the answer is a link to the page where a
+// person does it as themselves.
+func TestMintingACredentialIsForbiddenRatherThanGated(t *testing.T) {
+	s, _ := newTestStore()
+	r, seen := newGatedRouter(s, true)
+
+	w := post(r, http.MethodPost, "/v1/api-keys", `{"description":"x"}`, "")
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		ErrorCode string `json:"errorCode"`
+		Detail    struct {
+			URL        string `json:"url"`
+			ApprovalID string `json:"approvalId"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.ErrorCode != string(BizErrForbiddenForAgent) {
+		t.Fatalf("want FORBIDDEN_FOR_AGENT so a client stops polling, got %q", body.ErrorCode)
+	}
+	if body.Detail.ApprovalID != "" {
+		t.Fatalf("no approval should exist to wait for, got %q", body.Detail.ApprovalID)
+	}
+	if body.Detail.URL != "https://console.example.com/api-keys" {
+		t.Fatalf("want the api-keys page, got %q", body.Detail.URL)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("the handler must not have run, saw %v", *seen)
+	}
+	// And nothing is queued: a person opening the approvals page should not
+	// find a request they cannot meaningfully answer.
+	if pending, _ := s.List(context.Background(), alice); len(pending) != 0 {
+		t.Fatalf("no approval should have been created, got %d", len(pending))
 	}
 }

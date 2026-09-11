@@ -29,6 +29,17 @@ type Op struct {
 	// those that destroy something, and those that mint a credential. Neither is
 	// something a person should be able to authorise in advance and in bulk.
 	OnceOnly bool
+	// Forbidden refuses the call outright for a gated credential — no approval
+	// is created, because there is nothing here a person should be able to wave
+	// through from a prompt.
+	//
+	// The distinction from OnceOnly is the point. A once-only approval still
+	// ends with the agent holding what it asked for; for these, what it asked
+	// for is the ability to stop being gated. Issuing a credential can issue one
+	// WITHOUT the restriction, and what the approval card would say — "create an
+	// API key" — is not what is being decided. So the answer is a console link
+	// and the person does it as themselves.
+	Forbidden bool
 	// Summary is what the approval card says. Written for the person deciding,
 	// not for the log: it names the thing, because "create a pool" and "create a
 	// pool in prod" are different questions.
@@ -82,7 +93,7 @@ var gated = map[string]Op{
 	// Minting or revoking a credential is never covered by a standing grant:
 	// a key made without anyone looking outlives the session that made it, and
 	// an exec token is a shell.
-	"POST /v1/api-keys":                        {ID: "apikey.create", OnceOnly: true, Summary: "Create an API key"},
+	"POST /v1/api-keys":                        {ID: "apikey.create", OnceOnly: true, Forbidden: true, Summary: "Create an API key"},
 	"DELETE /v1/api-keys/:name":                {ID: "apikey.delete", OnceOnly: true, Summary: "Delete an API key"},
 	"POST /v1/sandboxes/:sandboxId/exec-token": {ID: "sandbox.execToken", OnceOnly: true, Summary: "Mint a terminal token for a sandbox"},
 }

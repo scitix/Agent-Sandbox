@@ -41,6 +41,15 @@ const (
 	// "go and click this".
 	BizErrApprovalRequired domain.BusinessErrorCode = "APPROVAL_REQUIRED"
 
+	// BizErrForbiddenForAgent tells a client the call will never be permitted
+	// for this credential and there is nothing to wait for.
+	//
+	// Distinct from APPROVAL_REQUIRED because the remedies are opposite: one
+	// says "a person is about to decide, ask again shortly", the other says
+	// "stop asking, and hand this to a person". An agent that cannot tell them
+	// apart polls forever for an approval nobody will ever be shown.
+	BizErrForbiddenForAgent domain.BusinessErrorCode = "FORBIDDEN_FOR_AGENT"
+
 	// StatusApprovalRequired is 428 Precondition Required.
 	//
 	// Not 403: a client cannot tell a real permission failure from a pending
@@ -96,12 +105,20 @@ type IdentityFunc func(c *gin.Context) Identity
 // and a link to nowhere is worse than no link.
 type ConsoleURLFunc func(approvalID string) string
 
+// PageURLFunc builds a link to a console PAGE rather than to one approval.
+//
+// A forbidden operation has no approval to link to — the whole answer is "do
+// this yourself, over there" — so the refusal needs an address for the page
+// that does it. May be nil, and may return "" for the same reason as
+// ConsoleURLFunc: the console's address arrives after this server is serving.
+type PageURLFunc func(page string) string
+
 // New returns the gate.
 //
 // It must run AFTER authentication (it needs the principal) and after routing
 // (it needs the route template, not the concrete URL). Both hold when it is
 // appended to the generated router's middleware slice, which is where it goes.
-func New(store *Store, identity IdentityFunc, consoleURL ConsoleURLFunc) gin.HandlerFunc {
+func New(store *Store, identity IdentityFunc, consoleURL ConsoleURLFunc, pageURL PageURLFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !IsWrite(c.Request.Method) {
 			c.Next()
@@ -115,6 +132,25 @@ func New(store *Store, identity IdentityFunc, consoleURL ConsoleURLFunc) gin.Han
 		id := identity(c)
 		if !id.Gated {
 			c.Next()
+			return
+		}
+
+		if op.Forbidden {
+			// No approval is created. What is being asked for is the ability to
+			// stop being gated, and an approval card reading "create an API key"
+			// does not say that to the person clicking it. The link is the whole
+			// answer: they do it as themselves.
+			detail := Detail{Operation: op.ID, Summary: op.Summary}
+			if pageURL != nil {
+				detail.URL = pageURL(forbiddenPage(op.ID))
+			}
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "this credential may not " + strings.ToLower(op.Summary) +
+					": issuing a credential would let it act without the approval gate. " +
+					"Open the console and do it as yourself.",
+				"errorCode": string(BizErrForbiddenForAgent),
+				"detail":    detail,
+			})
 			return
 		}
 
@@ -159,6 +195,20 @@ func New(store *Store, identity IdentityFunc, consoleURL ConsoleURLFunc) gin.Han
 			"errorCode": bizCode,
 			"detail":    detail,
 		})
+	}
+}
+
+// forbiddenPage names the console page that performs a forbidden operation.
+//
+// Keyed on the op id rather than the route, because the id is already the unit
+// a person reasons about, and the page is a property of the act rather than of
+// the URL that attempted it.
+func forbiddenPage(opID string) string {
+	switch opID {
+	case "apikey.create":
+		return "api-keys"
+	default:
+		return ""
 	}
 }
 
