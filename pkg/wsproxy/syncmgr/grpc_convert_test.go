@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	syncv1 "github.com/scitix/agent-sandbox/pkg/proto/sandbox/sync/v1"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 )
@@ -102,5 +103,40 @@ func TestTheConsoleAddressRidesTheClusterSnapshot(t *testing.T) {
 	})
 	if out.ConsoleBaseUrl != "https://console.example.com/agentbox" {
 		t.Fatalf("got %q", out.ConsoleBaseUrl)
+	}
+}
+
+// Agent mode has to survive the CREATE, not just the broadcast.
+//
+// The broadcast direction was right from the start; the create was not. Every
+// field a Worker sends when issuing a key was mapped onto the request except
+// this one, so on any deployment with a Hub — which is every multi-cluster
+// one — a key asked for as `agent` was minted unrestricted, and the approval
+// gate it was supposed to run under simply never engaged. Nothing failed: the
+// key worked, and it worked with more authority than it was asked for.
+func TestAgentModeSurvivesKeyCreation(t *testing.T) {
+	req := &syncv1.CreateKeyRequest{
+		User:            "u",
+		Team:            "t",
+		Description:     "an agent's key",
+		RequireApproval: true,
+	}
+
+	// The mapping the Hub performs before handing the metadata to its store.
+	meta := apikey.KeyMetadata{
+		User:            req.User,
+		Team:            req.Team,
+		Role:            apikey.RoleTenant,
+		Description:     req.Description,
+		RequireApproval: req.RequireApproval,
+	}
+	if !meta.RequireApproval {
+		t.Fatal("a key asked for as agent was about to be minted unrestricted")
+	}
+
+	// And it has to come back down the broadcast, because the gate that reads
+	// it runs on the Worker.
+	if !metaToProto(meta).RequireApproval {
+		t.Fatal("the flag stopped at the Hub; the gate would never see it")
 	}
 }

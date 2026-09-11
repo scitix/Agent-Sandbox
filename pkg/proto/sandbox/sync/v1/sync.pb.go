@@ -208,9 +208,15 @@ type CreateKeyRequest struct {
 	HashPrefix string                 `protobuf:"bytes,9,opt,name=hash_prefix,json=hashPrefix,proto3" json:"hash_prefix,omitempty"`
 	IssuedAt   *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
 	// Plaintext token to store alongside the hash in import/promote mode.
-	RawToken      string `protobuf:"bytes,11,opt,name=raw_token,json=rawToken,proto3" json:"raw_token,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RawToken string `protobuf:"bytes,11,opt,name=raw_token,json=rawToken,proto3" json:"raw_token,omitempty"`
+	// Agent mode: this key acts unattended, so its platform writes are held for
+	// a person. Carried on the CREATE because it is chosen at issue time and can
+	// never be added afterwards — a key that was born unrestricted stays that
+	// way. Absent on a request from an older Worker, which reads as false: the
+	// behaviour every key had before the field existed.
+	RequireApproval bool `protobuf:"varint,12,opt,name=require_approval,json=requireApproval,proto3" json:"require_approval,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateKeyRequest) Reset() {
@@ -318,6 +324,13 @@ func (x *CreateKeyRequest) GetRawToken() string {
 		return x.RawToken
 	}
 	return ""
+}
+
+func (x *CreateKeyRequest) GetRequireApproval() bool {
+	if x != nil {
+		return x.RequireApproval
+	}
+	return false
 }
 
 type CreateKeyResponse struct {
@@ -2599,7 +2612,7 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\n" +
 	"expires_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x1b\n" +
 	"\traw_token\x18\f \x01(\tR\brawToken\x12)\n" +
-	"\x10require_approval\x18\r \x01(\bR\x0frequireApproval\"\xfc\x02\n" +
+	"\x10require_approval\x18\r \x01(\bR\x0frequireApproval\"\xa7\x03\n" +
 	"\x10CreateKeyRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04user\x18\x02 \x01(\tR\x04user\x12\x12\n" +
@@ -2615,7 +2628,8 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"hashPrefix\x127\n" +
 	"\tissued_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12\x1b\n" +
-	"\traw_token\x18\v \x01(\tR\brawToken\"\xc0\x01\n" +
+	"\traw_token\x18\v \x01(\tR\brawToken\x12)\n" +
+	"\x10require_approval\x18\f \x01(\bR\x0frequireApproval\"\xc0\x01\n" +
 	"\x11CreateKeyResponse\x12\x1b\n" +
 	"\traw_token\x18\x01 \x01(\tR\brawToken\x12\x15\n" +
 	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x1f\n" +

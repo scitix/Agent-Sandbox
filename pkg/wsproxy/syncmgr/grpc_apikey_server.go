@@ -81,6 +81,12 @@ func (s *apiKeyServer) CreateKey(ctx context.Context, req *syncv1.CreateKeyReque
 		Description: req.Description,
 		IssuedAt:    time.Now().UTC(),
 		ExpiresAt:   protoToTime(req.ExpiresAt),
+
+		// Keys are minted here and the approval gate runs on the Worker, so a
+		// flag that stopped at the request would be a flag that never took
+		// effect. It is stamped at creation because there is no later moment
+		// to stamp it: a key cannot become restricted after it exists.
+		RequireApproval: req.RequireApproval,
 	}
 
 	rawToken, keyID, err := s.m.deps.KeyStore.Create(ctx, meta)

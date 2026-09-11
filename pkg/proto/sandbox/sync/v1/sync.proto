@@ -100,6 +100,13 @@ message CreateKeyRequest {
   google.protobuf.Timestamp issued_at = 10;
   // Plaintext token to store alongside the hash in import/promote mode.
   string raw_token = 11;
+
+  // Agent mode: this key acts unattended, so its platform writes are held for
+  // a person. Carried on the CREATE because it is chosen at issue time and can
+  // never be added afterwards — a key that was born unrestricted stays that
+  // way. Absent on a request from an older Worker, which reads as false: the
+  // behaviour every key had before the field existed.
+  bool require_approval = 12;
 }
 
 message CreateKeyResponse {

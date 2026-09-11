@@ -72,6 +72,11 @@ type CreateKeyRequest struct {
 	HashPrefix string
 	IssuedAt   string // RFC3339
 	RawToken   string // plaintext token for promote
+
+	// RequireApproval is the "agent" mode. It travels on the create because it
+	// is chosen at issue time and cannot be added afterwards; a key born
+	// unrestricted stays unrestricted.
+	RequireApproval bool
 }
 
 // CreateKeyResponse is the parsed result of a successful Hub-side CreateKey.
@@ -267,6 +272,8 @@ func (s *syncServiceImpl) RequestCreate(ctx context.Context, req CreateKeyReques
 		TokenHash:   req.TokenHash,
 		HashPrefix:  req.HashPrefix,
 		RawToken:    req.RawToken,
+
+		RequireApproval: req.RequireApproval,
 	}
 	if req.ExpiresAt != "" {
 		if t, err := time.Parse(time.RFC3339, req.ExpiresAt); err == nil {

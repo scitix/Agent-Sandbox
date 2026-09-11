@@ -75,6 +75,8 @@ func (s *k8sAPIKeyService) Create(ctx context.Context, input CreateAPIKeyInput) 
 			Team:        strings.TrimSpace(input.Team),
 			Role:        apikey.RoleTenant,
 			Description: strings.TrimSpace(input.Description),
+
+			RequireApproval: input.RequireApproval,
 		}
 		if !input.ExpiresAt.IsZero() {
 			req.ExpiresAt = input.ExpiresAt.UTC().Format(time.RFC3339)
@@ -116,6 +118,12 @@ func (s *k8sAPIKeyService) Create(ctx context.Context, input CreateAPIKeyInput) 
 			Description: input.Description,
 			IssuedAt:    issuedAt,
 			ExpiresAt:   input.ExpiresAt,
+
+			// Reflected back rather than dropped. Omitting it made every
+			// hub-managed key report as unrestricted the moment it was created
+			// — which on a multi-cluster deployment is every key, so agent mode
+			// existed in the request and nowhere else.
+			RequireApproval: input.RequireApproval,
 		}
 		return &APIKeyResult{
 			RawToken:    resp.RawToken,
