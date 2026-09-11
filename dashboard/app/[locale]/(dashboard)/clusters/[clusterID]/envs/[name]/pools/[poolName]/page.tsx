@@ -97,7 +97,7 @@ function PoolOverview({
 
   return (
     <div className="p-6">
-      <div className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-md border lg:grid-cols-4">
+      <div className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-xl border lg:grid-cols-4">
         {cells.map((cell) => (
           <div key={cell.label} className="bg-card flex flex-col gap-1.5 px-3.5 py-3">
             <span className="text-muted-foreground font-mono text-[10px] tracking-wider uppercase">

@@ -45,7 +45,7 @@ function ResourceCard({
 }: ResourceCardProps) {
   const { t } = useTranslation()
   return (
-    <div className="border-border bg-card relative overflow-hidden border">
+    <div className="border-border bg-card relative overflow-hidden rounded-xl border">
       <DotPattern className="opacity-15" />
       <div className="relative p-5">
         <div className="mb-3">
@@ -61,7 +61,7 @@ function ResourceCard({
         <div className="text-muted-foreground mb-3 font-mono text-xs">{t("quota.usedTotal")}</div>
 
         {/* Stacked progress bar: used (brand) + reserved (amber) */}
-        <div className="bg-secondary relative h-1.5 w-full overflow-hidden">
+        <div className="bg-secondary relative h-1.5 w-full overflow-hidden rounded-full">
           <div
             className="bg-brand absolute top-0 left-0 h-full transition-all"
             style={{ width: `${Math.min(usedPct, 100)}%` }}
@@ -109,12 +109,12 @@ function QuotaMeta({ quota }: { quota: QuotaItem }) {
   return (
     <div className="mb-6 flex flex-wrap items-center gap-3">
       {quota.team && (
-        <span className="border-border bg-secondary border px-2 py-0.5 font-mono text-xs tracking-wide uppercase">
+        <span className="border-border bg-secondary rounded-md border px-2 py-0.5 font-mono text-xs tracking-wide uppercase">
           team: {quota.team}
         </span>
       )}
       {quota.user && (
-        <span className="border-border bg-secondary border px-2 py-0.5 font-mono text-xs tracking-wide uppercase">
+        <span className="border-border bg-secondary rounded-md border px-2 py-0.5 font-mono text-xs tracking-wide uppercase">
           user: {quota.user}
         </span>
       )}

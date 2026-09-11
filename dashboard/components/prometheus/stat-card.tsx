@@ -70,8 +70,8 @@ export function StatCard({
       </div>
       {isLoading ? (
         <div className="mt-1 flex flex-col gap-2">
-          <div className="bg-muted h-8 w-16 animate-pulse rounded" />
-          {sub && <div className="bg-muted h-3 w-24 animate-pulse rounded" />}
+          <div className="bg-muted h-8 w-16 animate-pulse rounded-md" />
+          {sub && <div className="bg-muted h-3 w-24 animate-pulse rounded-md" />}
         </div>
       ) : (
         <>

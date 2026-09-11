@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, afterEach, vi } from "vitest"
+import * as fs from "fs"
+import * as os from "os"
+import * as path from "path"
 import {
   applyHostAlias,
   filterClustersByVisibility,
@@ -122,5 +125,59 @@ describe("applyHostAlias", () => {
       aliases,
     )
     expect(out.url).toBe("http://10.0.0.2:30080/agent-sandbox/api/e2b/sandboxes?x=1")
+  })
+})
+
+// ─── Peer sites ───────────────────────────────────────────────────────────────
+
+describe("listPeerSites", () => {
+  const tmpDirs: string[] = []
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+    delete process.env.CLUSTERS_CONFIG_PATH
+    vi.resetModules()
+  })
+
+  /**
+   * The config path is read once at module load, so each case needs its own
+   * file and a fresh import of the module under test.
+   */
+  async function loadWith(yaml: string) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cluster-config-"))
+    tmpDirs.push(dir)
+    fs.writeFileSync(path.join(dir, "clusters.yaml"), yaml)
+    process.env.CLUSTERS_CONFIG_PATH = path.join(dir, "clusters.yaml")
+    vi.resetModules()
+    return import("@/lib/cluster-config")
+  }
+
+  const clusters = `clusters:\n  - id: c1\n    name: C1\n    url: http://c1\n`
+
+  it("parses the peerSites block", async () => {
+    const mod = await loadWith(
+      `${clusters}peerSites:\n  - name: "Console (EU)"\n    url: "https://console-eu.example.com/agentbox"\n`,
+    )
+    expect(mod.listPeerSites()).toEqual([
+      { name: "Console (EU)", url: "https://console-eu.example.com/agentbox" },
+    ])
+  })
+
+  it("is empty when the block is absent", async () => {
+    const mod = await loadWith(clusters)
+    expect(mod.listPeerSites()).toEqual([])
+    // The clusters alongside it still parse — the two are cached together.
+    expect(mod.listClusters().map((c) => c.id)).toEqual(["c1"])
+  })
+
+  it("drops entries missing a name or a url", async () => {
+    // Either half alone is unrenderable: a link with no label, or a label that
+    // goes nowhere. Dropping beats shipping a dead entry in the picker.
+    const mod = await loadWith(
+      `${clusters}peerSites:\n  - name: "No URL"\n  - url: "https://nameless.example.com"\n  - name: "Blank URL"\n    url: ""\n  - name: "Good"\n    url: "https://good.example.com"\n`,
+    )
+    expect(mod.listPeerSites()).toEqual([{ name: "Good", url: "https://good.example.com" }])
   })
 })

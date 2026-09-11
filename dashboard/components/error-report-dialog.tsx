@@ -17,6 +17,8 @@
 "use client"
 
 import { useAtom, useAtomValue } from "jotai"
+import { cn } from "@/lib/utils"
+import { infoRow } from "@/components/custom-ui/surface"
 import { X, Copy, CheckCheck } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -86,7 +88,7 @@ export function ErrorReportDialog() {
           {/* Cluster + Team + User */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {clusterID && (
-              <div className="border-border bg-secondary border px-3 py-2">
+              <div className={cn(infoRow, "px-3 py-2")}>
                 <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                   {t("errors.cluster")}
                 </div>
@@ -94,14 +96,14 @@ export function ErrorReportDialog() {
               </div>
             )}
             {auth?.team && (
-              <div className="border-border bg-secondary border px-3 py-2">
+              <div className={cn(infoRow, "px-3 py-2")}>
                 <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                   {t("errors.team")}
                 </div>
                 <code className="text-foreground font-mono text-xs">{auth.team}</code>
               </div>
             )}
-            <div className="border-border bg-secondary border px-3 py-2">
+            <div className={cn(infoRow, "px-3 py-2")}>
               <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                 {t("errors.user")}
               </div>
@@ -110,14 +112,14 @@ export function ErrorReportDialog() {
           </div>
           {/* Error message */}
           {report?.status && (
-            <div className="border-border bg-secondary border px-3 py-2">
+            <div className={cn(infoRow, "px-3 py-2")}>
               <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                 {t("errors.statusCode")}
               </div>
               <code className="text-foreground font-mono text-xs">{report.status}</code>
             </div>
           )}
-          <div className="border-border bg-secondary border px-3 py-2">
+          <div className={cn(infoRow, "px-3 py-2")}>
             <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
               {t("errors.message")}
             </div>
@@ -126,7 +128,7 @@ export function ErrorReportDialog() {
 
           {/* Error code badge */}
           {report?.errorCode && (
-            <div className="border-border bg-secondary border px-3 py-2">
+            <div className={cn(infoRow, "px-3 py-2")}>
               <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                 {t("errors.errorCode")}
               </div>
@@ -136,7 +138,7 @@ export function ErrorReportDialog() {
 
           {/* Detail JSON */}
           {detailText && (
-            <div className="border-border bg-secondary border">
+            <div className={infoRow}>
               <div className="flex items-center justify-between px-3 py-1.5">
                 <span className="text-muted-foreground font-mono text-xs tracking-wider uppercase">
                   {t("errors.detail")}

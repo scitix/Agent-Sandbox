@@ -152,7 +152,7 @@ export function PoolMetricsPanel({ pool }: { pool: AgentSandboxPool }) {
 
       {/* Prometheus not configured */}
       {prometheusUnavailable ? (
-        <div className="border-border text-muted-foreground flex items-center gap-2 rounded border border-dashed p-4 font-mono text-xs">
+        <div className="border-border text-muted-foreground flex items-center gap-2 rounded-lg border border-dashed p-4 font-mono text-xs">
           <AlertCircle className="h-4 w-4 shrink-0" />
           <span>{t("prometheus.prometheusNotConfigured")}</span>
         </div>

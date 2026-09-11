@@ -177,7 +177,7 @@ export default function VaultPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4">
+    <div className="flex flex-1 flex-col gap-4 p-6">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <h1 className="flex items-center gap-2 text-lg font-semibold">
@@ -201,7 +201,7 @@ export default function VaultPage() {
           <p className="max-w-md text-xs">{t("vault.empty.description")}</p>
         </div>
       ) : (
-        <div className="border-border overflow-x-auto rounded-md border">
+        <div className="border-border overflow-x-auto rounded-xl border">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-muted-foreground text-xs">
               <tr>

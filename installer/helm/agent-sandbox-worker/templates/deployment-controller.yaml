@@ -63,6 +63,22 @@ spec:
           env:
             - name: LOCAL_CLUSTER_ID
               value: {{ .Values.controller.localClusterId | quote }}
+            {{- if and .Values.controller.image.tag (ne .Values.controller.image.tag "latest") }}
+            # Reported to clients via X-AgentBox-Server-Version and shown on the
+            # console's About panel. A pinned image tag names the build that is
+            # actually running, which is what someone reading a version off a
+            # console is trying to find out — a semver cannot say which of
+            # several builds under that number this is.
+            #
+            # Skipped for "latest" on purpose. Deployments that render this chart
+            # to static YAML have their image rewritten at apply time by the
+            # release platform, which does not touch env vars — so a baked-in
+            # "latest" would be a value that never changes and never matches.
+            # With no override the binary reports its compiled-in version, which
+            # is at least always true of the binary.
+            - name: AGENTBOX_VERSION
+              value: {{ .Values.controller.image.tag | quote }}
+            {{- end }}
             {{- if .Values.controller.observability.token }}
             # Both observability backends share one token; the binary reads it
             # from the environment so it never lands in the Pod spec's args.

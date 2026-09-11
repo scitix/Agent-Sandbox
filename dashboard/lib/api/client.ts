@@ -28,6 +28,7 @@ import type { AuthState } from "@/lib/atoms"
 import type {
   ClusterEntry,
   ClusterListResponse,
+  PeerSite,
   GlobalApiKeyItem,
   GlobalCreateApiKeyResult,
   LoginInput,
@@ -38,6 +39,7 @@ import type {
 export type {
   ClusterEntry,
   ClusterListResponse,
+  PeerSite,
   GlobalApiKeyItem,
   GlobalCreateApiKeyResult,
   LoginInput,
@@ -46,7 +48,6 @@ export type {
 
 // ─── Re-export schema components for downstream consumers ──────────────────────
 export type { components }
-
 
 // ─── Schema-derived type aliases (replaces lib/types/index.ts) ─────────────────
 

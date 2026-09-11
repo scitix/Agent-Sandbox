@@ -16,7 +16,7 @@
 
 "use client"
 
-import type { ClusterEntry } from "@/lib/api/client"
+import type { ClusterEntry, PeerSite } from "@/lib/api/client"
 import {
   Combobox,
   ComboboxInput,
@@ -26,7 +26,7 @@ import {
   ComboboxEmpty,
 } from "@/components/ui/combobox"
 import { useMemo } from "react"
-import { CloudyIcon, LayersIcon } from "lucide-react"
+import { CloudyIcon, LayersIcon, ArrowUpRightIcon } from "lucide-react"
 import { useTranslation } from "@/lib/i18n"
 
 /** Sentinel id for the "all clusters" entry, when the caller opts into it. */
@@ -43,6 +43,15 @@ interface ClusterComboboxProps {
    * means — this component only reports the id back.
    */
   allowAll?: boolean
+  /**
+   * Other Dashboard deployments, listed under the clusters as links out.
+   *
+   * They are pinned below the scrolling list rather than mixed into it because
+   * they are not clusters and picking one is not a selection — it leaves this
+   * deployment. Keeping them out of `items` is also what stops the search box
+   * from filtering away the only route to the other site.
+   */
+  peerSites?: PeerSite[]
   /** aria-invalid for form integration */
   "aria-invalid"?: boolean
 }
@@ -54,6 +63,7 @@ export function ClusterCombobox({
   placeholder,
   inputClassName = "h-8 font-mono text-xs",
   allowAll = false,
+  peerSites,
   "aria-invalid": ariaInvalid,
 }: ClusterComboboxProps) {
   const { t } = useTranslation()
@@ -93,6 +103,26 @@ export function ClusterCombobox({
             </ComboboxItem>
           )}
         </ComboboxList>
+        {peerSites && peerSites.length > 0 && (
+          <>
+            <div className="bg-border h-px" />
+            <div className="p-1">
+              {peerSites.map((site) => (
+                // A real anchor, not an onClick handler: the whole point is to
+                // leave for another origin, and this keeps middle-click and
+                // "open in new tab" working on the way out.
+                <a
+                  key={site.url}
+                  href={site.url}
+                  className="hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground relative flex w-full items-center gap-2 rounded-sm py-1.5 pr-2 pl-2 text-sm outline-hidden"
+                >
+                  <ArrowUpRightIcon className="text-muted-foreground size-4 shrink-0" />
+                  <span className="truncate font-mono">{site.name}</span>
+                </a>
+              ))}
+            </div>
+          </>
+        )}
       </ComboboxContent>
     </Combobox>
   )

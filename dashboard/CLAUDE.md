@@ -110,6 +110,8 @@ Three constraints that path has to respect:
 
 - **Auth is an API key, never the session JWT.** The E2B middleware accepts `X-API-Key` / `AGENTBOX-API-KEY` only. The form therefore picks the caller's newest key whose plaintext the platform still holds (`GlobalApiKeyItem.rawToken`) and sends it; the BFF forwards it upstream. No usable key → `ApiKeyRequiredNotice` instead of a form that would 401.
 - **Gateway hostnames need `resolveHostAlias`.** `gateway.e2bURL` is an ingress hostname. Where there is no public DNS the config carries a `hostAliases` block for it, but nothing puts those on the dashboard Pod — so the BFF dials the aliased IP and sends the hostname as `Host` itself. Same trick the native `url` + `headers.Host` pair uses, and the reason that route uses undici rather than fetch.
+
+> **Any BFF route that forwards `cluster.headers` MUST use `undici.request`, never `fetch`/`ky`.** The Fetch spec lists `Host` as a forbidden header and drops it without erroring, so the request reaches the ingress addressed to an IP, matches no virtual host, and comes back as a 404 from the ingress itself. It looks like a backend problem and is not. The `/ping` route reported every cluster's version as `unknown` this way for as long as it existed.
 - **Error bodies differ.** E2B answers `{code, message}`; `handleErrorResponse` parses the native `{error, errorCode, detail}`. The route normalises them, otherwise every failure shows up as a bare `HTTP 500` toast.
 
 Parameter mapping lives in `lib/utils/e2b-sandbox.ts` (unit-tested). Note one gap: E2B's network config has no field for `allowPrivateNetworks`, so the create form hides that switch rather than offering one that cannot take effect — declare it on the SandboxEnv instead.

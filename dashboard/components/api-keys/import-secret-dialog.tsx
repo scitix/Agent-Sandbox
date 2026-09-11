@@ -17,6 +17,8 @@
 "use client"
 
 import { useState } from "react"
+import { cn } from "@/lib/utils"
+import { infoRow } from "@/components/custom-ui/surface"
 import { Upload, Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 import { parse, parseAllDocuments } from "yaml"
@@ -306,10 +308,7 @@ export function ImportSecretDialog({ open, onOpenChange }: ImportSecretDialogPro
           <>
             <div className="flex max-h-80 flex-col gap-1.5 overflow-y-auto">
               {items.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="border-border bg-secondary flex items-center gap-2 border px-3 py-2"
-                >
+                <div key={idx} className={cn(infoRow, "flex items-center gap-2 px-3 py-2")}>
                   <StatusIcon status={item.status} />
                   <div className="flex min-w-0 flex-1 flex-col">
                     <span className="text-foreground truncate font-mono text-xs font-semibold">
@@ -330,7 +329,7 @@ export function ImportSecretDialog({ open, onOpenChange }: ImportSecretDialogPro
             </div>
 
             {phase === "result" && (
-              <div className="border-border bg-secondary mt-2 border px-3 py-2 font-mono text-xs">
+              <div className={cn(infoRow, "mt-2 px-3 py-2 font-mono text-xs")}>
                 <span className="text-green-600 dark:text-green-400">
                   {t("apiKeys.importResultImported", { count: String(successCount) })}
                 </span>

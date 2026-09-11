@@ -37,6 +37,7 @@ export function ClusterSwitcher({ compact = false }: { compact?: boolean }) {
 
   const multiCluster = clustersData.multiCluster
   const clusters = clustersData.clusters
+  const peerSites = clustersData.peerSites
 
   // Only render in multi-cluster mode. API-key sessions are included: the key
   // authenticates against every cluster, so switching needs no re-login.
@@ -80,6 +81,7 @@ export function ClusterSwitcher({ compact = false }: { compact?: boolean }) {
         value={currentClusterID}
         onValueChange={handleSwitch}
         allowAll
+        peerSites={peerSites}
         inputClassName="h-8 w-[200px] font-mono text-xs"
       />
     )
@@ -90,7 +92,12 @@ export function ClusterSwitcher({ compact = false }: { compact?: boolean }) {
       <p className="text-muted-foreground mb-1 px-2 font-mono text-xs font-bold tracking-[0.15em] uppercase">
         {t("nav.cluster")}
       </p>
-      <ClusterCombobox clusters={clusters} value={currentClusterID} onValueChange={handleSwitch} />
+      <ClusterCombobox
+        clusters={clusters}
+        value={currentClusterID}
+        onValueChange={handleSwitch}
+        peerSites={peerSites}
+      />
     </div>
   )
 }

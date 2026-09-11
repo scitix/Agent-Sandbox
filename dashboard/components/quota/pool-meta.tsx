@@ -64,7 +64,7 @@ export function PoolTypeBadge({ type, className }: { type?: string; className?: 
   return (
     <span
       className={cn(
-        "border-brand/40 bg-brand/10 text-brand shrink-0 border px-2 py-0.5 font-mono text-xs font-semibold tracking-wide uppercase",
+        "border-brand/40 bg-brand/10 text-brand shrink-0 rounded-md border px-2 py-0.5 font-mono text-xs font-semibold tracking-wide uppercase",
         className,
       )}
     >

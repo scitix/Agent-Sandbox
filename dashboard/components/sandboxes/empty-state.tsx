@@ -24,7 +24,7 @@ export function SandboxEmptyState() {
   const { t } = useTranslation()
   return (
     <div className="flex h-full items-center justify-center">
-      <div className="border-border bg-card relative w-full max-w-md border">
+      <div className="border-border bg-card relative w-full max-w-md overflow-hidden rounded-xl border">
         <GridPattern className="opacity-20" />
         <div className="relative flex flex-col items-center gap-4 px-8 py-10 text-center">
           <h3 className="text-foreground font-mono text-lg font-bold tracking-wide uppercase">
@@ -35,7 +35,7 @@ export function SandboxEmptyState() {
           </p>
           <a
             href="#"
-            className="border-border text-foreground hover:bg-secondary flex w-full items-center justify-center gap-2 border px-6 py-2.5 font-mono text-sm tracking-wider uppercase transition-colors"
+            className="border-border text-foreground hover:bg-secondary flex w-full items-center justify-center gap-2 rounded-lg border px-6 py-2.5 font-mono text-sm tracking-wider uppercase transition-colors"
           >
             {t("sandboxes.createASandbox")}
             <ExternalLink className="h-3.5 w-3.5" />

@@ -175,7 +175,7 @@ function TimePickerPopoverContent({
                 value={absFrom}
                 onChange={(e) => setAbsFrom(e.target.value)}
                 step="1"
-                className="border-border bg-background text-foreground w-full rounded border px-2 py-1.5 font-mono text-xs focus:ring-1 focus:outline-none"
+                className="border-border bg-background text-foreground w-full rounded-md border px-2 py-1.5 font-mono text-xs focus:ring-1 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -187,7 +187,7 @@ function TimePickerPopoverContent({
                 value={absTo}
                 onChange={(e) => setAbsTo(e.target.value)}
                 step="1"
-                className="border-border bg-background text-foreground w-full rounded border px-2 py-1.5 font-mono text-xs focus:ring-1 focus:outline-none"
+                className="border-border bg-background text-foreground w-full rounded-md border px-2 py-1.5 font-mono text-xs focus:ring-1 focus:outline-none"
               />
             </div>
           </div>
@@ -223,7 +223,7 @@ function TimePickerPopoverContent({
                 type="button"
                 onClick={() => handleSelectPreset(preset)}
                 className={cn(
-                  "flex items-center gap-2 rounded px-2 py-1.5 text-left font-mono text-xs transition-colors",
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-left font-mono text-xs transition-colors",
                   isActive
                     ? "bg-accent text-accent-foreground font-medium"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",

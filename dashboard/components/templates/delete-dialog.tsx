@@ -17,6 +17,8 @@
 "use client"
 
 import { Loader2, Trash2, X } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { infoRow } from "@/components/custom-ui/surface"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -75,7 +77,7 @@ export function DeleteTemplateDialog({
 
         {template && (
           <div className="py-2">
-            <div className="border-border bg-secondary border px-3 py-2">
+            <div className={cn(infoRow, "px-3 py-2")}>
               <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                 {t("templates.form.name")}
               </div>

@@ -27,8 +27,10 @@ export function TableSkeleton({ rows = 10, columns }: TableSkeletonProps) {
     <>
       {Array.from({ length: rows }).map((_, rowIndex) => (
         <TableRow key={rowIndex}>
+          {/* px-4 matches the real grid's edge inset (table-without-query.tsx)
+              so the skeleton's columns do not shift when data arrives. */}
           {Array.from({ length: columns }).map((_, colIndex) => (
-            <TableCell key={colIndex} className="px-6 py-4">
+            <TableCell key={colIndex} className="px-4 py-4">
               <Skeleton className="h-4 w-full" />
             </TableCell>
           ))}

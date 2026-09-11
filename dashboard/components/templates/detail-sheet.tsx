@@ -34,10 +34,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Button } from "@/components/ui/button"
 import { MarkdownRenderer } from "@/components/markdown-renderer"
 import type { AgentSandboxTemplate, AgentSandboxTemplateSummary } from "@/lib/api/client"
-import {
-  clusterTemplateQueryOptions,
-  templateQueryOptions,
-} from "@/lib/queries/template"
+import { clusterTemplateQueryOptions, templateQueryOptions } from "@/lib/queries/template"
 import { useTranslation } from "@/lib/i18n"
 import { parseCpuToCore, parseMemoryToMiB, formatCores, formatMiB } from "@/lib/resources"
 
@@ -76,7 +73,7 @@ function InlineCopyButton({ value }: { value: string }) {
   return (
     <button
       onClick={handleCopy}
-      className={`text-muted-foreground hover:text-foreground rounded p-0.5 transition-colors${copied ? "text-green-500 hover:text-green-500" : ""}`}
+      className={`text-muted-foreground hover:text-foreground rounded-md p-0.5 transition-colors ${copied ? "text-green-500 hover:text-green-500" : ""}`}
       title={copied ? "Copied!" : "Copy name"}
     >
       {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -233,7 +230,7 @@ export function TemplateDetailContent({
           <h3 className="text-muted-foreground mb-2 font-mono text-xs font-medium tracking-wider uppercase">
             {t("templates.detail.crdYaml")}
           </h3>
-          <pre className="bg-secondary overflow-auto rounded border p-3 font-mono text-xs leading-relaxed">
+          <pre className="bg-secondary overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed">
             {tmpl.crdYaml}
           </pre>
         </section>

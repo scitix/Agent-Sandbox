@@ -79,7 +79,7 @@ function InlineCopyButton({ value }: { value: string }) {
     <button
       onClick={handleCopy}
       className={cn(
-        "text-muted-foreground hover:text-foreground rounded p-0.5 transition-colors",
+        "text-muted-foreground hover:text-foreground rounded-md p-0.5 transition-colors",
         copied && "text-green-500 hover:text-green-500",
       )}
       title={copied ? "Copied!" : "Copy name"}

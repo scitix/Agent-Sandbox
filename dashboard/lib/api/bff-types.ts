@@ -60,9 +60,23 @@ export interface ClusterEntry {
   selector?: string
 }
 
+/**
+ * Another Dashboard deployment, offered as a link out at the bottom of the
+ * cluster picker. Configured per deployment (`peerSites` in clusters.yaml), so
+ * two control planes that cannot see each other's clusters can still point at
+ * one another. Not a cluster: nothing is fetched from it, selecting it navigates
+ * away.
+ */
+export interface PeerSite {
+  name: string
+  url: string
+}
+
 export interface ClusterListResponse {
   clusters: ClusterEntry[]
   multiCluster: boolean
+  /** Absent on a deployment that configures none. */
+  peerSites?: PeerSite[]
 }
 
 // ─── /api/global-api-keys ──────────────────────────────────────────────────────

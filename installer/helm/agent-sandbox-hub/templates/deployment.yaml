@@ -28,6 +28,17 @@ spec:
           env:
             - name: MULTI_CLUSTER_MODE
               value: {{ .Values.env.multiClusterMode | quote }}
+            {{- if and .Values.image.tag (ne .Values.image.tag "latest") }}
+            # Shown on the console's About panel. Read at request time by
+            # /api/version rather than through NEXT_PUBLIC_APP_VERSION, which is
+            # baked into the bundle at image-build time and so cannot name the
+            # tag the image was eventually published under.
+            #
+            # Skipped for "latest", which would pin a value that never changes;
+            # /api/version then falls back to the build-time constant.
+            - name: APP_VERSION
+              value: {{ .Values.image.tag | quote }}
+            {{- end }}
             - name: NEXT_PUBLIC_API_URL
               value: {{ .Values.env.apiUrl | quote }}
             # Kubernetes namespace where worker envoy / sandbox pods live.

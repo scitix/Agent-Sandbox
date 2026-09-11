@@ -679,7 +679,7 @@ func Run(opts Options) {
 		LocalClusterID:       localClusterID,
 		QuotaProvider:        quotaPluginProvider,
 		InstanceTypeProvider: itProvider,
-		ServerVersion:        version.Version,
+		ServerVersion:        version.Resolve(),
 		FederationRegistry:   fedRegistry,
 		VaultService:         vaultSvc,
 		FederationSource:     fedSource,
@@ -760,7 +760,7 @@ func Run(opts Options) {
 		e2bServer := e2bcompat.New(e2bcompat.Config{
 			BindAddress:     e2bBindAddress,
 			Domain:          e2bDomain,
-			ServerVersion:   version.Version,
+			ServerVersion:   version.Resolve(),
 			LocalClusterID:  localClusterID,
 			MetricsSelector: selectorFn,
 			LogFilters:      logFiltersFn,

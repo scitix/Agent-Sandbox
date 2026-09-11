@@ -105,7 +105,9 @@ function EnvOverview({
   const cells: { label: string; value: React.ReactNode }[] = [
     {
       label: t("envs.detail.field.template"),
-      value: <ResourceLink value={env.spec.templateRef.name} href={templateHref} copyable={false} />,
+      value: (
+        <ResourceLink value={env.spec.templateRef.name} href={templateHref} copyable={false} />
+      ),
     },
     { label: t("envs.detail.field.mode"), value: env.spec.mode },
     {
@@ -137,7 +139,7 @@ function EnvOverview({
   return (
     <div className="space-y-6 p-6">
       {/* Metadata grid */}
-      <div className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-md border lg:grid-cols-4">
+      <div className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-xl border lg:grid-cols-4">
         {cells.map((cell) => (
           <div key={cell.label} className="bg-card flex flex-col gap-1.5 px-3.5 py-3">
             <span className="text-muted-foreground font-mono text-[10px] tracking-wider uppercase">

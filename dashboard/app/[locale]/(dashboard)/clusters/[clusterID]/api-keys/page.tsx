@@ -72,7 +72,7 @@ function TokenBlock({ raw }: { raw: string }) {
       <button
         onClick={handleCopy}
         className={cn(
-          "text-muted-foreground hover:text-foreground shrink-0 rounded p-0.5 transition-colors",
+          "text-muted-foreground hover:text-foreground shrink-0 rounded-md p-0.5 transition-colors",
           copied && "text-green-500 hover:text-green-500",
         )}
         title={copied ? "Copied!" : "Copy API key"}
@@ -165,27 +165,21 @@ function CreateApiKeyDialog({
               {t("apiKeys.form.mode")}
             </FieldLabel>
             <div className="grid gap-2 sm:grid-cols-2">
-              {(["unrestricted", "agent"] as const).map(m => (
+              {(["unrestricted", "agent"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
                   onClick={() => setMode(m)}
                   className={cn(
                     "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors",
-                    mode === m
-                      ? "border-primary bg-primary/5"
-                      : "hover:border-primary/40"
+                    mode === m ? "border-primary bg-primary/5" : "hover:border-primary/40",
                   )}
                 >
                   <span className="text-[13px] font-medium">
                     {t(m === "agent" ? "apiKeys.mode.agent" : "apiKeys.mode.unrestricted")}
                   </span>
                   <span className="text-muted-foreground text-xs leading-snug">
-                    {t(
-                      m === "agent"
-                        ? "apiKeys.mode.agentHint"
-                        : "apiKeys.mode.unrestrictedHint"
-                    )}
+                    {t(m === "agent" ? "apiKeys.mode.agentHint" : "apiKeys.mode.unrestrictedHint")}
                   </span>
                 </button>
               ))}
@@ -373,7 +367,7 @@ export default function ApiKeysPage() {
             <div className="bg-brand h-1 w-24 animate-pulse" />
           </div>
         ) : !apiKeys || apiKeys.length === 0 ? (
-          <div className="border-border bg-card flex flex-col items-center justify-center border py-16 text-center">
+          <div className="border-border bg-card flex flex-col items-center justify-center rounded-xl border py-16 text-center">
             <KeyRound className="text-muted-foreground mb-3 h-8 w-8" />
             <p className="text-muted-foreground font-mono text-sm tracking-wider uppercase">
               {t("apiKeys.noApiKeys")}
@@ -419,9 +413,7 @@ export default function ApiKeysPage() {
                           label on every row and stop the one that matters from
                           standing out. */}
                       {key.mode === "agent" ? (
-                        <Badge className="font-mono text-xs">
-                          {t("apiKeys.mode.agent")}
-                        </Badge>
+                        <Badge className="font-mono text-xs">{t("apiKeys.mode.agent")}</Badge>
                       ) : null}
                     </div>
 

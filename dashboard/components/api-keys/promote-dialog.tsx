@@ -17,6 +17,8 @@
 "use client"
 
 import { Globe } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { infoRow } from "@/components/custom-ui/surface"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -76,7 +78,7 @@ export function PromoteApiKeyDialog({ apiKey, onOpenChange }: PromoteApiKeyDialo
 
         {apiKey && (
           <div className="flex flex-col gap-2 py-2">
-            <div className="border-border bg-secondary border px-3 py-2">
+            <div className={cn(infoRow, "px-3 py-2")}>
               <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                 {t("apiKeys.col.keyId")}
               </div>
@@ -84,7 +86,7 @@ export function PromoteApiKeyDialog({ apiKey, onOpenChange }: PromoteApiKeyDialo
             </div>
             <div className="grid grid-cols-2 gap-2">
               {apiKey.team && (
-                <div className="border-border bg-secondary border px-3 py-2">
+                <div className={cn(infoRow, "px-3 py-2")}>
                   <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                     {t("apiKeys.col.team")}
                   </div>
@@ -92,7 +94,7 @@ export function PromoteApiKeyDialog({ apiKey, onOpenChange }: PromoteApiKeyDialo
                 </div>
               )}
               {apiKey.user && (
-                <div className="border-border bg-secondary border px-3 py-2">
+                <div className={cn(infoRow, "px-3 py-2")}>
                   <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                     {t("apiKeys.col.user")}
                   </div>

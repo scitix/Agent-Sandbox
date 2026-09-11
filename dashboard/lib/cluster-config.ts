@@ -76,9 +76,27 @@ export interface ClusterEntry {
   logs?: LogsClusterConfig
 }
 
+/**
+ * Another Dashboard deployment the user can jump to from the cluster picker.
+ *
+ * A deployment only ever sees the clusters it is configured with, so two
+ * geographically separated control planes are two separate consoles with no way
+ * to reach each other. This is that way: each side lists the other, and the
+ * entry appears under the cluster list as a plain link out. It is deliberately
+ * NOT a cluster — nothing here is fetched, authenticated against or proxied to;
+ * clicking it leaves this deployment.
+ */
+export interface PeerSite {
+  /** Shown verbatim in the picker. Operators write it in whatever language they run in. */
+  name: string
+  /** Absolute URL of the other Dashboard, e.g. `https://console.example.com/agentbox`. */
+  url: string
+}
+
 interface ClustersFile {
   clusters: ClusterEntry[]
   hostAliases?: ClusterHostAlias[]
+  peerSites?: PeerSite[]
 }
 
 const CLUSTERS_FILE = process.env.CLUSTERS_CONFIG_PATH || "/etc/agentbox/clusters.yaml"
@@ -86,18 +104,23 @@ const CLUSTERS_FILE = process.env.CLUSTERS_CONFIG_PATH || "/etc/agentbox/cluster
 // Cached state
 let cachedClusters: ClusterEntry[] = []
 let cachedHostAliases: ClusterHostAlias[] = []
+let cachedPeerSites: PeerSite[] = []
 let watcherInitialized = false
 
 /**
- * Parses the whole file once. Both halves are cached together so a ConfigMap
+ * Parses the whole file once. Every part is cached together so a ConfigMap
  * update cannot leave the clusters and their host aliases out of step.
  */
-function loadConfig(): { clusters: ClusterEntry[]; hostAliases: ClusterHostAlias[] } {
+function loadConfig(): {
+  clusters: ClusterEntry[]
+  hostAliases: ClusterHostAlias[]
+  peerSites: PeerSite[]
+} {
   try {
     const content = fs.readFileSync(CLUSTERS_FILE, "utf-8")
     const parsed = parseYaml(content) as ClustersFile | null
     if (!parsed || !Array.isArray(parsed.clusters)) {
-      return { clusters: [], hostAliases: [] }
+      return { clusters: [], hostAliases: [], peerSites: [] }
     }
     const clusters = parsed.clusters
       .filter(
@@ -112,9 +135,15 @@ function loadConfig(): { clusters: ClusterEntry[]; hostAliases: ClusterHostAlias
       (a): a is ClusterHostAlias =>
         !!a && typeof a.ip === "string" && Array.isArray(a.hostnames) && a.hostnames.length > 0,
     )
-    return { clusters, hostAliases }
+    // Both fields are required: an entry missing either would render as a link
+    // with no label or a label that goes nowhere.
+    const peerSites = (Array.isArray(parsed.peerSites) ? parsed.peerSites : []).filter(
+      (s): s is PeerSite =>
+        !!s && typeof s.name === "string" && typeof s.url === "string" && !!s.url,
+    )
+    return { clusters, hostAliases, peerSites }
   } catch {
-    return { clusters: [], hostAliases: [] }
+    return { clusters: [], hostAliases: [], peerSites: [] }
   }
 }
 
@@ -126,11 +155,13 @@ function ensureWatcher() {
   const initial = loadConfig()
   cachedClusters = initial.clusters
   cachedHostAliases = initial.hostAliases
+  cachedPeerSites = initial.peerSites
 
   const reload = () => {
     const next = loadConfig()
     cachedClusters = next.clusters
     cachedHostAliases = next.hostAliases
+    cachedPeerSites = next.peerSites
   }
 
   // Watch the directory (not subPath, so K8s ConfigMap updates are picked up)
@@ -157,6 +188,12 @@ export function listClusters(): ClusterEntry[] {
 export function getClusterConfig(id: string): ClusterEntry | undefined {
   ensureWatcher()
   return cachedClusters.find((c) => c.id === id)
+}
+
+/** The `peerSites` block from clusters.yaml. Empty when the file has none. */
+export function listPeerSites(): PeerSite[] {
+  ensureWatcher()
+  return cachedPeerSites
 }
 
 /** The `hostAliases` block from clusters.yaml. Empty when the file has none. */

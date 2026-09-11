@@ -17,6 +17,8 @@
 "use client"
 
 import { useState } from "react"
+import { cn } from "@/lib/utils"
+import { infoRow } from "@/components/custom-ui/surface"
 import { Eye, EyeOff, Copy, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -60,12 +62,12 @@ export function KeyRevealModal({ result, onClose }: KeyRevealModalProps) {
           </DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-3 py-2">
-          <div className="border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
             <p className="font-mono text-xs text-amber-700 dark:text-amber-400">
               ⚠ {t("apiKeys.copyThisKeyNow")}
             </p>
           </div>
-          <div className="border-border bg-secondary border px-3 py-2">
+          <div className={cn(infoRow, "px-3 py-2")}>
             <div className="flex items-center gap-2">
               <code className="text-foreground flex-1 font-mono text-xs break-all">
                 {showKey ? result.apiKey : `${result.apiKey.slice(0, 12)}${"•".repeat(30)}`}
@@ -93,14 +95,14 @@ export function KeyRevealModal({ result, onClose }: KeyRevealModalProps) {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 font-mono text-xs">
-            <div className="border-border bg-secondary border px-2 py-1.5">
+            <div className={cn(infoRow, "px-2 py-1.5")}>
               <div className="text-muted-foreground mb-0.5 text-xs tracking-wider uppercase">
                 {t("apiKeys.col.keyId")}
               </div>
               <span>{result.keyId}</span>
             </div>
             {result.team && (
-              <div className="border-border bg-secondary border px-2 py-1.5">
+              <div className={cn(infoRow, "px-2 py-1.5")}>
                 <div className="text-muted-foreground mb-0.5 text-xs tracking-wider uppercase">
                   {t("apiKeys.col.team")}
                 </div>
@@ -109,7 +111,7 @@ export function KeyRevealModal({ result, onClose }: KeyRevealModalProps) {
             )}
           </div>
           {result.role && (
-            <div className="border-border bg-secondary border px-2 py-1.5 font-mono text-xs">
+            <div className={cn(infoRow, "px-2 py-1.5 font-mono text-xs")}>
               <div className="text-muted-foreground mb-0.5 text-xs tracking-wider uppercase">
                 {t("apiKeys.col.role")}
               </div>

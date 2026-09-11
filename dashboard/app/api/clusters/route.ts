@@ -15,11 +15,14 @@
  */
 
 import { NextResponse } from "next/server"
-import { listClusters, filterClustersByVisibility } from "@/lib/cluster-config"
+import { listClusters, listPeerSites, filterClustersByVisibility } from "@/lib/cluster-config"
 import { verifyJWT } from "@/lib/auth"
 
 export async function GET(request: Request) {
   const clusters = listClusters()
+  // Peer sites are not visibility-filtered: they carry no cluster identity, and
+  // the other deployment authenticates the user itself on arrival.
+  const peerSites = listPeerSites()
 
   // Try to get user info from JWT for filtering.
   // - No token (unauthenticated / login page): return all clusters so the user
@@ -32,11 +35,11 @@ export async function GET(request: Request) {
     try {
       const payload = await verifyJWT(token)
       const filtered = filterClustersByVisibility(clusters, payload.team, payload.user)
-      return NextResponse.json({ clusters: filtered, multiCluster: true })
+      return NextResponse.json({ clusters: filtered, multiCluster: true, peerSites })
     } catch {
       // Invalid token — fall through to unauthenticated path
     }
   }
 
-  return NextResponse.json({ clusters, multiCluster: true })
+  return NextResponse.json({ clusters, multiCluster: true, peerSites })
 }

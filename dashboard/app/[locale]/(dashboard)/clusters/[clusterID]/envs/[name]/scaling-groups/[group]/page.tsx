@@ -146,7 +146,7 @@ function GroupPolicySection({ group }: { group: AgentEnvAutoscalingGroup }) {
       <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.12em] uppercase">
         {t("envs.autoscaling.detail.policy")}
       </h3>
-      <div className="border-border bg-muted/20 grid grid-cols-2 gap-px overflow-hidden rounded border md:grid-cols-4">
+      <div className="border-border bg-muted/20 grid grid-cols-2 gap-px overflow-hidden rounded-xl border md:grid-cols-4">
         <Cell label={t("envs.autoscaling.col.enabled")}>
           <Badge
             variant={group.enabled ? "default" : "outline"}

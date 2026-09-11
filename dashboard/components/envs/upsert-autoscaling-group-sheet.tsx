@@ -176,7 +176,7 @@ function UpsertInner({
             control={control}
             name="enabled"
             render={({ field }) => (
-              <div className="flex items-start justify-between gap-4 rounded border p-3">
+              <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
                 <div>
                   <div className="text-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
                     {t("envs.editAutoscaling.field.enabled")}
@@ -206,7 +206,7 @@ function UpsertInner({
             />
           </div>
 
-          <fieldset className="space-y-3 rounded border p-3">
+          <fieldset className="space-y-3 rounded-lg border p-3">
             <legend className="text-foreground px-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">
               {t("envs.editAutoscaling.scaleUpSection")}
             </legend>
@@ -267,7 +267,7 @@ function UpsertInner({
             </div>
           </fieldset>
 
-          <fieldset className="space-y-3 rounded border p-3">
+          <fieldset className="space-y-3 rounded-lg border p-3">
             <legend className="text-foreground px-1 font-mono text-xs font-bold tracking-[0.12em] uppercase">
               {t("envs.editAutoscaling.scaleDownSection")}
             </legend>

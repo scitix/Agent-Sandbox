@@ -17,6 +17,8 @@
 "use client"
 
 import { Loader2, Trash2, X } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { infoRow } from "@/components/custom-ui/surface"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -74,20 +76,20 @@ export function RevokeApiKeyDialog({ apiKey, onOpenChange, onRevoked }: RevokeAp
 
         {apiKey && (
           <div className="flex flex-col gap-2 py-2">
-            <div className="border-border bg-secondary border px-3 py-2">
+            <div className={cn(infoRow, "px-3 py-2")}>
               <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                 {t("apiKeys.col.keyId")}
               </div>
               <code className="text-foreground font-mono text-sm">{apiKey.keyId}</code>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="border-border bg-secondary border px-3 py-2">
+              <div className={cn(infoRow, "px-3 py-2")}>
                 <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                   {t("apiKeys.col.team")}
                 </div>
                 <span className="font-mono text-xs">{apiKey.team ?? "---"}</span>
               </div>
-              <div className="border-border bg-secondary border px-3 py-2">
+              <div className={cn(infoRow, "px-3 py-2")}>
                 <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                   {t("apiKeys.col.user")}
                 </div>

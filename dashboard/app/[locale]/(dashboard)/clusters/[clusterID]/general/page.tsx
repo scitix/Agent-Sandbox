@@ -27,10 +27,12 @@ import { LogOut, Shield, User } from "lucide-react"
 import { useMemo } from "react"
 import { useTranslation } from "@/lib/i18n"
 import { LocaleSwitcher } from "@/components/locale-switcher"
+import { infoRow } from "@/components/custom-ui/surface"
+import { cn } from "@/lib/utils"
 import { loginPath } from "@/lib/cluster-path"
 import { useLocale } from "@/hooks/use-locale"
 import { useClusterID } from "@/hooks/use-cluster-id"
-import { serverVersionQueryOptions } from "@/lib/queries"
+import { dashboardVersionQueryOptions, serverVersionQueryOptions } from "@/lib/queries"
 
 export default function GeneralPage() {
   const router = useRouter()
@@ -42,7 +44,11 @@ export default function GeneralPage() {
   const impersonation = useAtomValue(impersonationAtom)
 
   const { data: pingData } = useQuery(serverVersionQueryOptions(clusterID))
-  const dashboardVersion = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0"
+  const { data: versionData } = useQuery(dashboardVersionQueryOptions())
+  // Both sides report the image tag they were deployed under. Until the request
+  // lands, fall back to the build-time constant rather than flashing a dash.
+  const dashboardVersion =
+    versionData?.dashboardVersion ?? process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"
   const serverVersion = pingData?.serverVersion ?? "—"
 
   const user = useMemo(() => {
@@ -75,8 +81,8 @@ export default function GeneralPage() {
             </h3>
             <p className="text-muted-foreground mb-3 text-xs">{t("general.currentSession")}</p>
             <div className="flex flex-col gap-2">
-              <div className="border-border bg-secondary flex items-center gap-3 border px-3 py-2.5">
-                <div className="border-border bg-background text-foreground flex h-8 w-8 items-center justify-center border text-sm font-bold">
+              <div className={cn(infoRow, "flex items-center gap-3 px-3 py-2.5")}>
+                <div className="border-border bg-background text-foreground flex h-8 w-8 items-center justify-center rounded-md border text-sm font-bold">
                   {isAdmin ? (
                     <Shield className="text-brand h-4 w-4" />
                   ) : (
@@ -116,7 +122,11 @@ export default function GeneralPage() {
               {t("general.about")}
             </h3>
             <p className="text-muted-foreground mb-3 text-xs">{t("general.aboutDesc")}</p>
-            <div className="border-border bg-secondary divide-border flex flex-col gap-0 divide-y border">
+            {/* overflow-hidden so the divide-y rules stop at the rounded edge
+                instead of overshooting the corners. */}
+            <div
+              className={cn(infoRow, "divide-border flex flex-col gap-0 divide-y overflow-hidden")}
+            >
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-muted-foreground font-mono text-xs">
                   {t("general.dashboardVersion")}

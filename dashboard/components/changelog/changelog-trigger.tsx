@@ -55,7 +55,7 @@ export function ChangelogTrigger() {
         </span>
         <span>{t("nav.changelog")}</span>
         {hasNew && (
-          <span className="ml-auto rounded bg-red-500 px-1 py-0.5 font-mono text-[9px] font-bold tracking-wider text-white uppercase">
+          <span className="ml-auto rounded-md bg-red-500 px-1 py-0.5 font-mono text-[9px] font-bold tracking-wider text-white uppercase">
             {t("status.new")}
           </span>
         )}

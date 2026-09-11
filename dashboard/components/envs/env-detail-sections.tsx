@@ -37,7 +37,11 @@ import { clusterPath } from "@/lib/cluster-path"
 import { useClusterID } from "@/hooks/use-cluster-id"
 import { useLocale } from "@/hooks/use-locale"
 import type { MultipleHandler } from "@/components/custom/query-table/pagination"
-import { createPoolColumns, poolNumberFilterOptions, type PoolRow } from "@/components/pools/columns"
+import {
+  createPoolColumns,
+  poolNumberFilterOptions,
+  type PoolRow,
+} from "@/components/pools/columns"
 import {
   deleteEnvAutoscalingGroupImperative,
   deleteEnvPoolImperative,
@@ -61,7 +65,7 @@ export function SpecSection({ env }: { env: AgentSandboxEnv }) {
       <h3 className="text-muted-foreground mb-2 font-mono text-xs font-bold tracking-[0.12em] uppercase">
         {t("envs.detail.section.spec")}
       </h3>
-      <dl className="border-border bg-muted/20 divide-border grid grid-cols-2 divide-x divide-y rounded border text-xs">
+      <dl className="border-border bg-muted/20 divide-border grid grid-cols-2 divide-x divide-y overflow-hidden rounded-lg border text-xs">
         <Row label={t("envs.detail.field.template")} value={env.spec.templateRef.name} />
         <Row label={t("envs.detail.field.mode")} value={env.spec.mode} />
         <Row

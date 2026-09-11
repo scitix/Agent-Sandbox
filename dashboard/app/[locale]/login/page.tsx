@@ -256,7 +256,7 @@ function LoginForm() {
               </Field>
 
               {apiKeyError && (
-                <div className="border-destructive/40 bg-destructive/5 rounded border px-3 py-2">
+                <div className="border-destructive/40 bg-destructive/5 rounded-lg border px-3 py-2">
                   <p className="text-destructive font-mono text-[11px]">{apiKeyError}</p>
                 </div>
               )}
@@ -293,7 +293,7 @@ function LoginForm() {
               /* ── OIDC mode ── */
               <div className="flex flex-col gap-3">
                 {(ssoError ?? urlErrorMessage) && (
-                  <div className="border-destructive/40 bg-destructive/5 rounded border px-3 py-2">
+                  <div className="border-destructive/40 bg-destructive/5 rounded-lg border px-3 py-2">
                     <p className="text-destructive font-mono text-[11px]">
                       {ssoError ?? urlErrorMessage}
                     </p>
@@ -359,7 +359,7 @@ function LoginForm() {
                 </div>
 
                 {(ssoError ?? urlErrorMessage) && (
-                  <div className="border-destructive/40 bg-destructive/5 rounded border px-3 py-2">
+                  <div className="border-destructive/40 bg-destructive/5 rounded-lg border px-3 py-2">
                     <p className="text-destructive font-mono text-[11px]">
                       {ssoError ?? urlErrorMessage}
                     </p>

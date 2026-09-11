@@ -161,11 +161,11 @@ export function EnvEventsTimelineSection({ envName }: EnvEventsTimelineSectionPr
       </div>
 
       {filtered.length === 0 ? (
-        <div className="border-border text-muted-foreground rounded border border-dashed p-6 text-center font-mono text-xs">
+        <div className="border-border text-muted-foreground rounded-lg border border-dashed p-6 text-center font-mono text-xs">
           {t("envs.detail.events.empty")}
         </div>
       ) : (
-        <ol className="border-border bg-background relative space-y-2 rounded border p-3">
+        <ol className="border-border bg-background relative space-y-2 rounded-lg border p-3">
           {filtered.map((e: EnvEvent, i: number) => (
             <TimelineRow
               key={`${e.involvedKind}-${e.involvedName}-${e.reason}-${i}`}

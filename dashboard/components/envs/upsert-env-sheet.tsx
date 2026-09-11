@@ -485,7 +485,7 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                       </AccordionTrigger>
                       {volumeCount > 0 && (
                         <span
-                          className={`rounded border px-1 font-mono text-[10px] ${
+                          className={`rounded-md border px-1 font-mono text-[10px] ${
                             writableVolumeCount > 0
                               ? "border-destructive/50 text-destructive"
                               : "border-border bg-muted text-muted-foreground"
@@ -591,7 +591,7 @@ function TemplateCombobox({
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs">{item.name}</span>
                   {item.version && (
-                    <span className="border-border bg-muted text-muted-foreground rounded border px-1 font-mono text-[10px]">
+                    <span className="border-border bg-muted text-muted-foreground rounded-md border px-1 font-mono text-[10px]">
                       {item.version}
                     </span>
                   )}
@@ -625,11 +625,11 @@ function SelectedTemplateInfo({
     return <FieldDescription>{t("envs.form.templateDescription")}</FieldDescription>
   }
   return (
-    <div className="border-border bg-muted/30 mt-1 space-y-1 rounded border border-dashed px-2 py-1.5">
+    <div className="border-border bg-muted/30 mt-1 space-y-1 rounded-lg border border-dashed px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px]">
         <span className="text-foreground">{tpl.name}</span>
         {tpl.version && (
-          <span className="border-border bg-background text-muted-foreground rounded border px-1 text-[10px]">
+          <span className="border-border bg-background text-muted-foreground rounded-md border px-1 text-[10px]">
             {tpl.version}
           </span>
         )}

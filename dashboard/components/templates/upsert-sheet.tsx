@@ -986,7 +986,7 @@ function UpsertTemplateForm({
                     ].map((v) => (
                       <code
                         key={v}
-                        className="bg-secondary rounded px-1 py-0.5 font-mono text-[10px]"
+                        className="bg-secondary rounded-md px-1 py-0.5 font-mono text-[10px]"
                       >
                         {v}
                       </code>
@@ -1174,7 +1174,7 @@ function RuleRow({ control, index, onRemove, readOnly }: RuleRowProps) {
   const { t } = useTranslation()
 
   return (
-    <div className="border-border bg-background flex flex-col gap-2 border p-3">
+    <div className="border-border bg-background flex flex-col gap-2 rounded-lg border p-3">
       <div className="flex items-center justify-between">
         <span className="text-muted-foreground font-mono text-xs uppercase">
           {t("templates.form.rule")} {index + 1}

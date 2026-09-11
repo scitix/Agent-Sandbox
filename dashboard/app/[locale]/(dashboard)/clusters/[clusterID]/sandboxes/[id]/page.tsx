@@ -140,7 +140,7 @@ function SandboxOverview({
 
   return (
     <div className="p-6">
-      <div className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-md border lg:grid-cols-4">
+      <div className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-xl border lg:grid-cols-4">
         {/* Regular metadata cells */}
         {cells.map((cell) => (
           <div key={cell.label} className="bg-card flex flex-col gap-1.5 px-3.5 py-3">
@@ -190,7 +190,7 @@ function SandboxOverview({
               {Object.entries(sandbox.metadata!).map(([k, v]) => (
                 <span
                   key={k}
-                  className="border-border bg-muted/40 inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-xs"
+                  className="border-border bg-muted/40 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs"
                 >
                   <span className="text-muted-foreground">{k}</span>
                   <span className="text-muted-foreground/40">=</span>

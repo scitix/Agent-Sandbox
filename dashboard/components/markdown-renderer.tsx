@@ -114,10 +114,10 @@ function ShikiBlock({ code, lang, compact }: ShikiBlockProps) {
   if (!html) {
     return (
       <div className={wrapper}>
-        <pre className="bg-secondary min-w-0 overflow-x-auto rounded">
+        <pre className="bg-secondary min-w-0 overflow-x-auto rounded-lg">
           <code
             className={cn(
-              "bg-secondary text-foreground block min-w-0 rounded px-3 py-2 font-mono leading-relaxed whitespace-pre",
+              "bg-secondary text-foreground block min-w-0 rounded-lg px-3 py-2 font-mono leading-relaxed whitespace-pre",
               compact ? "text-xs" : "text-xs",
             )}
           >
@@ -140,7 +140,7 @@ function ShikiBlock({ code, lang, compact }: ShikiBlockProps) {
       <div
         className={cn(
           "[&_pre]:bg-secondary! [&_pre]:min-w-0 [&_pre]:overflow-x-auto",
-          "[&_pre]:rounded [&_pre]:px-3 [&_pre]:py-2 [&_pre]:leading-relaxed",
+          "[&_pre]:rounded-lg [&_pre]:px-3 [&_pre]:py-2 [&_pre]:leading-relaxed",
           compact ? "[&_pre]:text-xs" : "[&_pre]:text-xs",
         )}
         // biome-ignore lint/security/noDangerouslySetInnerHtml: content is from Shiki, not user input
@@ -257,7 +257,7 @@ export function MarkdownRenderer({ content, compact = false, className }: Markdo
         }
         // Inline code
         return (
-          <code className="bg-secondary text-brand rounded px-1 py-0.5 font-mono text-xs">
+          <code className="bg-secondary text-brand rounded-md px-1 py-0.5 font-mono text-xs">
             {children}
           </code>
         )
@@ -285,21 +285,33 @@ export function MarkdownRenderer({ content, compact = false, className }: Markdo
           {children}
         </a>
       ),
+      // Mirrors components/assistant-ui/markdown-text.tsx: one hairline frame
+      // with horizontal rules inside, rather than a grid of boxed cells.
+      // `border-separate` is what makes the radius work — `overflow: hidden`
+      // does not clip a `<table>` reliably — so the corners are rounded on the
+      // corner cells instead, and the last row drops its rule.
       table: ({ children }: { children?: React.ReactNode }) => (
         <div className={cn("overflow-x-auto", compact ? "my-2" : "my-3")}>
-          <table className="border-border w-full border-collapse border text-xs">{children}</table>
+          <table className="bg-card ring-border w-full border-separate border-spacing-0 overflow-hidden rounded-xl text-xs ring-1 [&_tr:last-child>td]:border-b-0">
+            {children}
+          </table>
         </div>
       ),
       thead: ({ children }: { children?: React.ReactNode }) => (
         <thead className="bg-secondary">{children}</thead>
       ),
       th: ({ children }: { children?: React.ReactNode }) => (
-        <th className="border-border text-foreground border px-3 py-1.5 text-left font-semibold">
+        <th className="border-border text-foreground border-b px-3 py-1.5 text-left font-semibold first:rounded-ss-xl last:rounded-se-xl">
           {children}
         </th>
       ),
       td: ({ children }: { children?: React.ReactNode }) => (
-        <td className="border-border text-foreground/80 border px-3 py-1.5">{children}</td>
+        <td className="border-border text-foreground/80 border-b px-3 py-1.5">{children}</td>
+      ),
+      tr: ({ children }: { children?: React.ReactNode }) => (
+        <tr className="[&:last-child>td:first-child]:rounded-es-xl [&:last-child>td:last-child]:rounded-ee-xl">
+          {children}
+        </tr>
       ),
     }),
     [compact],

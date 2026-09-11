@@ -460,7 +460,7 @@ function UpsertPoolInner({
                 </Field>
               </div>
               {preview && (
-                <div className="bg-background text-muted-foreground rounded border px-3 py-2 font-mono text-[11px]">
+                <div className="bg-background text-muted-foreground rounded-md border px-3 py-2 font-mono text-[11px]">
                   <span className="mr-1 tracking-wider uppercase">
                     {t("envs.poolForm.preview")}
                   </span>
@@ -543,7 +543,7 @@ function UpsertPoolInner({
                         </div>
                         {(watchedOverrideCpu !== undefined || watchedOverrideMem !== undefined) &&
                           !overrideExceeds && (
-                            <div className="bg-background text-muted-foreground rounded border px-3 py-2 font-mono text-[11px]">
+                            <div className="bg-background text-muted-foreground rounded-md border px-3 py-2 font-mono text-[11px]">
                               <span className="mr-1 tracking-wider uppercase">
                                 {t("envs.poolForm.actualRequest")}
                               </span>

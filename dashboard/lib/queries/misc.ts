@@ -34,6 +34,24 @@ export const serverVersionQueryOptions = (clusterID: string) =>
   })
 
 /**
+ * Which build of the Dashboard is serving this page.
+ *
+ * A request rather than `NEXT_PUBLIC_APP_VERSION` because that constant is
+ * inlined into the bundle before the image is tagged; only the server knows the
+ * tag it was deployed under. See app/api/version/route.ts.
+ */
+export const dashboardVersionQueryOptions = () =>
+  queryOptions({
+    queryKey: ["dashboardVersion"],
+    queryFn: () =>
+      fetch(`${basePath}/api/version`).then(
+        (res) => res.json() as Promise<{ dashboardVersion: string }>,
+      ),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  })
+
+/**
  * Returns quota items for the current user (or an impersonated user).
  *
  * When `options.impersonate` is provided, X-Impersonate-Team and

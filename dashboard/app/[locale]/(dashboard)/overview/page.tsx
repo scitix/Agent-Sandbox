@@ -69,7 +69,7 @@ function StatCard({
   color: string
 }) {
   return (
-    <div className="border-border bg-card border p-4">
+    <div className="border-border bg-card rounded-xl border p-4">
       <div className="mb-3 flex items-start justify-between">
         <span className="text-muted-foreground font-mono text-xs font-bold tracking-[0.15em] uppercase">
           {label}
@@ -93,7 +93,7 @@ function StatusBadge({ status }: { status: string }) {
   const cls = colorMap[status] ?? "bg-secondary text-muted-foreground border-border"
   return (
     <span
-      className={`inline-flex items-center border px-1.5 py-0.5 font-mono text-xs font-bold tracking-wider uppercase ${cls}`}
+      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-xs font-bold tracking-wider uppercase ${cls}`}
     >
       {status}
     </span>
@@ -161,7 +161,11 @@ export default function OverviewPage() {
         "get",
         "/sandboxes",
         { params: { query: { limit: 10, offset: 0 } } },
-        { select: (data: { items: { sandboxId: string; poolName: string; status: string; claimedAt?: string }[] }) => data.items ?? [] },
+        {
+          select: (data: {
+            items: { sandboxId: string; poolName: string; status: string; claimedAt?: string }[]
+          }) => data.items ?? [],
+        },
       ),
     [fallbackClusterID],
   )
@@ -201,8 +205,7 @@ export default function OverviewPage() {
     dataUpdatedAt,
   } = useQuery(distributionOpts)
   const platformUsersOpts = platformUsersCountQueryOptions()
-  const { data: platformUsersData, isFetching: platformUsersFetching } =
-    useQuery(platformUsersOpts)
+  const { data: platformUsersData, isFetching: platformUsersFetching } = useQuery(platformUsersOpts)
 
   const distResolved = distributionData !== undefined
   const distConfigured = distributionData?.configured !== false
@@ -337,7 +340,7 @@ export default function OverviewPage() {
                         <Box className="h-3.5 w-3.5" />
                         {t("overview.recentSandboxes")}
                       </h2>
-                      <div className="border-border overflow-hidden border">
+                      <div className="border-border overflow-hidden rounded-xl border">
                         <table className="w-full">
                           <thead>
                             <tr className="border-border bg-secondary border-b">

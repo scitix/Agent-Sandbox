@@ -90,7 +90,7 @@ export function YamlDiffView({ oldYaml, newYaml, className }: YamlDiffViewProps)
   return (
     <div
       className={cn(
-        "border-border overflow-hidden rounded border font-mono text-xs leading-5",
+        "border-border overflow-hidden rounded-lg border font-mono text-xs leading-5",
         className,
       )}
     >

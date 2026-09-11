@@ -126,7 +126,7 @@ function ImageCard({
           {dataset.tags?.map((tag) => (
             <span
               key={tag}
-              className="bg-secondary text-muted-foreground rounded px-2 py-0.5 font-mono text-xs"
+              className="bg-secondary text-muted-foreground rounded-md px-2 py-0.5 font-mono text-xs"
             >
               {tag}
             </span>

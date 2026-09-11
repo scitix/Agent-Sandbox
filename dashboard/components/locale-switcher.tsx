@@ -50,7 +50,7 @@ export function LocaleSwitcher() {
                 if (!isActive) setLocale(loc)
               }}
               className={cn(
-                "border-border flex items-center justify-between border px-3 py-2.5 text-left transition-colors",
+                "border-border flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors",
                 isActive
                   ? "bg-secondary border-brand/40"
                   : "bg-background hover:bg-secondary/60 cursor-pointer",

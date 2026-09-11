@@ -17,6 +17,8 @@
 "use client"
 
 import { Loader2, Trash2, X } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { infoRow } from "@/components/custom-ui/surface"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -78,20 +80,20 @@ export function DeleteSandboxDialog({
 
         {sandbox && (
           <div className="py-2">
-            <div className="border-border bg-secondary border px-3 py-2">
+            <div className={cn(infoRow, "px-3 py-2")}>
               <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                 {t("sandboxes.col.id")}
               </div>
               <code className="text-foreground font-mono text-sm">{sandbox.sandboxId}</code>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
-              <div className="border-border bg-secondary border px-3 py-2">
+              <div className={cn(infoRow, "px-3 py-2")}>
                 <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                   {t("sandboxes.col.pool")}
                 </div>
                 <span className="font-mono text-xs">{sandbox.poolName}</span>
               </div>
-              <div className="border-border bg-secondary border px-3 py-2">
+              <div className={cn(infoRow, "px-3 py-2")}>
                 <div className="text-muted-foreground mb-1 font-mono text-xs tracking-wider uppercase">
                   {t("sandboxes.col.status")}
                 </div>

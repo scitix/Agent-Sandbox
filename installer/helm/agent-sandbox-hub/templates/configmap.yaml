@@ -19,3 +19,9 @@ data:
     {{- else }}
       []
     {{- end }}
+    peerSites:
+    {{- if .Values.peerSites }}
+    {{- .Values.peerSites | toYaml | nindent 4 }}
+    {{- else }}
+      []
+    {{- end }}

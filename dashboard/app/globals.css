@@ -169,8 +169,8 @@
      and on some Windows configurations — so a Chinese UI silently renders in
      SimSun while the English one is correct. */
   --font-sans:
-    "Geist", "Geist Fallback", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+    "Geist", "Geist Fallback", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif,
+    system-ui, sans-serif;
   --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -307,8 +307,24 @@
  * panel containing a focused input would have its resting hairline repainted.
  */
 *:focus-visible {
-  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0
-    calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+  --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width))
+    var(--tw-ring-color, currentcolor);
+}
+
+/*
+ * …with one exception, and it is a consequence of that unlayered placement.
+ *
+ * An InputGroup draws ONE ring around the whole control — the input plus its
+ * addons — and the inner `<input>`/`<textarea>` opts out of its own with
+ * `focus-visible:ring-0` (see `components/ui/input-group.tsx`). That opt-out is
+ * a utility, so the rule above outranks it and hands the inner control a ring
+ * back: a second highlight nested inside the first, square-cornered because the
+ * control is `rounded-none`, and stopping short of the group's edge because it
+ * wraps only the input. Every combobox in the app shows it, the cluster switcher
+ * included. Only another unlayered rule can take it away again.
+ */
+[data-slot="input-group-control"]:focus-visible {
+  --tw-ring-shadow: 0 0 #0000;
 }
 
 /*
@@ -323,19 +339,19 @@
  * that ring IS the error signal.
  */
 :is(
-  [data-slot="button"],
-  [data-slot="input"],
-  [data-slot="textarea"],
-  [data-slot="select-trigger"],
-  [data-slot="combobox-trigger"],
-  [data-slot="combobox-chip-input"],
-  [data-slot="toggle"],
-  [data-slot="checkbox"],
-  [data-slot="radio-group-item"],
-  [data-slot="switch"],
-  [data-slot="input-otp-slot"],
-  [data-slot="input-group"]
-):focus-visible:not([aria-invalid="true"]) {
+    [data-slot="button"],
+    [data-slot="input"],
+    [data-slot="textarea"],
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-slot="combobox-chip-input"],
+    [data-slot="toggle"],
+    [data-slot="checkbox"],
+    [data-slot="radio-group-item"],
+    [data-slot="switch"],
+    [data-slot="input-otp-slot"],
+    [data-slot="input-group"]
+  ):focus-visible:not([aria-invalid="true"]) {
   --tw-ring-color: var(--ring-halo);
 }
 

@@ -31,6 +31,7 @@ import {
 import { ChevronDown, ChevronRight, GridIcon } from "lucide-react"
 import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import { gridPanel } from "@/components/custom-ui/surface"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -87,25 +88,24 @@ export function TablePlaceHolder<TData, TValue>({
   const columnCount = columns.length - (toolbarConfig?.hiddenColumns?.length || 0)
   return (
     <div className={cn(isFixedLayout ? "flex h-full flex-col" : "flex flex-col gap-4", className)}>
+      {/* The placeholder has to stand exactly where the loaded table will, or
+          the swap shifts every edge on screen. In fixed layout that means the
+          same `h-13 px-6 py-2` on the toolbar and pagination rows and the same
+          panel around the grid — mirroring the live branch below, class for
+          class. */}
       {toolbarConfig && (
         <div
           className={cn(
-            "flex h-11 w-full flex-row items-center justify-between gap-2",
-            isFixedLayout ? "shrink-0 pb-2" : "",
+            "flex w-full flex-row items-center justify-between gap-2",
+            isFixedLayout ? "h-13 shrink-0 px-6 py-2" : "h-11",
           )}
         >
           <Skeleton className="h-9 w-1/4" />
           <Skeleton className="h-9 w-20" />
         </div>
       )}
-      <div className={isFixedLayout ? "min-h-0 flex-1" : ""}>
-        <Card
-          className={
-            isFixedLayout
-              ? "bg-sidebar/50 h-full overflow-hidden rounded-md p-0 shadow-xs"
-              : "overflow-hidden rounded-md p-0 shadow-xs"
-          }
-        >
+      <div className={isFixedLayout ? "min-h-0 flex-1 px-6 pb-3" : ""}>
+        <Card className={cn(gridPanel, isFixedLayout && "h-full")}>
           <CardContent className={isFixedLayout ? "h-full p-0" : "p-0"}>
             <Table>
               <TableHeader className={isFixedLayout ? "sticky top-0 z-10" : ""}>
@@ -123,7 +123,7 @@ export function TablePlaceHolder<TData, TValue>({
         </Card>
       </div>
       {isFixedLayout && (
-        <div className="flex h-11 w-full shrink-0 flex-row items-center justify-between gap-2 pt-2">
+        <div className="flex h-13 w-full shrink-0 flex-row items-center justify-between gap-2 px-6 py-2">
           <Skeleton className="h-9 w-1/4" />
           <Skeleton className="h-9 w-1/8" />
         </div>
@@ -399,8 +399,12 @@ export const TableContent = <TData,>({
                     key={header.id}
                     colSpan={header.colSpan}
                     className={cn("text-muted-foreground font-normal", {
-                      "pl-6": i === 0,
-                      "pr-6": i === headerGroup.headers.length - 1,
+                      // The grid's inset from its own panel edge. Smaller than
+                      // the page gutter the panel sits in, because the two add
+                      // up: at pl-6 the first column would start 48px into the
+                      // page, visibly deeper than the toolbar above it.
+                      "pl-4": i === 0,
+                      "pr-4": i === headerGroup.headers.length - 1,
                     })}
                   >
                     {header.isPlaceholder
@@ -418,19 +422,22 @@ export const TableContent = <TData,>({
                   <TableRow
                     key={row.id}
                     data-state={row.getIsSelected() && "selected"}
-                    className="border-0 hover:bg-card"
+                    className="hover:bg-card border-0"
                   >
                     {row.getVisibleCells().map((cell, i) => (
-                      <TableCell key={cell.id} className={cn({
-                        "pl-6": i === 0,
-                        "pr-6": i === row.getVisibleCells().length - 1,
-                      })}>
+                      <TableCell
+                        key={cell.id}
+                        className={cn({
+                          "pl-4": i === 0,
+                          "pr-4": i === row.getVisibleCells().length - 1,
+                        })}
+                      >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </TableCell>
                     ))}
                   </TableRow>
                   {expandedRows.has(idFn(row.original)) && (
-                    <TableRow key={`${row.id}-pods`} className="border-0 hover:bg-card">
+                    <TableRow key={`${row.id}-pods`} className="hover:bg-card border-0">
                       {expandedConfig?.renderRow(extendedColumns, row)}
                     </TableRow>
                   )}
@@ -490,9 +497,18 @@ export const TableContent = <TData,>({
           </div>
         )}
 
-        {/* Scrollable table area */}
-        <div ref={tableAreaRef} className={cn("min-h-0 flex-1", toolbarConfig ? "" : "mt-0")}>
-          <div className="relative h-full overflow-hidden p-0 border-y">
+        {/* Scrollable table area, inset to the page gutter so the grid reads as
+            a panel on the canvas rather than as the page's full width.
+
+            The gutter goes on THIS wrapper, outside the scroll area. Pinned
+            columns are `position: sticky; left: 0` against the scroll viewport
+            (app/globals.css), so padding the scroll container itself would move
+            the origin they freeze at and leave them floating mid-cell. */}
+        <div
+          ref={tableAreaRef}
+          className={cn("min-h-0 flex-1 px-6 pb-3", toolbarConfig ? "" : "mt-0")}
+        >
+          <div className={cn(gridPanel, "relative h-full")}>
             <TableScrollArea orientation="both" className="table-scroll-area h-full">
               {renderTableContent()}
             </TableScrollArea>
@@ -537,7 +553,10 @@ export const TableContent = <TData,>({
           {children}
         </DataTableToolbar>
       )}
-      <Card className="overflow-hidden rounded-md p-0 shadow-xs">
+      {/* No gutter here: the pages that use this mode (templates, images,
+          datasets, scaling groups) already lay themselves out inside `px-6`,
+          and adding another would nest one inset in the other. */}
+      <Card className={gridPanel}>
         <CardContent className="p-0">
           <TableScrollArea orientation="both" className="table-scroll-area">
             {renderTableContent()}

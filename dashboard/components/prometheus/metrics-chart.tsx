@@ -105,7 +105,7 @@ function TimeSeriesTooltip({
   if (!active || !payload?.length) return null
   const ts = typeof label === "number" ? new Date(label) : null
   return (
-    <div className="bg-popover border-border rounded border px-3 py-2 shadow-md">
+    <div className="bg-popover border-border rounded-lg border px-3 py-2 shadow-md">
       {ts && (
         <p className="text-muted-foreground mb-1.5 font-mono text-xs">
           {ts.toLocaleDateString([], { month: "short", day: "numeric" })}{" "}
@@ -842,7 +842,7 @@ export function MetricsChart({
 
         {isLoading ? (
           <div className="flex items-center justify-center" style={{ height }}>
-            <div className="bg-muted h-1 w-24 animate-pulse rounded" />
+            <div className="bg-muted h-1 w-24 animate-pulse rounded-md" />
           </div>
         ) : data.length === 0 ? (
           <div

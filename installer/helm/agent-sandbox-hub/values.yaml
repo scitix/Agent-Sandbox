@@ -114,6 +114,23 @@ clusters: []
 #       - "loadbalancer-cluster1.example.com"
 hostAliases: []
 
+# Other Dashboard deployments, listed under the cluster list in the cluster
+# picker as plain links out.
+#
+# A deployment only knows the clusters configured above, so two control planes
+# in different regions are two consoles with no route between them. Give each
+# side the other's address and the picker gains a way across. These are NOT
+# clusters: nothing is fetched from them and nothing is proxied to them —
+# selecting one navigates the browser away, and the other deployment
+# authenticates the user itself on arrival.
+#
+# `name` is shown verbatim (write it in whatever language the operators read);
+# `url` must be absolute and include the other side's basePath.
+# peerSites:
+#   - name: "Console (EU)"
+#     url: "https://console-eu.example.com/agentbox"
+peerSites: []
+
 ingress:
   enabled: true
   className: nginx
