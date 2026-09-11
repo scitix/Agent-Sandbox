@@ -49,6 +49,16 @@ from the signatures.
 The session-binding daemon and workspace file API are the Python half
 (`sdk/hands/python/agentbox_hands/`).
 
+## Ask two things before configuring
+
+1. **Which harness** — Claude Agent SDK, OpenCode, or something else that needs
+   the generic MCP binding. The binding decides the whole integration and there
+   is no useful generic answer.
+2. **How many concurrent conversations**, not how many users. Ten people with
+   one session each is ten; the pool is sized against that number.
+
+Then say the confinement sentence below **before** they build anything on it.
+
 ## What has to exist on the platform first
 
 1. **An env** whose template is what your agent's tools need — an E2B-compatible

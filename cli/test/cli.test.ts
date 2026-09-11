@@ -32,7 +32,15 @@ import {
   resolveApi,
   rootResources,
 } from '@headless/index'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { applyFilters, hints, renderTable, visibleColumns } from '../src/render'
+import {
+  AmbiguousContextError,
+  UnknownContextError,
+  selectContext,
+  type FileConfig,
+} from '../src/contexts'
 import { agentContext } from '../src/agent-context'
 import { CliError, type Context } from '../src/context'
 
@@ -190,5 +198,69 @@ describe('children are addressed under their parent', () => {
       expect(err, `${r.plural} should not be addressable alone`).toContain(r.parent)
       expect(childrenOf(r.parent).map(c => c.plural)).toContain(r.plural)
     }
+  })
+})
+
+describe('contexts name deployments, clusters name their clusters', () => {
+  const two: FileConfig = {
+    currentContext: 'alpha',
+    contexts: {
+      alpha: { endpoint: 'https://a.test/api/clusters/{cluster}', apiKey: 'k1' },
+      beta: { endpoint: 'https://b.test/api/clusters/{cluster}', apiKey: 'k2' },
+    },
+  }
+
+  it('uses the current context when none is named', () => {
+    expect(selectContext(two).name).toBe('alpha')
+  })
+
+  it('an explicit name wins', () => {
+    expect(selectContext(two, 'beta').entry.apiKey).toBe('k2')
+  })
+
+  it('an unknown name lists the ones that exist', () => {
+    try {
+      selectContext(two, 'gamma')
+      throw new Error('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(UnknownContextError)
+      expect((e as UnknownContextError).known).toEqual(['alpha', 'beta'])
+    }
+  })
+
+  it('refuses to guess between two when none is current', () => {
+    // Guessing is the one outcome worth preventing: the command would succeed,
+    // against the wrong platform, and nothing in the output would say so.
+    const noDefault = { contexts: two.contexts }
+    expect(() => selectContext(noDefault)).toThrow(AmbiguousContextError)
+  })
+
+  it('a single context needs no default', () => {
+    const one = { contexts: { only: { endpoint: 'https://x.test', apiKey: 'k' } } }
+    expect(selectContext(one).name).toBe('only')
+  })
+
+  it('the flat shape still works, and is what a platform sandbox has', () => {
+    // The plugin hook and the in-sandbox case both write settings with no
+    // contexts key at all. Requiring one would break every existing install.
+    const flat = { endpoint: 'https://x.test', apiKey: 'k' }
+    const got = selectContext(flat)
+    expect(got.name).toBeUndefined()
+    expect(got.entry.endpoint).toBe('https://x.test')
+  })
+
+  it('the CLI ships no deployment address of its own', () => {
+    // The deployment owns its URLs and this repository is public. An address
+    // compiled into the binary would publish an internal hostname AND point
+    // every fresh install at somebody else's platform — so the only hosts
+    // allowed in the source are the licence header and documentation examples.
+    const allowed = /^(www\.apache\.org|.*\.example|example\.(com|test|invalid))$/
+    for (const file of readdirSync(join(import.meta.dir, '..', 'src'))) {
+      const src = readFileSync(join(import.meta.dir, '..', 'src', file), 'utf8')
+      for (const m of src.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) {
+        expect(m[1], `${file} names the host ${m[1]}`).toMatch(allowed)
+      }
+    }
+    expect(selectContext({}).entry).toEqual({})
   })
 })

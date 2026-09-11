@@ -22,13 +22,38 @@ enters the conversation**, because only hooks receive plugin options.
 
 ```sh
 curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
-export AGENTBOX_ENDPOINT=...
-export AGENTBOX_API_KEY=...
 ```
 
-The binary lands in `~/.local/bin`, the skills in `~/.agents/skills`. There is
-no keychain in this path: the key is an environment variable, so treat it as
-one.
+The binary lands in `~/.local/bin`, the skills in `~/.agents/skills`. Then name
+the deployment you are talking to:
+
+```sh
+abx context set <name>   --endpoint 'https://<console>/agentbox/api/clusters/{cluster}'   --api-key agbx_... --auth-scheme bearer --cluster <default-cluster>
+```
+
+Each deployment's own console prints that line with its addresses filled in —
+this repository ships none, because the addresses belong to whoever deployed
+the platform.
+
+## More than one platform
+
+`abx context` works like a kubectl context: one binary, several deployments.
+
+```sh
+abx context                 # list, with the current one marked
+abx context use <name>      # change the default
+abx --context <name> envs   # just this command
+```
+
+`--cluster` is the other axis and stays independent: a context is which
+platform, `--cluster` is which of its clusters. With two contexts configured
+and no default chosen, commands are refused rather than guessing — a command
+that quietly ran against the wrong platform is the failure this prevents.
+
+Environment variables still win over the file, which is what makes a sandbox
+work: a platform that embeds `abx` passes its own address in the environment
+and injects the token on the way out, so that sandbox reaches that deployment
+and no other.
 
 ## What is in here
 
@@ -37,7 +62,7 @@ one.
 | `bin/abx` | shim: picks the platform binary, self-updates from the public bucket, falls back to the bundled copy on any failure |
 | `dist/` | compiled binaries, one per platform (populated by `hack/build-plugin.sh`) |
 | `hooks/` | writes the keychain-backed config the CLI reads |
-| `skills/` | six skills, all deferring to `abx-common` for endpoint, key, cluster and approval |
+| `skills/` | nine skills, all deferring to `abx-common` for endpoint, key, cluster and approval |
 | `install.sh` | the non-Claude path |
 
 ## The grammar

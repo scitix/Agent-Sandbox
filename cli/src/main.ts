@@ -49,7 +49,18 @@ import {
   type Address,
   type Verb,
 } from '@headless/index'
-import { CliError, configPath, readConfig, routesByPath, type Context, type FileConfig } from './context'
+import { CliError, routesByPath, type Context } from './context'
+import {
+  AmbiguousContextError,
+  UnknownContextError,
+  configPath,
+  contextNames,
+  readConfig,
+  selectContext,
+  writeConfig,
+  type ContextEntry,
+  type FileConfig,
+} from './contexts'
 import { request } from './api'
 import { applyFilters, hints, renderCsv, renderTable, visibleColumns } from './render'
 import { agentContext } from './agent-context'
@@ -100,6 +111,30 @@ function contextFrom(flags: Record<string, string | boolean>, file: FileConfig =
   const str = (k: string, fallback = '') =>
     typeof flags[k] === 'string' ? (flags[k] as string) : fallback
 
+  // Which deployment, before anything about which cluster.
+  let selected: { name?: string; entry: ContextEntry }
+  try {
+    selected = selectContext(file, str('context') || undefined)
+  } catch (err) {
+    if (err instanceof UnknownContextError) {
+      throw new CliError(
+        err.message,
+        err.known.length
+          ? `configured: ${err.known.join(', ')}\nadd one with \`abx context set <name> --endpoint … --api-key …\``
+          : `none are configured yet — \`abx context set <name> --endpoint … --api-key …\``,
+      )
+    }
+    if (err instanceof AmbiguousContextError) {
+      throw new CliError(
+        err.message,
+        `pick one for this command with --context, or make it the default:\n` +
+          err.known.map((n) => `  abx context use ${n}`).join('\n'),
+      )
+    }
+    throw err
+  }
+  const entry = selected.entry
+
   // One flag name per concept, everywhere. --json and --csv are the shorthands
   // people and agents actually reach for; --format is the long form. A tool
   // that spells this differently per command costs a guess per command.
@@ -108,16 +143,22 @@ function contextFrom(flags: Record<string, string | boolean>, file: FileConfig =
   else if (flags.csv) format = 'csv'
   else if (str('format')) format = str('format') as Context['format']
 
-  // Flag, then environment, then the config file a plugin hook wrote. The
-  // order is the usual one and stated once here rather than per setting.
+  // Flag, then environment, then the selected context. The order is the usual
+  // one and stated once here rather than per setting.
+  //
+  // Environment beats the file on purpose: inside a platform's own sandbox the
+  // address arrives as an environment variable and the credential is injected
+  // on the way out, and that deployment is the only one such a sandbox should
+  // reach. A config file it never had cannot redirect it somewhere else.
   const ctx: Context = {
-    endpoint: str('endpoint', env('AGENTBOX_ENDPOINT') || file.endpoint || ''),
-    apiKey: str('api-key', env('AGENTBOX_API_KEY') || file.apiKey || ''),
-    cluster: str('cluster', env('AGENTBOX_CLUSTER') || file.cluster || '') || undefined,
-    authScheme: (str('auth-scheme', env('AGENTBOX_AUTH_SCHEME') || file.authScheme || '') ||
+    contextName: selected.name,
+    endpoint: str('endpoint', env('AGENTBOX_ENDPOINT') || entry.endpoint || ''),
+    apiKey: str('api-key', env('AGENTBOX_API_KEY') || entry.apiKey || ''),
+    cluster: str('cluster', env('AGENTBOX_CLUSTER') || entry.cluster || '') || undefined,
+    authScheme: (str('auth-scheme', env('AGENTBOX_AUTH_SCHEME') || entry.authScheme || '') ||
       'api-key') as 'api-key' | 'bearer',
     format,
-    webBase: str('web-base', env('AGENTBOX_WEB_BASE') || file.webBase || '') || undefined,
+    webBase: str('web-base', env('AGENTBOX_WEB_BASE') || entry.webBase || '') || undefined,
   }
   if (!ctx.endpoint) {
     throw new CliError(
@@ -154,9 +195,11 @@ function usage(): string {
     '',
     'Other commands:',
     '  whoami         who this key authenticates as',
+    '  context        name a deployment, and switch between them',
     '  agent-context  the whole CLI shape, as JSON',
     '',
     'Global flags:',
+    '  --context <name>     which deployment (see `abx context`)',
     '  --cluster <id>       cluster this command addresses',
     '  --endpoint <url>     API base; a {cluster} placeholder routes by path',
     '  --api-key <key>      platform credential',
@@ -260,6 +303,10 @@ export async function run(argv: string[]): Promise<number> {
   }
   const fileConfig: FileConfig = await readConfig()
 
+  if (positional[0] === 'context' || positional[0] === 'contexts') {
+    return await contextCommand(positional.slice(1), flags, fileConfig)
+  }
+
   if (positional[0] === 'version') {
     console.log(VERSION)
     return 0
@@ -348,6 +395,97 @@ export async function run(argv: string[]): Promise<number> {
   console.log('')
   console.log(hints(resolved.spec, ctx, address))
   return 0
+}
+
+/**
+ * `abx context` — name a deployment once, then switch between them.
+ *
+ * Deliberately the only stateful thing the CLI does. Everything else reads
+ * flags and the API; this writes a file, because the alternative is re-pasting
+ * two addresses and a key every time someone moves between platforms, and the
+ * failure mode of getting that wrong is a command that succeeds against the
+ * wrong one.
+ */
+async function contextCommand(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  cfg: FileConfig,
+): Promise<number> {
+  const [verb, name] = args
+  const str = (k: string) => (typeof flags[k] === 'string' ? (flags[k] as string) : '')
+
+  if (!verb || verb === 'list') {
+    const names = contextNames(cfg)
+    if (!names.length) {
+      // The addresses belong to the deployment, not to this CLI, so there is
+      // nothing sensible to suggest except where to find them.
+      console.log(
+        [
+          'no contexts configured.',
+          '',
+          'Each deployment\'s console prints the line that adds it — open the',
+          'assistant page and look for the setup panel. Or write it yourself:',
+          '',
+          '  abx context set <name> \\',
+          '    --endpoint https://<console>/agentbox/api/clusters/{cluster} \\',
+          '    --api-key agbx_... --auth-scheme bearer --cluster <default-cluster>',
+        ].join('\n'),
+      )
+      return 0
+    }
+    const width = Math.max(...names.map((n) => n.length))
+    for (const n of names) {
+      const e = cfg.contexts![n]
+      const mark = n === cfg.currentContext ? '*' : ' '
+      console.log(`${mark} ${n.padEnd(width)}  ${e.endpoint ?? '—'}${e.cluster ? `  (${e.cluster})` : ''}`)
+    }
+    return 0
+  }
+
+  if (verb === 'use') {
+    if (!name) throw new CliError('which context?', `configured: ${contextNames(cfg).join(', ')}`)
+    if (!cfg.contexts?.[name]) {
+      throw new CliError(`no context named "${name}"`, `configured: ${contextNames(cfg).join(', ')}`)
+    }
+    cfg.currentContext = name
+    await writeConfig(cfg)
+    console.log(`now using ${name}`)
+    return 0
+  }
+
+  if (verb === 'set') {
+    if (!name) throw new CliError('name the context', 'abx context set <name> --endpoint … --api-key …')
+    const entry: ContextEntry = { ...(cfg.contexts?.[name] ?? {}) }
+    if (str('endpoint')) entry.endpoint = str('endpoint')
+    if (str('api-key')) entry.apiKey = str('api-key')
+    if (str('cluster')) entry.cluster = str('cluster')
+    if (str('web-base')) entry.webBase = str('web-base')
+    if (str('auth-scheme')) entry.authScheme = str('auth-scheme') as ContextEntry['authScheme']
+    if (!entry.endpoint) {
+      throw new CliError('a context needs an endpoint', 'pass --endpoint')
+    }
+    cfg.contexts = { ...(cfg.contexts ?? {}), [name]: entry }
+    // First one becomes current: a single configured deployment with no default
+    // selected would refuse every command for no reason a reader could act on.
+    if (!cfg.currentContext) cfg.currentContext = name
+    await writeConfig(cfg)
+    console.log(`saved ${name}${cfg.currentContext === name ? ' (now current)' : ''} to ${configPath()}`)
+    return 0
+  }
+
+  if (verb === 'remove' || verb === 'delete') {
+    if (!name) throw new CliError('which context?', `configured: ${contextNames(cfg).join(', ')}`)
+    if (!cfg.contexts?.[name]) {
+      throw new CliError(`no context named "${name}"`, `configured: ${contextNames(cfg).join(', ')}`)
+    }
+    delete cfg.contexts[name]
+    if (cfg.currentContext === name) cfg.currentContext = contextNames(cfg)[0]
+    await writeConfig(cfg)
+    console.log(`removed ${name}`)
+    return 0
+  }
+
+  throw new CliError(`unknown context command "${verb}"`, 'try: list, use, set, remove')
 }
 
 /**

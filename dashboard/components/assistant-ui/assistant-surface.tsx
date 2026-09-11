@@ -84,6 +84,7 @@ import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
 import { authAtom, clustersAtom } from "@/lib/atoms"
 import { mcpGuide } from "@/components/assistant-ui/mcp-guide"
+import { basePath } from "@/lib/base-path"
 import { MarkdownContent } from "@/components/assistant-ui/markdown-text"
 import { usePathname } from "next/navigation"
 import { clusterFromPath } from "@/lib/assistant/current-page"
@@ -168,8 +169,21 @@ function McpEntry({ cluster }: { cluster: string }) {
   } = useDraggableBall("agentbox.assistant.mcp.position.v1")
 
   const entry = clusters.find(c => c.id === cluster)
+  // The console's own address, read off the browser rather than configured:
+  // this source is public and one organisation runs several platforms from it,
+  // so a URL written into the repository would publish an internal hostname
+  // and point every other deployment's readers at the wrong one.
+  const consoleBase =
+    typeof window === "undefined"
+      ? ""
+      : `${window.location.origin}${basePath()}`
   const guide = mcpGuide(
-    { e2bURL: entry?.gateway?.e2bURL, dataURL: entry?.gateway?.dataURL },
+    {
+      e2bURL: entry?.gateway?.e2bURL,
+      dataURL: entry?.gateway?.dataURL,
+      consoleBase,
+      clusterID: cluster,
+    },
     locale
   )
 

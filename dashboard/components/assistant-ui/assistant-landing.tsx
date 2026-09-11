@@ -55,6 +55,18 @@ const CAPABILITY_ROTATE_MS = 4200
  *  never shows the same batch twice in a row. */
 const SUGGESTION_WINDOW = 6
 
+/**
+ * A note on what these say.
+ *
+ * The label is the question a person clicks and the prompt is what reaches the
+ * agent — but neither carries operating instructions. "Ask me my target
+ * concurrency before configuring anything" is true of every rollout
+ * conversation, not of the one that happened to start from this pill, so it
+ * belongs in the skill that handles rollouts. Put in the prompt, it reads as
+ * something the user typed, which makes it advice the agent may drop the moment
+ * the user says anything else.
+ */
+
 /** How long the skeleton holds after a shuffle. */
 const SHUFFLE_PAUSE_MS = 1000
 
@@ -181,10 +193,27 @@ const SUGGESTIONS: SuggestionSpec[] = [
     when: s => s.hasEnv,
   },
   {
+    // Not gated: "what can this platform run" is the first question on a fresh
+    // install and still a fair one later, when someone wants a different shape
+    // of workload than the env they already have.
     id: "templates",
     labelKey: "assistant.ask.templates.label",
     promptKey: "assistant.ask.templates.prompt",
-    when: s => !s.hasEnv,
+  },
+  {
+    id: "docker",
+    labelKey: "assistant.ask.docker.label",
+    promptKey: "assistant.ask.docker.prompt",
+  },
+  {
+    id: "noEgress",
+    labelKey: "assistant.ask.noEgress.label",
+    promptKey: "assistant.ask.noEgress.prompt",
+  },
+  {
+    id: "vault",
+    labelKey: "assistant.ask.vault.label",
+    promptKey: "assistant.ask.vault.prompt",
   },
 ]
 

@@ -147,4 +147,7 @@ reformulating — it usually contains the answer, and a guess costs a round trip
 | Put sandboxes behind your own agent | `abx-managed-agent` |
 | Size pools, fix autoscaling, read quota | `abx-resource-capacity` |
 | Run a benchmark suite | `abx-harbor-framework` |
+| Run Docker inside a sandbox | `abx-sandbox-docker` |
+| Stop a sandbox reaching the internet | `abx-sandbox-network` |
+| Give a sandbox a credential it cannot read | `abx-sandbox-secrets` |
 | Work out why something is broken or slow | `abx-observe` |

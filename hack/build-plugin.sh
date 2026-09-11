@@ -46,7 +46,9 @@ cp "$ROOT/plugin/install.sh" "$REL/install.sh"
   done )
 
 # Skills travel with the release so install.sh can fetch them individually —
-# the bucket serves objects, not archives.
+# the bucket serves objects, not archives. Every directory is copied, so a new
+# skill needs no edit here; install.sh names them because it has to fetch by
+# name over HTTP.
 for d in "$ROOT/plugin/skills"/*/; do
   name="$(basename "$d")"
   mkdir -p "$REL/skills/$name"

@@ -50,7 +50,8 @@ echo "installed $BIN_DIR/abx"
 # these. Fetched individually because the bucket serves objects, not archives.
 mkdir -p "$SKILL_DIR"
 for s in abx-common abx-reinforcement-learning abx-managed-agent \
-         abx-resource-capacity abx-harbor-framework abx-observe; do
+         abx-resource-capacity abx-harbor-framework abx-observe \
+         abx-sandbox-docker abx-sandbox-network abx-sandbox-secrets; do
   mkdir -p "$SKILL_DIR/$s"
   if curl -fsSL "$BASE/skills/$s/SKILL.md" -o "$SKILL_DIR/$s/SKILL.md" 2>/dev/null; then
     echo "installed $SKILL_DIR/$s/SKILL.md"

@@ -14,11 +14,10 @@
  * limitations under the License.
  */
 
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-
 /** Where requests go, and who they go as. */
 export interface Context {
+  /** The named deployment this run resolved to, when there is one. */
+  contextName?: string
   endpoint: string
   apiKey: string
   cluster?: string
@@ -26,36 +25,6 @@ export interface Context {
   authScheme: 'api-key' | 'bearer'
   format: 'table' | 'json' | 'csv'
   webBase?: string
-}
-
-/**
- * Settings written by something other than the caller.
- *
- * The plugin's hook writes this file, because a hook is the only place a
- * sensitive plugin option is readable at all — it never passes through argv,
- * stdin, or the agent's context. Everything here is therefore optional and
- * overridable: a flag beats an environment variable beats this file.
- */
-export interface FileConfig {
-  endpoint?: string
-  apiKey?: string
-  cluster?: string
-  authScheme?: 'api-key' | 'bearer'
-  webBase?: string
-}
-
-export function configPath(): string {
-  return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'abx', 'config.json')
-}
-
-export async function readConfig(): Promise<FileConfig> {
-  try {
-    return JSON.parse(await Bun.file(configPath()).text()) as FileConfig
-  } catch {
-    // A missing or unreadable config is the normal case for anyone passing
-    // flags, so it is not worth a word of output.
-    return {}
-  }
 }
 
 /**

@@ -5,9 +5,28 @@ description: Set up and run RL rollouts on AgentBox — choosing a template, siz
 
 # RL rollouts on AgentBox
 
-The division of labour, which decides everything else: **`abx` provisions, the
-E2B SDK executes.** You use `abx` once to make sure there is capacity, and then
-your trainer talks E2B for the rest of the run.
+## Before configuring anything, ask what concurrency they need
+
+It is the only number that decides the whole shape of the answer, it is never
+in the question, and guessing it wastes the conversation: a pool sized for 8
+when they wanted 200 looks like it worked right up until the run stalls.
+
+Ask for **peak concurrent sandboxes**, not total episodes. People usually know
+the second and have to be walked to the first: 10,000 episodes at 64 in flight
+needs 64.
+
+Two more defaults worth stating rather than deciding silently:
+
+- **Leave autoscaling on**, with `maxReplicas` at their peak. A fixed pool
+  holds capacity between runs and bills for it; a group with a ceiling drains
+  and comes back.
+- **Set `minReplicas` to the steady-state floor** when the run ramps faster
+  than the scale-up cooldown, so the autoscaler only handles the tail.
+
+## The division of labour
+
+**`abx` provisions, the E2B SDK executes.** You use `abx` once to make sure
+there is capacity, and then your trainer talks E2B for the rest of the run.
 
 ```
 trainer process                     AgentBox
@@ -38,9 +57,6 @@ sbx.kill()
 > SWE ReX is **deprecated** — do not reach for it. E2B is the interface.
 
 ## Sizing the pool
-
-Peak concurrency is the number, not total episodes. 10,000 episodes at 64 in
-flight needs 64.
 
 ```bash
 abx envs                                        # what exists

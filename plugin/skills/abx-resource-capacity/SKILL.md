@@ -86,6 +86,18 @@ there. Doubling down on the number that already failed does nothing.
 If quota is the limit, no amount of pool configuration helps — that is a
 request to whoever owns the quota, not a setting.
 
+## Defaults worth stating out loud
+
+- **Autoscaling on, with a ceiling.** A fixed pool holds capacity nobody is
+  using between runs. A group with `maxReplicas` at the expected peak drains
+  and comes back, and the ceiling is what stops a runaway — not a substitute
+  for asking how much they need.
+- **A wide ceiling is not a request.** Scale-up is anchored on demand; setting
+  0–2560 does not ask for 2560, and someone who read it as a target has the
+  wrong model of the autoscaler.
+- **Never raise a target that just failed.** Reduce it, let the reservation
+  succeed, then climb. This is the one procedure people reliably get backwards.
+
 ## Planning for N concurrent sandboxes
 
 You need `N` claimable Pods at peak, not `N` over the run:
