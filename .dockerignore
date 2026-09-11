@@ -45,6 +45,25 @@ sdk/hands/typescript/node_modules/
 **/__pycache__/
 **/*.pyc
 
+# --- Assistant sandbox (used by the EE Dockerfile.assistant-sandbox, whose
+#     context is THIS directory, like brain/Dockerfile's) ---
+# The abx CLI is compiled here, and the open-source tree it bakes in at
+# /opt/agentbox/source is the reference an agent reads to answer questions about
+# the platform: the API contract, the CRD types, the SDKs, the CLI and its
+# registry, the skills. pkg/** and api/** are already un-ignored above for the
+# Go builds; these are the rest.
+!cli/**
+cli/node_modules/
+cli/dist/
+!headless/**
+!plugin/skills/**
+!sdk/**
+sdk/**/node_modules/
+sdk/**/.venv/
+sdk/**/dist/
+!README.md
+!LICENSE
+
 # --- Generic noise that should never land in any image layer ---
 **/.git
 **/.github
