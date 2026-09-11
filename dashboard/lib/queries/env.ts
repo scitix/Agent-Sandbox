@@ -74,12 +74,17 @@ export function useCreateEnv() {
 }
 
 /**
- * Patch the env shell (overrides + image-pull-secret). Members and
- * autoscaling groups are managed through their own dedicated mutations.
+ * Replace the env shell's editable state (overrides + image-pull-secret).
+ * Members and autoscaling groups are managed through their own mutations.
+ *
+ * A PUT, and the form must send the whole object: a field left out is one the
+ * caller is asking to remove. That is what makes "clear this override"
+ * expressible at all — while the verb was PATCH there was no request that
+ * meant it, and the emptied box saved successfully without changing anything.
  */
 export function useUpdateEnv() {
   const qc = useQueryClient()
-  return currentApiClient().useMutation("patch", "/envs/{name}", {
+  return currentApiClient().useMutation("put", "/envs/{name}", {
     onSuccess: () => {
       delayedInvalidate(qc, ["get", "/envs"])
       delayedInvalidate(qc, ["get", "/envs/{name}"])

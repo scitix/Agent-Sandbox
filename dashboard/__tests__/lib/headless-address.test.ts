@@ -24,12 +24,17 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { parse as parseYaml } from 'yaml'
 import {
   RESOURCES,
   addressError,
   cliArgs,
   consolePath,
+  operations,
   parseConsolePath,
+  parsePositional,
   type Address,
 } from '@headless/index'
 
@@ -38,7 +43,10 @@ const ADDRESSES: Address[] = [
   { cluster: 'foo', resource: 'envs', id: 'demo' },
   { cluster: 'foo', resource: 'envs', id: 'demo', sub: 'pools' },
   { cluster: 'foo', resource: 'envs', id: 'demo', sub: 'scaling-groups', subId: '1c2gi' },
+  { cluster: 'foo', resource: 'envs', id: 'demo', view: 'metrics' },
+  { cluster: 'foo', resource: 'envs', id: 'demo', sub: 'pools', subId: 'p1', view: 'metrics' },
   { cluster: 'foo', resource: 'sandboxes', id: 'abc-123' },
+  { cluster: 'foo', resource: 'sandboxes', id: 'abc-123', view: 'logs' },
   { cluster: 'bar', resource: 'quotas' },
 ]
 
@@ -72,10 +80,45 @@ describe('one address, two spellings', () => {
   })
 
   it('refuses to address a view as if it were a collection', () => {
-    expect(addressError({ resource: 'sandboxes', id: 'x', sub: 'logs', subId: 'y' })).toContain(
-      'view',
-    )
-    expect(addressError({ resource: 'sandboxes', id: 'x', sub: 'logs' })).toBeNull()
+    // A view is always the LAST segment, never a sub-resource, so there is one
+    // spelling for "the logs of this sandbox" rather than two that drift.
+    expect(parsePositional(['sandboxes', 'x', 'logs', 'y'])).toBeNull()
+    expect(addressError({ resource: 'sandboxes', id: 'x', view: 'logs' })).toBeNull()
+    expect(addressError({ resource: 'sandboxes', id: 'x', sub: 'logs' })).toContain('no "logs"')
+  })
+
+  it('reads a view at whichever depth the address reached', () => {
+    expect(parsePositional(['envs', 'e', 'pools', 'p', 'metrics'])).toEqual({
+      resource: 'envs',
+      id: 'e',
+      sub: 'pools',
+      subId: 'p',
+      view: 'metrics',
+    })
+    // The tail is refused rather than dropped. Silently ignoring it is how
+    // `envs e pools p metrics` used to come back as the pool itself.
+    expect(parsePositional(['envs', 'e', 'pools', 'p', 'metrics', 'x'])).toBeNull()
+  })
+
+  it('a child resource is not addressable on its own', () => {
+    const err = addressError({ resource: 'pools' })
+    expect(err).toContain('envs <env> pools')
+  })
+
+  it('every API path template the registry declares exists in the spec', () => {
+    // The registry is what the CLI dispatches on AND what the conformance
+    // manifest projects, so a typo here would silently claim a capability that
+    // 404s. Checked against the spec itself rather than against a copy.
+    const doc = parseYaml(
+      readFileSync(join(__dirname, '..', '..', '..', 'pkg', 'openapi', 'native', 'openapi.yaml'), 'utf8'),
+    ) as { paths: Record<string, Record<string, unknown>> }
+    for (const o of operations()) {
+      expect(doc.paths[o.path], `${o.resource} declares ${o.path}`).toBeTruthy()
+      expect(
+        doc.paths[o.path][o.method.toLowerCase()],
+        `${o.method} ${o.path} (${o.resource})`,
+      ).toBeTruthy()
+    }
   })
 
   it('every column that declares a filter names one the resource accepts', () => {

@@ -121,9 +121,13 @@ def sync_detailed(
     Args:
         name (str):
         group_name (str):
-        body (UpdateEnvAutoscalingGroupRequest): Patch one or more editable fields on an
-            autoscaling group. Omitted fields are left unchanged. Policy objects are REPLACED
-            wholesale when supplied — callers must echo back any fields they want to preserve.
+        body (UpdateEnvAutoscalingGroupRequest): Desired state of one autoscaling group. This is a
+            PUT and it means it:
+            a field left out is one the caller wants REMOVED. That is the only way
+            "take the ceiling off" can be expressed — while an omitted field meant
+            "leave unchanged" there was no request that could clear minReplicas,
+            maxReplicas or a policy, and the form's empty box reported success
+            without doing anything.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,9 +164,13 @@ def sync(
     Args:
         name (str):
         group_name (str):
-        body (UpdateEnvAutoscalingGroupRequest): Patch one or more editable fields on an
-            autoscaling group. Omitted fields are left unchanged. Policy objects are REPLACED
-            wholesale when supplied — callers must echo back any fields they want to preserve.
+        body (UpdateEnvAutoscalingGroupRequest): Desired state of one autoscaling group. This is a
+            PUT and it means it:
+            a field left out is one the caller wants REMOVED. That is the only way
+            "take the ceiling off" can be expressed — while an omitted field meant
+            "leave unchanged" there was no request that could clear minReplicas,
+            maxReplicas or a policy, and the form's empty box reported success
+            without doing anything.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,9 +202,13 @@ async def asyncio_detailed(
     Args:
         name (str):
         group_name (str):
-        body (UpdateEnvAutoscalingGroupRequest): Patch one or more editable fields on an
-            autoscaling group. Omitted fields are left unchanged. Policy objects are REPLACED
-            wholesale when supplied — callers must echo back any fields they want to preserve.
+        body (UpdateEnvAutoscalingGroupRequest): Desired state of one autoscaling group. This is a
+            PUT and it means it:
+            a field left out is one the caller wants REMOVED. That is the only way
+            "take the ceiling off" can be expressed — while an omitted field meant
+            "leave unchanged" there was no request that could clear minReplicas,
+            maxReplicas or a policy, and the form's empty box reported success
+            without doing anything.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -233,9 +245,13 @@ async def asyncio(
     Args:
         name (str):
         group_name (str):
-        body (UpdateEnvAutoscalingGroupRequest): Patch one or more editable fields on an
-            autoscaling group. Omitted fields are left unchanged. Policy objects are REPLACED
-            wholesale when supplied — callers must echo back any fields they want to preserve.
+        body (UpdateEnvAutoscalingGroupRequest): Desired state of one autoscaling group. This is a
+            PUT and it means it:
+            a field left out is one the caller wants REMOVED. That is the only way
+            "take the ceiling off" can be expressed — while an omitted field meant
+            "leave unchanged" there was no request that could clear minReplicas,
+            maxReplicas or a policy, and the form's empty box reported success
+            without doing anything.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

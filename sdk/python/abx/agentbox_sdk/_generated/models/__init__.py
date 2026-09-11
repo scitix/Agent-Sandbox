@@ -164,6 +164,7 @@ from .visibility_rule import VisibilityRule
 from .volume_item import VolumeItem
 from .volume_item_labels import VolumeItemLabels
 from .who_am_i_result import WhoAmIResult
+from .who_am_i_result_mode import WhoAmIResultMode
 
 __all__ = (
     "APIKeyItem",
@@ -316,4 +317,5 @@ __all__ = (
     "VolumeItem",
     "VolumeItemLabels",
     "WhoAmIResult",
+    "WhoAmIResultMode",
 )

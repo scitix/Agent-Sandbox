@@ -352,9 +352,16 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 			return err
 		}
 		base := current.DeepCopy()
-		if input.Overrides != nil {
-			current.Spec.Overrides = input.Overrides
-		}
+		// Desired state, assigned unconditionally: a PUT that omits overrides
+		// is asking for none. The guarded form could not express "remove the
+		// overrides I set last week" at all — the request that meant it was
+		// indistinguishable from one that meant "leave them alone" — so the
+		// console's empty form reported success and changed nothing.
+		//
+		// MergeFrom is what makes the removal reach the API server: it emits an
+		// explicit null for the dropped key, where a plain Update would race
+		// the Env reconciler writing status on the same object.
+		current.Spec.Overrides = input.Overrides
 		return s.client.Patch(ctx, current, client.MergeFrom(base))
 	}); err != nil {
 		if k8serrors.IsNotFound(err) {

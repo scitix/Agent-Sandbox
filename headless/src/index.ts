@@ -17,3 +17,4 @@
 export * from './types'
 export * from './resources'
 export * from './navigation'
+export * from './paths'

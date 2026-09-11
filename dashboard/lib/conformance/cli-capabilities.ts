@@ -17,29 +17,24 @@
 /**
  * Which API operations `abx` can reach.
  *
- * Hand-maintained only until the headless package owns the CLI's resource
- * definitions; then this becomes a projection of those and stops being a place
- * anyone edits. Until then it is deliberately a flat list rather than anything
- * clever, so that "the CLI cannot do this yet" is a visible line in a diff.
+ * Derived from the headless registry rather than maintained beside it, which
+ * is the whole point: the CLI dispatches off those same entries, so "the CLI
+ * registered a resource" and "the CLI reaches its operations" cannot disagree.
+ * A hand-written list can be right on the day it is written and wrong by the
+ * next commit, and nothing would say so.
+ *
+ * EXTRA_OPERATIONS is for commands that are not resource CRUD — one line each,
+ * naming the command that reaches it, so an entry with no command is visible.
  */
+import { operations } from '@headless/index'
 import { op, type OperationKey } from './surface'
 
-export const CLI_OPERATIONS: OperationKey[] = [
-  // Reads — the seven resource kinds the CLI registers today.
-  op('GET', '/clusters'),
-  op('GET', '/envs'),
-  op('GET', '/envs/{name}'),
-  op('GET', '/envs/{name}/sandboxpools'),
-  op('GET', '/envs/{name}/events'),
-  op('GET', '/envs/{name}/sandboxpools/{poolName}'),
-  op('GET', '/instancetypes'),
-  op('GET', '/quotas'),
-  op('GET', '/sandboxes'),
-  op('GET', '/sandboxes/{sandboxId}'),
-  op('GET', '/sandbox-templates'),
-  op('GET', '/sandbox-templates/{name}'),
+/** Non-resource commands, and the operation each one reaches. */
+const EXTRA_OPERATIONS: Record<OperationKey, string> = {
+  [op('GET', '/feature-gates')]: '`abx agent-context` narrows itself to the gates this deployment has on',
+}
 
-  // Writes — the only two that exist.
-  op('POST', '/envs'),
-  op('POST', '/envs/{name}/sandboxpools'),
+export const CLI_OPERATIONS: OperationKey[] = [
+  ...operations().map((o) => op(o.method, o.path)),
+  ...Object.keys(EXTRA_OPERATIONS),
 ]

@@ -43,7 +43,7 @@ def _get_kwargs(
     
 
     _kwargs: dict[str, Any] = {
-        "method": "put",
+        "method": "patch",
         "url": "/envs/{name}".format(name=quote(str(name), safe=""),),
     }
 
@@ -114,8 +114,16 @@ def sync_detailed(
     body: UpdateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
-    dedicated endpoints.
+    """ Deprecated alias of PUT /envs/{name}.
+
+     **DEPRECATED** — use `PUT /envs/{name}`.
+
+    Identical behaviour, and always was: the body replaced `overrides`
+    wholesale, so this verb never carried the merge semantics its name
+    implies. It is retained only so clients pinned to the old spelling —
+    an SDK inside a running sandbox, say — keep working until they are
+    rebuilt. New callers should use PUT, which is what the console and
+    `abx` send.
 
     Args:
         name (str):
@@ -163,8 +171,16 @@ def sync(
     body: UpdateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
-    dedicated endpoints.
+    """ Deprecated alias of PUT /envs/{name}.
+
+     **DEPRECATED** — use `PUT /envs/{name}`.
+
+    Identical behaviour, and always was: the body replaced `overrides`
+    wholesale, so this verb never carried the merge semantics its name
+    implies. It is retained only so clients pinned to the old spelling —
+    an SDK inside a running sandbox, say — keep working until they are
+    rebuilt. New callers should use PUT, which is what the console and
+    `abx` send.
 
     Args:
         name (str):
@@ -207,8 +223,16 @@ async def asyncio_detailed(
     body: UpdateSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
-    """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
-    dedicated endpoints.
+    """ Deprecated alias of PUT /envs/{name}.
+
+     **DEPRECATED** — use `PUT /envs/{name}`.
+
+    Identical behaviour, and always was: the body replaced `overrides`
+    wholesale, so this verb never carried the merge semantics its name
+    implies. It is retained only so clients pinned to the old spelling —
+    an SDK inside a running sandbox, say — keep working until they are
+    rebuilt. New callers should use PUT, which is what the console and
+    `abx` send.
 
     Args:
         name (str):
@@ -256,8 +280,16 @@ async def asyncio(
     body: UpdateSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
-    """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
-    dedicated endpoints.
+    """ Deprecated alias of PUT /envs/{name}.
+
+     **DEPRECATED** — use `PUT /envs/{name}`.
+
+    Identical behaviour, and always was: the body replaced `overrides`
+    wholesale, so this verb never carried the merge semantics its name
+    implies. It is retained only so clients pinned to the old spelling —
+    an SDK inside a running sandbox, say — keep working until they are
+    rebuilt. New callers should use PUT, which is what the console and
+    `abx` send.
 
     Args:
         name (str):

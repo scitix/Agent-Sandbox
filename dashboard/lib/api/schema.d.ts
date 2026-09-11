@@ -213,14 +213,26 @@ export interface paths {
         };
         /** Get a SandboxEnv by name. Response includes the rendered envDocs Markdown. */
         get: operations["GetSandboxEnv"];
-        put?: never;
+        /** Replace the editable Env shell fields (overrides only). Members and autoscaling groups have dedicated endpoints. */
+        put: operations["UpdateSandboxEnv"];
         post?: never;
         /** Delete a SandboxEnv. All member SandboxPools are cascade-deleted via OwnerReferences. */
         delete: operations["DeleteSandboxEnv"];
         options?: never;
         head?: never;
-        /** Update the editable Env shell fields (overrides only). Members and autoscaling groups have dedicated endpoints. */
-        patch: operations["UpdateSandboxEnv"];
+        /**
+         * Deprecated alias of PUT /envs/{name}.
+         * @deprecated
+         * @description **DEPRECATED** — use `PUT /envs/{name}`.
+         *
+         *     Identical behaviour, and always was: the body replaced `overrides`
+         *     wholesale, so this verb never carried the merge semantics its name
+         *     implies. It is retained only so clients pinned to the old spelling —
+         *     an SDK inside a running sandbox, say — keep working until they are
+         *     rebuilt. New callers should use PUT, which is what the console and
+         *     `abx` send.
+         */
+        patch: operations["PatchSandboxEnv"];
         trace?: never;
     };
     "/envs/{name}/autoscaling": {
@@ -1890,22 +1902,34 @@ export interface components {
             items: components["schemas"]["SandboxEnvSummary"][];
         };
         /**
-         * @description Patch the editable Env shell. Members are managed through
+         * @description Desired state of the editable Env shell. Members are managed through
          *     `/envs/{name}/sandboxpools/*` and autoscaling through
          *     `/envs/{name}/autoscaling/*`.
          *
-         *     The `overrides` object is REPLACED WHOLESALE when supplied — callers must
-         *     echo back every field they want to preserve. Omitting `overrides`
-         *     entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
-         *     credential values need not be echoed: their references round-trip through
-         *     GET, so re-sending what GET returned preserves the stored material.
+         *     This is a PUT and it means it: `overrides` is REPLACED WHOLESALE, so a
+         *     field left out is one the caller wants removed. Sending `overrides: {}`
+         *     clears every override. Write-only credential values need not be echoed:
+         *     their references round-trip through GET, so re-sending what GET returned
+         *     preserves the stored material.
+         *
+         *     It was a PATCH while the request carried a single wholesale-replaced
+         *     object, which meant the verb promised merge semantics the body never
+         *     had. One verb per meaning: every editable object on this API is now a
+         *     PUT of its desired state.
          */
         UpdateSandboxEnvRequest: {
             overrides?: components["schemas"]["EnvOverrides"];
         };
-        /** @description Patch one or more editable fields on an autoscaling group. Omitted fields are left unchanged. Policy objects are REPLACED wholesale when supplied — callers must echo back any fields they want to preserve. */
+        /**
+         * @description Desired state of one autoscaling group. This is a PUT and it means it:
+         *     a field left out is one the caller wants REMOVED. That is the only way
+         *     "take the ceiling off" can be expressed — while an omitted field meant
+         *     "leave unchanged" there was no request that could clear minReplicas,
+         *     maxReplicas or a policy, and the form's empty box reported success
+         *     without doing anything.
+         */
         UpdateEnvAutoscalingGroupRequest: {
-            /** @description Toggle this group's autoscaler. nil = leave unchanged. */
+            /** @description Whether the autoscaler acts on this group. */
             enabled?: boolean;
             /** Format: int32 */
             minReplicas?: number;
@@ -2334,6 +2358,16 @@ export interface components {
             offset: number;
         };
         WhoAmIResult: {
+            /**
+             * @description What kind of credential this is. `agent` keys have their writes held
+             *     for a person to release. Reported here so a client can say so before
+             *     attempting the write rather than after: an agent that learns its own
+             *     restriction up front asks for the right thing, while one that learns
+             *     it from a 428 has already spent the round trip. Absent on keys
+             *     issued before the field existed, which read as `unrestricted`.
+             * @enum {string}
+             */
+            mode?: "unrestricted" | "agent";
             /** @description Role assigned to the caller's API key (e.g. tenant, admin). */
             role: string;
             /** @description Username extracted from the caller's auth context. */
@@ -3489,6 +3523,68 @@ export interface operations {
             };
         };
     };
+    UpdateSandboxEnv: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSandboxEnvRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxEnvEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     DeleteSandboxEnv: {
         parameters: {
             query?: never;
@@ -3538,7 +3634,7 @@ export interface operations {
             };
         };
     };
-    UpdateSandboxEnv: {
+    PatchSandboxEnv: {
         parameters: {
             query?: never;
             header?: never;

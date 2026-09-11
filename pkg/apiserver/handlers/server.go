@@ -225,7 +225,15 @@ func parseCRDJSON(jsonStr string) (*agentsv1alpha1.SandboxTemplate, error) {
 
 func (s *Server) GetWhoAmI(ctx context.Context, _ gen.GetWhoAmIRequestObject) (gen.GetWhoAmIResponseObject, error) {
 	auth := authFrom(ctx)
+	// `Unattended` is the same property the approval gate keys on, reported
+	// under the name the credential itself carries, so "what am I" and "what
+	// will be held for approval" cannot answer differently.
+	mode := gen.Unrestricted
+	if auth.Unattended {
+		mode = gen.Agent
+	}
 	return gen.GetWhoAmI200JSONResponse(gen.WhoAmIResult{
+		Mode:      ptr.To(mode),
 		Role:      auth.Role,
 		User:      ptr.To(auth.User),
 		Team:      ptr.To(auth.Team),
@@ -612,9 +620,9 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 		input.Overrides = ov
 		input.ImagePullSecret = req.Body.Overrides.ImagePullSecret
 	}
-	if input.Overrides == nil && input.ImagePullSecret == nil {
-		return gen.UpdateSandboxEnv400JSONResponse{Error: "at least one editable field must be provided"}, nil
-	}
+	// No "at least one field" guard: under desired-state semantics an empty
+	// body is a meaningful request — it asks for an Env with no overrides —
+	// and rejecting it would leave that state unreachable.
 
 	result, appErr := s.env.Update(ctx, input)
 	if appErr != nil {
@@ -628,6 +636,30 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 		}
 	}
 	return gen.UpdateSandboxEnv200JSONResponse{Env: *result}, nil
+}
+
+// PatchSandboxEnv serves the deprecated alias, and is the same call.
+//
+// Kept as a one-line forward rather than a second implementation: the two
+// spellings diverging is the only way this could become a bug, and a shared
+// body makes that impossible.
+func (s *Server) PatchSandboxEnv(ctx context.Context, req gen.PatchSandboxEnvRequestObject) (gen.PatchSandboxEnvResponseObject, error) {
+	resp, err := s.UpdateSandboxEnv(ctx, gen.UpdateSandboxEnvRequestObject(req))
+	if err != nil {
+		return nil, err
+	}
+	switch r := resp.(type) {
+	case gen.UpdateSandboxEnv200JSONResponse:
+		return gen.PatchSandboxEnv200JSONResponse(r), nil
+	case gen.UpdateSandboxEnv400JSONResponse:
+		return gen.PatchSandboxEnv400JSONResponse(r), nil
+	case gen.UpdateSandboxEnv404JSONResponse:
+		return gen.PatchSandboxEnv404JSONResponse(r), nil
+	case gen.UpdateSandboxEnv500JSONResponse:
+		return gen.PatchSandboxEnv500JSONResponse(r), nil
+	default:
+		return gen.PatchSandboxEnv500JSONResponse{Error: "unexpected response"}, nil
+	}
 }
 
 func (s *Server) DeleteSandboxEnv(ctx context.Context, req gen.DeleteSandboxEnvRequestObject) (gen.DeleteSandboxEnvResponseObject, error) {

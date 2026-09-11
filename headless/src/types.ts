@@ -51,6 +51,16 @@ export interface FilterSpec {
 export interface ColumnSpec {
   id: string
   describe: string
+  /**
+   * Where the value lives in the API response, as a dot path, when that is not
+   * the column id itself.
+   *
+   * The id stays the short name a person types and reads — `replicas`, not
+   * `spec.replicas` — because it is also the `--filter` key and the CSV header.
+   * The wire shape is an implementation detail of the response and is allowed
+   * to be nested without dragging its nesting into the vocabulary.
+   */
+  path?: string
   /** When set, this column is also filterable under the named FilterSpec. */
   filter?: string
   /** Hidden until asked for. Keeps the default view narrow enough to read. */
@@ -58,29 +68,96 @@ export interface ColumnSpec {
 }
 
 /**
- * A sub-resource: a collection that hangs off one instance of a parent.
- *
- * `segment` is used by BOTH surfaces — it is the console's route segment and
- * the CLI's third positional token — which is what allows a console URL and an
- * `abx` invocation to be derived from one another without a lookup table.
- */
-export interface SubResourceSpec {
-  segment: Segment
-  describe: string
-  columns?: readonly ColumnSpec[]
-}
-
-/**
  * A view that is not a collection — metrics, logs.
  *
- * Kept distinct from sub-resources because the CLI must NOT try to address
- * these positionally: `abx envs x metrics` would imply a list of metrics, which
- * is not a thing. They exist here so route derivation knows the segment is
- * legitimate rather than a typo.
+ * Kept distinct from resources because neither surface may address these as if
+ * they held items: `abx sandboxes x logs y` names nothing. They are registered
+ * so route derivation can tell a legitimate segment from a typo.
  */
 export interface ViewSpec {
   segment: Segment
   describe: string
+  /** Native API path, when the view has one. Metrics come from Prometheus instead. */
+  api?: string
+}
+
+/** What a surface may do to a resource, beyond reading it. */
+export type Verb = 'create' | 'apply' | 'delete' | 'scale'
+
+/**
+ * Where a resource lives in the API.
+ *
+ * Path templates are written in the OpenAPI document's own spelling —
+ * `/envs/{name}/sandboxpools/{poolName}`, not a normalised `{id}` — because
+ * these strings do double duty: the CLI fills the placeholders positionally,
+ * and the conformance test compares them against the spec verbatim. One string
+ * cannot drift from itself.
+ *
+ * The route segment is NOT derived from this path, and the two differ on
+ * purpose: `scaling-groups` is what the concept is called everywhere a person
+ * reads it, while the API still spells it `/autoscaling/groups`. Renaming a URL
+ * is cheap; renaming a published API operation is not.
+ */
+export interface ApiSpec {
+  /** Collection path. Absent for a resource with no list endpoint. */
+  list?: string
+  /** Item path. Absent for a pure list. */
+  item?: string
+  /**
+   * The response field the list lives under, when it is not the obvious one.
+   *
+   * `/approvals` returns two lists in one envelope — what is being asked for
+   * and what has already been granted — so each is registered as the resource
+   * it is, reading its own field of the same response. Guessing by convention
+   * would have picked one and silently hidden the other.
+   */
+  listField?: string
+  /**
+   * False when the item path exists for writes but cannot be read.
+   *
+   * Not a detail worth hiding: an API key can be deleted by name and never
+   * fetched by name, and a CLI that assumed otherwise would offer a `get` that
+   * 404s on every call.
+   */
+  itemReadable?: boolean
+  /**
+   * Verbs beyond reading. `create` is POST on `list`; `apply` and `delete` act
+   * on `item`. `scale` adds no operation of its own — it is a narrow client of
+   * the same PUT as `apply`, which is why it is a verb here and not a path.
+   */
+  verbs?: readonly Verb[]
+  /**
+   * Verbs an Agent-mode key may never perform, with the reason.
+   *
+   * Distinct from the approval gate, which holds a write for a person to
+   * release. These are refused outright, because what makes them dangerous is
+   * not the single action but that performing it dissolves the gate itself —
+   * and no approval dialog can convey that.
+   */
+  agentForbidden?: Partial<Record<Verb, string>>
+}
+
+/**
+ * A named action on one item: something that is neither a read nor a
+ * whole-object write.
+ *
+ * Deliberately rare. Every action is a word a person and an agent both have to
+ * learn, and one that does not appear in any URL, so it cannot be derived from
+ * a console address the way the rest of the grammar can. An action earns its
+ * place only when the thing it does has no honest spelling as state — deciding
+ * an approval is an event, not a field you can set.
+ */
+export interface ActionSpec {
+  /** The CLI's trailing verb, and the label the console uses for the button. */
+  name: string
+  describe: string
+  method: 'POST' | 'PUT' | 'DELETE'
+  /** Path template, filled positionally like any other. */
+  path: string
+  /** Fixed request body, when the action IS the payload. */
+  body?: Record<string, unknown>
+  /** Set when an Agent-mode key may never perform it, with the reason. */
+  agentForbidden?: string
 }
 
 export interface ResourceSpec {
@@ -89,16 +166,47 @@ export interface ResourceSpec {
   /** Plural — the console route segment AND the CLI's first positional token. */
   plural: Segment
   describe: string
+  api: ApiSpec
+  /**
+   * The resource this one hangs off, by plural.
+   *
+   * A child is never addressable on its own: a pool exists within an env, and
+   * both surfaces spell it that way — `/envs/{env}/pools/{pool}` and
+   * `abx envs {env} pools {pool}`. Declaring the relationship here is what lets
+   * one registry entry serve as both the child resource and the parent's
+   * sub-resource, instead of the two copies that drifted before.
+   */
+  parent?: Segment
   /** Absent when the resource has no per-item page (a pure list). */
   detail?: boolean
   columns: readonly ColumnSpec[]
   filters?: readonly FilterSpec[]
-  subResources?: readonly SubResourceSpec[]
   views?: readonly ViewSpec[]
+  actions?: readonly ActionSpec[]
+  /**
+   * False for a resource that is not addressed *within* a cluster — today only
+   * `clusters` itself, which supplies the prefix every other resource sits
+   * under. Without this the console link for the cluster list comes out as
+   * `/clusters/{cluster}/clusters`, which is a real page nowhere.
+   */
+  clusterScoped?: boolean
+  /**
+   * False when the console has no page for this resource, so nothing offers a
+   * "view in console" link to a URL that 404s. The CLI is then the only place
+   * it is reachable, which is a deliberate state and not a gap.
+   */
+  consolePage?: boolean
   /**
    * The feature gate this resource depends on, from GET /feature-gates. Absent
    * means always available. Both surfaces hide the resource when the gate is
    * off, so a deployment without the feature never advertises it.
    */
   gate?: string
+}
+
+/** One API operation a surface reaches, derived from the registry. */
+export interface ApiOperation {
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  path: string
+  resource: Segment
 }

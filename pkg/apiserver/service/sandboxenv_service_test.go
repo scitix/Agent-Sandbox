@@ -225,3 +225,39 @@ func TestPoolToGen_OwningEnvNilWhenNoOwnerRef(t *testing.T) {
 		t.Errorf("OwningEnv = %v, want nil", *result.OwningEnv)
 	}
 }
+
+// Update is a PUT: what the caller sends is the whole editable state, and what
+// they leave out is what they want gone.
+//
+// The second half is the one worth a test. While an omitted field meant "leave
+// unchanged", no request could clear an override that had already been set —
+// the console's emptied box saved successfully and changed nothing, which reads
+// as a bug in the form rather than in the contract.
+func TestSandboxEnvService_Update_OverridesAreDesiredState(t *testing.T) {
+	env := newEnv(envTestName, "k8s", "ylli")
+	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{Image: "registry.example/keep:1"}
+	svc := newEnvService(t, env)
+
+	set, appErr := svc.Update(context.Background(), UpdateSandboxEnvInput{
+		Name:      envTestName,
+		Namespace: envTestNamespace,
+		Overrides: &agentsv1alpha1.EnvOverridesSpec{Image: "registry.example/replaced:2"},
+	})
+	if appErr != nil {
+		t.Fatalf("update: %v", appErr)
+	}
+	if set.Spec.Overrides == nil || ptr.Deref(set.Spec.Overrides.Image, "") != "registry.example/replaced:2" {
+		t.Fatalf("overrides were not replaced wholesale: %+v", set.Spec.Overrides)
+	}
+
+	cleared, appErr := svc.Update(context.Background(), UpdateSandboxEnvInput{
+		Name:      envTestName,
+		Namespace: envTestNamespace,
+	})
+	if appErr != nil {
+		t.Fatalf("clearing update: %v", appErr)
+	}
+	if cleared.Spec.Overrides != nil {
+		t.Fatalf("omitting overrides should remove them, got %+v", cleared.Spec.Overrides)
+	}
+}

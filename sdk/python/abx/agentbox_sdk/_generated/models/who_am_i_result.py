@@ -22,6 +22,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.who_am_i_result_mode import WhoAmIResultMode
 from ..types import UNSET, Unset
 
 
@@ -38,6 +39,12 @@ class WhoAmIResult:
     """ 
         Attributes:
             role (str): Role assigned to the caller's API key (e.g. tenant, admin).
+            mode (WhoAmIResultMode | Unset): What kind of credential this is. `agent` keys have their writes held
+                for a person to release. Reported here so a client can say so before
+                attempting the write rather than after: an agent that learns its own
+                restriction up front asks for the right thing, while one that learns
+                it from a 428 has already spent the round trip. Absent on keys
+                issued before the field existed, which read as `unrestricted`.
             user (str | Unset): Username extracted from the caller's auth context.
             team (str | Unset): Team extracted from the caller's auth context.
             namespace (str | Unset): The namespace this credential reads and writes in on THIS cluster. Reported because it
@@ -48,6 +55,7 @@ class WhoAmIResult:
      """
 
     role: str
+    mode: WhoAmIResultMode | Unset = UNSET
     user: str | Unset = UNSET
     team: str | Unset = UNSET
     namespace: str | Unset = UNSET
@@ -59,6 +67,11 @@ class WhoAmIResult:
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
 
         user = self.user
 
@@ -72,6 +85,8 @@ class WhoAmIResult:
         field_dict.update({
             "role": role,
         })
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if user is not UNSET:
             field_dict["user"] = user
         if team is not UNSET:
@@ -88,6 +103,16 @@ class WhoAmIResult:
         d = dict(src_dict)
         role = d.pop("role")
 
+        _mode = d.pop("mode", UNSET)
+        mode: WhoAmIResultMode | Unset
+        if isinstance(_mode,  Unset):
+            mode = UNSET
+        else:
+            mode = WhoAmIResultMode(_mode)
+
+
+
+
         user = d.pop("user", UNSET)
 
         team = d.pop("team", UNSET)
@@ -96,6 +121,7 @@ class WhoAmIResult:
 
         who_am_i_result = cls(
             role=role,
+            mode=mode,
             user=user,
             team=team,
             namespace=namespace,

@@ -1,0 +1,12 @@
+{
+  "name": "@scitix/abx",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "abx — the AgentBox platform CLI. A Bun-compiled single binary with no runtime dependencies, built from the same headless registry the console renders from.",
+  "bin": { "abx": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/index.ts --compile --outfile dist/abx"
+  }
+}

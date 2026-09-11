@@ -38,15 +38,20 @@ T = TypeVar("T", bound="UpdateSandboxEnvRequest")
 
 @_attrs_define
 class UpdateSandboxEnvRequest:
-    """ Patch the editable Env shell. Members are managed through
+    """ Desired state of the editable Env shell. Members are managed through
     `/envs/{name}/sandboxpools/*` and autoscaling through
     `/envs/{name}/autoscaling/*`.
 
-    The `overrides` object is REPLACED WHOLESALE when supplied — callers must
-    echo back every field they want to preserve. Omitting `overrides`
-    entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
-    credential values need not be echoed: their references round-trip through
-    GET, so re-sending what GET returned preserves the stored material.
+    This is a PUT and it means it: `overrides` is REPLACED WHOLESALE, so a
+    field left out is one the caller wants removed. Sending `overrides: {}`
+    clears every override. Write-only credential values need not be echoed:
+    their references round-trip through GET, so re-sending what GET returned
+    preserves the stored material.
+
+    It was a PATCH while the request carried a single wholesale-replaced
+    object, which meant the verb promised merge semantics the body never
+    had. One verb per meaning: every editable object on this API is now a
+    PUT of its desired state.
 
         Attributes:
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The

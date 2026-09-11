@@ -22,10 +22,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envautoscaler"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (

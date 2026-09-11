@@ -39,11 +39,15 @@ T = TypeVar("T", bound="UpdateEnvAutoscalingGroupRequest")
 
 @_attrs_define
 class UpdateEnvAutoscalingGroupRequest:
-    """ Patch one or more editable fields on an autoscaling group. Omitted fields are left unchanged. Policy objects are
-    REPLACED wholesale when supplied — callers must echo back any fields they want to preserve.
+    """ Desired state of one autoscaling group. This is a PUT and it means it:
+    a field left out is one the caller wants REMOVED. That is the only way
+    "take the ceiling off" can be expressed — while an omitted field meant
+    "leave unchanged" there was no request that could clear minReplicas,
+    maxReplicas or a policy, and the form's empty box reported success
+    without doing anything.
 
         Attributes:
-            enabled (bool | Unset): Toggle this group's autoscaler. nil = leave unchanged.
+            enabled (bool | Unset): Whether the autoscaler acts on this group.
             min_replicas (int | Unset):
             max_replicas (int | Unset):
             scale_up_policy (PoolScaleUpPolicy | Unset): Scale-up behaviour for a scaling group (mode + cooldown + idle

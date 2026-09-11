@@ -1702,26 +1702,37 @@ components:
     UpdateSandboxEnvRequest:
       type: object
       description: |
-        Patch the editable Env shell. Members are managed through
+        Desired state of the editable Env shell. Members are managed through
         `/envs/{name}/sandboxpools/*` and autoscaling through
         `/envs/{name}/autoscaling/*`.
 
-        The `overrides` object is REPLACED WHOLESALE when supplied — callers must
-        echo back every field they want to preserve. Omitting `overrides`
-        entirely leaves it unchanged; sending `overrides: {}` clears it. Write-only
-        credential values need not be echoed: their references round-trip through
-        GET, so re-sending what GET returned preserves the stored material.
+        This is a PUT and it means it: `overrides` is REPLACED WHOLESALE, so a
+        field left out is one the caller wants removed. Sending `overrides: {}`
+        clears every override. Write-only credential values need not be echoed:
+        their references round-trip through GET, so re-sending what GET returned
+        preserves the stored material.
+
+        It was a PATCH while the request carried a single wholesale-replaced
+        object, which meant the verb promised merge semantics the body never
+        had. One verb per meaning: every editable object on this API is now a
+        PUT of its desired state.
       properties:
         overrides:
           $ref: "#/components/schemas/EnvOverrides"
 
     UpdateEnvAutoscalingGroupRequest:
       type: object
-      description: "Patch one or more editable fields on an autoscaling group. Omitted fields are left unchanged. Policy objects are REPLACED wholesale when supplied — callers must echo back any fields they want to preserve."
+      description: |
+        Desired state of one autoscaling group. This is a PUT and it means it:
+        a field left out is one the caller wants REMOVED. That is the only way
+        "take the ceiling off" can be expressed — while an omitted field meant
+        "leave unchanged" there was no request that could clear minReplicas,
+        maxReplicas or a policy, and the form's empty box reported success
+        without doing anything.
       properties:
         enabled:
           type: boolean
-          description: "Toggle this group's autoscaler. nil = leave unchanged."
+          description: "Whether the autoscaler acts on this group."
         minReplicas:
           type: integer
           format: int32
@@ -2391,6 +2402,16 @@ components:
       type: object
       required: [role]
       properties:
+        mode:
+          type: string
+          enum: [unrestricted, agent]
+          description: |
+            What kind of credential this is. `agent` keys have their writes held
+            for a person to release. Reported here so a client can say so before
+            attempting the write rather than after: an agent that learns its own
+            restriction up front asks for the right thing, while one that learns
+            it from a 428 has already spent the round trip. Absent on keys
+            issued before the field existed, which read as `unrestricted`.
         role:
           type: string
           description: "Role assigned to the caller's API key (e.g. tenant, admin)."
@@ -3355,9 +3376,68 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-    patch:
+    put:
       operationId: UpdateSandboxEnv
-      summary: Update the editable Env shell fields (overrides only). Members and autoscaling groups have dedicated endpoints.
+      summary: Replace the editable Env shell fields (overrides only). Members and autoscaling groups have dedicated endpoints.
+      x-since: "0.0.0"
+      tags: [sandbox-envs]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSandboxEnvRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxEnvEnvelope"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      operationId: PatchSandboxEnv
+      summary: Deprecated alias of PUT /envs/{name}.
+      deprecated: true
+      description: |
+        **DEPRECATED** — use `PUT /envs/{name}`.
+
+        Identical behaviour, and always was: the body replaced `overrides`
+        wholesale, so this verb never carried the merge semantics its name
+        implies. It is retained only so clients pinned to the old spelling —
+        an SDK inside a running sandbox, say — keep working until they are
+        rebuilt. New callers should use PUT, which is what the console and
+        `abx` send.
       tags: [sandbox-envs]
       parameters:
         - in: path
