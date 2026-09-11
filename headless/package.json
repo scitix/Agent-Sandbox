@@ -1,0 +1,11 @@
+{
+  "name": "@scitix/agentbox-headless",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free contract shared by the AgentBox console and the abx CLI: the resource registry, its route segments, and the filters each resource accepts. No React, no DOM — it compiles under Next.js, tsc and Bun alike.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  }
+}

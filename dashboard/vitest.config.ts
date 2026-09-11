@@ -30,6 +30,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
+      // The framework-free contract the CLI also compiles. Aliased rather than
+      // installed so both surfaces build from the same files on disk.
+      "@headless": path.resolve(__dirname, "../headless/src"),
     },
   },
 })
