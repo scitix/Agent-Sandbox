@@ -123,6 +123,12 @@ credential could mint one without the agent restriction and leave the gate
 entirely, and no approval dialog conveys that. The answer is a console link for
 the person to act on themselves. Do not queue, retry, or look for a flag.
 
+For the same reason, an agent key gets key **metadata** without key
+**material**: `abx api-keys` lists what exists and which keys are gated, and
+the token field is absent. An env's rendered docs come back with
+`${AGBX_API_KEY}` intact rather than a live token. Relay the template and tell
+the person where to get their key; there is nothing missing to hunt for.
+
 ## Errors carry the recovery
 
 A rejection names the valid set and the next command. Read it before

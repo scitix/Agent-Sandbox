@@ -51,9 +51,17 @@ class APIKeyItem:
             expires_at (datetime.datetime | Unset): RFC 3339 expiry timestamp, or absent if the key never expires.
             sync_source (str | Unset): Resource origin: 'global' (synced via ws-proxy) or 'local' (created directly on
                 worker). Empty for legacy resources.
-            raw_token (str | Unset): The full raw API key value (agbx_...), present only for keys created after plaintext
-                storage was introduced. Absent for legacy keys. Displayed masked in UI; the full value is returned here for
-                recovery by authorised callers.
+            raw_token (str | Unset): The full raw API key value (`agbx_...`), for recovery by the person
+                who owns it. Present only for keys created after plaintext storage
+                was introduced; absent for legacy keys, and displayed masked in the
+                console.
+
+                **Always absent for an agent credential.** An agent is forbidden
+                from minting a key precisely so that it cannot issue itself one
+                without the agent restriction — and returning an existing key here
+                would have let it read that credential instead of creating it. The
+                metadata still comes back, so an agent can say which keys exist and
+                which are gated; only the material is withheld.
      """
 
     key_id: str

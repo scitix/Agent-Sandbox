@@ -1386,7 +1386,7 @@ func (s *Server) SelfListAPIKeys(ctx context.Context, _ gen.SelfListAPIKeysReque
 	if appErr != nil {
 		return gen.SelfListAPIKeys503JSONResponse(errResp(ctx, appErr)), nil
 	}
-	return gen.SelfListAPIKeys200JSONResponse(apiKeyItemsToGen(keys)), nil
+	return gen.SelfListAPIKeys200JSONResponse(apiKeyItemsToGen(keys, !auth.Unattended)), nil
 }
 
 func (s *Server) SelfDeleteAPIKey(ctx context.Context, req gen.SelfDeleteAPIKeyRequestObject) (gen.SelfDeleteAPIKeyResponseObject, error) {
@@ -1474,15 +1474,26 @@ func (s *Server) createAPIKeyInternal(ctx context.Context, body *gen.CreateAPIKe
 }
 
 func (s *Server) ListAPIKeys(ctx context.Context, req gen.ListAPIKeysRequestObject) (gen.ListAPIKeysResponseObject, error) {
+	auth := authFrom(ctx)
 	keys, appErr := s.apikey.List(ctx)
 	if appErr != nil {
 		return gen.ListAPIKeys503JSONResponse(errResp(ctx, appErr)), nil
 	}
-	return gen.ListAPIKeys200JSONResponse(apiKeyItemsToGen(keys)), nil
+	return gen.ListAPIKeys200JSONResponse(apiKeyItemsToGen(keys, !auth.Unattended)), nil
 }
 
-// apiKeyItemsToGen projects the service-layer APIKeyItem slice into the wire shape.
-func apiKeyItemsToGen(items []service.APIKeyItem) []gen.APIKeyItem {
+// apiKeyItemsToGen projects stored keys onto the wire.
+//
+// `includeSecrets` is false for an agent credential, and that is the whole
+// reason this parameter exists. Listing keys returned the plaintext token of
+// every key belonging to that team and user — so an agent whose writes are
+// gated, and which is expressly forbidden from MINTING a credential, could
+// simply read the unrestricted one instead. Forbidding the mint while handing
+// back an existing key is not a boundary; it is a boundary with a door in it.
+//
+// The metadata still comes back, so an agent can still tell a user what keys
+// exist and which are gated. Only the material is withheld.
+func apiKeyItemsToGen(items []service.APIKeyItem, includeSecrets bool) []gen.APIKeyItem {
 	out := make([]gen.APIKeyItem, 0, len(items))
 	for _, item := range items {
 		r := gen.APIKeyItem{
@@ -1497,7 +1508,7 @@ func apiKeyItemsToGen(items []service.APIKeyItem) []gen.APIKeyItem {
 		if !item.ExpiresAt.IsZero() {
 			r.ExpiresAt = &item.ExpiresAt
 		}
-		if item.RawToken != "" {
+		if includeSecrets && item.RawToken != "" {
 			r.RawToken = ptr.To(item.RawToken)
 		}
 		// Always stated, including for the unrestricted case: a console showing

@@ -76,6 +76,13 @@ export const INTENTIONALLY_ABSENT: Record<OperationKey, string> = {
  * act on themselves — deliberately NOT an approval request, since there is
  * nothing here a person should be able to wave through from a prompt.
  *
+ * Forbidding the mint is only half of it, and the other half is not a write at
+ * all: the READS that return key material are withheld from an agent too.
+ * Listing keys used to include every plaintext token for that team and user, so
+ * an agent did not need to create an unrestricted credential — it could read
+ * one. Rendering an env's docs substituted the same token into the markdown.
+ * Both now come back without the material and with the metadata intact.
+ *
  * Vault secrets are deliberately NOT here: the credential lands in the acting
  * person's own vault and widens nobody's authority, and writing them is exactly
  * the integration work people want an agent to finish for them.
