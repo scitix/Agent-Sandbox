@@ -62,11 +62,6 @@ export const INTENTIONALLY_ABSENT: Record<OperationKey, string> = {
   // prevent — the console fetches it because its form edits the container.
   [op('GET', '/envs/{name}/autoscaling')]:
     'the CLI reads the same groups through /envs/{name}/autoscaling/groups',
-
-  // A deprecated alias of PUT /envs/{name}, kept only so an SDK already
-  // running inside a sandbox keeps working until it is rebuilt. Neither
-  // surface should send it, and listing it here is what says so.
-  [op('PATCH', '/envs/{name}')]: 'deprecated alias of PUT /envs/{name}',
 }
 
 /**

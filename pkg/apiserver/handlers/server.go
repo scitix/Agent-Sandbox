@@ -642,30 +642,6 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 	return gen.UpdateSandboxEnv200JSONResponse{Env: *result}, nil
 }
 
-// PatchSandboxEnv serves the deprecated alias, and is the same call.
-//
-// Kept as a one-line forward rather than a second implementation: the two
-// spellings diverging is the only way this could become a bug, and a shared
-// body makes that impossible.
-func (s *Server) PatchSandboxEnv(ctx context.Context, req gen.PatchSandboxEnvRequestObject) (gen.PatchSandboxEnvResponseObject, error) {
-	resp, err := s.UpdateSandboxEnv(ctx, gen.UpdateSandboxEnvRequestObject(req))
-	if err != nil {
-		return nil, err
-	}
-	switch r := resp.(type) {
-	case gen.UpdateSandboxEnv200JSONResponse:
-		return gen.PatchSandboxEnv200JSONResponse(r), nil
-	case gen.UpdateSandboxEnv400JSONResponse:
-		return gen.PatchSandboxEnv400JSONResponse(r), nil
-	case gen.UpdateSandboxEnv404JSONResponse:
-		return gen.PatchSandboxEnv404JSONResponse(r), nil
-	case gen.UpdateSandboxEnv500JSONResponse:
-		return gen.PatchSandboxEnv500JSONResponse(r), nil
-	default:
-		return gen.PatchSandboxEnv500JSONResponse{Error: "unexpected response"}, nil
-	}
-}
-
 func (s *Server) DeleteSandboxEnv(ctx context.Context, req gen.DeleteSandboxEnvRequestObject) (gen.DeleteSandboxEnvResponseObject, error) {
 	auth := authFrom(ctx)
 	result, appErr := s.env.Delete(ctx, auth.Namespace, req.Name)

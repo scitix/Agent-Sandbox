@@ -168,10 +168,11 @@ Rules that matter:
   reaches another cluster's environment from here, because the E2B surface
   forwards it. So "run something on cluster X" always works; "list the envs on
   cluster X" depends on the endpoint.
-- Reads are tenant-scoped. `--as-team` / `--as-user` exist for an administrator
-  driving the CLI by hand, and are **not yours to use** — see the 403 note
-  above: in this sandbox that error means the front door handed you the wrong
-  credential, and covering it up hides a deployment fault.
+- Reads are tenant-scoped, and `abx` speaks as exactly one tenant — whoever
+  the key belongs to. There is no flag to act as somebody else. A 403 saying a
+  read needs user and team context therefore means the front door handed you
+  the wrong credential; see the note above, and report it rather than trying to
+  work around it.
 
 ### Writing
 

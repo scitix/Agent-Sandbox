@@ -26,16 +26,6 @@ export interface Context {
   authScheme: 'api-key' | 'bearer'
   format: 'table' | 'json' | 'csv'
   webBase?: string
-  /**
-   * Act as another tenant. Admin credentials only.
-   *
-   * Some reads are tenant-scoped and have no meaning for an admin key —
-   * "which quota" presumes a whose. The server answers those with a 403 naming
-   * the headers rather than an empty list, so this is the flag that turns that
-   * refusal into an answer.
-   */
-  asTeam?: string
-  asUser?: string
 }
 
 /**
@@ -95,8 +85,6 @@ export function headers(ctx: Context): Record<string, string> {
   const h: Record<string, string> = { Accept: 'application/json' }
   if (ctx.authScheme === 'bearer') h.Authorization = `Bearer ${ctx.apiKey}`
   else h['AGENTBOX-API-KEY'] = ctx.apiKey
-  if (ctx.asTeam) h['X-Impersonate-Team'] = ctx.asTeam
-  if (ctx.asUser) h['X-Impersonate-User'] = ctx.asUser
   return h
 }
 

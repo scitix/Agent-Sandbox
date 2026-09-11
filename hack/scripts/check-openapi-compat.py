@@ -33,6 +33,10 @@ Rules enforced:
     x-breaking-change set to a non-empty version string.
   - Operations missing x-since emit a WARNING (not an error) so existing
     endpoints do not block CI until they are annotated.
+  - Removing an operation MUST be declared in pkg/openapi/removed-operations.yaml
+    with a reason. The declaration is the point: a removal is sometimes the
+    right call, and a gate with no way to say so gets bypassed wholesale --
+    which silences it for the removals that are NOT intended.
 
 Breaking change definition (detected automatically when --diff-base is used):
   - A response field listed in the old spec is absent from the new spec.
@@ -55,6 +59,7 @@ except ImportError:
     sys.exit("PyYAML is required: pip install pyyaml")
 
 OPENAPI_PATH = Path("pkg/openapi/native/openapi.yaml")
+REMOVALS_PATH = Path("pkg/openapi/removed-operations.yaml")
 HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 
 
@@ -158,11 +163,20 @@ def check_diff(base_spec: dict, new_spec: dict) -> tuple[list[str], list[str]]:
         (p, m): op for p, m, op in iter_operations(new_spec)
     }
 
+    declared = load_declared_removals()
+
     # Removed operations
     for key in old_ops:
         if key not in new_ops:
             path, method = key
-            errors.append(f"  ERROR {method.upper():7} {path} — operation REMOVED (breaking change)")
+            name = f"{method.upper()} {path}"
+            if name in declared:
+                print(f"  OK    {method.upper():7} {path} — removed, declared: {declared[name]}")
+                continue
+            errors.append(
+                f"  ERROR {method.upper():7} {path} — operation REMOVED (breaking change). "
+                f"If intended, declare it in {REMOVALS_PATH} with a reason."
+            )
 
     for (path, method), op in new_ops.items():
         if (path, method) not in old_ops:
@@ -192,6 +206,14 @@ def check_diff(base_spec: dict, new_spec: dict) -> tuple[list[str], list[str]]:
                     )
 
     return errors, warnings
+
+
+def load_declared_removals() -> dict[str, str]:
+    """Operations whose removal has been argued for, as `METHOD /path: reason`."""
+    if not REMOVALS_PATH.exists():
+        return {}
+    doc = yaml.safe_load(REMOVALS_PATH.read_text()) or {}
+    return {str(k): str(v) for k, v in (doc.get("removed") or {}).items()}
 
 
 def main() -> int:

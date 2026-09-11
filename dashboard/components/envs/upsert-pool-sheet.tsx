@@ -53,6 +53,14 @@ import { createFormClone } from "@/lib/utils/form-clone"
 import { getPoolMeta, PoolTypeBadge, poolDisplayName } from "@/components/quota/pool-meta"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
 import { useFeatureGates } from "@/hooks/use-feature-gates"
@@ -70,7 +78,6 @@ import {
 } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 import type { TranslationKey } from "@/messages/_schema"
-import { cn } from "@/lib/utils"
 import {
   cpuQuantity,
   formatCores,
@@ -402,7 +409,7 @@ function UpsertPoolInner({
                 control={control}
                 name="resourceMode"
                 render={({ field }) => (
-                  <ModeToggle
+                  <ModeTabs
                     value={field.value}
                     onChange={field.onChange}
                     options={[
@@ -653,7 +660,17 @@ function UpsertPoolInner({
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function ModeToggle<T extends string>({
+/**
+ * The resource-mode picker.
+ *
+ * Tabs rather than a hand-rolled pair of buttons: this is a choice between two
+ * mutually exclusive panels of fields, which is what tabs are, and the shared
+ * primitive brings the keyboard handling, the focus ring and the active styling
+ * that the bespoke version never had. There is no TabsContent here — the panels
+ * are large enough to live in the form body, and the mode drives them from form
+ * state.
+ */
+function ModeTabs<T extends string>({
   value,
   onChange,
   options,
@@ -663,30 +680,22 @@ function ModeToggle<T extends string>({
   options: Array<{ value: T; label: string }>
 }) {
   return (
-    <div className="bg-background inline-flex h-9 w-fit overflow-hidden rounded-md border font-mono text-[11px]">
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          onClick={() => onChange(opt.value)}
-          className={cn(
-            "px-3 transition-colors",
-            opt.value === value
-              ? "bg-foreground text-background"
-              : "text-muted-foreground hover:bg-muted",
-          )}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
+    <Tabs value={value} onValueChange={(v) => onChange(v as T)}>
+      <TabsList className="h-9">
+        {options.map((opt) => (
+          <TabsTrigger key={opt.value} value={opt.value} className="px-3 text-xs">
+            {opt.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
   )
 }
 
-// ResourceAmountField pairs a whole-number input with a unit toggle, so the same
-// field can express 2 cores or 20 milli-cores without a second control layout.
-// The unit lives in the form state (not component state) so it survives reset()
-// on Edit and rides along in the JSON export.
+// ResourceAmountField pairs a whole-number input with a unit dropdown, so the
+// same field can express 2 cores or 20 milli-cores without a second control
+// layout. The unit lives in the form state (not component state) so it survives
+// reset() on Edit and rides along in the JSON export.
 function ResourceAmountField<U extends string>({
   label,
   control,
@@ -731,15 +740,29 @@ function ResourceAmountField<U extends string>({
             />
           )}
         />
+        {/* A unit is one value out of a closed set, not a mode the form
+            switches between — a dropdown says that, and stays one control wide
+            however many units a dimension grows. */}
         <Controller
           control={control}
           name={unitName}
           render={({ field }) => (
-            <ModeToggle
+            <Select
               value={(field.value as U) ?? units[0].value}
-              onChange={(v) => !disabled && field.onChange(v)}
-              options={units}
-            />
+              onValueChange={(v) => field.onChange(v as U)}
+              disabled={disabled}
+            >
+              <SelectTrigger className="w-24 shrink-0 font-mono text-xs" aria-label={label}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {units.map((u) => (
+                  <SelectItem key={u.value} value={u.value} className="font-mono text-xs">
+                    {u.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         />
       </div>

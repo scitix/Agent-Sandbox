@@ -220,19 +220,7 @@ export interface paths {
         delete: operations["DeleteSandboxEnv"];
         options?: never;
         head?: never;
-        /**
-         * Deprecated alias of PUT /envs/{name}.
-         * @deprecated
-         * @description **DEPRECATED** — use `PUT /envs/{name}`.
-         *
-         *     Identical behaviour, and always was: the body replaced `overrides`
-         *     wholesale, so this verb never carried the merge semantics its name
-         *     implies. It is retained only so clients pinned to the old spelling —
-         *     an SDK inside a running sandbox, say — keep working until they are
-         *     rebuilt. New callers should use PUT, which is what the console and
-         *     `abx` send.
-         */
-        patch: operations["PatchSandboxEnv"];
+        patch?: never;
         trace?: never;
     };
     "/envs/{name}/autoscaling": {
@@ -1934,8 +1922,8 @@ export interface components {
          *
          *     It was a PATCH while the request carried a single wholesale-replaced
          *     object, which meant the verb promised merge semantics the body never
-         *     had. One verb per meaning: every editable object on this API is now a
-         *     PUT of its desired state.
+         *     had. One verb per meaning: every editable object on this API is a PUT
+         *     of its desired state.
          */
         UpdateSandboxEnvRequest: {
             overrides?: components["schemas"]["EnvOverrides"];
@@ -3623,68 +3611,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteSandboxEnvResult"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    PatchSandboxEnv: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateSandboxEnvRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxEnvEnvelope"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Unauthorized */

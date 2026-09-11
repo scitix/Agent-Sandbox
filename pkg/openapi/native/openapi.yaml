@@ -1732,8 +1732,8 @@ components:
 
         It was a PATCH while the request carried a single wholesale-replaced
         object, which meant the verb promised merge semantics the body never
-        had. One verb per meaning: every editable object on this API is now a
-        PUT of its desired state.
+        had. One verb per meaning: every editable object on this API is a PUT
+        of its desired state.
       properties:
         overrides:
           $ref: "#/components/schemas/EnvOverrides"
@@ -3398,64 +3398,6 @@ paths:
       operationId: UpdateSandboxEnv
       summary: Replace the editable Env shell fields (overrides only). Members and autoscaling groups have dedicated endpoints.
       x-since: "0.0.0"
-      tags: [sandbox-envs]
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateSandboxEnvRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxEnvEnvelope"
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-    patch:
-      operationId: PatchSandboxEnv
-      summary: Deprecated alias of PUT /envs/{name}.
-      deprecated: true
-      description: |
-        **DEPRECATED** — use `PUT /envs/{name}`.
-
-        Identical behaviour, and always was: the body replaced `overrides`
-        wholesale, so this verb never carried the merge semantics its name
-        implies. It is retained only so clients pinned to the old spelling —
-        an SDK inside a running sandbox, say — keep working until they are
-        rebuilt. New callers should use PUT, which is what the console and
-        `abx` send.
       tags: [sandbox-envs]
       parameters:
         - in: path

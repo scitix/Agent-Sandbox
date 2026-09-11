@@ -137,6 +137,16 @@ func (v docsVars) apply(raw string) string {
 // skipped because users cannot run the rendered snippets without the plaintext
 // token).
 //
+// An agent credential is the exception and gets the placeholder back verbatim.
+// The rendered docs are a copy-paste snippet for a PERSON, and the plaintext
+// token in them is not even necessarily the caller's own — it is the first
+// usable key of that team and user, which for an agent-restricted credential
+// can be the unrestricted one it was deliberately not given. Handing that to
+// something whose writes are gated hands it the way out of the gate, and it
+// lands in a transcript besides. The placeholder is also the better answer on
+// its own terms: an agent relaying instructions to a person should relay the
+// template, not a secret it had no reason to see.
+//
 // When raw is empty, returns ("", nil) — nothing to render.
 // When raw contains ${AGBX_API_KEY} but no usable key is found, returns
 // ("", APIKeyRequired AppError) so the caller can surface it to the user.
@@ -145,7 +155,7 @@ func (s *Server) renderEnvDocs(ctx context.Context, raw string, vars docsVars, a
 		return "", nil
 	}
 
-	if strings.Contains(raw, docsVarAPIKey) {
+	if strings.Contains(raw, docsVarAPIKey) && !auth.Unattended {
 		keys, appErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
 		if appErr != nil {
 			return "", appErr

@@ -1,0 +1,19 @@
+# Operations that have been removed from openapi.yaml on purpose.
+#
+# Removal is a breaking change and the compatibility check blocks it by
+# default. This file is how a removal is argued for rather than bypassed: the
+# entry shows up in the diff, and the reason has to be written down where the
+# next person will read it.
+#
+# Add an entry only when the operation is genuinely gone — not to silence a
+# rename you have not finished, and not to get a commit through. An entry stays
+# forever; it costs nothing and it is the record of why the operation is not
+# there.
+removed:
+  "PATCH /envs/{name}": >-
+    Replaced by PUT /envs/{name}. The body always replaced `overrides`
+    wholesale, so the verb promised merge semantics the request never had, and
+    because an omitted field meant "leave alone" there was no request that could
+    clear an override at all. Kept briefly as a deprecated alias and then
+    removed: the SDK is not published outside this organisation, and one verb
+    per meaning is worth more than an alias nobody should call.

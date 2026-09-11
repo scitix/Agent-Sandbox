@@ -59,6 +59,10 @@ in defeats the arrangement.
 `abx whoami` answers who the key acts as, and — the part worth checking before
 a write — whether it is an `agent` key.
 
+`abx` speaks as one tenant and has no flag to act as another. That is
+deliberate: acting as somebody means holding their key, not asking yours to
+pretend. Administrative work across tenants belongs in the console.
+
 ## Clusters
 
 Management calls are per cluster. An endpoint whose path contains `{cluster}`

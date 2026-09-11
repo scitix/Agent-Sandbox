@@ -55,8 +55,8 @@ class UpdateSandboxEnvRequest:
 
     It was a PATCH while the request carried a single wholesale-replaced
     object, which meant the verb promised merge semantics the body never
-    had. One verb per meaning: every editable object on this API is now a
-    PUT of its desired state.
+    had. One verb per meaning: every editable object on this API is a PUT
+    of its desired state.
 
         Attributes:
             overrides (EnvOverrides | Unset): SandboxTemplate fields this Env replaces uniformly for every member Pool. The

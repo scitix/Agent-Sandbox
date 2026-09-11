@@ -16,6 +16,7 @@ package handlers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"k8s.io/utils/ptr"
@@ -318,5 +319,49 @@ func TestRenderTemplateDocs_KeepsRealClusterEndpoints(t *testing.T) {
 	want := "env=YOUR_ENV_NAME data=https://gw.example.com/agent-sandbox/api/data ip=10.0.0.1"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+// An agent credential gets the template back, placeholder intact.
+//
+// The key that would have been substituted is the first usable one belonging to
+// that team and user — which, for an agent-restricted credential, can be the
+// unrestricted key it was deliberately not given. Rendering it would hand the
+// thing whose writes are gated the way around the gate, and put a live secret
+// in a transcript on the way.
+func TestRenderEnvDocs_AgentCredentialKeepsThePlaceholder(t *testing.T) {
+	stub := &stubAPIKeyService{items: []service.APIKeyItem{{KeyMetadata: service.KeyMetadata{RawToken: "agbx_should_not_appear"}}}}
+	s := newTestServer(stub)
+
+	raw := "export AGENTBOX_API_KEY=${AGBX_API_KEY}\nenv=${AGBX_ENV_NAME}"
+	got, err := s.renderEnvDocs(context.Background(), raw,
+		docsVars{envName: "demo"},
+		domain.AuthInfo{Team: "t", User: "u", Unattended: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(got, "agbx_should_not_appear") {
+		t.Fatalf("an agent credential was handed a plaintext key:\n%s", got)
+	}
+	if !strings.Contains(got, "${AGBX_API_KEY}") {
+		t.Fatalf("the placeholder should survive verbatim, got:\n%s", got)
+	}
+	// Everything else still renders — only the secret is withheld.
+	if !strings.Contains(got, "env=demo") {
+		t.Fatalf("non-secret variables should still be substituted, got:\n%s", got)
+	}
+}
+
+// And the missing-key error is not raised for an agent either: there is nothing
+// it needed to look up, so "no usable key" is not its problem to report.
+func TestRenderEnvDocs_AgentCredentialNeedsNoKey(t *testing.T) {
+	s := newTestServer(&stubAPIKeyService{})
+	got, err := s.renderEnvDocs(context.Background(), "k=${AGBX_API_KEY}", docsVars{envName: "e"},
+		domain.AuthInfo{Team: "t", User: "u", Unattended: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "k=${AGBX_API_KEY}" {
+		t.Fatalf("expected the raw template, got %q", got)
 	}
 }

@@ -118,8 +118,6 @@ function contextFrom(flags: Record<string, string | boolean>, file: FileConfig =
       'api-key') as 'api-key' | 'bearer',
     format,
     webBase: str('web-base', env('AGENTBOX_WEB_BASE') || file.webBase || '') || undefined,
-    asTeam: str('as-team') || undefined,
-    asUser: str('as-user') || undefined,
   }
   if (!ctx.endpoint) {
     throw new CliError(
@@ -163,8 +161,6 @@ function usage(): string {
     '  --endpoint <url>     API base; a {cluster} placeholder routes by path',
     '  --api-key <key>      platform credential',
     '  --filter key=value   narrow a list; keys are the column headings',
-    '  --as-team <t>        act as another tenant (admin keys only)',
-    '  --as-user <u>        the matching user; quota reads need both',
     '  --limit <n>          rows to print (default 200)',
     '  --json | --csv       machine output (drops headers and hints)',
     '  --wide               include the columns held back by default',
