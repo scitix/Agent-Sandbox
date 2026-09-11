@@ -4,10 +4,16 @@ on:
   push:
     paths:
       - "dashboard/**"
+      # The dashboard imports the resource registry and its conformance test
+      # projects it, so a change there can only be validated here.
+      - "headless/**"
+      - "pkg/openapi/native/openapi.yaml"
       - ".github/workflows/test-dashboard.yml"
   pull_request:
     paths:
       - "dashboard/**"
+      - "headless/**"
+      - "pkg/openapi/native/openapi.yaml"
       - ".github/workflows/test-dashboard.yml"
 
 jobs:

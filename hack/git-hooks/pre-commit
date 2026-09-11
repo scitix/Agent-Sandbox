@@ -99,11 +99,13 @@ touched_openapi=false
 touched_go=false
 touched_dashboard=false
 touched_website=false
+touched_cli=false
 
 changed "^${OPENAPI_SPEC}$"                                   && touched_openapi=true
 changed '\.go$|^go\.(mod|sum)$|^\.golangci\.yml$'             && touched_go=true
 changed '^dashboard/'                                         && touched_dashboard=true
 changed '^docs/website/'                                      && touched_website=true
+changed '^cli/|^headless/'                                    && touched_cli=true
 
 # The spec is the single source of truth for all three consumers.
 if $touched_openapi; then
@@ -112,8 +114,14 @@ if $touched_openapi; then
   touched_website=true
 fi
 
-printf '%spre-commit:%s areas → go=%s dashboard=%s website=%s openapi=%s\n' \
-  "$BOLD" "$RESET" "$touched_go" "$touched_dashboard" "$touched_website" "$touched_openapi"
+# The registry the CLI dispatches on is also what the dashboard's conformance
+# test projects, so a change to headless has to satisfy both.
+if $touched_cli; then
+  touched_dashboard=true
+fi
+
+printf '%spre-commit:%s areas → go=%s dashboard=%s website=%s cli=%s openapi=%s\n' \
+  "$BOLD" "$RESET" "$touched_go" "$touched_dashboard" "$touched_website" "$touched_cli" "$touched_openapi"
 
 # --- Secret / internal-identifier scan (always, cheap) -----------------------
 # This repository is published publicly. .gitleaks.toml holds the credential
@@ -169,6 +177,23 @@ if $touched_dashboard; then
     run dashboard "Dashboard typecheck"   bash -c 'cd dashboard && pnpm exec next typegen && pnpm exec tsc --noEmit'
     run dashboard "Dashboard i18n"        pnpm -C dashboard run i18n:validate
     run dashboard "Dashboard build"       pnpm -C dashboard run build
+  fi
+fi
+
+# --- abx CLI: typecheck + contract tests + it must actually compile ----------
+if $touched_cli; then
+  # Not `require`: that records a failure, and bun is not something every
+  # contributor has. CI still gates.
+  if command -v bun >/dev/null 2>&1; then
+    run cli "CLI tests"    bash -c 'cd cli && bun test'
+    run cli "CLI typecheck" bash -c 'cd cli && bun install --frozen-lockfile >/dev/null && bun x tsc --noEmit'
+    # The binary is the artefact people install, so "it type-checks" is not the
+    # bar: a compile failure here is a release that cannot be built.
+    run cli "CLI compiles" bash -c 'cd cli && bun build src/index.ts --compile --outfile /tmp/abx-precommit >/dev/null && rm -f /tmp/abx-precommit'
+  else
+    printf '%s! %-22s bun not installed, skipped (CI still gates)%s\n' \
+      "$YELLOW" "CLI tests" "$RESET"
+    printf '    install: https://bun.sh\n'
   fi
 fi
 

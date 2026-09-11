@@ -8,7 +8,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "types": ["bun-types"],
+    "types": ["bun"],
     "paths": { "@headless/*": ["../headless/src/*"] }
   },
   "include": ["src/**/*.ts"]

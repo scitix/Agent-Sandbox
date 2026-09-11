@@ -3,10 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "abx — the AgentBox platform CLI. A Bun-compiled single binary with no runtime dependencies, built from the same headless registry the console renders from.",
-  "bin": { "abx": "./src/index.ts" },
+  "description": "abx \u2014 the AgentBox platform CLI. A Bun-compiled single binary with no RUNTIME dependencies, built from the same headless registry the console renders from. The devDependencies here are types and tsc; nothing from node_modules reaches the binary.",
+  "bin": {
+    "abx": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "bun build src/index.ts --compile --outfile dist/abx"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
   }
 }

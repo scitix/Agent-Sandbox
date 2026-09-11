@@ -80,6 +80,16 @@ code-formatter: imports fmt ## Run all code formatting tools.
 test: manifests generate generate-api imports fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -p $$(nproc) $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: test-cli
+test-cli: ## Run the abx CLI's contract tests (needs bun).
+	@command -v bun >/dev/null 2>&1 \
+		|| { echo "bun not installed -- skipping CLI tests (https://bun.sh)"; exit 0; }
+	cd cli && bun test
+
+.PHONY: build-abx
+build-abx: ## Build the abx binary for every platform we ship, into cli/dist.
+	bash hack/build-abx.sh
+
 .PHONY: test-e2e
 test-e2e: manifests generate imports fmt vet ## Run the e2e tests against the current kubeconfig cluster using a locally started controller.
 	go test -tags=e2e ./test/e2e/ -v -ginkgo.v

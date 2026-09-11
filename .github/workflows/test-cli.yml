@@ -1,0 +1,44 @@
+name: CLI Tests
+
+on:
+  push:
+    paths:
+      - "cli/**"
+      - "headless/**"
+      - ".github/workflows/test-cli.yml"
+  pull_request:
+    paths:
+      - "cli/**"
+      - "headless/**"
+      - ".github/workflows/test-cli.yml"
+
+jobs:
+  test:
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3"
+
+      - name: Install dev dependencies
+        run: cd cli && bun install --frozen-lockfile
+
+      - name: Type check
+        run: cd cli && bun x tsc --noEmit
+
+      - name: Run tests
+        run: cd cli && bun test
+
+      # The artefact people install is a binary, so "it type-checks" is not the
+      # bar — a compile failure is a release that cannot be built.
+      - name: Compile every platform
+        run: bash hack/build-abx.sh
+
+      - name: The binary runs
+        run: ./cli/dist/abx-linux-x64 version
