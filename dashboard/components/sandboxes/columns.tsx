@@ -457,14 +457,15 @@ export function createSandboxColumns(
         a.localeCompare(b),
       )
       if (entries.length === 0) return <span className="text-muted-foreground text-xs">---</span>
-      const text = entries.map(([k, v]) => `${k}=${v}`).join("\n")
       return (
         <div className="flex flex-col gap-0.5">
           {entries.map(([k, v]) => (
             <span key={k} className="font-mono text-xs whitespace-nowrap">
-              <span className="text-muted-foreground">{k}</span>
-              <span className="text-muted-foreground">=</span>
-              <CopyableText value={text} label={v} className="font-mono text-xs" />
+              <span className="text-muted-foreground">{k}=</span>
+              {/* Copies this one value, not the whole map: these are ids you
+                  paste somewhere else (a thread id, a run id), and a click that
+                  yields the entire blob is never what the person wanted. */}
+              <CopyableText value={v} label={v} className="font-mono text-xs" />
             </span>
           ))}
         </div>
