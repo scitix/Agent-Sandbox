@@ -35,7 +35,11 @@ import { useAtomValue } from "jotai"
 import { type LucideIcon, RefreshCwIcon } from "lucide-react"
 import { useAui } from "@assistant-ui/react"
 
-import { StatusCards, type StatusAsk } from "@/components/assistant-ui/status-cards"
+import {
+  StatusCards,
+  useLandingSignals,
+  type StatusAsk,
+} from "@/components/assistant-ui/status-cards"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { actingIdentityAtom } from "@/lib/atoms"
@@ -82,58 +86,105 @@ interface SuggestionSpec {
   id: string
   labelKey: TranslationKey
   promptKey: TranslationKey
+  /**
+   * When this question is worth asking, given what the deployment looks like.
+   *
+   * Absent means always. A suggestion that presumes an environment exists is
+   * noise on a fresh install, and "why won't my pool scale" is noise until a
+   * pool is actually stuck — the bank is small enough that a slot spent on an
+   * irrelevant question is a slot not spent on the useful one.
+   */
+  when?: (s: LandingSignals) => boolean
 }
 
+/**
+ * The few facts that change which questions are worth offering.
+ *
+ * Derived from the queries the status board already runs, so this costs no
+ * extra request — the cache is shared and the landing renders one set of data.
+ */
+export interface LandingSignals {
+  hasEnv: boolean
+  hasStuckPool: boolean
+  hasFailedSandbox: boolean
+}
+
+
+
 const SUGGESTIONS: SuggestionSpec[] = [
+  // What people actually come here to do. The two largest real uses of the
+  // platform — running rollouts at scale, and putting sandboxes behind your own
+  // agent — had no suggestion at all, while four of ten asked the assistant to
+  // list something the user can see by clicking a page.
   {
-    id: "templates",
-    labelKey: "assistant.ask.templates.label",
-    promptKey: "assistant.ask.templates.prompt",
+    id: "rlRollouts",
+    labelKey: "assistant.ask.rlRollouts.label",
+    promptKey: "assistant.ask.rlRollouts.prompt",
+  },
+  {
+    id: "handsIntegration",
+    labelKey: "assistant.ask.handsIntegration.label",
+    promptKey: "assistant.ask.handsIntegration.prompt",
+  },
+  {
+    id: "harborEval",
+    labelKey: "assistant.ask.harborEval.label",
+    promptKey: "assistant.ask.harborEval.prompt",
+    when: s => s.hasEnv,
+  },
+  {
+    id: "concurrency",
+    labelKey: "assistant.ask.concurrency.label",
+    promptKey: "assistant.ask.concurrency.prompt",
+    when: s => s.hasEnv,
   },
   {
     id: "createEnv",
     labelKey: "assistant.ask.createEnv.label",
     promptKey: "assistant.ask.createEnv.prompt",
+    when: s => !s.hasEnv,
   },
   {
-    id: "runCode",
-    labelKey: "assistant.ask.runCode.label",
-    promptKey: "assistant.ask.runCode.prompt",
-  },
-  {
-    id: "poolIdle",
-    labelKey: "assistant.ask.poolIdle.label",
-    promptKey: "assistant.ask.poolIdle.prompt",
-  },
-  {
-    id: "quota",
-    labelKey: "assistant.ask.quota.label",
-    promptKey: "assistant.ask.quota.prompt",
+    id: "poolNotScaling",
+    labelKey: "assistant.ask.poolNotScaling.label",
+    promptKey: "assistant.ask.poolNotScaling.prompt",
+    when: s => s.hasStuckPool,
   },
   {
     id: "stuckSandbox",
     labelKey: "assistant.ask.stuckSandbox.label",
     promptKey: "assistant.ask.stuckSandbox.prompt",
+    when: s => s.hasFailedSandbox,
   },
   {
-    id: "autoscaling",
-    labelKey: "assistant.ask.autoscaling.label",
-    promptKey: "assistant.ask.autoscaling.prompt",
-  },
-  {
-    id: "uploadFiles",
-    labelKey: "assistant.ask.uploadFiles.label",
-    promptKey: "assistant.ask.uploadFiles.prompt",
+    id: "runCode",
+    labelKey: "assistant.ask.runCode.label",
+    promptKey: "assistant.ask.runCode.prompt",
+    when: s => s.hasEnv,
   },
   {
     id: "installDeps",
     labelKey: "assistant.ask.installDeps.label",
     promptKey: "assistant.ask.installDeps.prompt",
+    when: s => s.hasEnv,
   },
   {
-    id: "images",
-    labelKey: "assistant.ask.images.label",
-    promptKey: "assistant.ask.images.prompt",
+    id: "autoscaling",
+    labelKey: "assistant.ask.autoscaling.label",
+    promptKey: "assistant.ask.autoscaling.prompt",
+    when: s => s.hasEnv,
+  },
+  {
+    id: "uploadFiles",
+    labelKey: "assistant.ask.uploadFiles.label",
+    promptKey: "assistant.ask.uploadFiles.prompt",
+    when: s => s.hasEnv,
+  },
+  {
+    id: "templates",
+    labelKey: "assistant.ask.templates.label",
+    promptKey: "assistant.ask.templates.prompt",
+    when: s => !s.hasEnv,
   },
 ]
 
@@ -261,12 +312,15 @@ export const AssistantLanding: FC<AssistantLandingProps> = ({
   actions,
   onPick,
   onAsk,
-}) => (
-  <div className="flex w-full flex-col gap-10 pb-16">
-    <SuggestedQuestions actions={actions} onPick={onPick} />
-    <StatusCards onAsk={onAsk} />
-  </div>
-)
+}) => {
+  const signals = useLandingSignals()
+  return (
+    <div className="flex w-full flex-col gap-10 pb-16">
+      <SuggestedQuestions actions={actions} onPick={onPick} signals={signals} />
+      <StatusCards onAsk={onAsk} />
+    </div>
+  )
+}
 
 /** One thing you could ask, whatever produced it. */
 interface Suggestion {
@@ -279,9 +333,11 @@ interface Suggestion {
 function SuggestedQuestions({
   actions,
   onPick,
+  signals,
 }: {
   actions?: LandingActionSpec[]
   onPick: (prompt: string) => void
+  signals: LandingSignals
 }) {
   const { t } = useTranslation()
   const [offset, setOffset] = useState(0)
@@ -295,7 +351,9 @@ function SuggestedQuestions({
     return () => window.clearTimeout(id)
   }, [shuffling])
 
-  const statics: Suggestion[] = SUGGESTIONS.map(spec => ({
+  const statics: Suggestion[] = SUGGESTIONS.filter(
+    spec => !spec.when || spec.when(signals)
+  ).map(spec => ({
     key: spec.id,
     label: t(spec.labelKey),
     // The pill's words go nowhere; the prompt behind it is what is asked.

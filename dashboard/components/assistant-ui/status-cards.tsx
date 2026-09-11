@@ -45,6 +45,7 @@ import { envsQueryOptions } from "@/lib/queries/env"
 import { sandboxesQueryOptions } from "@/lib/queries/sandbox"
 import { templatesQueryOptions } from "@/lib/queries/template"
 import { useTranslation, type TranslationKey } from "@/lib/i18n"
+import type { LandingSignals } from "@/components/assistant-ui/assistant-landing"
 import { cn } from "@/lib/utils"
 import type { DashboardPage } from "@/lib/cluster-path"
 
@@ -303,6 +304,47 @@ const GROUPS: StatusGroupSpec[] = [
     buckets: templateBucketsQuery,
   },
 ]
+
+/**
+ * The handful of facts that decide which questions the landing offers.
+ *
+ * Reads the SAME query options the board's cards read, so react-query serves
+ * both from one cache entry and the landing makes no request of its own. That
+ * is also why it lives here rather than beside the suggestions: the queries and
+ * the shapes they return are already understood in this file, and a second
+ * reading of them somewhere else is a second thing to keep in step.
+ */
+export function useLandingSignals(): LandingSignals {
+  const { data: envs } = useQuery(
+    envsQueryOptions() as unknown as UseQueryOptions<unknown, Error, unknown, readonly unknown[]>
+  )
+  const { data: sandboxes } = useQuery(
+    sandboxesQueryOptions() as unknown as UseQueryOptions<unknown, Error, unknown, readonly unknown[]>
+  )
+  const envItems = (envs as { items?: EnvLike[] })?.items ?? []
+  const sbxItems = (sandboxes as { items?: { status?: string }[] })?.items ?? []
+
+  // "Stuck" means asked for and neither idle nor serving: Pods that exist on
+  // paper and cannot be claimed. Same definition the pool card uses, so the
+  // suggestion appears exactly when the card says something is wrong.
+  const unavailable = envItems.reduce((n, e) => {
+    const st = e.status
+    if (!st) return n
+    return (
+      n +
+      Math.max(
+        0,
+        (st.desiredReplicas ?? 0) - (st.idleReplicas ?? 0) - (st.runningReplicas ?? 0)
+      )
+    )
+  }, 0)
+
+  return {
+    hasEnv: envItems.length > 0,
+    hasStuckPool: unavailable > 0,
+    hasFailedSandbox: sbxItems.some(s => s.status === "Failed"),
+  }
+}
 
 /**
  * The board. Renders nothing without a cluster — which is also what makes the

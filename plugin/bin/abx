@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Plugin entrypoint on the agent's PATH.
+#
+# Runs the compiled `abx` for this platform — Bun embedded, no Node, no
+# virtualenv, nothing to install alongside it — and, best effort, keeps it
+# current from the public bucket that serves these binaries unauthenticated.
+#
+# dist/ holds bundled binaries when the plugin was packaged by
+# hack/build-plugin.sh; a plugin installed from git has none, and the first run
+# downloads. Either way an update failure — offline, DNS, checksum mismatch, a
+# bucket that has moved — returns quietly and whatever is already on disk runs,
+# so a working install cannot be broken by the network.
+#
+# Set AGBX_CLI_AUTO_UPDATE=0 to turn the check off, AGBX_CLI_BASE to point
+# somewhere else.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+case "$(uname -s)" in
+  Linux) o=linux ;;
+  Darwin) o=darwin ;;
+  *) o="$(uname -s)" ;;
+esac
+case "$(uname -m)" in
+  x86_64 | amd64) a=x64 ;;
+  aarch64 | arm64) a=arm64 ;;
+  *) a="$(uname -m)" ;;
+esac
+name="abx-$o-$a"
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/abx"
+base="${AGBX_CLI_BASE:-https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest}"
+
+# Throttled to once every 6h by a stamp file, and never fatal.
+try_update() {
+  command -v curl >/dev/null 2>&1 || return 0
+  mkdir -p "$cache_dir" 2>/dev/null || return 0
+  local stamp="$cache_dir/.checked"
+  if [ -n "$(find "$stamp" -mmin -360 2>/dev/null)" ]; then return 0; fi
+  : >"$stamp" 2>/dev/null || true # throttle even when the check below fails
+  local remote_ver
+  remote_ver="$(curl -fsS -m 2 "$base/VERSION" 2>/dev/null)" || return 0
+  [ -n "$remote_ver" ] || return 0
+  local local_ver=""
+  [ -f "$cache_dir/VERSION" ] && local_ver="$(cat "$cache_dir/VERSION" 2>/dev/null || true)"
+  if [ "$remote_ver" = "$local_ver" ] && [ -x "$cache_dir/current/$name" ]; then return 0; fi
+  local tmp
+  tmp="$(mktemp 2>/dev/null)" || return 0
+  curl -fsS -m 120 "$base/$name" -o "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  local sha
+  sha="$(curl -fsS -m 5 "$base/$name.sha256" 2>/dev/null | awk '{print $1}')" || true
+  if [ -n "$sha" ] && command -v sha256sum >/dev/null 2>&1; then
+    echo "$sha  $tmp" | sha256sum -c - >/dev/null 2>&1 || { rm -f "$tmp"; return 0; }
+  fi
+  chmod +x "$tmp" 2>/dev/null || true
+  mkdir -p "$cache_dir/current" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  mv -f "$tmp" "$cache_dir/current/$name" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  printf '%s' "$remote_ver" >"$cache_dir/VERSION" 2>/dev/null || true
+}
+
+if [ "${AGBX_CLI_AUTO_UPDATE:-1}" = "1" ]; then try_update || true; fi
+
+bin="$root/dist/$name"
+[ -x "$cache_dir/current/$name" ] && bin="$cache_dir/current/$name"
+
+if [ -x "$bin" ]; then
+  exec "$bin" "$@"
+fi
+
+# Nothing on disk and nothing downloadable. Say which platforms the release
+# does carry, so the next step is obvious rather than a support question.
+avail="$(ls "$root/dist" 2>/dev/null | sed 's/^abx-//' | paste -sd, - || true)"
+printf 'error: no abx binary for %s/%s, and none could be downloaded\nbundled: %s\nsource:  %s\n' \
+  "$o" "$a" "${avail:-none}" "$base" >&2
+exit 1

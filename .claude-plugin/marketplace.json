@@ -1,0 +1,8 @@
+{
+  "name": "scitix-agentbox",
+  "owner": { "name": "ScitiX" },
+  "description": "AgentBox: sandbox environments, warm pools and autoscaling for AI agents.",
+  "plugins": [
+    { "name": "agentbox", "source": "./plugin" }
+  ]
+}

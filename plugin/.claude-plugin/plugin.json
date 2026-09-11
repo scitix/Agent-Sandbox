@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "agentbox",
+  "description": "AgentBox platform CLI: create and size the sandbox environments, warm pools and autoscaling groups that E2B sandboxes are claimed from, read quotas, templates and instance types, and work the approval queue. The agent runs `abx …`; the API key never leaves the CLI.",
+  "version": "0.1.0",
+  "author": { "name": "ScitiX" },
+  "homepage": "https://github.com/scitix/agent-sandbox",
+  "repository": "https://github.com/scitix/agent-sandbox",
+  "license": "Apache-2.0",
+  "keywords": ["agentbox", "sandbox", "e2b", "kubernetes", "autoscaling", "rl"],
+  "userConfig": {
+    "endpoint": {
+      "type": "string",
+      "title": "API endpoint",
+      "description": "Your cluster's AgentBox API base. A {cluster} placeholder in the path — e.g. https://console.example.com/agentbox/api/clusters/{cluster} — makes one endpoint reach every cluster, and is what `--cluster` substitutes into. Without it the endpoint answers for its own cluster and `--cluster` is refused rather than silently ignored."
+    },
+    "api_key": {
+      "type": "string",
+      "title": "API key",
+      "description": "Issued in the console under API keys. Stored in your OS keychain; never shown to the agent. An `agent` key is the restricted kind: its writes wait for a person to release them.",
+      "sensitive": true
+    },
+    "cluster": {
+      "type": "string",
+      "title": "Default cluster",
+      "description": "Optional. The cluster to act on when a command does not say. Every command still takes --cluster."
+    },
+    "web_base": {
+      "type": "string",
+      "title": "Console base URL",
+      "description": "Optional. When set, output carries a `view:` link to the same page in the console, and writes an agent key may not perform come back as a link for you to act on yourself."
+    },
+    "auth_scheme": {
+      "type": "string",
+      "title": "Auth scheme",
+      "description": "Optional. `api-key` (default) sends the key as AGENTBOX-API-KEY, which is what a cluster API expects. Use `bearer` when the endpoint is the console's own BFF."
+    }
+  }
+}
