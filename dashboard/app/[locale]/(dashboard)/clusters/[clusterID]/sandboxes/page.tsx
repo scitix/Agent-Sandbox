@@ -27,6 +27,7 @@ import { createSandboxColumns, sandboxNumberFilterOptions } from "@/components/s
 import { TerminalDialog, TERMINAL_SANDBOX_ID_PARAM } from "@/components/sandboxes/terminal-dialog"
 import { CreateSandboxSheet } from "@/components/sandboxes/create-sheet"
 import { DeleteSandboxDialog } from "@/components/sandboxes/delete-dialog"
+import { SandboxEmptyState } from "@/components/sandboxes/empty-state"
 import { sandboxesQueryOptions, deleteSandboxImperative } from "@/lib/queries"
 import type { AgentSandbox } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
@@ -221,6 +222,7 @@ export default function SandboxesPage() {
           toolbarConfig={toolbarConfig}
           multipleHandlers={multipleHandlers}
           externalState={tableState}
+          emptyState={<SandboxEmptyState onCreate={() => setCreateOpen(true)} />}
           className="table-layout-fixed h-full"
         >
           {toolbarActions}

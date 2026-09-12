@@ -72,6 +72,15 @@ export interface DataTableCoreProps<TData> extends React.HTMLAttributes<HTMLDivE
   expandedConfig?: ExpandedConfig<TData>
   className?: string
   externalState?: TableExternalState
+  /**
+   * What to show when the caller has none of this resource at all.
+   *
+   * Only for a genuinely empty result — a table whose rows were filtered away
+   * keeps the plain "no data", because the useful next step there is to widen
+   * the filter, not to go and install an SDK. The two look identical from
+   * `getRowModel()`, which is why the distinction is drawn against `data`.
+   */
+  emptyState?: React.ReactNode
 }
 
 export function TablePlaceHolder<TData, TValue>({
@@ -155,12 +164,16 @@ export const TableContent = <TData,>({
   expandedConfig,
   className,
   externalState,
+  emptyState,
   isValidating = false,
   isFixedLayout = false,
 }: DataTableBasicProps<TData> & {
   isFixedLayout?: boolean
 }) => {
   const { t } = useTranslation()
+  // `data` is what the server returned; `getRowModel()` is what survived the
+  // filters. The rich empty state belongs to the first being empty.
+  const hasNothingAtAll = data.length === 0 && !!emptyState
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const tableAreaRef = useRef<HTMLDivElement>(null)
   const tableRef = useRef<HTMLTableElement>(null)
@@ -452,12 +465,16 @@ export const TableContent = <TData,>({
                   colSpan={columns.length}
                   className="text-muted-foreground/85 h-full text-center hover:bg-transparent"
                 >
-                  <div className="flex flex-col items-center justify-center py-16">
-                    <div className="bg-muted mb-4 rounded-full p-3">
-                      <GridIcon className="h-6 w-6" />
+                  {hasNothingAtAll ? (
+                    <div className="py-10">{emptyState}</div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-16">
+                      <div className="bg-muted mb-4 rounded-full p-3">
+                        <GridIcon className="h-6 w-6" />
+                      </div>
+                      <p className="text-sm select-none">{t("table.noData")}</p>
                     </div>
-                    <p className="text-sm select-none">{t("table.noData")}</p>
-                  </div>
+                  )}
                 </TableCell>
               </TableRow>
             )}
@@ -467,10 +484,12 @@ export const TableContent = <TData,>({
     ),
     [
       columns.length,
+      emptyState,
       expandedConfig,
       expandedRows,
       extendedColumns,
       filterOptions,
+      hasNothingAtAll,
       idFn,
       isFixedLayout,
       pinnedCount,
@@ -512,14 +531,17 @@ export const TableContent = <TData,>({
             <TableScrollArea orientation="both" className="table-scroll-area h-full">
               {renderTableContent()}
             </TableScrollArea>
-            {table.getRowModel().rows?.length === 0 && (
-              <div className="bg-card text-muted-foreground/85 absolute inset-0 flex flex-col items-center justify-center">
-                <div className="bg-muted mb-4 rounded-full p-3">
-                  <GridIcon className="h-6 w-6" />
+            {table.getRowModel().rows?.length === 0 &&
+              (hasNothingAtAll ? (
+                <div className="bg-card absolute inset-0 overflow-y-auto">{emptyState}</div>
+              ) : (
+                <div className="bg-card text-muted-foreground/85 absolute inset-0 flex flex-col items-center justify-center">
+                  <div className="bg-muted mb-4 rounded-full p-3">
+                    <GridIcon className="h-6 w-6" />
+                  </div>
+                  <p className="text-sm select-none">{t("table.noData")}</p>
                 </div>
-                <p className="text-sm select-none">{t("table.noData")}</p>
-              </div>
-            )}
+              ))}
           </div>
         </div>
 
