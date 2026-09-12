@@ -1,0 +1,153 @@
+# The platform assistant's sandbox image — the agent's "hands".
+#
+# Build context is the REPOSITORY ROOT, because the image compiles `abx` from
+# ./cli at this commit:
+#
+#   docker build -f installer/dockerfile/Dockerfile.hands -t <img> .
+#
+# Two toolchains land here, and the split between them IS the product
+# explanation the assistant gives its user:
+#
+#   abx        platform concepts — environments, warm pools, templates, quotas,
+#              instance types. Our own API surface, our own CLI: a single
+#              compiled binary with no interpreter behind it.
+#   e2b + patch_e2b   sandboxes themselves — create, exec, files, network.
+#              The upstream E2B SDK, unmodified except for the monkey patches
+#              that let it address a path-routed data plane and accept an
+#              `agbx_` key.
+#
+# The CLI is COMPILED FROM SOURCE here — not downloaded from a release bucket
+# and not pulled from an index — so a sandbox can never be running a different
+# `abx` than the commit that produced the image. The bucket exists for people
+# installing on their own machines, where the self-updating shim is the point;
+# here the image IS the version pin, and reaching over the network for a binary
+# would make two things out of one.
+
+# The E2B code-interpreter image, which is what a sandbox in an E2B-compatible
+# pool is expected to look like. Overridable so a deployment can point at its
+# own mirror: `--build-arg BASE_IMAGE=<registry>/e2bdev/code-interpreter:...`.
+#
+# Declared before the first FROM so it is a global ARG, which is what makes it
+# usable in the final stage's FROM line.
+ARG BASE_IMAGE=e2bdev/code-interpreter:python-3.12.8
+
+# Closed-source forks that publish this image to their own registry generally
+# carry a sibling of this file, because a fork builds from its own repository
+# and has to fetch this tree rather than having it in its context. Everything
+# after the abx stage is the payload and should be identical in both; a change
+# here that is not mirrored there ships a different image under the same name.
+#
+# Stage 0: compile abx. Bun bundles the CLI and its runtime into one file, so
+# nothing of this stage survives into the image except that file — no Node, no
+# node_modules, no second interpreter for the agent to trip over.
+#
+# `headless` is copied beside `cli` because that is where the CLI's path alias
+# expects it: the resource registry is shared with the console and belongs to
+# neither.
+FROM oven/bun:1.3 AS abx-build
+WORKDIR /src
+COPY cli /src/cli
+COPY headless /src/headless
+COPY VERSION /src/VERSION
+RUN cd /src/cli \
+    && bun build src/index.ts --compile \
+    --define AGBX_CLI_VERSION="\"$(cat /src/VERSION)\"" \
+    --outfile /src/abx \
+    && /src/abx version
+
+FROM ${BASE_IMAGE}
+
+# The base image ships a dpkg statoverride for
+# /usr/lib/dbus-1.0/dbus-daemon-launch-helper owned by group `messagebus`, but
+# not the group — so dpkg aborts with "unknown system group" and EVERY apt
+# install in a derived image fails, whatever it is installing. Recreating the
+# group is narrower than editing dpkg's database: it restores the consistency
+# the override already assumes, and touches nothing else.
+RUN getent group messagebus >/dev/null || groupadd --system messagebus
+
+# One apt layer. The list is mirrored verbatim in the assistant's AGENTS.md
+# under "assume ONLY these are present" — a tool the prompt promises and the
+# image lacks is a dead end the agent cannot diagnose, and one the image has
+# and the prompt omits is never reached.
+#
+# --force-confold and the noninteractive frontend are not belt-and-braces here:
+# the base image carries a modified /etc/mime.types, so installing anything that
+# ships that file makes dpkg stop and ASK which copy to keep. With no tty the
+# prompt fails, and it fails as a cascade — media-types goes unconfigured, then
+# everything depending on it, so the visible error names python and vim rather
+# than the config file that actually blocked.
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+    -o Dpkg::Options::=--force-confold \
+    -o Dpkg::Options::=--force-confdef \
+    ca-certificates curl wget jq ripgrep vim bsdextrautils \
+    iputils-ping bind9-dnsutils; \
+    rm -rf /var/lib/apt/lists/*
+
+# `abx`: the compiled binary from stage 0, on PATH and nothing else required.
+COPY --from=abx-build /src/abx /usr/local/bin/abx
+
+# The E2B SDK, in the interpreter the agent will actually invoke.
+#
+# --break-system-packages is deliberate: a venv would mean every `python3
+# script.py` the agent writes needs activation first, and the agent has no
+# reason to know that. The checks run in the SAME layer so a broken install
+# fails the build rather than the first tool call.
+RUN set -eux; \
+    pip install --no-cache-dir --break-system-packages \
+    'e2b>=2.0.0' agent-sandbox-e2b; \
+    abx --help > /dev/null; \
+    abx version; \
+    python3 -c "from agent_sandbox_e2b import patch_e2b; print('patch_e2b import ok')"; \
+    python3 -c "import e2b; print('e2b import ok')"
+
+# Remove sudo.
+#
+# The sandbox container already runs as root, so sudo grants nothing — while
+# costing something real: its env_reset drops the CA-bundle variables the
+# platform injects for per-sandbox TLS interception, so an agent that reaches
+# for `sudo` out of habit turns a working injected request into a certificate
+# error with no credential and no obvious cause. It is a setuid binary the base
+# image added outside dpkg, and nothing in the image depends on it.
+RUN rm -f /usr/bin/sudo /usr/bin/sudoedit /etc/sudoers \
+    && rm -rf /etc/sudoers.d \
+    && ! command -v sudo
+
+# The platform's own source, read-only, for the agent to consult.
+#
+# Only the parts that answer questions: the API contract, the CRD types, the
+# SDKs, the CLI and its registry, the skills. Not the console's UI code, which
+# is large and answers nothing a sandbox is asked, and not docs/, which is a
+# built website rather than prose.
+#
+# Under /opt rather than in the workspace, so it is not mistaken for the
+# session's own files and is not swept with them.
+#
+# `chmod a-w` is a guard rail, not a boundary: the sandbox runs as root, and
+# root writes regardless. What it buys is that an agent editing files does not
+# edit THESE by accident — and nothing here survives the sandbox anyway, so a
+# deliberate change is lost rather than propagated.
+COPY README.md LICENSE /opt/agentbox/source/
+COPY api           /opt/agentbox/source/api
+COPY cli/src       /opt/agentbox/source/cli/src
+COPY headless/src  /opt/agentbox/source/headless/src
+COPY plugin/skills /opt/agentbox/source/plugin/skills
+COPY sdk           /opt/agentbox/source/sdk
+COPY pkg/openapi   /opt/agentbox/source/pkg/openapi
+RUN set -eux; \
+    find /opt/agentbox/source -name '__pycache__' -type d -prune -exec rm -rf {} + ; \
+    find /opt/agentbox/source -name '*.pyc' -delete; \
+    chmod -R a-w /opt/agentbox/source; \
+    test -f /opt/agentbox/source/pkg/openapi/native/openapi.yaml; \
+    du -sh /opt/agentbox/source
+
+# Provenance, so a sandbox can say which image it is without guessing.
+ARG IMAGE_NAME=agent-sandbox-hands
+ARG IMAGE_TAG=dev
+RUN mkdir -p /opt/abx \
+    && printf '%s:%s\n' "${IMAGE_NAME}" "${IMAGE_TAG}" > /opt/abx/IMAGE
+
+# The base image's entrypoint/cmd are what the pool's envd wrapper expects;
+# nothing here replaces them.

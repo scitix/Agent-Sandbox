@@ -156,14 +156,25 @@ spec:
             - name: AGBX_ENV_NAME
               value: {{ . | quote }}
             {{- end }}
-            {{- with $s.image }}
-            {{- /* Structured as repository:tag by the values so a CI system can
-                   auto-bump it. This is NOT a Pod container image — it is handed
-                   to the E2B SDK as a template argument — so register it as a
-                   managed image for this service or the scan reports "image name
-                   not found". */}}
+            {{- /* repository + tag rather than one ref, so a release can bump
+                   the tag without restating the registry path. This is NOT a Pod
+                   container image — it is handed to the E2B SDK as a template
+                   argument — so register it as a managed image for this service
+                   or an image scan reports "image name not found".
+
+                   A non-empty string here used to be the whole ref. Left alone
+                   it would reach `.repository` on a string and fail with a Go
+                   template error naming neither this value nor its replacement,
+                   so say what to do instead. */}}
+            {{- if kindIs "string" $s.image }}
+            {{- if $s.image }}
+            {{- fail "assistant.sandbox.image is now a map: set assistant.sandbox.image.repository and .tag instead of one repository:tag string" }}
+            {{- end }}
+            {{- else }}
+            {{- with $s.image.repository }}
             - name: SBX_IMAGE
-              value: {{ . | quote }}
+              value: {{ printf "%s:%s" . ($s.image.tag | default "latest") | quote }}
+            {{- end }}
             {{- end }}
             - name: SBX_READY_TIMEOUT
               value: {{ $s.readyTimeoutSeconds | default 300 | quote }}

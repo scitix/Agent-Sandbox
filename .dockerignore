@@ -45,6 +45,21 @@ sdk/hands/typescript/node_modules/
 **/__pycache__/
 **/*.pyc
 
+# --- Hands (the assistant's sandbox) build context (used by Dockerfile.hands) ---
+# It compiles `abx` from cli/ (with headless/ beside it, where the CLI's path
+# alias expects the shared resource registry), and ships a read-only copy of the
+# source the agent may consult. api/, pkg/ and sdk/hands are already re-included
+# above for the Go and Brain builds.
+!cli/**
+!headless/**
+!plugin/skills/**
+!sdk/**
+!README.md
+!LICENSE
+cli/node_modules/
+headless/node_modules/
+sdk/**/node_modules/
+
 # --- Generic noise that should never land in any image layer ---
 **/.git
 **/.github

@@ -229,8 +229,8 @@ assistant:
   enabled: false
 
   image:
-    repository: ""
-    tag: ""
+    repository: ghcr.io/scitix/agent-sandbox-brain
+    tag: latest
     pullPolicy: IfNotPresent
     pullSecrets: []
 
@@ -287,7 +287,14 @@ assistant:
     # The sandbox image: `abx` plus the E2B SDK. Omitting it starts sandboxes
     # from the pool's default image, which come up healthy and then cannot run
     # anything the assistant needs.
-    image: ""
+    #
+    # Split into repository and tag like every other image in this chart, so a
+    # release can bump the tag on its own — `--set assistant.sandbox.image.tag=…`
+    # — without restating the registry path it does not own. The tag defaults to
+    # `latest` when a repository is given without one.
+    image:
+      repository: ghcr.io/scitix/agent-sandbox-hands
+      tag: latest
     readyTimeoutSeconds: 300
     timeoutSeconds: 3600
     # Whose credential a conversation's sandbox is created with.
