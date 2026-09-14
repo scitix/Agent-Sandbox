@@ -100,9 +100,14 @@ cp "$ENVD_SRC_DIR/bin/envd" ./envd
 # changes independently of upstream's version. Rebuilding at an unchanged
 # INFRA_REF would otherwise overwrite an existing tag in place — and templates
 # pull with imagePullPolicy: IfNotPresent, so nodes that already cached it keep
-# running the old script with no error anywhere. Set ENVD_IMAGE_SUFFIX (e.g.
-# "-2") for such a rebuild; leave it empty when the envd version itself moved.
-ENVD_IMAGE_SUFFIX=${ENVD_IMAGE_SUFFIX:-""}
+# running the old script with no error anywhere. Set ENVD_IMAGE_SUFFIX for such
+# a rebuild, and RESET IT TO EMPTY whenever INFRA_REF moves — a stale suffix on
+# a genuinely new envd version reads as "the second build of X" when it is the
+# first build of Y.
+#
+# Currently -1: envd is still 0.9.0, but the entrypoint gained the verbose /
+# extra-flags handling after :0.9.0 was published.
+ENVD_IMAGE_SUFFIX=${ENVD_IMAGE_SUFFIX:-"-1"}
 ENVD_VERSIONED_TAG="${REGISTRY_PREFIX}${ENVD_IMAGE_NAME}:${ENVD_VERSION}${ENVD_IMAGE_SUFFIX}"
 ENVD_LATEST_TAG="${REGISTRY_PREFIX}${ENVD_IMAGE_NAME}:latest"
 

@@ -157,9 +157,15 @@ ENVD_FLAGS=""
 # envd's request logger writes one structured line per Connect RPC — for
 # Process/Start that is the command, its arguments, cwd and environment. It is
 # discarded unless a writer exists, and outside Firecracker the only writer is
-# stdout under -verbose. Off by default: a PTY session sends one SendInput RPC
-# per keystroke, and each one logs its whole request.
-if [ "$AGENTBOX_ENVD_VERBOSE" = "true" ]; then
+# stdout under -verbose.
+#
+# ON unless explicitly turned off, and the direction matters: the API resolves
+# an unset SandboxEnv.overrides.envd.verbose to true and the console renders the
+# switch from that, while the renderer only writes this variable when the Env
+# says something. So "variable absent" has to mean the same thing here as it
+# does there — read it the other way round and every Env that never touched the
+# setting shows a switch that is on while its sandboxes log nothing.
+if [ "$AGENTBOX_ENVD_VERBOSE" != "false" ]; then
     ENVD_FLAGS="$ENVD_FLAGS -verbose"
 fi
 

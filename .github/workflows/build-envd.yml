@@ -46,10 +46,10 @@ on:
           Suffix appended to the envd image tag (e.g. "-2"). The image carries our
           entrypoint as well as the binary, and that script changes independently of
           upstream's version — rebuilding at an unchanged infra_ref would otherwise
-          overwrite an existing tag in place, and templates pull IfNotPresent. Leave
-          empty when the envd version itself moved.
+          overwrite an existing tag in place, and templates pull IfNotPresent. Reset
+          it to empty whenever infra_ref moves.
         required: false
-        default: ""
+        default: "-1"
 
 env:
   REGISTRY: ghcr.io
@@ -109,7 +109,10 @@ jobs:
           fi
           ENVD_VERSION=$(./bin/envd --version | awk '{print $NF}')
           echo "envd_version=${ENVD_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "envd_image_tag=${ENVD_VERSION}${{ github.event.inputs.envd_image_suffix }}" >> "$GITHUB_OUTPUT"
+          # `inputs` is empty on a push event, so the fallback is what actually
+          # applies most of the time — same shape as infra_ref above. Keep the two
+          # defaults in step with build-envd.sh's ENVD_IMAGE_SUFFIX.
+          echo "envd_image_tag=${ENVD_VERSION}${{ github.event.inputs.envd_image_suffix || '-1' }}" >> "$GITHUB_OUTPUT"
           echo "Detected envd version: ${ENVD_VERSION}"
           cp bin/envd ${{ github.workspace }}/installer/runtimes/envd/envd
 
