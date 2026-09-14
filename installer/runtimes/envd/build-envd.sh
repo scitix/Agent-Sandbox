@@ -27,11 +27,12 @@ INFRA_REPO="https://github.com/e2b-dev/infra"
 # (which are line-addressed) apply deterministically. e2b-infra's default
 # branch moves fast (date-based release tags), so an unpinned clone would
 # silently change the envd version and break patch application. This commit is
-# envd 0.7.0. Bump this together with regenerating the patches (see
-# patches/README.md) when you intentionally move to a newer envd.
+# the `chore(main): release envd 0.9.0` commit. Bump this together with
+# regenerating the patches (see patches/README.md) when you intentionally move
+# to a newer envd.
 # Full SHA is required: `git fetch --depth 1 origin <sha>` rejects abbreviated SHAs.
 # Keep this in lockstep with .github/workflows/build-envd.yml's infra_ref default.
-INFRA_REF=${INFRA_REF:-"8a3f69da6f822c2de2b310dd1076d2c309eef919"}
+INFRA_REF=${INFRA_REF:-"0c2108b1b76a66d18cf095d51fd7c51c703648ae"}
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCHES_DIR="$CURRENT_DIR/patches"
 
@@ -95,7 +96,14 @@ echo "--- Step 3: Building envd image ---"
 cd "$CURRENT_DIR"
 cp "$ENVD_SRC_DIR/bin/envd" ./envd
 
-ENVD_VERSIONED_TAG="${REGISTRY_PREFIX}${ENVD_IMAGE_NAME}:${ENVD_VERSION}"
+# The image carries our entrypoint as well as the envd binary, and that script
+# changes independently of upstream's version. Rebuilding at an unchanged
+# INFRA_REF would otherwise overwrite an existing tag in place — and templates
+# pull with imagePullPolicy: IfNotPresent, so nodes that already cached it keep
+# running the old script with no error anywhere. Set ENVD_IMAGE_SUFFIX (e.g.
+# "-2") for such a rebuild; leave it empty when the envd version itself moved.
+ENVD_IMAGE_SUFFIX=${ENVD_IMAGE_SUFFIX:-""}
+ENVD_VERSIONED_TAG="${REGISTRY_PREFIX}${ENVD_IMAGE_NAME}:${ENVD_VERSION}${ENVD_IMAGE_SUFFIX}"
 ENVD_LATEST_TAG="${REGISTRY_PREFIX}${ENVD_IMAGE_NAME}:latest"
 
 docker build \

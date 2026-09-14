@@ -563,6 +563,7 @@ func envOverridesToGen(o *agentsv1alpha1.EnvOverridesSpec) *gen.EnvOverrides {
 		out.DefaultIdleTimeout = ptr.To(o.DefaultIdleTimeout.Duration.String())
 	}
 	out.Gateway = gatewayToGen(o.Gateway)
+	out.Envd = envdToGen(o.Envd)
 	out.UpdateStrategy = updateStrategyToGen(o.UpdateStrategy)
 	out.Volumes = envVolumesToGen(o.Volumes)
 	return out
@@ -604,6 +605,17 @@ func updateStrategyToGen(s *agentsv1alpha1.EnvUpdateStrategy) *gen.EnvUpdateStra
 		out.MaxUnavailable = ptr.To(s.MaxUnavailable.String())
 	}
 	return out
+}
+
+// envdToGen reports the envd settings in force, resolving the defaults.
+//
+// Always non-nil, and always carrying an explicit verbose: the console renders
+// a switch from it, and a nil would have to be interpreted there too — in
+// exactly the same direction, from a second copy of the rule. Sending the
+// resolved value means the API is the only place that knows which way an unset
+// field leans.
+func envdToGen(e *agentsv1alpha1.EnvdSpec) *gen.EnvdSpec {
+	return &gen.EnvdSpec{Verbose: ptr.To(e.VerboseEnabled())}
 }
 
 // gatewayToGen maps the Env's egress-gateway switch onto the wire shape (GET).

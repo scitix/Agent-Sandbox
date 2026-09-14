@@ -95,6 +95,14 @@ type LogsConfig struct {
 	// {"region": "region-a", "cluster": "prod-foo"}. Without them a query for
 	// a pod name would match same-named pods in other clusters.
 	Filters map[string]string `json:"filters,omitempty"`
+	// SplitProject says this cluster's container output is sharded across two
+	// log stores by namespace, so the store has to be chosen per query rather
+	// than per deployment. See logclient.ProjectFor for the rule.
+	//
+	// Getting this wrong is silent: the service answers 200 with an empty body
+	// for a store that holds nothing, which is indistinguishable from a pod
+	// that printed nothing.
+	SplitProject bool `json:"splitProject,omitempty"`
 }
 
 // RegistryEntry describes a private container image registry that belongs to a

@@ -449,6 +449,35 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
                   </AccordionContent>
                 </AccordionItem>
 
+                <AccordionItem value="envd">
+                  {/* The switch is a SIBLING of the trigger, not a child: the
+                      trigger is itself a <button>, so nesting would be invalid
+                      markup and every toggle would also open the panel. */}
+                  <div className="flex items-center pr-3">
+                    <AccordionTrigger className="text-muted-foreground flex-1 px-3 py-2 font-mono text-[11px] font-bold tracking-[0.12em] uppercase hover:no-underline">
+                      {t("envs.form.section.envd")}
+                    </AccordionTrigger>
+                    <Controller
+                      control={control}
+                      name="envdVerbose"
+                      render={({ field }) => (
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          aria-label={t("envs.form.envd.verbose")}
+                        />
+                      )}
+                    />
+                  </div>
+                  <AccordionContent className="px-3">
+                    <div className="text-muted-foreground space-y-2 pb-2 text-xs">
+                      <p>{t("envs.form.envd.hint")}</p>
+                      <p>{t("envs.form.envd.cost")}</p>
+                      <p>{t("envs.form.envd.rollout")}</p>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
                 <AccordionItem value="update">
                   {/* The switch is a SIBLING of the trigger, not a child: the
                       trigger is itself a <button>, so nesting would be invalid

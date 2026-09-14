@@ -16,6 +16,7 @@ from enum import StrEnum
 
 class SandboxLogsResultSource(StrEnum):
     CACHED = "cached"
+    CENTRAL = "central"
     LIVE = "live"
     RUNTIME = "runtime"
 

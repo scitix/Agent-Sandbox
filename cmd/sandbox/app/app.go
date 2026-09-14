@@ -481,6 +481,43 @@ func Run(opts Options) {
 		idleNotifier = n
 	}
 
+	// ---- central sandbox logs ------------------------------------------------
+	// A sandbox's Pod holds its logs only while it exists; once released, the
+	// only remaining copy is in the central service. Same shape as the metrics
+	// wiring: endpoint and credential from flags, per-cluster scope read live
+	// from the cluster config. Wired into the sandbox service so both API
+	// surfaces answer a finished sandbox from the same place.
+	var centralLogs *logclient.Client
+	if logServiceURL != "" && logServiceToken != "" {
+		centralLogs = logclient.New(logclient.Config{
+			URL:     logServiceURL,
+			Token:   logServiceToken,
+			AppID:   logServiceAppID,
+			Project: logServiceProject,
+		})
+		setupLog.Info("central sandbox logs enabled", "endpoint", logServiceURL)
+	} else {
+		setupLog.Info("central sandbox logs disabled; only live sandboxes can be queried")
+	}
+	logScopeFn := func() service.CentralLogScope {
+		if clusterStore == nil || localClusterID == "" {
+			return service.CentralLogScope{}
+		}
+		entry, ok := clusterStore.Get(localClusterID)
+		if !ok || entry.Logs == nil {
+			return service.CentralLogScope{}
+		}
+		return service.CentralLogScope{
+			Filters:      logclient.CloneFilters(entry.Logs.Filters),
+			SplitProject: entry.Logs.SplitProject,
+		}
+	}
+	if r, ok := sandboxSvc.(interface {
+		SetCentralLogs(*logclient.Client, func() service.CentralLogScope)
+	}); ok {
+		r.SetCentralLogs(centralLogs, logScopeFn)
+	}
+
 	// ---- in-process Sandbox.Create timestamp tracker -------------------------
 	// Bumps from sandbox.Create live in memory and flush to the
 	// LastSandboxCreateTimeAnnotationKey on Pool every 5 s. The Pool
@@ -730,42 +767,14 @@ func Run(opts Options) {
 			return entry.Selector
 		}
 
-		// A sandbox's Pod holds its logs only while it exists; once released,
-		// the only remaining copy is in the central service. Same shape as the
-		// metrics wiring: endpoint and credential from flags, per-cluster scope
-		// read live from the cluster config.
-		var centralLogs *logclient.Client
-		if logServiceURL != "" && logServiceToken != "" {
-			centralLogs = logclient.New(logclient.Config{
-				URL:     logServiceURL,
-				Token:   logServiceToken,
-				AppID:   logServiceAppID,
-				Project: logServiceProject,
-			})
-			setupLog.Info("central sandbox logs enabled", "endpoint", logServiceURL)
-		} else {
-			setupLog.Info("central sandbox logs disabled; only live sandboxes can be queried")
-		}
-		logFiltersFn := func() map[string]string {
-			if clusterStore == nil || localClusterID == "" {
-				return nil
-			}
-			entry, ok := clusterStore.Get(localClusterID)
-			if !ok || entry.Logs == nil {
-				return nil
-			}
-			return logclient.CloneFilters(entry.Logs.Filters)
-		}
-
 		e2bServer := e2bcompat.New(e2bcompat.Config{
 			BindAddress:     e2bBindAddress,
 			Domain:          e2bDomain,
 			ServerVersion:   version.Resolve(),
 			LocalClusterID:  localClusterID,
 			MetricsSelector: selectorFn,
-			LogFilters:      logFiltersFn,
 		}, mgr.GetClient(), keyStore, adminKeyMgr, iamSvc, sandboxSvc, ccForwarder, fedRegistry, metricsClient,
-			vaultSvc, centralLogs)
+			vaultSvc)
 		go func() { errCh <- e2bServer.Start(ctx) }()
 	}
 

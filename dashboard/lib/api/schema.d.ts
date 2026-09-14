@@ -965,8 +965,21 @@ export interface components {
              * @description Total byte size of all log entries before any truncation.
              */
             totalBytes?: number;
-            /** @enum {string} */
-            source: "live" | "cached" | "runtime";
+            /**
+             * @description Where the lines came from. `live` reads the sandbox's Pod through the Kubernetes log API.
+             *     `central` is the central log service, used once the sandbox has ended and its Pod was
+             *     recycled; only what the log pipeline collected is available there. `runtime` is a runtime's
+             *     own log file, read via exec.
+             * @enum {string}
+             */
+            source: "live" | "cached" | "runtime" | "central";
+            /**
+             * @description For source=central: what was actually asked of the central log service — log store, filters
+             *     and time window. An empty result and a mis-scoped query are the same 200 with no rows over
+             *     the wire, so this is the only way to tell "the sandbox printed nothing" from "nobody was
+             *     asked about it".
+             */
+            scope?: string;
             /** @description When source=runtime, the runtime name whose log file was read */
             runtimeName?: string;
         };
@@ -1637,6 +1650,12 @@ export interface components {
              *     pools.
              */
             gateway?: components["schemas"]["GatewaySpec"];
+            /**
+             * @description Tunes the sandbox agent (envd) every member Pool's Pods run. These are process
+             *     flags fixed when a Pod starts, so changing them re-renders the pod template and
+             *     rolls the Env's idle pools — the same way an image or gateway change does.
+             */
+            envd?: components["schemas"]["EnvdSpec"];
             /** @description Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy. */
             updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
             /**
@@ -1664,6 +1683,26 @@ export interface components {
              * @default true
              */
             readOnly: boolean;
+        };
+        /**
+         * @description Settings for the sandbox agent (envd) that serves the E2B API inside every
+         *     sandbox Pod.
+         */
+        EnvdSpec: {
+            /**
+             * @description Write one structured line per API call envd serves to the container's stdout —
+             *     for a command, the command itself, its arguments, working directory and
+             *     environment. It is how a deployment gets a record of what agents actually ran
+             *     inside a sandbox, since a command's output otherwise only travels back to its
+             *     caller. Defaults to on; a GET always reports the value in force.
+             *
+             *     Two costs. A PTY session sends one API call per keystroke and each is logged
+             *     with its whole request, so an interactive terminal produces a lot of lines and
+             *     pays a serialization cost on a hot path. And environment variable VALUES appear
+             *     in the log — anything secret belongs in a Secret the sandbox reads, or in the
+             *     egress credential injection path, not in a plain environment variable.
+             */
+            verbose?: boolean;
         };
         /**
          * @description Egress gateway switch. Enabling it adds a transparent proxy sidecar and an

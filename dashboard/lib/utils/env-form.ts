@@ -82,6 +82,10 @@ export const baseSchema = z.object({
   // sandboxes get the proxy sidecar. What each sandbox may reach, and what gets
   // injected into which request, is chosen per sandbox on the create call.
   gatewayEnabled: z.boolean(),
+  // The sandbox agent's request log: one line per API call it serves, carrying
+  // the command, its arguments and its environment. On unless turned off — the
+  // record of what an agent actually ran is the point.
+  envdVerbose: z.boolean(),
   // Auto-update rollout policy (Env-level default; per-member override lives
   // on the pool sheet). maxUnavailable is a free-form int-or-percent string.
   autoUpdate: z.boolean(),
@@ -114,6 +118,7 @@ export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
       imagePullSecretRows: [],
       imagePullSecretConfigured: false,
       gatewayEnabled: false,
+      envdVerbose: true,
       autoUpdate: true,
       maxUnavailable: undefined,
       volumeRows: [],
@@ -131,6 +136,10 @@ export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
     // even when credentials exist. What exists is carried by the flag below.
     imagePullSecretRows: [],
     imagePullSecretConfigured: overrides?.imagePullSecretConfigured ?? false,
+    // The server resolves the default and always sends an explicit value, so
+    // the `?? true` only covers a response from a server too old to know the
+    // field — which is also the case where it is on.
+    envdVerbose: overrides?.envd?.verbose ?? true,
     gatewayEnabled: overrides?.gateway?.enabled ?? false,
     autoUpdate: overrides?.updateStrategy?.autoUpdate ?? true,
     maxUnavailable: overrides?.updateStrategy?.maxUnavailable,
@@ -180,6 +189,11 @@ function buildOverrides(v: FormValues) {
   // Emitted only when on. An explicit `{enabled: false}` and an omitted key mean
   // the same thing to the server, and omitting keeps the stored CR clean.
   if (v.gatewayEnabled) o.gateway = { enabled: true }
+  // Emitted only when off, for the same reason and in the opposite direction:
+  // verbose defaults to on, so `{verbose: false}` is the only value worth
+  // storing. Emitting an explicit `true` would put the setting on every CR and
+  // roll every pool the first time anyone saved an unrelated edit.
+  if (!v.envdVerbose) o.envd = { verbose: false }
   const us = buildUpdateStrategy(v)
   if (us) o.updateStrategy = us
   // Always emit volumes, including as an empty array. PATCH replaces the whole

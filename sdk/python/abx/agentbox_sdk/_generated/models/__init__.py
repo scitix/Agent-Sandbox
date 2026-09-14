@@ -65,6 +65,7 @@ from .env_overrides_pod_creation_image_policy import EnvOverridesPodCreationImag
 from .env_scaling_group_status import EnvScalingGroupStatus
 from .env_update_strategy import EnvUpdateStrategy
 from .env_volume_mount import EnvVolumeMount
+from .envd_spec import EnvdSpec
 from .error_response import ErrorResponse
 from .exec_command_request import ExecCommandRequest
 from .exec_command_result import ExecCommandResult
@@ -210,6 +211,7 @@ __all__ = (
     "EnvClusterSpec",
     "EnvClusterStatus",
     "EnvCondition",
+    "EnvdSpec",
     "EnvEvent",
     "EnvObservedMember",
     "EnvObservedMemberState",

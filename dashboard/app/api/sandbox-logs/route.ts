@@ -44,7 +44,7 @@
 
 import { createHash, randomBytes } from "crypto"
 import { NextResponse, type NextRequest } from "next/server"
-import { getClusterConfig, listClusters } from "@/lib/cluster-config"
+import { getClusterConfig, listClusters, projectForNamespace } from "@/lib/cluster-config"
 import { requireAuth } from "@/lib/server/bff-auth"
 import type { components } from "@/lib/api/schema"
 
@@ -73,11 +73,21 @@ function getLogConfig(): LogConfig | null {
   }
 }
 
-/** Full request URL, carrying the gateway's project scope when configured. */
-function buildLogServiceUrl(cfg: LogConfig): string {
-  if (!cfg.project) return cfg.url
-  const sep = cfg.url.includes("?") ? "&" : "?"
-  return `${cfg.url}${sep}project=${encodeURIComponent(cfg.project)}`
+/**
+ * Full request URL, carrying the log store this query is scoped to.
+ *
+ * `override` wins over the configured project and over one already present in
+ * the URL — the gateway's documented endpoint form is
+ * `.../logs/download?project=default`, and appending a second `project` is not
+ * a syntax error: the server picks one and answers 200 with whatever that store
+ * holds. Replacing is the only way to be sure which was asked.
+ */
+function buildLogServiceUrl(cfg: LogConfig, override?: string): string {
+  const project = override || cfg.project
+  if (!project) return cfg.url
+  const u = new URL(cfg.url)
+  u.searchParams.set("project", project)
+  return u.toString()
 }
 
 function buildLogServiceHeaders(cfg: LogConfig): Record<string, string> {
@@ -174,8 +184,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // 7. Call the external log service and stream the NDJSON response
+  //
+  // A sharded deployment holds tenant namespaces and platform namespaces in
+  // different stores, so the store is a property of this query rather than of
+  // the deployment. Asking the wrong one returns 200 with no rows.
   const logHeaders = buildLogServiceHeaders(logConfig)
-  const logServiceUrl = buildLogServiceUrl(logConfig)
+  const logServiceUrl = buildLogServiceUrl(
+    logConfig,
+    projectForNamespace(clusterLogs?.splitProject, sandbox.namespace),
+  )
 
   // DEBUG: print equivalent cURL command. Authorization carries the raw token
   // under Bearer auth, so it is redacted — the signed scheme's headers are

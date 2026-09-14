@@ -21,6 +21,16 @@
 // anyone asking "what did that run print" has to be sent. The dashboard has
 // queried it since the log integration landed; this is the same query from the
 // worker, so the API can answer for a sandbox that has already ended.
+//
+// # Every failure here looks the same
+//
+// The service answers a query that matches nothing with 200 and an empty body.
+// So "that pod printed nothing", "this cluster is not scoped into the query",
+// "the wrong log store was asked" and "this cluster ships no container output
+// at all" are one indistinguishable outcome. Nothing in this package can tell
+// them apart, which is why QueryOptions.Scope exists: callers report what they
+// asked alongside what came back, and someone reading the result can see which
+// of the four it was.
 package logclient
 
 import (
@@ -34,6 +44,8 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	neturl "net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +76,39 @@ type Config struct {
 	Timeout time.Duration
 }
 
+// Log-store sharding, for deployments whose central service splits container
+// output across more than one store.
+//
+// Where it is in use, the split is by namespace: tenant workloads land in one
+// store and everything else — platform components, system namespaces — in
+// another. Which clusters do this is deployment configuration
+// (ClusterEntry.Logs.SplitProject), because a cluster that does not shard will
+// return an empty result for the store it does not use, with a 200 and no
+// error to say so.
+const (
+	// TenantNamespacePrefix marks a namespace as belonging to a tenant.
+	TenantNamespacePrefix = "t-"
+	// TenantProject holds tenant namespaces' output on a sharded deployment.
+	TenantProject = "default"
+	// PlatformProject holds everything else on a sharded deployment.
+	PlatformProject = "internal"
+)
+
+// ProjectFor picks the log store to query for one namespace.
+//
+// Returns the empty string when the cluster is not sharded, which leaves the
+// endpoint's own `project` (or Config.Project) in force — the single-store case,
+// and the one every cluster looked like before sharding existed.
+func ProjectFor(splitProject bool, namespace string) string {
+	if !splitProject {
+		return ""
+	}
+	if strings.HasPrefix(namespace, TenantNamespacePrefix) {
+		return TenantProject
+	}
+	return PlatformProject
+}
+
 // Client queries the central log service.
 type Client struct {
 	mu   sync.RWMutex
@@ -91,6 +136,26 @@ func (c *Client) SetConfig(cfg Config) {
 	}
 }
 
+// DefaultProject returns the log store used when a query names none. Callers
+// report it alongside an empty result, which is otherwise indistinguishable
+// from having asked the wrong store.
+func (c *Client) DefaultProject() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.cfg.Project != "" {
+		return c.cfg.Project
+	}
+	// The documented endpoint form carries it in the query string, so reading
+	// only Config.Project would report "none" for a deployment that has one.
+	if u, err := neturl.Parse(c.cfg.URL); err == nil {
+		return u.Query().Get("project")
+	}
+	return ""
+}
+
 // Ready reports whether the service is configured.
 func (c *Client) Ready() bool {
 	if c == nil {
@@ -101,18 +166,51 @@ func (c *Client) Ready() bool {
 	return c.cfg.URL != "" && c.cfg.Token != ""
 }
 
-// Query returns the lines the named Pod produced within [start, end].
+// QueryOptions addresses one central-log query.
+type QueryOptions struct {
+	// PodName is the pod whose output is wanted.
+	PodName string
+	// Filters scope the query to one cluster (region / cluster labels). They are
+	// not optional in practice: pod names are unique per cluster, not globally,
+	// so an unscoped query can return another cluster's output for the same name.
+	Filters map[string]string
+	// Project overrides the configured log store for this query. Empty uses
+	// Config.Project. A deployment that shards its store by namespace needs a
+	// different value per query, not per process — see ProjectFor.
+	Project string
+	// Start and End bound the query window.
+	Start, End time.Time
+	// Limit caps the returned entries; 0 means no cap.
+	Limit int
+}
+
+// Scope describes, in one line, what a query actually asked for.
 //
-// filters scope the query to one cluster (region / cluster labels). They are
-// not optional in practice: pod names are unique per cluster, not globally, so
-// an unscoped query can return another cluster's output for the same name.
-func (c *Client) Query(
-	ctx context.Context,
-	podName string,
-	filters map[string]string,
-	start, end time.Time,
-	limit int,
-) ([]Entry, error) {
+// A query that matches nothing returns 200 with an empty body, so "no rows" and
+// "you asked the wrong question" are indistinguishable at the transport. The
+// caller has to be able to show what it asked, or every empty result turns into
+// the same unanswerable ticket.
+func (o QueryOptions) Scope(defaultProject string) string {
+	project := o.Project
+	if project == "" {
+		project = defaultProject
+	}
+	if project == "" {
+		project = "(none)"
+	}
+	filters := make([]string, 0, len(o.Filters)+1)
+	for k, v := range o.Filters {
+		filters = append(filters, k+"="+v)
+	}
+	sort.Strings(filters)
+	filters = append(filters, "pod_name="+o.PodName)
+	return fmt.Sprintf("project=%s filters=[%s] window=%s..%s",
+		project, strings.Join(filters, " "),
+		o.Start.UTC().Format(time.RFC3339), o.End.UTC().Format(time.RFC3339))
+}
+
+// Query returns the lines the named Pod produced within the requested window.
+func (c *Client) Query(ctx context.Context, opts QueryOptions) ([]Entry, error) {
 	c.mu.RLock()
 	cfg := c.cfg
 	c.mu.RUnlock()
@@ -122,9 +220,9 @@ func (c *Client) Query(
 
 	body := map[string]any{
 		"kind":       "container_stdout",
-		"filters":    buildFilters(podName, filters),
-		"start_time": start.UnixMilli(),
-		"end_time":   end.UnixMilli(),
+		"filters":    buildFilters(opts.PodName, opts.Filters),
+		"start_time": opts.Start.UnixMilli(),
+		"end_time":   opts.End.UnixMilli(),
 		"sort_order": "asc",
 	}
 	raw, err := json.Marshal(body)
@@ -132,13 +230,9 @@ func (c *Client) Query(
 		return nil, err
 	}
 
-	url := cfg.URL
-	if cfg.Project != "" {
-		sep := "?"
-		if strings.Contains(url, "?") {
-			sep = "&"
-		}
-		url += sep + "project=" + cfg.Project
+	url, err := withProject(cfg.URL, opts.Project, cfg.Project)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(raw)))
@@ -163,7 +257,32 @@ func (c *Client) Query(
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		return nil, fmt.Errorf("log service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
-	return decodeNDJSON(resp.Body, limit), nil
+	return decodeNDJSON(resp.Body, opts.Limit), nil
+}
+
+// withProject returns endpoint with its `project` query parameter resolved.
+//
+// The endpoint may already carry one — the gateway's own documented form is
+// `.../logs/download?project=default` — so an override has to replace it rather
+// than append a second copy. Two `project` values in one URL is not a syntax
+// error; it silently resolves to whichever the server reads first, which is the
+// kind of thing that only shows up as an empty result.
+func withProject(endpoint, override, fallback string) (string, error) {
+	project := override
+	if project == "" {
+		project = fallback
+	}
+	if project == "" {
+		return endpoint, nil
+	}
+	u, err := neturl.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse log service url: %w", err)
+	}
+	q := u.Query()
+	q.Set("project", project)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // buildFilters wraps every value in the service's equality-matcher shape.

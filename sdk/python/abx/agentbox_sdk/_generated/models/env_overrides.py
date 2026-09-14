@@ -29,6 +29,7 @@ from typing import cast
 if TYPE_CHECKING:
   from ..models.env_update_strategy import EnvUpdateStrategy
   from ..models.env_volume_mount import EnvVolumeMount
+  from ..models.envd_spec import EnvdSpec
   from ..models.gateway_spec import GatewaySpec
   from ..models.image_pull_secret_input import ImagePullSecretInput
 
@@ -74,6 +75,8 @@ class EnvOverrides:
             gateway (GatewaySpec | Unset): Egress gateway switch. Enabling it adds a transparent proxy sidecar and an
                 iptables redirect to every sandbox Pod of the environment; the rules it
                 enforces are supplied per sandbox on the create call.
+            envd (EnvdSpec | Unset): Settings for the sandbox agent (envd) that serves the E2B API inside every
+                sandbox Pod.
             update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
                 Pod identity (Template edit, image / gateway override) changes. Rollout mode is always Recreate: stale idle Pods
                 are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
@@ -94,6 +97,7 @@ class EnvOverrides:
     image_pull_secret: ImagePullSecretInput | Unset = UNSET
     image_pull_secret_configured: bool | Unset = UNSET
     gateway: GatewaySpec | Unset = UNSET
+    envd: EnvdSpec | Unset = UNSET
     update_strategy: EnvUpdateStrategy | Unset = UNSET
     volumes: list[EnvVolumeMount] | Unset = UNSET
 
@@ -104,6 +108,7 @@ class EnvOverrides:
     def to_dict(self) -> dict[str, Any]:
         from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
         from ..models.env_volume_mount import EnvVolumeMount # noqa: PLC0415
+        from ..models.envd_spec import EnvdSpec # noqa: PLC0415
         from ..models.gateway_spec import GatewaySpec # noqa: PLC0415
         from ..models.image_pull_secret_input import ImagePullSecretInput # noqa: PLC0415
         image = self.image
@@ -126,6 +131,10 @@ class EnvOverrides:
         gateway: dict[str, Any] | Unset = UNSET
         if not isinstance(self.gateway, Unset):
             gateway = self.gateway.to_dict()
+
+        envd: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.envd, Unset):
+            envd = self.envd.to_dict()
 
         update_strategy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.update_strategy, Unset):
@@ -159,6 +168,8 @@ class EnvOverrides:
             field_dict["imagePullSecretConfigured"] = image_pull_secret_configured
         if gateway is not UNSET:
             field_dict["gateway"] = gateway
+        if envd is not UNSET:
+            field_dict["envd"] = envd
         if update_strategy is not UNSET:
             field_dict["updateStrategy"] = update_strategy
         if volumes is not UNSET:
@@ -172,6 +183,7 @@ class EnvOverrides:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
         from ..models.env_volume_mount import EnvVolumeMount # noqa: PLC0415
+        from ..models.envd_spec import EnvdSpec # noqa: PLC0415
         from ..models.gateway_spec import GatewaySpec # noqa: PLC0415
         from ..models.image_pull_secret_input import ImagePullSecretInput # noqa: PLC0415
         d = dict(src_dict)
@@ -213,6 +225,16 @@ class EnvOverrides:
 
 
 
+        _envd = d.pop("envd", UNSET)
+        envd: EnvdSpec | Unset
+        if isinstance(_envd,  Unset):
+            envd = UNSET
+        else:
+            envd = EnvdSpec.from_dict(_envd)
+
+
+
+
         _update_strategy = d.pop("updateStrategy", UNSET)
         update_strategy: EnvUpdateStrategy | Unset
         if isinstance(_update_strategy,  Unset):
@@ -243,6 +265,7 @@ class EnvOverrides:
             image_pull_secret=image_pull_secret,
             image_pull_secret_configured=image_pull_secret_configured,
             gateway=gateway,
+            envd=envd,
             update_strategy=update_strategy,
             volumes=volumes,
         )

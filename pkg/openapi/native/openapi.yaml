@@ -517,7 +517,19 @@ components:
           description: "Total byte size of all log entries before any truncation."
         source:
           type: string
-          enum: [live, cached, runtime]
+          enum: [live, cached, runtime, central]
+          description: |
+            Where the lines came from. `live` reads the sandbox's Pod through the Kubernetes log API.
+            `central` is the central log service, used once the sandbox has ended and its Pod was
+            recycled; only what the log pipeline collected is available there. `runtime` is a runtime's
+            own log file, read via exec.
+        scope:
+          type: string
+          description: |
+            For source=central: what was actually asked of the central log service — log store, filters
+            and time window. An empty result and a mis-scoped query are the same 200 with no rows over
+            the wire, so this is the only way to tell "the sandbox printed nothing" from "nobody was
+            asked about it".
         runtimeName:
           type: string
           description: "When source=runtime, the runtime name whose log file was read"
@@ -1337,6 +1349,12 @@ components:
             injected into which request, belong to that one sandbox and arrive with it.
             Changing this switch changes the Pod spec and therefore rolls the Env's
             pools.
+        envd:
+          $ref: "#/components/schemas/EnvdSpec"
+          description: |
+            Tunes the sandbox agent (envd) every member Pool's Pods run. These are process
+            flags fixed when a Pod starts, so changing them re-renders the pod template and
+            rolls the Env's idle pools — the same way an image or gateway change does.
         updateStrategy:
           $ref: "#/components/schemas/EnvUpdateStrategy"
           description: "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy."
@@ -1377,6 +1395,28 @@ components:
           type: boolean
           default: true
           description: "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out."
+      additionalProperties: false
+
+    EnvdSpec:
+      type: object
+      description: |
+        Settings for the sandbox agent (envd) that serves the E2B API inside every
+        sandbox Pod.
+      properties:
+        verbose:
+          type: boolean
+          description: |
+            Write one structured line per API call envd serves to the container's stdout —
+            for a command, the command itself, its arguments, working directory and
+            environment. It is how a deployment gets a record of what agents actually ran
+            inside a sandbox, since a command's output otherwise only travels back to its
+            caller. Defaults to on; a GET always reports the value in force.
+
+            Two costs. A PTY session sends one API call per keystroke and each is logged
+            with its whole request, so an interactive terminal produces a lot of lines and
+            pays a serialization cost on a hot path. And environment variable VALUES appear
+            in the log — anything secret belongs in a Secret the sandbox reads, or in the
+            egress credential injection path, not in a plain environment variable.
       additionalProperties: false
 
     GatewaySpec:

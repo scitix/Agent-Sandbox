@@ -132,6 +132,10 @@ type EnvOverridesSpec struct {
 	// +optional
 	Gateway *GatewaySpec `json:"gateway,omitempty"`
 
+	// Envd tunes the sandbox agent every member Pool runs.
+	// +optional
+	Envd *EnvdSpec `json:"envd,omitempty"`
+
 	// UpdateStrategy is the Env-wide default rollout policy: when a member's
 	// effective idle-Pod identity changes (Template edit, image / gateway
 	// override), whether and how fast its idle Pods are rebuilt. Per-member
@@ -209,6 +213,47 @@ type EnvVolumeMount struct {
 //
 // Never dereference ReadOnly directly.
 func (v EnvVolumeMount) IsReadOnly() bool { return v.ReadOnly == nil || *v.ReadOnly }
+
+// EnvdSpec tunes the sandbox agent (envd) that every member Pool's Pods run.
+//
+// These are process flags, decided when the Pod starts, so a change here
+// re-renders the pod template and rolls the Env's idle Pods — the same way an
+// image or gateway change does.
+type EnvdSpec struct {
+	// Verbose makes envd write one structured line per API call it serves to
+	// the container's stdout: for a command, that is the command itself, its
+	// arguments, working directory and environment. It is how a deployment
+	// gets a record of what agents actually ran inside a sandbox, since the
+	// output of a command otherwise only ever travels back to its caller.
+	//
+	// nil means enabled. The record is the point; a deployment that does not
+	// want it says so explicitly.
+	//
+	// Two costs, both real:
+	//   - A PTY session sends one API call per keystroke and each one is
+	//     logged with its whole request, so an interactive terminal can
+	//     produce a lot of lines and pay a serialization cost on a hot path.
+	//   - Environment variable VALUES appear in the log. Anything secret
+	//     belongs in a Secret the sandbox reads, or in the egress credential
+	//     injection path, not in a plain environment variable.
+	//
+	// Requires an envd image new enough to read the flag; older images ignore
+	// it and log nothing either way.
+	// +optional
+	Verbose *bool `json:"verbose,omitempty"`
+}
+
+// VerboseEnabled is the only sanctioned way to read EnvdSpec.Verbose.
+//
+// A nil spec and a nil field both mean enabled, so every caller has to agree
+// on that default or the console will show a switch that does not match what
+// the Pod is running.
+func (e *EnvdSpec) VerboseEnabled() bool {
+	if e == nil || e.Verbose == nil {
+		return true
+	}
+	return *e.Verbose
+}
 
 // EnvUpdateStrategy controls automatic rollout of member Pools when their
 // rendered idle-Pod identity (revision hash) changes. The only rollout mode is

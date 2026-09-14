@@ -17,19 +17,28 @@ unpatched envd: it reintroduces the bug below.
    `git -C <infra> diff packages/envd/... > patches/000X-....patch`.
    Regenerating out of order (or from a pristine checkout) produces a patch that
    duplicates an earlier one's changes and cannot be applied after it.
-3. Rebuild + run the envd unit tests (`go test ./internal/services/process/handler/`).
+3. Rebuild + run the envd unit tests (`go test ./internal/...`). Two
+   filesystem tests need `bindfs` on the host and fail without it; that is an
+   environment gap, not a regression.
+4. Bump `.github/workflows/build-envd.yml`'s `infra_ref` default to the same
+   SHA. The workflow and `build-envd.sh` are checked against each other by
+   nothing but this step.
 
 ## 0001-skip-oom-nice-wrapper-when-not-firecracker.patch
 
-**Base:** envd 0.7.0 (`8a3f69da6f822c2de2b310dd1076d2c309eef919`)
+**Base:** envd 0.9.0 (`0c2108b1b76a66d18cf095d51fd7c51c703648ae`)
 
-> Applies unchanged from 0.6.13 through 0.7.0 (one line of offset in `main.go`).
-> Upstream reworked the wrapper so ionice/nice are looked up with
-> `exec.LookPath` and skipped when absent — but the `oom_score_adj` write is
-> still unconditional, which is the half that breaks under Kubernetes, and
-> upstream still has no not-Firecracker branch. The patch keeps upstream's
-> improvement in the Firecracker branch and only bypasses the whole wrapper in
-> not-FC mode.
+> Carried unchanged in substance from 0.6.13 onward. Upstream reworked the
+> wrapper so ionice/nice are looked up with `exec.LookPath` and skipped when
+> absent — but the `oom_score_adj` write is still unconditional, which is the
+> half that breaks under Kubernetes, and upstream still has no not-Firecracker
+> branch. The patch keeps upstream's improvement in the Firecracker branch and
+> only bypasses the whole wrapper in not-FC mode.
+>
+> Two hunks were re-made by hand for 0.9.0: `main.go` (upstream moved the
+> default user to `execcontext.BuiltinDefaultUser`) and
+> `internal/execcontext/context.go` (upstream added a `UserDelivered` field,
+> so `IsNotFC` goes after it).
 
 **Problem.** Before exec-ing each command, envd wraps it as
 `/bin/sh -c "echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n N -- CMD"`.
@@ -58,7 +67,7 @@ upstreaming — gating the wrapper on `!isNotFC` is a legitimate change.
 
 ## 0002-await-init-gate.patch
 
-**Base:** envd 0.7.0 (`8a3f69da6f822c2de2b310dd1076d2c309eef919`), **with 0001
+**Base:** envd 0.9.0 (`0c2108b1b76a66d18cf095d51fd7c51c703648ae`), **with 0001
 already applied**.
 
 > Patches are applied in filename order onto one tree, so each is a diff against

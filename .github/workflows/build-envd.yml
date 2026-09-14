@@ -28,16 +28,26 @@ on:
       infra_ref:
         description: "e2b-infra git ref to checkout (branch, tag, or commit SHA)"
         required: false
-        # Pinned to envd 0.7.0. MUST match build-envd.sh's INFRA_REF and the
-        # base the patches in installer/runtimes/envd/patches/ were generated
-        # against — the apply step below fails the build if they drift.
-        default: "8a3f69da6f822c2de2b310dd1076d2c309eef919"
+        # Pinned to the `chore(main): release envd 0.9.0` commit. MUST match
+        # build-envd.sh's INFRA_REF and the base the patches in
+        # installer/runtimes/envd/patches/ were generated against — the apply
+        # step below fails the build if they drift.
+        default: "0c2108b1b76a66d18cf095d51fd7c51c703648ae"
       tini_version:
         description: "tini version to package (e.g. v0.19.0)"
         required: false
         default: "v0.19.0"
       tini_image_tag:
         description: "tag for the tini image; defaults to <tini_version>-static"
+        required: false
+        default: ""
+      envd_image_suffix:
+        description: >-
+          Suffix appended to the envd image tag (e.g. "-2"). The image carries our
+          entrypoint as well as the binary, and that script changes independently of
+          upstream's version — rebuilding at an unchanged infra_ref would otherwise
+          overwrite an existing tag in place, and templates pull IfNotPresent. Leave
+          empty when the envd version itself moved.
         required: false
         default: ""
 
@@ -64,7 +74,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: e2b-dev/infra
-          ref: ${{ github.event.inputs.infra_ref || '8a3f69da6f822c2de2b310dd1076d2c309eef919' }}
+          ref: ${{ github.event.inputs.infra_ref || '0c2108b1b76a66d18cf095d51fd7c51c703648ae' }}
           path: e2b-infra
 
       # Apply our carried-forward envd patches BEFORE building. Without this the
@@ -99,6 +109,7 @@ jobs:
           fi
           ENVD_VERSION=$(./bin/envd --version | awk '{print $NF}')
           echo "envd_version=${ENVD_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "envd_image_tag=${ENVD_VERSION}${{ github.event.inputs.envd_image_suffix }}" >> "$GITHUB_OUTPUT"
           echo "Detected envd version: ${ENVD_VERSION}"
           cp bin/envd ${{ github.workspace }}/installer/runtimes/envd/envd
 
@@ -122,7 +133,7 @@ jobs:
           build-args: |
             ENVD_VERSION=${{ steps.build.outputs.envd_version }}
           tags: |
-            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/agent-sandbox-envd:${{ steps.build.outputs.envd_version }}
+            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/agent-sandbox-envd:${{ steps.build.outputs.envd_image_tag }}
             ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/agent-sandbox-envd:latest
           cache-from: type=gha,scope=envd
           cache-to: type=gha,mode=max,scope=envd

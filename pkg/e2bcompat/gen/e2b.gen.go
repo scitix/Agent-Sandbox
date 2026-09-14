@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	AccessTokenAuthScopes        = "AccessTokenAuth.Scopes"
 	AdminApiKeyAuthScopes        = "AdminApiKeyAuth.Scopes"
+	AdminJWTAuthScopes           = "AdminJWTAuth.Scopes"
 	AdminTeamAuthScopes          = "AdminTeamAuth.Scopes"
 	ApiKeyAuthScopes             = "ApiKeyAuth.Scopes"
 	AuthProviderBearerAuthScopes = "AuthProviderBearerAuth.Scopes"
@@ -134,11 +134,12 @@ func (e LogsSource) Valid() bool {
 
 // Defines values for NodeStatus.
 const (
-	NodeStatusConnecting NodeStatus = "connecting"
-	NodeStatusDraining   NodeStatus = "draining"
-	NodeStatusReady      NodeStatus = "ready"
-	NodeStatusStandby    NodeStatus = "standby"
-	NodeStatusUnhealthy  NodeStatus = "unhealthy"
+	NodeStatusConnecting   NodeStatus = "connecting"
+	NodeStatusDraining     NodeStatus = "draining"
+	NodeStatusReady        NodeStatus = "ready"
+	NodeStatusShuttingDown NodeStatus = "shutting_down"
+	NodeStatusStandby      NodeStatus = "standby"
+	NodeStatusUnhealthy    NodeStatus = "unhealthy"
 )
 
 // Valid indicates whether the value is a known member of the NodeStatus enum.
@@ -149,6 +150,8 @@ func (e NodeStatus) Valid() bool {
 	case NodeStatusDraining:
 		return true
 	case NodeStatusReady:
+		return true
+	case NodeStatusShuttingDown:
 		return true
 	case NodeStatusStandby:
 		return true
@@ -353,22 +356,6 @@ type ConnectSandbox struct {
 	Timeout int32 `json:"timeout"`
 }
 
-// CreatedAccessToken defines model for CreatedAccessToken.
-type CreatedAccessToken struct {
-	// CreatedAt Timestamp of access token creation
-	CreatedAt time.Time `json:"createdAt"`
-
-	// Id Identifier of the access token
-	Id   openapi_types.UUID       `json:"id"`
-	Mask IdentifierMaskingDetails `json:"mask"`
-
-	// Name Name of the access token
-	Name string `json:"name"`
-
-	// Token The fully created access token
-	Token string `json:"token"`
-}
-
 // CreatedTeamAPIKey defines model for CreatedTeamAPIKey.
 type CreatedTeamAPIKey struct {
 	// CreatedAt Timestamp of API key creation
@@ -566,11 +553,8 @@ type Mcp map[string]interface{}
 // MemoryMB Memory for the sandbox in MiB
 type MemoryMB = int32
 
-// NewAccessToken defines model for NewAccessToken.
-type NewAccessToken struct {
-	// Name Name of the access token
-	Name string `json:"name"`
-}
+// MinFreeDiskMb Requested minimum free space after the template's build steps, in MiB. Omit to use the team's default. Set to 0 to request no minimum free-disk growth. The filesystem is never shrunk, including inherited or already-larger filesystems. Growth is best effort, so filesystem metadata can leave the available space slightly below the requested minimum.
+type MinFreeDiskMb = int32
 
 // NewSandbox defines model for NewSandbox.
 type NewSandbox struct {
@@ -651,6 +635,9 @@ type Node struct {
 	// Metrics Node metrics
 	Metrics NodeMetrics `json:"metrics"`
 
+	// OutstandingWork Observed work holds on the node. Omitted when unknown; zero does not authorize deletion.
+	OutstandingWork *uint64 `json:"outstandingWork,omitempty"`
+
 	// SandboxCount Number of sandboxes running on the node
 	SandboxCount uint32 `json:"sandboxCount"`
 
@@ -661,7 +648,6 @@ type Node struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 
@@ -693,6 +679,9 @@ type NodeDetail struct {
 	// Metrics Node metrics
 	Metrics NodeMetrics `json:"metrics"`
 
+	// OutstandingWork Observed work holds on the node. Omitted when unknown; zero does not authorize deletion.
+	OutstandingWork *uint64 `json:"outstandingWork,omitempty"`
+
 	// SandboxCount Number of sandboxes running on the node
 	SandboxCount uint32 `json:"sandboxCount"`
 
@@ -700,7 +689,6 @@ type NodeDetail struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 
@@ -748,7 +736,6 @@ type NodeMetrics struct {
 }
 
 // NodeStatus Status of the node.
-// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
 // - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 type NodeStatus string
 
@@ -758,7 +745,6 @@ type NodeStatusChange struct {
 	ClusterID *openapi_types.UUID `json:"clusterID,omitempty"`
 
 	// Status Status of the node.
-	// - draining: the node is bound to be shut down. It will not accept new sandboxes and will stop once all existing sandboxes are done.
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
 	Status NodeStatus `json:"status"`
 }
@@ -777,6 +763,69 @@ type ResumedSandbox struct {
 
 	// Timeout Time to live for the sandbox in seconds.
 	Timeout *int32 `json:"timeout,omitempty"`
+}
+
+// Rig An orchestrator node pool backed by one cloud scaling group
+type Rig struct {
+	// CapacityCurrent Number of instances currently attached to the rig
+	CapacityCurrent int32 `json:"capacityCurrent"`
+
+	// CapacityDesired Desired number of instances in the rig
+	CapacityDesired int32 `json:"capacityDesired"`
+
+	// CapacityMax Maximum capacity enforced on the rig's scaling group. Omitted when nothing enforces bounds (GCP MIG without an active autoscaler).
+	CapacityMax *int32 `json:"capacityMax,omitempty"`
+
+	// CapacityMin Minimum capacity enforced on the rig's scaling group. Omitted when nothing enforces bounds (GCP MIG without an active autoscaler).
+	CapacityMin *int32 `json:"capacityMin,omitempty"`
+
+	// Id Rig identifier (e.g. "default")
+	Id string `json:"id"`
+
+	// Provider Cloud provider backing the rig ("aws" or "gcp")
+	Provider string `json:"provider"`
+
+	// ResourceID Canonical cloud resource ID of the scaling group backing the rig (ARN on AWS, self-link on GCP)
+	ResourceID string `json:"resourceID"`
+}
+
+// RigCapacityChange Desired capacity to set on the rig's scaling group
+type RigCapacityChange struct {
+	// Desired Absolute desired number of instances in the rig
+	Desired int32 `json:"desired"`
+}
+
+// RigError Scaling error on the rig's scaling group, e.g. a failed instance creation due to resource exhaustion
+type RigError struct {
+	// Action Action being performed when the error occurred (e.g. CREATING)
+	Action *string `json:"action,omitempty"`
+
+	// Code Provider-specific error code (e.g. ZONE_RESOURCE_POOL_EXHAUSTED, Failed)
+	Code string `json:"code"`
+
+	// Instance Instance the error relates to, if any
+	Instance *string `json:"instance,omitempty"`
+
+	// Message Human-readable error message
+	Message string `json:"message"`
+
+	// Timestamp When the error occurred
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// RigInstance An instance attached to a rig's scaling group
+type RigInstance struct {
+	// CreatedAt When the provider created the instance. Omitted while the instance is transitioning.
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
+
+	// Id Provider instance ID (EC2 instance ID on AWS, instance name on GCP), also the node ID the orchestrator reports
+	Id string `json:"id"`
+
+	// Terminating The instance is on its way out of the group and can never become healthy again
+	Terminating bool `json:"terminating"`
+
+	// Transitioning The provider is creating, deleting, recreating or otherwise mutating the instance
+	Transitioning bool `json:"transitioning"`
 }
 
 // Sandbox defines model for Sandbox.
@@ -1008,10 +1057,13 @@ type SandboxNetworkConfig struct {
 	// EgressProxy SOCKS5 proxy for sandbox egress. Outbound TCP is tunneled through the proxy after allow/deny filtering; the sandbox is unaware. Domain-matched flows use remote DNS (ATYP=domain).
 	EgressProxy *SandboxEgressProxyConfig `json:"egressProxy,omitempty"`
 
+	// HttpsPorts Sandbox ports that serve HTTPS rather than plaintext HTTP. Affects how the proxy reaches the service inside the sandbox; the public URL is HTTPS either way. Certificates are not verified, so self-signed ones work. The envd port (49983) cannot be listed.
+	HttpsPorts *[]uint32 `json:"httpsPorts,omitempty"`
+
 	// MaskRequestHost Specify host mask which will be used for all sandbox requests
 	MaskRequestHost *string `json:"maskRequestHost,omitempty"`
 
-	// Rules Per-domain transform rules applied to matching egress HTTP/HTTPS requests. Keys are domains (e.g. "api.example.com", "example.com"). A domain listed here is not automatically allowed - use allowOut to permit the traffic.
+	// Rules Per-domain transform rules applied to matching outbound HTTPS requests. Keys may be exact DNS names (for example, "api.example.com") or a leading wildcard (for example, "*.example.com"), and are normalized to lowercase on write. Wildcards match subdomains at any depth but not the apex domain; a bare "*" is invalid. Exact rules take precedence, followed by the longest matching wildcard suffix, and matching rule sets are not merged. Broad wildcards such as "*.com" are allowed and may expose transformed credentials to every matching destination the sandbox contacts. Rules do not grant network access; configure allowOut separately to permit the destination.
 	Rules *map[string][]SandboxNetworkRule `json:"rules,omitempty"`
 }
 
@@ -1041,7 +1093,7 @@ type SandboxNetworkUpdateConfig struct {
 	// EgressProxy SOCKS5 proxy for sandbox egress. Outbound TCP is tunneled through the proxy after allow/deny filtering; the sandbox is unaware. Domain-matched flows use remote DNS (ATYP=domain).
 	EgressProxy *SandboxEgressProxyConfig `json:"egressProxy,omitempty"`
 
-	// Rules Per-domain transform rules. Replaces all existing rules when provided.
+	// Rules Per-domain transform rules applied to matching outbound HTTPS requests. Replaces all existing rules when provided. Keys may be exact DNS names or a single leading wildcard (for example, "*.example.com"), and are normalized to lowercase on write. Wildcards match subdomains at any depth but not the apex domain; a bare "*" is invalid. Exact rules take precedence, followed by the longest matching wildcard suffix, and matching rule sets are not merged. Broad wildcards such as "*.com" are allowed and may expose transformed credentials to every matching destination the sandbox contacts. Rules do not grant network access; configure allowOut separately to permit the destination.
 	Rules *map[string][]SandboxNetworkRule `json:"rules,omitempty"`
 }
 
@@ -1364,6 +1416,9 @@ type TemplateBuildRequestV3 struct {
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
 
+	// MinFreeDiskMb Requested minimum free space after the template's build steps, in MiB. Omit to use the team's default. Set to 0 to request no minimum free-disk growth. The filesystem is never shrunk, including inherited or already-larger filesystems. Growth is best effort, so filesystem metadata can leave the available space slightly below the requested minimum.
+	MinFreeDiskMb *MinFreeDiskMb `json:"minFreeDiskMb,omitempty"`
+
 	// Name Name of the template. Can include a tag with colon separator (e.g. "my-template" or "my-template:v1"). If tag is included, it will be treated as if the tag was provided in the tags array.
 	Name *string `json:"name,omitempty"`
 
@@ -1568,14 +1623,14 @@ type VolumeAndToken struct {
 	VolumeID string `json:"volumeID"`
 }
 
-// AccessTokenID defines model for accessTokenID.
-type AccessTokenID = string
-
 // ApiKeyID defines model for apiKeyID.
 type ApiKeyID = string
 
 // BuildID defines model for buildID.
 type BuildID = string
+
+// ClusterID defines model for clusterID.
+type ClusterID = openapi_types.UUID
 
 // NodeID defines model for nodeID.
 type NodeID = string
@@ -1585,6 +1640,9 @@ type PaginationLimit = int32
 
 // PaginationNextToken defines model for paginationNextToken.
 type PaginationNextToken = string
+
+// RigID defines model for rigID.
+type RigID = string
 
 // SandboxID defines model for sandboxID.
 type SandboxID = string
@@ -1616,14 +1674,14 @@ type N404 = Error
 // N409 defines model for 409.
 type N409 = Error
 
-// N410 defines model for 410.
-type N410 = Error
-
 // N429 defines model for 429.
 type N429 = Error
 
 // N500 defines model for 500.
 type N500 = Error
+
+// N501 defines model for 501.
+type N501 = Error
 
 // N502 defines model for 502.
 type N502 = Error
@@ -1633,6 +1691,18 @@ type N503 = Error
 
 // N504 defines model for 504.
 type N504 = Error
+
+// DeleteClustersClusterIDRigsInstancesInstanceIDParams defines parameters for DeleteClustersClusterIDRigsInstancesInstanceID.
+type DeleteClustersClusterIDRigsInstancesInstanceIDParams struct {
+	// DecrementDesired When true, desired capacity is decremented (rig shrinks); when false, the scaling group launches a replacement instance
+	DecrementDesired bool `form:"decrementDesired" json:"decrementDesired"`
+}
+
+// GetClustersClusterIDRigsRigIDErrorsParams defines parameters for GetClustersClusterIDRigsRigIDErrors.
+type GetClustersClusterIDRigsRigIDErrorsParams struct {
+	// Limit Maximum number of errors to return
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // GetNodesParams defines parameters for GetNodes.
 type GetNodesParams struct {
@@ -1808,9 +1878,6 @@ type GetV2TemplatesParams struct {
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
-// PostAccessTokensJSONRequestBody defines body for PostAccessTokens for application/json ContentType.
-type PostAccessTokensJSONRequestBody = NewAccessToken
-
 // PostAdminTeamsTeamIDApiKeysJSONRequestBody defines body for PostAdminTeamsTeamIDApiKeys for application/json ContentType.
 type PostAdminTeamsTeamIDApiKeysJSONRequestBody = NewTeamAPIKey
 
@@ -1819,6 +1886,9 @@ type PostApiKeysJSONRequestBody = NewTeamAPIKey
 
 // PatchApiKeysApiKeyIDJSONRequestBody defines body for PatchApiKeysApiKeyID for application/json ContentType.
 type PatchApiKeysApiKeyIDJSONRequestBody = UpdateTeamAPIKey
+
+// PutClustersClusterIDRigsRigIDCapacityJSONRequestBody defines body for PutClustersClusterIDRigsRigIDCapacity for application/json ContentType.
+type PutClustersClusterIDRigsRigIDCapacityJSONRequestBody = RigCapacityChange
 
 // PostNodesNodeIDJSONRequestBody defines body for PostNodesNodeID for application/json ContentType.
 type PostNodesNodeIDJSONRequestBody = NodeStatusChange
@@ -2007,12 +2077,6 @@ func (t *FromImageRegistry) UnmarshalJSON(b []byte) error {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Create access token
-	// (POST /access-tokens)
-	PostAccessTokens(c *gin.Context)
-	// Delete access token
-	// (DELETE /access-tokens/{accessTokenID})
-	DeleteAccessTokensAccessTokenID(c *gin.Context, accessTokenID AccessTokenID)
 	// Count running sandboxes by team
 	// (GET /admin/sandboxes/running-counts)
 	GetAdminSandboxesRunningCounts(c *gin.Context)
@@ -2040,6 +2104,21 @@ type ServerInterface interface {
 	// Update team API key
 	// (PATCH /api-keys/{apiKeyID})
 	PatchApiKeysApiKeyID(c *gin.Context, apiKeyID ApiKeyID)
+	// List rigs of a cluster
+	// (GET /clusters/{clusterID}/rigs)
+	GetClustersClusterIDRigs(c *gin.Context, clusterID ClusterID)
+	// Terminate an instance of a rig
+	// (DELETE /clusters/{clusterID}/rigs/instances/{instanceID})
+	DeleteClustersClusterIDRigsInstancesInstanceID(c *gin.Context, clusterID ClusterID, instanceID string, params DeleteClustersClusterIDRigsInstancesInstanceIDParams)
+	// Set the capacity of a rig
+	// (PUT /clusters/{clusterID}/rigs/{rigID}/capacity)
+	PutClustersClusterIDRigsRigIDCapacity(c *gin.Context, clusterID ClusterID, rigID RigID)
+	// List recent scaling errors of a rig
+	// (GET /clusters/{clusterID}/rigs/{rigID}/errors)
+	GetClustersClusterIDRigsRigIDErrors(c *gin.Context, clusterID ClusterID, rigID RigID, params GetClustersClusterIDRigsRigIDErrorsParams)
+	// List the instances attached to a rig
+	// (GET /clusters/{clusterID}/rigs/{rigID}/instances)
+	GetClustersClusterIDRigsRigIDInstances(c *gin.Context, clusterID ClusterID, rigID RigID)
 	// Health check
 	// (GET /health)
 	GetHealth(c *gin.Context)
@@ -2210,51 +2289,12 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(c *gin.Context)
 
-// PostAccessTokens operation middleware
-func (siw *ServerInterfaceWrapper) PostAccessTokens(c *gin.Context) {
-
-	c.Set(AuthProviderBearerAuthScopes, []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostAccessTokens(c)
-}
-
-// DeleteAccessTokensAccessTokenID operation middleware
-func (siw *ServerInterfaceWrapper) DeleteAccessTokensAccessTokenID(c *gin.Context) {
-
-	var err error
-
-	// ------------- Path parameter "accessTokenID" -------------
-	var accessTokenID AccessTokenID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "accessTokenID", c.Param("accessTokenID"), &accessTokenID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter accessTokenID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	c.Set(AuthProviderBearerAuthScopes, []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.DeleteAccessTokensAccessTokenID(c, accessTokenID)
-}
-
 // GetAdminSandboxesRunningCounts operation middleware
 func (siw *ServerInterfaceWrapper) GetAdminSandboxesRunningCounts(c *gin.Context) {
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2281,6 +2321,8 @@ func (siw *ServerInterfaceWrapper) PostAdminTeamsTeamIDApiKeys(c *gin.Context) {
 	}
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2317,6 +2359,8 @@ func (siw *ServerInterfaceWrapper) DeleteAdminTeamsTeamIDApiKeysApiKeyID(c *gin.
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2342,6 +2386,8 @@ func (siw *ServerInterfaceWrapper) PostAdminTeamsTeamIDBuildsCancel(c *gin.Conte
 	}
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
@@ -2369,6 +2415,8 @@ func (siw *ServerInterfaceWrapper) PostAdminTeamsTeamIDSandboxesKill(c *gin.Cont
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2387,6 +2435,10 @@ func (siw *ServerInterfaceWrapper) GetApiKeys(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -2439,6 +2491,10 @@ func (siw *ServerInterfaceWrapper) DeleteApiKeysApiKeyID(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2471,6 +2527,10 @@ func (siw *ServerInterfaceWrapper) PatchApiKeysApiKeyID(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2479,6 +2539,211 @@ func (siw *ServerInterfaceWrapper) PatchApiKeysApiKeyID(c *gin.Context) {
 	}
 
 	siw.Handler.PatchApiKeysApiKeyID(c, apiKeyID)
+}
+
+// GetClustersClusterIDRigs operation middleware
+func (siw *ServerInterfaceWrapper) GetClustersClusterIDRigs(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetClustersClusterIDRigs(c, clusterID)
+}
+
+// DeleteClustersClusterIDRigsInstancesInstanceID operation middleware
+func (siw *ServerInterfaceWrapper) DeleteClustersClusterIDRigsInstancesInstanceID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "instanceID" -------------
+	var instanceID string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "instanceID", c.Param("instanceID"), &instanceID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter instanceID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteClustersClusterIDRigsInstancesInstanceIDParams
+
+	// ------------- Required query parameter "decrementDesired" -------------
+
+	if paramValue := c.Query("decrementDesired"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandler(c, fmt.Errorf("Query argument decrementDesired is required, but not found"), http.StatusBadRequest)
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "decrementDesired", c.Request.URL.Query(), &params.DecrementDesired, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter decrementDesired: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteClustersClusterIDRigsInstancesInstanceID(c, clusterID, instanceID, params)
+}
+
+// PutClustersClusterIDRigsRigIDCapacity operation middleware
+func (siw *ServerInterfaceWrapper) PutClustersClusterIDRigsRigIDCapacity(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "rigID" -------------
+	var rigID RigID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rigID", c.Param("rigID"), &rigID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter rigID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PutClustersClusterIDRigsRigIDCapacity(c, clusterID, rigID)
+}
+
+// GetClustersClusterIDRigsRigIDErrors operation middleware
+func (siw *ServerInterfaceWrapper) GetClustersClusterIDRigsRigIDErrors(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "rigID" -------------
+	var rigID RigID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rigID", c.Param("rigID"), &rigID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter rigID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetClustersClusterIDRigsRigIDErrorsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetClustersClusterIDRigsRigIDErrors(c, clusterID, rigID, params)
+}
+
+// GetClustersClusterIDRigsRigIDInstances operation middleware
+func (siw *ServerInterfaceWrapper) GetClustersClusterIDRigsRigIDInstances(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "rigID" -------------
+	var rigID RigID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rigID", c.Param("rigID"), &rigID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter rigID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetClustersClusterIDRigsRigIDInstances(c, clusterID, rigID)
 }
 
 // GetHealth operation middleware
@@ -2500,6 +2765,8 @@ func (siw *ServerInterfaceWrapper) GetNodes(c *gin.Context) {
 	var err error
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetNodesParams
@@ -2538,6 +2805,8 @@ func (siw *ServerInterfaceWrapper) GetNodesNodeID(c *gin.Context) {
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetNodesNodeIDParams
 
@@ -2575,6 +2844,8 @@ func (siw *ServerInterfaceWrapper) PostNodesNodeID(c *gin.Context) {
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2597,6 +2868,10 @@ func (siw *ServerInterfaceWrapper) GetSandboxes(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -2634,6 +2909,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxes(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2656,6 +2935,10 @@ func (siw *ServerInterfaceWrapper) GetSandboxesMetrics(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -2711,6 +2994,10 @@ func (siw *ServerInterfaceWrapper) DeleteSandboxesSandboxID(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2742,6 +3029,10 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxID(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -2779,6 +3070,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDConnect(c *gin.Context)
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2813,6 +3108,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDFork(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2844,6 +3143,10 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDLogs(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -2900,6 +3203,10 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDMetrics(c *gin.Context) 
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetSandboxesSandboxIDMetricsParams
 
@@ -2953,6 +3260,10 @@ func (siw *ServerInterfaceWrapper) PutSandboxesSandboxIDNetwork(c *gin.Context) 
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -2984,6 +3295,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDPause(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3021,6 +3336,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDRefreshes(c *gin.Contex
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3052,6 +3371,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDResume(c *gin.Context) 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3089,6 +3412,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDSnapshots(c *gin.Contex
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3123,6 +3450,10 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDTimeout(c *gin.Context)
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3145,6 +3476,10 @@ func (siw *ServerInterfaceWrapper) GetSecrets(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3190,6 +3525,10 @@ func (siw *ServerInterfaceWrapper) PostSecrets(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3221,6 +3560,10 @@ func (siw *ServerInterfaceWrapper) DeleteSecretsSecretID(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3258,6 +3601,10 @@ func (siw *ServerInterfaceWrapper) GetSecretsSecretID(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3292,6 +3639,10 @@ func (siw *ServerInterfaceWrapper) PostSecretsSecretID(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3314,6 +3665,10 @@ func (siw *ServerInterfaceWrapper) GetSnapshots(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3365,8 +3720,6 @@ func (siw *ServerInterfaceWrapper) GetSnapshots(c *gin.Context) {
 // GetTeams operation middleware
 func (siw *ServerInterfaceWrapper) GetTeams(c *gin.Context) {
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3400,6 +3753,10 @@ func (siw *ServerInterfaceWrapper) GetTeamsTeamIDMetrics(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3456,6 +3813,10 @@ func (siw *ServerInterfaceWrapper) GetTeamsTeamIDMetricsMax(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetTeamsTeamIDMetricsMaxParams
 
@@ -3507,13 +3868,15 @@ func (siw *ServerInterfaceWrapper) GetTemplates(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3540,8 +3903,6 @@ func (siw *ServerInterfaceWrapper) GetTemplates(c *gin.Context) {
 
 // PostTemplates operation middleware
 func (siw *ServerInterfaceWrapper) PostTemplates(c *gin.Context) {
-
-	c.Set(AccessTokenAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3581,6 +3942,10 @@ func (siw *ServerInterfaceWrapper) GetTemplatesAliasesAlias(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3604,6 +3969,10 @@ func (siw *ServerInterfaceWrapper) DeleteTemplatesTags(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -3624,6 +3993,10 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTags(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3653,13 +4026,15 @@ func (siw *ServerInterfaceWrapper) DeleteTemplatesTemplateID(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3694,6 +4069,10 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateID(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3742,13 +4121,15 @@ func (siw *ServerInterfaceWrapper) PatchTemplatesTemplateID(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3775,8 +4156,6 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTemplateID(c *gin.Context) {
 		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter templateID: %w", err), http.StatusBadRequest)
 		return
 	}
-
-	c.Set(AccessTokenAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
@@ -3815,8 +4194,6 @@ func (siw *ServerInterfaceWrapper) PostTemplatesTemplateIDBuildsBuildID(c *gin.C
 		return
 	}
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
@@ -3854,8 +4231,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDLogs(c *gi
 		return
 	}
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(ApiKeyAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
@@ -3863,6 +4238,10 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDLogs(c *gi
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -3942,8 +4321,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDStatus(c *
 		return
 	}
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(ApiKeyAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
@@ -3951,6 +4328,10 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDBuildsBuildIDStatus(c *
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4014,8 +4395,6 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDFilesHash(c *gin.Contex
 		return
 	}
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(ApiKeyAuthScopes, []string{})
 
 	c.Set(AuthProviderBearerAuthScopes, []string{})
@@ -4023,6 +4402,10 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDFilesHash(c *gin.Contex
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4060,6 +4443,10 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDTags(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -4082,6 +4469,10 @@ func (siw *ServerInterfaceWrapper) GetV2Sandboxes(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4178,6 +4569,10 @@ func (siw *ServerInterfaceWrapper) GetV2SandboxesSandboxIDLogs(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetV2SandboxesSandboxIDLogsParams
 
@@ -4238,13 +4633,15 @@ func (siw *ServerInterfaceWrapper) GetV2Templates(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4298,6 +4695,10 @@ func (siw *ServerInterfaceWrapper) PostV2Templates(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -4324,13 +4725,15 @@ func (siw *ServerInterfaceWrapper) PatchV2TemplatesTemplateID(c *gin.Context) {
 
 	c.Set(ApiKeyAuthScopes, []string{})
 
-	c.Set(AccessTokenAuthScopes, []string{})
-
 	c.Set(AuthProviderBearerAuthScopes, []string{})
 
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4377,6 +4780,10 @@ func (siw *ServerInterfaceWrapper) PostV2TemplatesTemplateIDBuildsBuildID(c *gin
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -4397,6 +4804,10 @@ func (siw *ServerInterfaceWrapper) PostV3Templates(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4423,6 +4834,10 @@ func (siw *ServerInterfaceWrapper) GetVolumes(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -4443,6 +4858,10 @@ func (siw *ServerInterfaceWrapper) PostVolumes(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4480,6 +4899,10 @@ func (siw *ServerInterfaceWrapper) DeleteVolumesVolumeID(c *gin.Context) {
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -4511,6 +4934,10 @@ func (siw *ServerInterfaceWrapper) GetVolumesVolumeID(c *gin.Context) {
 	c.Set(AuthProviderTeamAuthScopes, []string{})
 
 	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
 
 	c.Set(AdminTeamAuthScopes, []string{})
 
@@ -4551,8 +4978,6 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 		ErrorHandler:       errorHandler,
 	}
 
-	router.POST(options.BaseURL+"/access-tokens", wrapper.PostAccessTokens)
-	router.DELETE(options.BaseURL+"/access-tokens/:accessTokenID", wrapper.DeleteAccessTokensAccessTokenID)
 	router.GET(options.BaseURL+"/admin/sandboxes/running-counts", wrapper.GetAdminSandboxesRunningCounts)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/api-keys", wrapper.PostAdminTeamsTeamIDApiKeys)
 	router.DELETE(options.BaseURL+"/admin/teams/:teamID/api-keys/:apiKeyID", wrapper.DeleteAdminTeamsTeamIDApiKeysApiKeyID)
@@ -4562,6 +4987,11 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/api-keys", wrapper.PostApiKeys)
 	router.DELETE(options.BaseURL+"/api-keys/:apiKeyID", wrapper.DeleteApiKeysApiKeyID)
 	router.PATCH(options.BaseURL+"/api-keys/:apiKeyID", wrapper.PatchApiKeysApiKeyID)
+	router.GET(options.BaseURL+"/clusters/:clusterID/rigs", wrapper.GetClustersClusterIDRigs)
+	router.DELETE(options.BaseURL+"/clusters/:clusterID/rigs/instances/:instanceID", wrapper.DeleteClustersClusterIDRigsInstancesInstanceID)
+	router.PUT(options.BaseURL+"/clusters/:clusterID/rigs/:rigID/capacity", wrapper.PutClustersClusterIDRigsRigIDCapacity)
+	router.GET(options.BaseURL+"/clusters/:clusterID/rigs/:rigID/errors", wrapper.GetClustersClusterIDRigsRigIDErrors)
+	router.GET(options.BaseURL+"/clusters/:clusterID/rigs/:rigID/instances", wrapper.GetClustersClusterIDRigsRigIDInstances)
 	router.GET(options.BaseURL+"/health", wrapper.GetHealth)
 	router.GET(options.BaseURL+"/nodes", wrapper.GetNodes)
 	router.GET(options.BaseURL+"/nodes/:nodeID", wrapper.GetNodesNodeID)
@@ -4627,104 +5057,17 @@ type N404JSONResponse Error
 
 type N409JSONResponse Error
 
-type N410JSONResponse Error
-
 type N429JSONResponse Error
 
 type N500JSONResponse Error
+
+type N501JSONResponse Error
 
 type N502JSONResponse Error
 
 type N503JSONResponse Error
 
 type N504JSONResponse Error
-
-type PostAccessTokensRequestObject struct {
-	Body *PostAccessTokensJSONRequestBody
-}
-
-type PostAccessTokensResponseObject interface {
-	VisitPostAccessTokensResponse(w http.ResponseWriter) error
-}
-
-type PostAccessTokens201JSONResponse CreatedAccessToken
-
-func (response PostAccessTokens201JSONResponse) VisitPostAccessTokensResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostAccessTokens401JSONResponse struct{ N401JSONResponse }
-
-func (response PostAccessTokens401JSONResponse) VisitPostAccessTokensResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostAccessTokens410JSONResponse struct{ N410JSONResponse }
-
-func (response PostAccessTokens410JSONResponse) VisitPostAccessTokensResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(410)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostAccessTokens500JSONResponse struct{ N500JSONResponse }
-
-func (response PostAccessTokens500JSONResponse) VisitPostAccessTokensResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteAccessTokensAccessTokenIDRequestObject struct {
-	AccessTokenID AccessTokenID `json:"accessTokenID"`
-}
-
-type DeleteAccessTokensAccessTokenIDResponseObject interface {
-	VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error
-}
-
-type DeleteAccessTokensAccessTokenID204Response struct {
-}
-
-func (response DeleteAccessTokensAccessTokenID204Response) VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type DeleteAccessTokensAccessTokenID401JSONResponse struct{ N401JSONResponse }
-
-func (response DeleteAccessTokensAccessTokenID401JSONResponse) VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteAccessTokensAccessTokenID404JSONResponse struct{ N404JSONResponse }
-
-func (response DeleteAccessTokensAccessTokenID404JSONResponse) VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteAccessTokensAccessTokenID500JSONResponse struct{ N500JSONResponse }
-
-func (response DeleteAccessTokensAccessTokenID500JSONResponse) VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
 
 type GetAdminSandboxesRunningCountsRequestObject struct {
 }
@@ -5120,6 +5463,330 @@ func (response PatchApiKeysApiKeyID500JSONResponse) VisitPatchApiKeysApiKeyIDRes
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetClustersClusterIDRigsRequestObject struct {
+	ClusterID ClusterID `json:"clusterID"`
+}
+
+type GetClustersClusterIDRigsResponseObject interface {
+	VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error
+}
+
+type GetClustersClusterIDRigs200JSONResponse []Rig
+
+func (response GetClustersClusterIDRigs200JSONResponse) VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigs401JSONResponse struct{ N401JSONResponse }
+
+func (response GetClustersClusterIDRigs401JSONResponse) VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigs404JSONResponse struct{ N404JSONResponse }
+
+func (response GetClustersClusterIDRigs404JSONResponse) VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigs500JSONResponse struct{ N500JSONResponse }
+
+func (response GetClustersClusterIDRigs500JSONResponse) VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigs501JSONResponse struct{ N501JSONResponse }
+
+func (response GetClustersClusterIDRigs501JSONResponse) VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceIDRequestObject struct {
+	ClusterID  ClusterID `json:"clusterID"`
+	InstanceID string    `json:"instanceID"`
+	Params     DeleteClustersClusterIDRigsInstancesInstanceIDParams
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceIDResponseObject interface {
+	VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceID202Response struct {
+}
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID202Response) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceID400JSONResponse struct{ N400JSONResponse }
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID400JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceID401JSONResponse struct{ N401JSONResponse }
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID401JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceID404JSONResponse struct{ N404JSONResponse }
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID404JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceID409JSONResponse struct{ N409JSONResponse }
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID409JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceID500JSONResponse struct{ N500JSONResponse }
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID500JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteClustersClusterIDRigsInstancesInstanceID501JSONResponse struct{ N501JSONResponse }
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID501JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutClustersClusterIDRigsRigIDCapacityRequestObject struct {
+	ClusterID ClusterID `json:"clusterID"`
+	RigID     RigID     `json:"rigID"`
+	Body      *PutClustersClusterIDRigsRigIDCapacityJSONRequestBody
+}
+
+type PutClustersClusterIDRigsRigIDCapacityResponseObject interface {
+	VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error
+}
+
+type PutClustersClusterIDRigsRigIDCapacity202Response struct {
+}
+
+func (response PutClustersClusterIDRigsRigIDCapacity202Response) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutClustersClusterIDRigsRigIDCapacity400JSONResponse struct{ N400JSONResponse }
+
+func (response PutClustersClusterIDRigsRigIDCapacity400JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutClustersClusterIDRigsRigIDCapacity401JSONResponse struct{ N401JSONResponse }
+
+func (response PutClustersClusterIDRigsRigIDCapacity401JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutClustersClusterIDRigsRigIDCapacity404JSONResponse struct{ N404JSONResponse }
+
+func (response PutClustersClusterIDRigsRigIDCapacity404JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutClustersClusterIDRigsRigIDCapacity409JSONResponse struct{ N409JSONResponse }
+
+func (response PutClustersClusterIDRigsRigIDCapacity409JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutClustersClusterIDRigsRigIDCapacity500JSONResponse struct{ N500JSONResponse }
+
+func (response PutClustersClusterIDRigsRigIDCapacity500JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutClustersClusterIDRigsRigIDCapacity501JSONResponse struct{ N501JSONResponse }
+
+func (response PutClustersClusterIDRigsRigIDCapacity501JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDErrorsRequestObject struct {
+	ClusterID ClusterID `json:"clusterID"`
+	RigID     RigID     `json:"rigID"`
+	Params    GetClustersClusterIDRigsRigIDErrorsParams
+}
+
+type GetClustersClusterIDRigsRigIDErrorsResponseObject interface {
+	VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error
+}
+
+type GetClustersClusterIDRigsRigIDErrors200JSONResponse []RigError
+
+func (response GetClustersClusterIDRigsRigIDErrors200JSONResponse) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDErrors400JSONResponse struct{ N400JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDErrors400JSONResponse) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDErrors401JSONResponse struct{ N401JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDErrors401JSONResponse) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDErrors404JSONResponse struct{ N404JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDErrors404JSONResponse) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDErrors500JSONResponse struct{ N500JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDErrors500JSONResponse) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDErrors501JSONResponse struct{ N501JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDErrors501JSONResponse) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDInstancesRequestObject struct {
+	ClusterID ClusterID `json:"clusterID"`
+	RigID     RigID     `json:"rigID"`
+}
+
+type GetClustersClusterIDRigsRigIDInstancesResponseObject interface {
+	VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error
+}
+
+type GetClustersClusterIDRigsRigIDInstances200JSONResponse []RigInstance
+
+func (response GetClustersClusterIDRigsRigIDInstances200JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDInstances400JSONResponse struct{ N400JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDInstances400JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDInstances401JSONResponse struct{ N401JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDInstances401JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDInstances404JSONResponse struct{ N404JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDInstances404JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDInstances500JSONResponse struct{ N500JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDInstances500JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDInstances501JSONResponse struct{ N501JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDInstances501JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetHealthRequestObject struct {
 }
 
@@ -5352,15 +6019,6 @@ type PostSandboxes401JSONResponse struct{ N401JSONResponse }
 func (response PostSandboxes401JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostSandboxes429JSONResponse struct{ N429JSONResponse }
-
-func (response PostSandboxes429JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -5877,6 +6535,15 @@ type PostSandboxesSandboxIDPause500JSONResponse struct{ N500JSONResponse }
 func (response PostSandboxesSandboxIDPause500JSONResponse) VisitPostSandboxesSandboxIDPauseResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDPause503JSONResponse struct{ N503JSONResponse }
+
+func (response PostSandboxesSandboxIDPause503JSONResponse) VisitPostSandboxesSandboxIDPauseResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -6848,6 +7515,15 @@ func (response PostTemplates401JSONResponse) VisitPostTemplatesResponse(w http.R
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostTemplates409JSONResponse struct{ N409JSONResponse }
+
+func (response PostTemplates409JSONResponse) VisitPostTemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostTemplates500JSONResponse struct{ N500JSONResponse }
 
 func (response PostTemplates500JSONResponse) VisitPostTemplatesResponse(w http.ResponseWriter) error {
@@ -7160,6 +7836,15 @@ type PostTemplatesTemplateID401JSONResponse struct{ N401JSONResponse }
 func (response PostTemplatesTemplateID401JSONResponse) VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostTemplatesTemplateID409JSONResponse struct{ N409JSONResponse }
+
+func (response PostTemplatesTemplateID409JSONResponse) VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -7602,6 +8287,15 @@ func (response PostV2Templates401JSONResponse) VisitPostV2TemplatesResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostV2Templates409JSONResponse struct{ N409JSONResponse }
+
+func (response PostV2Templates409JSONResponse) VisitPostV2TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostV2Templates500JSONResponse struct{ N500JSONResponse }
 
 func (response PostV2Templates500JSONResponse) VisitPostV2TemplatesResponse(w http.ResponseWriter) error {
@@ -7732,6 +8426,15 @@ type PostV3Templates403JSONResponse struct{ N403JSONResponse }
 func (response PostV3Templates403JSONResponse) VisitPostV3TemplatesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV3Templates409JSONResponse struct{ N409JSONResponse }
+
+func (response PostV3Templates409JSONResponse) VisitPostV3TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -7912,12 +8615,6 @@ func (response GetVolumesVolumeID500JSONResponse) VisitGetVolumesVolumeIDRespons
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// Create access token
-	// (POST /access-tokens)
-	PostAccessTokens(ctx context.Context, request PostAccessTokensRequestObject) (PostAccessTokensResponseObject, error)
-	// Delete access token
-	// (DELETE /access-tokens/{accessTokenID})
-	DeleteAccessTokensAccessTokenID(ctx context.Context, request DeleteAccessTokensAccessTokenIDRequestObject) (DeleteAccessTokensAccessTokenIDResponseObject, error)
 	// Count running sandboxes by team
 	// (GET /admin/sandboxes/running-counts)
 	GetAdminSandboxesRunningCounts(ctx context.Context, request GetAdminSandboxesRunningCountsRequestObject) (GetAdminSandboxesRunningCountsResponseObject, error)
@@ -7945,6 +8642,21 @@ type StrictServerInterface interface {
 	// Update team API key
 	// (PATCH /api-keys/{apiKeyID})
 	PatchApiKeysApiKeyID(ctx context.Context, request PatchApiKeysApiKeyIDRequestObject) (PatchApiKeysApiKeyIDResponseObject, error)
+	// List rigs of a cluster
+	// (GET /clusters/{clusterID}/rigs)
+	GetClustersClusterIDRigs(ctx context.Context, request GetClustersClusterIDRigsRequestObject) (GetClustersClusterIDRigsResponseObject, error)
+	// Terminate an instance of a rig
+	// (DELETE /clusters/{clusterID}/rigs/instances/{instanceID})
+	DeleteClustersClusterIDRigsInstancesInstanceID(ctx context.Context, request DeleteClustersClusterIDRigsInstancesInstanceIDRequestObject) (DeleteClustersClusterIDRigsInstancesInstanceIDResponseObject, error)
+	// Set the capacity of a rig
+	// (PUT /clusters/{clusterID}/rigs/{rigID}/capacity)
+	PutClustersClusterIDRigsRigIDCapacity(ctx context.Context, request PutClustersClusterIDRigsRigIDCapacityRequestObject) (PutClustersClusterIDRigsRigIDCapacityResponseObject, error)
+	// List recent scaling errors of a rig
+	// (GET /clusters/{clusterID}/rigs/{rigID}/errors)
+	GetClustersClusterIDRigsRigIDErrors(ctx context.Context, request GetClustersClusterIDRigsRigIDErrorsRequestObject) (GetClustersClusterIDRigsRigIDErrorsResponseObject, error)
+	// List the instances attached to a rig
+	// (GET /clusters/{clusterID}/rigs/{rigID}/instances)
+	GetClustersClusterIDRigsRigIDInstances(ctx context.Context, request GetClustersClusterIDRigsRigIDInstancesRequestObject) (GetClustersClusterIDRigsRigIDInstancesResponseObject, error)
 	// Health check
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -8116,66 +8828,6 @@ func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareF
 type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
-}
-
-// PostAccessTokens operation middleware
-func (sh *strictHandler) PostAccessTokens(ctx *gin.Context) {
-	var request PostAccessTokensRequestObject
-
-	var body PostAccessTokensJSONRequestBody
-	if err := ctx.ShouldBindJSON(&body); err != nil {
-		ctx.Status(http.StatusBadRequest)
-		ctx.Error(err)
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.PostAccessTokens(ctx, request.(PostAccessTokensRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostAccessTokens")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		ctx.Error(err)
-		ctx.Status(http.StatusInternalServerError)
-	} else if validResponse, ok := response.(PostAccessTokensResponseObject); ok {
-		if err := validResponse.VisitPostAccessTokensResponse(ctx.Writer); err != nil {
-			ctx.Error(err)
-		}
-	} else if response != nil {
-		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DeleteAccessTokensAccessTokenID operation middleware
-func (sh *strictHandler) DeleteAccessTokensAccessTokenID(ctx *gin.Context, accessTokenID AccessTokenID) {
-	var request DeleteAccessTokensAccessTokenIDRequestObject
-
-	request.AccessTokenID = accessTokenID
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteAccessTokensAccessTokenID(ctx, request.(DeleteAccessTokensAccessTokenIDRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteAccessTokensAccessTokenID")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		ctx.Error(err)
-		ctx.Status(http.StatusInternalServerError)
-	} else if validResponse, ok := response.(DeleteAccessTokensAccessTokenIDResponseObject); ok {
-		if err := validResponse.VisitDeleteAccessTokensAccessTokenIDResponse(ctx.Writer); err != nil {
-			ctx.Error(err)
-		}
-	} else if response != nil {
-		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
-	}
 }
 
 // GetAdminSandboxesRunningCounts operation middleware
@@ -8433,6 +9085,155 @@ func (sh *strictHandler) PatchApiKeysApiKeyID(ctx *gin.Context, apiKeyID ApiKeyI
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(PatchApiKeysApiKeyIDResponseObject); ok {
 		if err := validResponse.VisitPatchApiKeysApiKeyIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetClustersClusterIDRigs operation middleware
+func (sh *strictHandler) GetClustersClusterIDRigs(ctx *gin.Context, clusterID ClusterID) {
+	var request GetClustersClusterIDRigsRequestObject
+
+	request.ClusterID = clusterID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClustersClusterIDRigs(ctx, request.(GetClustersClusterIDRigsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClustersClusterIDRigs")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetClustersClusterIDRigsResponseObject); ok {
+		if err := validResponse.VisitGetClustersClusterIDRigsResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteClustersClusterIDRigsInstancesInstanceID operation middleware
+func (sh *strictHandler) DeleteClustersClusterIDRigsInstancesInstanceID(ctx *gin.Context, clusterID ClusterID, instanceID string, params DeleteClustersClusterIDRigsInstancesInstanceIDParams) {
+	var request DeleteClustersClusterIDRigsInstancesInstanceIDRequestObject
+
+	request.ClusterID = clusterID
+	request.InstanceID = instanceID
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteClustersClusterIDRigsInstancesInstanceID(ctx, request.(DeleteClustersClusterIDRigsInstancesInstanceIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteClustersClusterIDRigsInstancesInstanceID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(DeleteClustersClusterIDRigsInstancesInstanceIDResponseObject); ok {
+		if err := validResponse.VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutClustersClusterIDRigsRigIDCapacity operation middleware
+func (sh *strictHandler) PutClustersClusterIDRigsRigIDCapacity(ctx *gin.Context, clusterID ClusterID, rigID RigID) {
+	var request PutClustersClusterIDRigsRigIDCapacityRequestObject
+
+	request.ClusterID = clusterID
+	request.RigID = rigID
+
+	var body PutClustersClusterIDRigsRigIDCapacityJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PutClustersClusterIDRigsRigIDCapacity(ctx, request.(PutClustersClusterIDRigsRigIDCapacityRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutClustersClusterIDRigsRigIDCapacity")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PutClustersClusterIDRigsRigIDCapacityResponseObject); ok {
+		if err := validResponse.VisitPutClustersClusterIDRigsRigIDCapacityResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetClustersClusterIDRigsRigIDErrors operation middleware
+func (sh *strictHandler) GetClustersClusterIDRigsRigIDErrors(ctx *gin.Context, clusterID ClusterID, rigID RigID, params GetClustersClusterIDRigsRigIDErrorsParams) {
+	var request GetClustersClusterIDRigsRigIDErrorsRequestObject
+
+	request.ClusterID = clusterID
+	request.RigID = rigID
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClustersClusterIDRigsRigIDErrors(ctx, request.(GetClustersClusterIDRigsRigIDErrorsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClustersClusterIDRigsRigIDErrors")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetClustersClusterIDRigsRigIDErrorsResponseObject); ok {
+		if err := validResponse.VisitGetClustersClusterIDRigsRigIDErrorsResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetClustersClusterIDRigsRigIDInstances operation middleware
+func (sh *strictHandler) GetClustersClusterIDRigsRigIDInstances(ctx *gin.Context, clusterID ClusterID, rigID RigID) {
+	var request GetClustersClusterIDRigsRigIDInstancesRequestObject
+
+	request.ClusterID = clusterID
+	request.RigID = rigID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClustersClusterIDRigsRigIDInstances(ctx, request.(GetClustersClusterIDRigsRigIDInstancesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClustersClusterIDRigsRigIDInstances")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetClustersClusterIDRigsRigIDInstancesResponseObject); ok {
+		if err := validResponse.VisitGetClustersClusterIDRigsRigIDInstancesResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {

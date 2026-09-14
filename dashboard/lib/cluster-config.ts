@@ -25,6 +25,42 @@ export interface LogsClusterConfig {
    * entries. Typical keys: `region`, `cluster`. Values are always matched with op="eq".
    */
   filters?: Record<string, string>
+  /**
+   * This cluster's container output is sharded across two log stores by
+   * namespace, so the store has to be chosen per query rather than per
+   * deployment. See `projectForNamespace`.
+   *
+   * Getting it wrong is silent: the service answers 200 with an empty body for
+   * a store that holds nothing, which is indistinguishable from a pod that
+   * printed nothing.
+   */
+  splitProject?: boolean
+}
+
+/**
+ * Log-store sharding, for deployments whose central service splits container
+ * output across more than one store.
+ *
+ * Mirrors the Go side (`pkg/utils/logclient.ProjectFor`) — both halves of the
+ * platform query the same gateway and have to agree on which store holds what.
+ */
+export const TENANT_NAMESPACE_PREFIX = "t-"
+export const TENANT_PROJECT = "default"
+export const PLATFORM_PROJECT = "internal"
+
+/**
+ * Picks the log store to query for one namespace.
+ *
+ * Returns undefined when the cluster is not sharded, which leaves the
+ * endpoint's own project in force — the single-store case, and the one every
+ * cluster looked like before sharding existed.
+ */
+export function projectForNamespace(
+  splitProject: boolean | undefined,
+  namespace: string,
+): string | undefined {
+  if (!splitProject) return undefined
+  return namespace.startsWith(TENANT_NAMESPACE_PREFIX) ? TENANT_PROJECT : PLATFORM_PROJECT
 }
 
 /**

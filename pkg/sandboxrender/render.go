@@ -27,6 +27,7 @@ package sandboxrender
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/distribution/reference"
 	corev1 "k8s.io/api/core/v1"
@@ -56,6 +57,11 @@ type Options struct {
 	// ImageRegistry, when non-nil, supplies per-cluster registry rewriting.
 	// Whether it is applied is decided by RewriteImages.
 	ImageRegistry *RegistryRewrite
+	// EnvdVerbose, when non-nil, pins the sandbox agent's request logging by
+	// setting AGENTBOX_ENVD_VERBOSE on the main container. nil leaves whatever
+	// the Template itself declares, which for a Template that declares nothing
+	// is the image's own default (on).
+	EnvdVerbose *bool
 	// RewriteImages turns rewriting on for every image this render produces:
 	// the Template's own (IdleImage, containers, initContainers) and the
 	// caller-supplied Image override. Ignored when ImageRegistry is nil.
@@ -79,6 +85,7 @@ func (o Options) Empty() bool {
 	return o.Image == "" &&
 		o.InlineResources == nil &&
 		len(o.Volumes) == 0 &&
+		o.EnvdVerbose == nil &&
 		o.ImageRegistry == nil
 }
 
@@ -118,7 +125,34 @@ func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 			return err
 		}
 	}
+	if opts.EnvdVerbose != nil {
+		if len(emb.Template.Spec.Containers) == 0 {
+			return fmt.Errorf("envd settings require at least one container in the template")
+		}
+		setContainerEnv(&emb.Template.Spec.Containers[0],
+			AgentEnvVerbose, strconv.FormatBool(*opts.EnvdVerbose))
+	}
 	return nil
+}
+
+// AgentEnvVerbose is read by the sandbox image's entrypoint, which turns it
+// into the agent's own flag. It is a container env var rather than an argument
+// because the entrypoint is baked into the image: a new knob would otherwise
+// cost a new image everywhere instead of a pool rollout.
+const AgentEnvVerbose = "AGENTBOX_ENVD_VERBOSE"
+
+// setContainerEnv sets one env var, replacing any existing entry of the same
+// name. Replacing rather than appending matters: duplicate names in a Pod spec
+// are legal and the last one wins, so appending would work by accident until
+// something reordered the list.
+func setContainerEnv(c *corev1.Container, name, value string) {
+	for i := range c.Env {
+		if c.Env[i].Name == name {
+			c.Env[i] = corev1.EnvVar{Name: name, Value: value}
+			return
+		}
+	}
+	c.Env = append(c.Env, corev1.EnvVar{Name: name, Value: value})
 }
 
 // rewriteTemplateImages rewrites the images the Template itself owns. The

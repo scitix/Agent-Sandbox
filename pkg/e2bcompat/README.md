@@ -9,6 +9,12 @@ supported answers **HTTP 501** with a message naming what to use instead — the
 message is the only thing the SDK surfaces to the caller, and increasingly the
 caller is a model deciding what to do next.
 
+The spec is vendored, pinned by `E2B_SPEC_VERSION` in the repo's Makefile;
+`make sync-e2b-spec generate-api` re-pulls and regenerates. Code generation
+uses oapi-codegen's strict server, so an operation added upstream is a
+**compile error** until it is either implemented or given a 501 stub — which is
+the only reason this list can be trusted to be current.
+
 ## Supported
 
 | Area | Operations |
@@ -97,18 +103,31 @@ matter; the rules themselves are per sandbox and arrive on the create call.
 ## Refused at create (HTTP 400)
 
 `autoPause`, `autoResume`, `iam.tokens`, `mcp`, `volumeMounts`,
-`network.egressProxy`, and wildcard hosts in `network.rules`. Each error names
-the alternative.
+`network.egressProxy`, `network.httpsPorts`, `network.maskRequestHost`, and
+wildcard hosts in `network.rules`. Each error names the alternative.
+
+`network.httpsPorts` tells the platform which sandbox ports speak TLS rather
+than plaintext, so the proxy can reach them accordingly. AgentBox routes to a
+sandbox port through Envoy + ExtProc header rewriting and has no per-sandbox
+upstream-TLS path, so it is refused rather than accepted and ignored. Serve
+plain HTTP inside the sandbox; the public URL is HTTPS either way.
 
 These used to be dropped silently. For a human that is a confusing afternoon;
 for an agent it is unrecoverable, because there is no signal to correct from.
 
 ## Not supported (HTTP 501)
 
-Pause, resume, snapshots and fork have no counterpart: an AgentBox sandbox is a
-claimed Pod from a pre-warmed pool, not a Firecracker microVM, so there is no
-memory image to capture. Template builds, volumes, nodes, teams and the admin
-surface live in the AgentBox native API or console.
+Three kinds, and the distinction is the `category` label on the metric below:
+
+| Category | Meaning | Operations |
+|---|---|---|
+| `architectural` | No counterpart here; the caller should stop asking | pause / resume / snapshots / fork (a sandbox is a claimed Pod, not a microVM, so there is no memory image), per-sandbox volumes, nodes, teams, rigs, `admin/*` |
+| `platform` | The capability exists, but not on this API | template builds (`POST /templates`, v2/v3, builds, files/hash, build logs/status), template tags |
+| `unimplemented` | A genuine gap, worth counting | `GET /templates/aliases/{alias}`, `GET /v2/templates`, `PATCH /api-keys/{id}` |
+
+Rig inventory and capacity are the infrastructure operator's view of a fleet of
+machines. AgentBox schedules onto Kubernetes nodes, so the questions they
+answer are asked of the cluster itself.
 
 `agentbox_e2b_unsupported_total{operation,category}` counts what callers
 actually reach for, so the next batch of work is chosen from evidence.

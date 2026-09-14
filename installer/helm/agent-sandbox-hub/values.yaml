@@ -170,11 +170,22 @@ prometheus:
 # Two auth schemes, chosen by appId: set it for the signed scheme
 # (Signature/AppID/Timestamp/Randstr headers), leave it empty for Bearer.
 # project scopes the query on gateways that require it; empty omits the param.
+# It may also be written straight into downloadUrl as `?project=...`, which is
+# the form the query gateway documents.
 logs:
   downloadUrl: ""
   appId: ""
   token: ""
   project: ""
+  # Clusters whose container output is sharded across two log stores by
+  # namespace: `t-*` namespaces in one store, everything else in the other.
+  # Name a cluster by the value it has in the log service's own `cluster`
+  # field (clusters[].logs.filters.cluster); its `id` is also accepted.
+  #
+  # A cluster listed here that is not actually sharded, or one omitted that is,
+  # fails the same silent way: the gateway answers 200 with an empty body for
+  # the store that holds nothing.
+  splitProjectClusters: []
 
 # Platform notifications sent by ws-proxy: the daily usage report and the
 # idle alert. Requires globalApiKey.enabled (the notification service runs in

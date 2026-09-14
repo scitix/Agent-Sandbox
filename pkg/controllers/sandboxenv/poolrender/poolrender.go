@@ -108,6 +108,12 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 	if envOv != nil {
 		opts.Image = envOv.Image
 		opts.Volumes = envOv.Volumes
+		// Only when the Env has an opinion. Rendering the default explicitly
+		// would put a new env var on every existing Pool's pod template, and
+		// therefore roll the whole fleet, for a setting nobody changed.
+		if envOv.Envd != nil && envOv.Envd.Verbose != nil {
+			opts.EnvdVerbose = envOv.Envd.Verbose
+		}
 	}
 	// Registry rewriting is available whenever the operator knows its own
 	// cluster, but nothing is rewritten unless the Template opts in — including

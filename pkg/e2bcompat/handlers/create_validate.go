@@ -72,6 +72,21 @@ func rejectUnsupportedCreateFields(body *e2bgen.NewSandbox) *e2bgen.Error {
 		return &e
 	}
 
+	if body.Network != nil {
+		if p := body.Network.HttpsPorts; p != nil && len(*p) > 0 {
+			e := errRespCode(400, "network.httpsPorts is not supported: the sandbox gateway reaches a "+
+				"sandbox port over plain HTTP and cannot be told to speak TLS to it per sandbox. Serve "+
+				"plain HTTP inside the sandbox — the public URL is HTTPS either way.")
+			return &e
+		}
+		if h := body.Network.MaskRequestHost; h != nil && *h != "" {
+			e := errRespCode(400, "network.maskRequestHost is not supported: outbound requests leave with "+
+				"their own Host header. To change what a destination sees, set the header explicitly with "+
+				"a network.rules entry for that host.")
+			return &e
+		}
+	}
+
 	// `secure` is accepted and ignored on purpose: it governs whether envd
 	// requires its own access token, and AgentBox authenticates at the gateway
 	// instead. Rejecting it would break every caller that passes the SDK

@@ -55,6 +55,7 @@ import (
 	pkgmetrics "github.com/scitix/agent-sandbox/pkg/metrics"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
+	"github.com/scitix/agent-sandbox/pkg/utils/logclient"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
@@ -146,6 +147,13 @@ type k8sSandboxService struct {
 	registryStore  RegistryStore // may be nil; used for per-cluster image registry rewriting
 
 	envRouter EnvRouter // may be nil; set via SetEnvRouter at startup
+
+	// centralLogs answers for a sandbox whose Pod has been recycled: the
+	// Kubernetes log API has nothing left, but the lines were shipped. Nil
+	// means a finished sandbox's output is simply gone. centralLogScope
+	// addresses the local cluster in that service and is read per query.
+	centralLogs     *logclient.Client
+	centralLogScope func() CentralLogScope
 
 	// vault resolves per-sandbox credential references at claim time. May be
 	// nil, in which case a request carrying network.rules is refused rather
@@ -246,6 +254,29 @@ func (s *k8sSandboxService) SetLastCreateTracker(t LastCreateBumper) {
 // direct Pool dispatch. Safe to call at most once during startup.
 func (s *k8sSandboxService) SetEnvRouter(r EnvRouter) {
 	s.envRouter = r
+}
+
+// CentralLogScope addresses the local cluster in the central log service.
+//
+// Read live rather than captured at startup: it arrives on the cluster-config
+// snapshot the hub distributes, and that can change without a restart.
+type CentralLogScope struct {
+	// Filters scope a query to this cluster. Pod names are unique per cluster,
+	// not globally, so without them a query can answer with another cluster's
+	// output for the same name.
+	Filters map[string]string
+	// SplitProject says this cluster's output is sharded across log stores by
+	// namespace. See logclient.ProjectFor.
+	SplitProject bool
+}
+
+// SetCentralLogs wires the central log service used to answer for a sandbox
+// whose Pod has already been recycled. Called at startup from cmd/sandbox/app.
+// Nil leaves finished sandboxes unanswerable, which is what a deployment
+// without a log service gets.
+func (s *k8sSandboxService) SetCentralLogs(c *logclient.Client, scope func() CentralLogScope) {
+	s.centralLogs = c
+	s.centralLogScope = scope
 }
 
 // ResolveCreateTarget reports the cluster and member pool a bare-name Env
@@ -1356,7 +1387,10 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 	pod, err := sandboxpool.FindClaimedPodBySandboxID(ctx, s.client, namespace, sandboxID)
 	if err != nil {
 		if errors.Is(err, sandboxpool.ErrSandboxNotFound) {
-			return nil, domain.NewNotFound(fmt.Sprintf("sandbox %s/%s not found or already terminated", namespace, sandboxID))
+			// The Pod is gone, but the lines were shipped before it was
+			// recycled. Answering "not found" for a sandbox that finished two
+			// minutes ago is the least useful true statement available.
+			return s.getCentralLogs(ctx, namespace, sandboxID, lines)
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
@@ -1421,6 +1455,86 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 		Entries:    entries,
 		TotalBytes: &totalBytes,
 		Source:     gen.SandboxLogsResultSource("live"),
+	}, nil
+}
+
+// getCentralLogs answers for a sandbox whose Pod no longer exists, from the
+// central log service the lines were shipped to.
+//
+// Every failure here has to name itself. The service answers an unmatched query
+// with 200 and an empty body, so "this sandbox printed nothing", "this cluster
+// is not scoped", "the wrong log store was asked" and "this cluster ships no
+// container output at all" are one indistinguishable outcome at the transport.
+// Whatever is returned therefore carries the scope that produced it.
+func (s *k8sSandboxService) getCentralLogs(
+	ctx context.Context, namespace, sandboxID string, lines int,
+) (*gen.SandboxLogsResult, *domain.AppError) {
+	gone := fmt.Sprintf("sandbox %s/%s has ended and its pod was recycled", namespace, sandboxID)
+	if s.centralLogs == nil || !s.centralLogs.Ready() {
+		return nil, domain.NewNotFound(gone +
+			"; historical logs are unavailable because this deployment has no central log service configured")
+	}
+
+	// Get, not GetLive: the point is a sandbox that has finished, and its
+	// history record is what carries the pod name and the window it ran in.
+	sb, appErr := s.Get(ctx, namespace, sandboxID)
+	if appErr != nil {
+		return nil, appErr
+	}
+	if sb.PodName == "" {
+		return nil, domain.NewNotFound(gone + "; no pod name was recorded for it, so its logs cannot be located")
+	}
+
+	var scope CentralLogScope
+	if s.centralLogScope != nil {
+		scope = s.centralLogScope()
+	}
+
+	// Widen the window by a second at each end: the record's timestamps and the
+	// log shipper's clocks are not the same clock, and a line written in the
+	// last moment before teardown is exactly the one worth reading.
+	end := time.Now()
+	if sb.TerminatedAt != nil {
+		end = sb.TerminatedAt.Add(time.Second)
+	}
+	opts := logclient.QueryOptions{
+		PodName: sb.PodName,
+		Filters: scope.Filters,
+		Project: logclient.ProjectFor(scope.SplitProject, namespace),
+		Start:   sb.ClaimedAt.Add(-time.Second),
+		End:     end,
+		Limit:   lines,
+	}
+	asked := opts.Scope(s.centralLogs.DefaultProject())
+
+	entries, err := s.centralLogs.Query(ctx, opts)
+	if err != nil {
+		return nil, domain.NewInternal("central log service query failed ("+asked+")", err)
+	}
+
+	out := make([]gen.SandboxLogEntry, 0, len(entries))
+	var totalBytes int64
+	for i := range entries {
+		e := gen.SandboxLogEntry{Container: entries[i].ContainerName, Log: entries[i].Log}
+		if !entries[i].Timestamp.IsZero() {
+			e.Timestamp = ptr.To(entries[i].Timestamp)
+		}
+		totalBytes += int64(len(entries[i].Log))
+		out = append(out, e)
+	}
+
+	if len(out) == 0 && len(scope.Filters) == 0 {
+		asked += "; this cluster declares no log filters, so the query was not scoped to it"
+	}
+
+	return &gen.SandboxLogsResult{
+		SandboxId:  sandboxID,
+		Namespace:  namespace,
+		PodName:    ptr.To(sb.PodName),
+		Entries:    out,
+		TotalBytes: &totalBytes,
+		Source:     gen.SandboxLogsResultSource("central"),
+		Scope:      ptr.To(asked),
 	}, nil
 }
 

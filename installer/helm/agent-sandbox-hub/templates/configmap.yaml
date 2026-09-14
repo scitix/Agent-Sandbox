@@ -9,7 +9,28 @@ data:
   clusters.yaml: |
     clusters:
     {{- if .Values.clusters }}
-    {{- .Values.clusters | toYaml | nindent 4 }}
+    {{- /*
+      logs.splitProjectClusters is a flat list so it can be copied between
+      deployments unchanged; the per-cluster boolean the readers actually
+      consume is derived here. Match on the cluster's name in the log service
+      (logs.filters.cluster) first, then on its id.
+    */}}
+    {{- $split := (.Values.logs | default dict).splitProjectClusters | default list }}
+    {{- $out := list }}
+    {{- range .Values.clusters }}
+      {{- $c := deepCopy . }}
+      {{- $logName := "" }}
+      {{- if and $c.logs $c.logs.filters }}
+        {{- $logName = $c.logs.filters.cluster | default "" }}
+      {{- end }}
+      {{- if or (and $logName (has $logName $split)) (has ($c.id | default "") $split) }}
+        {{- $logs := $c.logs | default dict }}
+        {{- $_ := set $logs "splitProject" true }}
+        {{- $_ := set $c "logs" $logs }}
+      {{- end }}
+      {{- $out = append $out $c }}
+    {{- end }}
+    {{- $out | toYaml | nindent 4 }}
     {{- else }}
       []
     {{- end }}

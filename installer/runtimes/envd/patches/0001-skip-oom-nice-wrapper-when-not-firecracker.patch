@@ -1,11 +1,12 @@
 diff --git a/packages/envd/internal/execcontext/context.go b/packages/envd/internal/execcontext/context.go
-index c7b6828..b2eaf79 100644
+index 846d9f7e..0d539c0b 100644
 --- a/packages/envd/internal/execcontext/context.go
 +++ b/packages/envd/internal/execcontext/context.go
-@@ -10,6 +10,12 @@ type Defaults struct {
- 	EnvVars *utils.EnvVars
- 	User    string
- 	Workdir *string
+@@ -27,6 +27,13 @@ type Defaults struct {
+ 	// from one that was never told, if you only compare strings. Those two need opposite
+ 	// treatment, so the fact is recorded when it happens instead of being inferred later.
+ 	UserDelivered bool
++
 +	// IsNotFC is true when envd runs OUTSIDE a Firecracker microVM (e.g. as a
 +	// plain container under Kubernetes). It mirrors the `-isnotfc` CLI flag and
 +	// is consumed by the process handler to skip Firecracker-only priming of
@@ -16,7 +17,7 @@ index c7b6828..b2eaf79 100644
  
  func ResolveDefaultWorkdir(workdir string, defaultWorkdir *string) string {
 diff --git a/packages/envd/internal/services/process/handler/handler.go b/packages/envd/internal/services/process/handler/handler.go
-index 8c135c3..98536c7 100644
+index 4dcc7b1f..0bb61143 100644
 --- a/packages/envd/internal/services/process/handler/handler.go
 +++ b/packages/envd/internal/services/process/handler/handler.go
 @@ -195,12 +195,32 @@ func New(
@@ -60,7 +61,7 @@ index 8c135c3..98536c7 100644
  	if err != nil {
 diff --git a/packages/envd/internal/services/process/handler/handler_oom_test.go b/packages/envd/internal/services/process/handler/handler_oom_test.go
 new file mode 100644
-index 0000000..1057550
+index 00000000..10575507
 --- /dev/null
 +++ b/packages/envd/internal/services/process/handler/handler_oom_test.go
 @@ -0,0 +1,83 @@
@@ -148,12 +149,12 @@ index 0000000..1057550
 +	}
 +}
 diff --git a/packages/envd/main.go b/packages/envd/main.go
-index f61e0b9..dd6b397 100644
+index 701bf0e6..edb0534c 100644
 --- a/packages/envd/main.go
 +++ b/packages/envd/main.go
-@@ -186,6 +186,7 @@ func run() error {
+@@ -183,6 +183,7 @@ func run() error {
  	defaults := &execcontext.Defaults{
- 		User:    defaultUser,
+ 		User:    execcontext.BuiltinDefaultUser,
  		EnvVars: utils.NewEnvVars(),
 +		IsNotFC: isNotFC,
  	}

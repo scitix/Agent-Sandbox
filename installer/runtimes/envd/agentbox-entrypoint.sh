@@ -147,7 +147,41 @@ persist_image_env || echo "Warning: could not persist image env, continuing..." 
 # forwarding; envd does not need it.
 export GODEBUG=multipathtcp=0
 
+# Extra envd flags, assembled from the Pod's environment.
+#
+# These are decided at Pod creation and cannot change without recreating the
+# Pod, so they belong in the Pod spec rather than baked into this image: a new
+# flag then costs a pool rollout instead of a new image everywhere.
+ENVD_FLAGS=""
+
+# envd's request logger writes one structured line per Connect RPC — for
+# Process/Start that is the command, its arguments, cwd and environment. It is
+# discarded unless a writer exists, and outside Firecracker the only writer is
+# stdout under -verbose. Off by default: a PTY session sends one SendInput RPC
+# per keystroke, and each one logs its whole request.
+if [ "$AGENTBOX_ENVD_VERBOSE" = "true" ]; then
+    ENVD_FLAGS="$ENVD_FLAGS -verbose"
+fi
+
+# envd creates its own cgroups for pty/socat/user processes under
+# /sys/fs/cgroup. Under Kubernetes that path is usually a read-only mount, and
+# envd's fallback to a no-op manager is preceded by one mkdir failure per
+# process type. Ask for the no-op manager up front where the mount is read-only,
+# and keep real cgroup accounting where it is not (privileged / DinD templates).
+if ! ( mkdir /sys/fs/cgroup/.agentbox-probe && rmdir /sys/fs/cgroup/.agentbox-probe ) 2>/dev/null; then
+    ENVD_FLAGS="$ENVD_FLAGS -no-cgroups"
+fi
+
+# Escape hatch for anything not worth its own variable. Deliberately last, so
+# it can override what the checks above decided.
+if [ -n "$AGENTBOX_ENVD_FLAGS" ]; then
+    ENVD_FLAGS="$ENVD_FLAGS $AGENTBOX_ENVD_FLAGS"
+fi
+
 # Start envd daemon. -isnotfc = "not a Firecracker microVM": logs go to stdout
 # (no MMDS/Firecracker log shipping) AND, with our patch, the process handler
 # skips the Firecracker-only OOM/nice wrapper that fails under Kubernetes.
-exec "$AGENTBOX_DIR/envd" -isnotfc
+#
+# $ENVD_FLAGS is deliberately unquoted: it is a flag list, not one argument.
+# shellcheck disable=SC2086
+exec "$AGENTBOX_DIR/envd" -isnotfc $ENVD_FLAGS

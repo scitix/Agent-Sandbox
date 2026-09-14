@@ -685,6 +685,7 @@ func envOverridesFromGen(o *gen.EnvOverrides) (*agentsv1alpha1.EnvOverridesSpec,
 		out.DefaultIdleTimeout = &metav1.Duration{Duration: d}
 	}
 	out.Gateway = gatewayFromGen(o.Gateway)
+	out.Envd = envdFromGen(o.Envd)
 	out.UpdateStrategy = updateStrategyFromGen(o.UpdateStrategy)
 	out.Volumes = envVolumesFromGen(o.Volumes)
 	return out, nil
@@ -730,6 +731,20 @@ func updateStrategyFromGen(s *gen.EnvUpdateStrategy) *agentsv1alpha1.EnvUpdateSt
 		out.MaxUnavailable = &v
 	}
 	return out
+}
+
+// envdFromGen maps the wire envd settings onto the CRD spec.
+//
+// Verbose defaults to on, and the wire always carries the value in force (see
+// envdToGen), so an explicit true is canonicalised back to "unset". Without
+// that, a plain read-then-write round trip through the console would turn
+// every Env's default into a stored value — changing the pod template, and
+// rolling the pools, for a setting nobody touched.
+func envdFromGen(e *gen.EnvdSpec) *agentsv1alpha1.EnvdSpec {
+	if e == nil || e.Verbose == nil || *e.Verbose {
+		return nil
+	}
+	return &agentsv1alpha1.EnvdSpec{Verbose: ptr.To(false)}
 }
 
 // gatewayFromGen maps the wire egress-gateway switch onto the CRD spec.

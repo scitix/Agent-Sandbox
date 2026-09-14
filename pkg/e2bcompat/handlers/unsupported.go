@@ -88,9 +88,6 @@ const (
 	msgClusterAdmin = "Cluster and team administration is not exposed through the E2B-compatible API. " +
 		"Use the AgentBox native API or console."
 
-	msgAccessTokens = "Access tokens are not supported; AgentBox authenticates with API keys only. " +
-		"Send \"X-API-Key: agbx_...\" (create one with POST /api-keys)."
-
 	msgAPIKeyRename = "Renaming an API key is not supported. Delete it with DELETE /api-keys/{apiKeyID} " +
 		"and create a new one."
 
@@ -217,8 +214,19 @@ func (u unsupported) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.R
 func (u unsupported) VisitPostAdminTeamsTeamIDSandboxesKillResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }
-func (u unsupported) VisitPostAccessTokensResponse(w http.ResponseWriter) error { return u.write(w) }
-func (u unsupported) VisitDeleteAccessTokensAccessTokenIDResponse(w http.ResponseWriter) error {
+func (u unsupported) VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }
 func (u unsupported) VisitPatchApiKeysApiKeyIDResponse(w http.ResponseWriter) error {

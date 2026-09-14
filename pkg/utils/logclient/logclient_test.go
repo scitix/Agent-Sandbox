@@ -37,7 +37,8 @@ func TestQuery_ParsesNDJSONAndSkipsMeta(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{URL: srv.URL, Token: "tok"})
-	entries, err := c.Query(context.Background(), "p1", nil, time.Now().Add(-time.Hour), time.Now(), 0)
+	entries, err := c.Query(context.Background(), QueryOptions{
+		PodName: "p1", Start: time.Now().Add(-time.Hour), End: time.Now()})
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -60,9 +61,10 @@ func TestQuery_SendsPodAndClusterFilters(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{URL: srv.URL, Token: "tok"})
-	if _, err := c.Query(context.Background(), "p1",
-		map[string]string{"cluster": "prod-foo", "region": "region-a"},
-		time.Unix(1000, 0), time.Unix(2000, 0), 0); err != nil {
+	if _, err := c.Query(context.Background(), QueryOptions{
+		PodName: "p1",
+		Filters: map[string]string{"cluster": "prod-foo", "region": "region-a"},
+		Start:   time.Unix(1000, 0), End: time.Unix(2000, 0)}); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 
@@ -90,7 +92,8 @@ func TestQuery_SignedSchemeWhenAppIDIsSet(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{URL: srv.URL, Token: "tok", AppID: "agent-sandbox"})
-	if _, err := c.Query(context.Background(), "p1", nil, time.Unix(0, 0), time.Unix(1, 0), 0); err != nil {
+	if _, err := c.Query(context.Background(), QueryOptions{
+		PodName: "p1", Start: time.Unix(0, 0), End: time.Unix(1, 0)}); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	for _, h := range []string{"Signature", "Appid", "Timestamp", "Randstr"} {
@@ -116,7 +119,8 @@ func TestQuery_BearerSchemeWhenAppIDIsEmpty(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{URL: srv.URL, Token: "tok"})
-	if _, err := c.Query(context.Background(), "p1", nil, time.Unix(0, 0), time.Unix(1, 0), 0); err != nil {
+	if _, err := c.Query(context.Background(), QueryOptions{
+		PodName: "p1", Start: time.Unix(0, 0), End: time.Unix(1, 0)}); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	if auth != "Bearer tok" {
@@ -131,7 +135,8 @@ func TestQuery_RespectsLimit(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{URL: srv.URL, Token: "tok"})
-	entries, err := c.Query(context.Background(), "p1", nil, time.Unix(0, 0), time.Unix(1, 0), 1)
+	entries, err := c.Query(context.Background(), QueryOptions{
+		PodName: "p1", Start: time.Unix(0, 0), End: time.Unix(1, 0), Limit: 1})
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -149,6 +154,79 @@ func TestReady_RequiresURLAndToken(t *testing.T) {
 	}
 	if !New(Config{URL: "https://x", Token: "t"}).Ready() {
 		t.Error("expected ready")
+	}
+}
+
+func TestProjectFor(t *testing.T) {
+	cases := []struct {
+		name         string
+		splitProject bool
+		namespace    string
+		want         string
+	}{
+		{"unsharded cluster leaves the endpoint's own project alone", false, "t-team-a", ""},
+		{"unsharded cluster, platform namespace", false, "agentbox-system", ""},
+		{"sharded cluster sends a tenant namespace to the tenant store", true, "t-team-a", TenantProject},
+		{"sharded cluster sends everything else to the platform store", true, "agentbox-system", PlatformProject},
+		{"the prefix must be a prefix, not a substring", true, "team-t-a", PlatformProject},
+		{"an empty namespace is not a tenant", true, "", PlatformProject},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProjectFor(tc.splitProject, tc.namespace); got != tc.want {
+				t.Fatalf("ProjectFor(%v, %q) = %q, want %q", tc.splitProject, tc.namespace, got, tc.want)
+			}
+		})
+	}
+}
+
+// Two `project` parameters in one URL is not an error the server reports; it
+// picks one and answers 200 with whatever that store holds.
+func TestWithProject_ReplacesRatherThanAppends(t *testing.T) {
+	got, err := withProject("https://logs.example.com/download?project=default", "internal", "")
+	if err != nil {
+		t.Fatalf("withProject: %v", err)
+	}
+	if got != "https://logs.example.com/download?project=internal" {
+		t.Fatalf("override must replace the endpoint's own project, got %q", got)
+	}
+
+	got, err = withProject("https://logs.example.com/download?project=default", "", "")
+	if err != nil {
+		t.Fatalf("withProject: %v", err)
+	}
+	if got != "https://logs.example.com/download?project=default" {
+		t.Fatalf("no override must leave the endpoint untouched, got %q", got)
+	}
+
+	got, err = withProject("https://logs.example.com/download", "", "fallback")
+	if err != nil {
+		t.Fatalf("withProject: %v", err)
+	}
+	if got != "https://logs.example.com/download?project=fallback" {
+		t.Fatalf("configured project must apply when the URL carries none, got %q", got)
+	}
+}
+
+// An empty result is indistinguishable from a wrong question at the transport,
+// so the caller has to be able to show what it asked.
+func TestQueryOptions_Scope(t *testing.T) {
+	opts := QueryOptions{
+		PodName: "pod-1",
+		Filters: map[string]string{"region": "region-a", "cluster": "prod-foo"},
+		Start:   time.Unix(0, 0), End: time.Unix(60, 0),
+	}
+	got := opts.Scope("default")
+	for _, want := range []string{
+		"project=default", "cluster=prod-foo", "region=region-a", "pod_name=pod-1",
+		"1970-01-01T00:00:00Z..1970-01-01T00:01:00Z",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scope %q is missing %q", got, want)
+		}
+	}
+	if s := (QueryOptions{Project: "internal"}).Scope("default"); !strings.Contains(s, "project=internal") {
+		t.Errorf("the per-query override is what was actually sent, got %q", s)
 	}
 }
 

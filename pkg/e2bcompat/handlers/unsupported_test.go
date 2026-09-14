@@ -36,7 +36,6 @@ var allMessages = map[string]string{
 	"templateListV2": msgTemplateListV2,
 	"volumes":        msgVolumes,
 	"clusterAdmin":   msgClusterAdmin,
-	"accessTokens":   msgAccessTokens,
 	"apiKeyRename":   msgAPIKeyRename,
 	"secrets":        msgSecrets,
 	"logs":           msgLogs,
@@ -132,6 +131,7 @@ func TestStatusJSON_SendsTheHonestStatus(t *testing.T) {
 
 func TestRejectUnsupportedCreateFields(t *testing.T) {
 	tr := true
+	maskedHost := "example.com"
 	for _, tc := range []struct {
 		name     string
 		body     e2bgen.NewSandbox
@@ -177,8 +177,27 @@ func TestRejectUnsupportedCreateFields(t *testing.T) {
 		// `secure` is accepted and ignored: rejecting the SDK default would
 		// break every caller for no correctness gain.
 		{name: "secure", body: e2bgen.NewSandbox{TemplateID: "env", Secure: &tr}},
+		{
+			name: "network.httpsPorts",
+			body: e2bgen.NewSandbox{TemplateID: "env", Network: &e2bgen.SandboxNetworkConfig{
+				HttpsPorts: &[]uint32{8443},
+			}},
+			wantErr:  true,
+			mentions: "plain HTTP",
+		},
+		{
+			name: "network.maskRequestHost",
+			body: e2bgen.NewSandbox{TemplateID: "env", Network: &e2bgen.SandboxNetworkConfig{
+				MaskRequestHost: &maskedHost,
+			}},
+			wantErr:  true,
+			mentions: "network.rules",
+		},
 		// Empty maps/slices are not a request for the feature.
 		{name: "empty iam tokens", body: e2bgen.NewSandbox{TemplateID: "env", Iam: &e2bgen.SandboxIam{}}},
+		{name: "empty httpsPorts", body: e2bgen.NewSandbox{TemplateID: "env", Network: &e2bgen.SandboxNetworkConfig{
+			HttpsPorts: &[]uint32{},
+		}}},
 		{name: "empty volumeMounts", body: e2bgen.NewSandbox{TemplateID: "env", VolumeMounts: &[]e2bgen.SandboxVolumeMount{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

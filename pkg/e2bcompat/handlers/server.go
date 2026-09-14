@@ -43,7 +43,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
-	"github.com/scitix/agent-sandbox/pkg/utils/logclient"
 	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
@@ -67,11 +66,6 @@ type Services struct {
 	// means no cluster scoping, which is only correct for a backend that serves
 	// a single cluster.
 	MetricsSelector func() string
-	// CentralLogs reads finished sandboxes' output. Nil limits logs to live
-	// sandboxes.
-	CentralLogs *logclient.Client
-	// LogFilters scopes central-log queries to this cluster.
-	LogFilters func() map[string]string
 	// Forwarder enables cross-cluster forwarding via E2B API.
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	// When Forwarder is nil, cross-cluster requests will be rejected.
@@ -103,15 +97,9 @@ type Server struct {
 	// string because the value arrives on the cluster-config stream and can
 	// change while the process runs.
 	metricsSelector func() string
-	// centralLogs reads a finished sandbox's output, whose Pod no longer
-	// exists. Nil means only live sandboxes can be asked for logs.
-	centralLogs *logclient.Client
-	// logFilters scopes a central-log query to this cluster; same liveness
-	// reasoning as metricsSelector.
-	logFilters    func() map[string]string
-	k8sClient     client.Client
-	gatewayDomain string
-	forwarder     *service.CrossClusterForwarder
+	k8sClient       client.Client
+	gatewayDomain   string
+	forwarder       *service.CrossClusterForwarder
 }
 
 // NewServer creates a new E2B handler Server.
@@ -124,8 +112,6 @@ func NewServer(svcs Services, k8sClient client.Client, gatewayDomain string) *Se
 		localClusterID:  svcs.LocalClusterID,
 		metrics:         svcs.Metrics,
 		metricsSelector: svcs.MetricsSelector,
-		centralLogs:     svcs.CentralLogs,
-		logFilters:      svcs.LogFilters,
 		k8sClient:       k8sClient,
 		gatewayDomain:   gatewayDomain,
 		forwarder:       svcs.Forwarder,
@@ -806,12 +792,29 @@ func (s *Server) PatchApiKeysApiKeyID(_ context.Context, _ e2bgen.PatchApiKeysAp
 // All other operations return 501 Not Implemented
 // ---------------------------------------------------------------------------
 
-func (s *Server) PostAccessTokens(_ context.Context, _ e2bgen.PostAccessTokensRequestObject) (e2bgen.PostAccessTokensResponseObject, error) {
-	return unsupportedOp("PostAccessTokens", catArchitectural, msgAccessTokens), nil
+// Rig inventory and capacity are the infrastructure operator's view of the
+// fleet — which machines exist, what they can still take, what is failing on
+// them. AgentBox schedules onto Kubernetes nodes, so there is no equivalent
+// object here, and the questions these answer are asked of the cluster itself.
+
+func (s *Server) GetClustersClusterIDRigs(_ context.Context, _ e2bgen.GetClustersClusterIDRigsRequestObject) (e2bgen.GetClustersClusterIDRigsResponseObject, error) {
+	return unsupportedOp("GetClustersClusterIDRigs", catArchitectural, msgClusterAdmin), nil
 }
 
-func (s *Server) DeleteAccessTokensAccessTokenID(_ context.Context, _ e2bgen.DeleteAccessTokensAccessTokenIDRequestObject) (e2bgen.DeleteAccessTokensAccessTokenIDResponseObject, error) {
-	return unsupportedOp("DeleteAccessTokensAccessTokenID", catArchitectural, msgAccessTokens), nil
+func (s *Server) DeleteClustersClusterIDRigsInstancesInstanceID(_ context.Context, _ e2bgen.DeleteClustersClusterIDRigsInstancesInstanceIDRequestObject) (e2bgen.DeleteClustersClusterIDRigsInstancesInstanceIDResponseObject, error) {
+	return unsupportedOp("DeleteClustersClusterIDRigsInstancesInstanceID", catArchitectural, msgClusterAdmin), nil
+}
+
+func (s *Server) PutClustersClusterIDRigsRigIDCapacity(_ context.Context, _ e2bgen.PutClustersClusterIDRigsRigIDCapacityRequestObject) (e2bgen.PutClustersClusterIDRigsRigIDCapacityResponseObject, error) {
+	return unsupportedOp("PutClustersClusterIDRigsRigIDCapacity", catArchitectural, msgClusterAdmin), nil
+}
+
+func (s *Server) GetClustersClusterIDRigsRigIDErrors(_ context.Context, _ e2bgen.GetClustersClusterIDRigsRigIDErrorsRequestObject) (e2bgen.GetClustersClusterIDRigsRigIDErrorsResponseObject, error) {
+	return unsupportedOp("GetClustersClusterIDRigsRigIDErrors", catArchitectural, msgClusterAdmin), nil
+}
+
+func (s *Server) GetClustersClusterIDRigsRigIDInstances(_ context.Context, _ e2bgen.GetClustersClusterIDRigsRigIDInstancesRequestObject) (e2bgen.GetClustersClusterIDRigsRigIDInstancesResponseObject, error) {
+	return unsupportedOp("GetClustersClusterIDRigsRigIDInstances", catArchitectural, msgClusterAdmin), nil
 }
 
 func (s *Server) PostAdminTeamsTeamIDBuildsCancel(_ context.Context, _ e2bgen.PostAdminTeamsTeamIDBuildsCancelRequestObject) (e2bgen.PostAdminTeamsTeamIDBuildsCancelResponseObject, error) {

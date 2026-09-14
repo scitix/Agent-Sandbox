@@ -49,10 +49,18 @@ class SandboxLogsResult:
             namespace (str): Kubernetes namespace of the sandbox.
             entries (list[SandboxLogEntry]): Ordered list of log lines (oldest first).
             truncated (bool): True when the response was truncated due to the `lines` limit or internal size cap.
-            source (SandboxLogsResultSource):
+            source (SandboxLogsResultSource): Where the lines came from. `live` reads the sandbox's Pod through the
+                Kubernetes log API.
+                `central` is the central log service, used once the sandbox has ended and its Pod was
+                recycled; only what the log pipeline collected is available there. `runtime` is a runtime's
+                own log file, read via exec.
             pod_name (str | Unset): Name of the Kubernetes Pod backing the sandbox.
             captured_at (datetime.datetime | Unset): RFC 3339 timestamp when the log snapshot was captured.
             total_bytes (int | Unset): Total byte size of all log entries before any truncation.
+            scope (str | Unset): For source=central: what was actually asked of the central log service — log store, filters
+                and time window. An empty result and a mis-scoped query are the same 200 with no rows over
+                the wire, so this is the only way to tell "the sandbox printed nothing" from "nobody was
+                asked about it".
             runtime_name (str | Unset): When source=runtime, the runtime name whose log file was read
      """
 
@@ -64,6 +72,7 @@ class SandboxLogsResult:
     pod_name: str | Unset = UNSET
     captured_at: datetime.datetime | Unset = UNSET
     total_bytes: int | Unset = UNSET
+    scope: str | Unset = UNSET
     runtime_name: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -96,6 +105,8 @@ class SandboxLogsResult:
 
         total_bytes = self.total_bytes
 
+        scope = self.scope
+
         runtime_name = self.runtime_name
 
 
@@ -114,6 +125,8 @@ class SandboxLogsResult:
             field_dict["capturedAt"] = captured_at
         if total_bytes is not UNSET:
             field_dict["totalBytes"] = total_bytes
+        if scope is not UNSET:
+            field_dict["scope"] = scope
         if runtime_name is not UNSET:
             field_dict["runtimeName"] = runtime_name
 
@@ -160,6 +173,8 @@ class SandboxLogsResult:
 
         total_bytes = d.pop("totalBytes", UNSET)
 
+        scope = d.pop("scope", UNSET)
+
         runtime_name = d.pop("runtimeName", UNSET)
 
         sandbox_logs_result = cls(
@@ -171,6 +186,7 @@ class SandboxLogsResult:
             pod_name=pod_name,
             captured_at=captured_at,
             total_bytes=total_bytes,
+            scope=scope,
             runtime_name=runtime_name,
         )
 
