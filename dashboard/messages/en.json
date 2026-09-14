@@ -195,6 +195,7 @@
   "sandboxes.form.idleTimeoutDesc": "If not set, the sandbox will never be automatically terminated due to idleness. If set, the sandbox will be terminated if it has been idle for the specified duration.",
   "sandboxes.tab.overview": "Overview",
   "sandboxes.logs": "Logs",
+  "sandboxes.logs.container": "Container",
   "sandboxes.sandboxLogs": "Sandbox: {{sandboxId}}",
   "sandboxes.connecting": "Connecting...",
   "sandboxes.connected": "Connected",

@@ -1,0 +1,127 @@
+diff --git a/packages/envd/internal/api/init.go b/packages/envd/internal/api/init.go
+index 093919e2..7bab19a2 100644
+--- a/packages/envd/internal/api/init.go
++++ b/packages/envd/internal/api/init.go
+@@ -175,6 +175,11 @@ type effectiveDefaults struct {
+ // be a second declaration to keep in step.
+ const memoryHeader = "X-Envd-Memory"
+ 
++// pollMMDSOpts is host.PollForMMDSOpts, indirected so a test can observe
++// whether the poll was started at all — which is the whole behaviour of the
++// gate below, and is otherwise only visible as network traffic.
++var pollMMDSOpts = host.PollForMMDSOpts
++
+ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
+ 	defer r.Body.Close()
+ 
+@@ -294,11 +299,23 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
+ 		a.initialized.Store(true)
+ 	}
+ 
+-	go func() { //nolint:contextcheck // TODO: fix this later
+-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+-		defer cancel()
+-		host.PollForMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
+-	}()
++	// MMDS is Firecracker's metadata service, reachable only inside a microVM.
++	// Outside one there is nothing at 169.254.169.254 to answer, so this poll
++	// can only ever run its deadline out: a request every 50ms for 60s, 1200 of
++	// them, per sandbox, every time. Under Kubernetes each one is a real
++	// connection attempt that the pod's egress filter has to evaluate and log,
++	// and the whole point of -isnotfc is that this envd is not in a microVM.
++	//
++	// The two values it would fetch (E2B_SANDBOX_ID, E2B_TEMPLATE_ID) are
++	// available to the orchestrator already; it can deliver them in the /init
++	// body it is sending anyway. main.go's boot-time poll is gated the same way.
++	if !a.isNotFC {
++		go func() { //nolint:contextcheck // TODO: fix this later
++			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
++			defer cancel()
++			pollMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
++		}()
++	}
+ 
+ 	// After SetData, so this reports what is actually in effect rather than what was
+ 	// requested. Set before WriteHeader.
+diff --git a/packages/envd/internal/api/init_test.go b/packages/envd/internal/api/init_test.go
+index 72a80662..c35afa53 100644
+--- a/packages/envd/internal/api/init_test.go
++++ b/packages/envd/internal/api/init_test.go
+@@ -13,6 +13,7 @@ import (
+ 	"slices"
+ 	"strings"
+ 	"sync"
++	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
+@@ -21,6 +22,7 @@ import (
+ 	"github.com/stretchr/testify/require"
+ 
+ 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
++	"github.com/e2b-dev/infra/packages/envd/internal/host"
+ 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+ 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
+ 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
+@@ -1147,3 +1149,61 @@ func TestPostInit_UnauthorizedDoesNotUnfreeze(t *testing.T) {
+ 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+ 	assert.Empty(t, mgr.unfreezeAttempts, "unauthorized /init must not attempt unfreeze")
+ }
++
++// Outside Firecracker there is nothing at 169.254.169.254 to answer, so the
++// MMDS poll can only run its deadline out: one request every 50ms for 60s,
++// 1200 per sandbox, every time. Under Kubernetes each is a connection the
++// pod's egress filter evaluates and logs, which is how this was found.
++func TestPostInit_MMDSPollGatedOnFirecracker(t *testing.T) {
++	for _, tc := range []struct {
++		name      string
++		isNotFC   bool
++		wantPolls int32
++	}{
++		{"outside firecracker: no poll", true, 0},
++		{"inside firecracker: polls", false, 1},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			var polls atomic.Int32
++			done := make(chan struct{}, 1)
++			orig := pollMMDSOpts
++			pollMMDSOpts = func(context.Context, chan<- *host.MMDSOpts, *utils.EnvVars) {
++				polls.Add(1)
++				select {
++				case done <- struct{}{}:
++				default:
++				}
++			}
++			t.Cleanup(func() { pollMMDSOpts = orig })
++
++			api := newTestAPI(nil, &mockMMDSClient{})
++			api.isNotFC = tc.isNotFC
++
++			body, err := json.Marshal(PostInitJSONBody{})
++			require.NoError(t, err)
++			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "/init", bytes.NewReader(body))
++			require.NoError(t, err)
++			rec := httptest.NewRecorder()
++			api.PostInit(rec, req)
++			require.Equal(t, http.StatusNoContent, rec.Code)
++
++			// The poll runs in a goroutine, so "it happened" needs a wait and
++			// "it did not" needs a bounded one — asserting immediately would
++			// pass for the wrong reason.
++			if tc.wantPolls > 0 {
++				select {
++				case <-done:
++				case <-time.After(2 * time.Second):
++					t.Fatal("expected the MMDS poll to start inside Firecracker")
++				}
++			} else {
++				select {
++				case <-done:
++					t.Fatal("the MMDS poll must not start outside Firecracker")
++				case <-time.After(250 * time.Millisecond):
++				}
++			}
++			assert.Equal(t, tc.wantPolls, polls.Load())
++		})
++	}
++}

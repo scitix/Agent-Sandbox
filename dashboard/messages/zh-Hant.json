@@ -195,6 +195,7 @@
   "sandboxes.form.idleTimeoutDesc": "未設定時，沙箱不會因閒置而自動終止。設定後，沙箱將在閒置達指定時長後被終止。",
   "sandboxes.tab.overview": "概覽",
   "sandboxes.logs": "日誌",
+  "sandboxes.logs.container": "容器",
   "sandboxes.sandboxLogs": "沙箱：{{sandboxId}}",
   "sandboxes.connecting": "連線中...",
   "sandboxes.connected": "已連線",

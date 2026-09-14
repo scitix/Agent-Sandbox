@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
@@ -64,7 +66,7 @@ func historyWith(t *testing.T, sb gen.Sandbox) store.SandboxStore {
 // to be in the message, because it is a deployment gap and not a bad request.
 func TestGetCentralLogs_NoServiceConfigured(t *testing.T) {
 	s := centralLogsService(t, nil)
-	_, appErr := s.getCentralLogs(context.Background(), "t-a", "sbx-1", 100)
+	_, appErr := s.getCentralLogs(context.Background(), "t-a", "sbx-1", "", 100)
 	if appErr == nil {
 		t.Fatal("expected an error for a sandbox with no pod and no log service")
 	}
@@ -94,7 +96,7 @@ func TestGetCentralLogs_EmptyResultCarriesTheScopeItAsked(t *testing.T) {
 		func() CentralLogScope { return CentralLogScope{} },
 	)
 
-	res, appErr := s.getCentralLogs(context.Background(), "t-a", "sbx-1", 100)
+	res, appErr := s.getCentralLogs(context.Background(), "t-a", "sbx-1", "", 100)
 	if appErr != nil {
 		t.Fatalf("an empty result is not an error: %v", appErr)
 	}
@@ -138,7 +140,7 @@ func TestGetCentralLogs_SplitProjectPicksTheStoreByNamespace(t *testing.T) {
 				},
 			)
 
-			res, appErr := s.getCentralLogs(context.Background(), tc.namespace, "sbx-1", 100)
+			res, appErr := s.getCentralLogs(context.Background(), tc.namespace, "sbx-1", "", 100)
 			if appErr != nil {
 				t.Fatalf("query: %v", appErr)
 			}
@@ -174,7 +176,7 @@ func TestGetCentralLogs_UnshardedClusterLeavesTheEndpointProject(t *testing.T) {
 		},
 	)
 
-	if _, appErr := s.getCentralLogs(context.Background(), "agentbox-system", "sbx-1", 100); appErr != nil {
+	if _, appErr := s.getCentralLogs(context.Background(), "agentbox-system", "sbx-1", "", 100); appErr != nil {
 		t.Fatalf("query: %v", appErr)
 	}
 	if gotProject != "default" {
@@ -206,5 +208,115 @@ func TestEnvdToGen_AlwaysReportsTheEffectiveValue(t *testing.T) {
 				t.Fatalf("expected verbose=%v, got %v", tc.want, *got.Verbose)
 			}
 		})
+	}
+}
+
+// A sandbox Pod runs the egress proxy alongside the sandbox, and the proxy
+// logs a line per connection it evaluates. Reading every container by default
+// buried what the sandbox itself printed, so the default is the sandbox's own
+// container — on both the live path and this one.
+func TestGetCentralLogs_DefaultsToTheSandboxContainer(t *testing.T) {
+	var gotContainer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Filters map[string]struct {
+				Op    string `json:"op"`
+				Value string `json:"value"`
+			} `json:"filters"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotContainer = body.Filters["container_name"].Value
+		_, _ = io.WriteString(w, "")
+	}))
+	defer srv.Close()
+
+	for _, tc := range []struct{ name, ask, want string }{
+		{"unspecified reads the sandbox container", "", SandboxContainerName},
+		{"an explicit container is honoured", "egress-proxy", "egress-proxy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hist := historyWith(t, gen.Sandbox{
+				SandboxId: "sbx-1", Namespace: "t-a", PodName: "pod-1",
+				ClaimedAt: time.Unix(1000, 0), TerminatedAt: ptr.To(time.Unix(2000, 0)),
+			})
+			s := centralLogsService(t, &hist)
+			s.SetCentralLogs(
+				logclient.New(logclient.Config{URL: srv.URL, Token: "tok"}),
+				func() CentralLogScope { return CentralLogScope{} },
+			)
+			if _, appErr := s.getCentralLogs(context.Background(), "t-a", "sbx-1", tc.ask, 100); appErr != nil {
+				t.Fatalf("query: %v", appErr)
+			}
+			if gotContainer != tc.want {
+				t.Fatalf("expected container_name=%q, got %q", tc.want, gotContainer)
+			}
+		})
+	}
+}
+
+// The Pod is gone, so the container list has to come from the record — and it
+// has to be offered, or nobody can reach the sidecar's log for the very
+// sandbox whose failure they are investigating.
+func TestRecordedContainerNames(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *map[string]string
+		want []string
+	}{
+		{"no record falls back to the sandbox container", nil, []string{"sandbox"}},
+		{"empty record likewise", &map[string]string{}, []string{"sandbox"}},
+		{
+			"the sandbox container is listed first",
+			&map[string]string{"egress-proxy": "i", "sandbox": "i"},
+			[]string{"sandbox", "egress-proxy"},
+		},
+		{
+			"a pod without one keeps what it has",
+			&map[string]string{"worker": "i", "helper": "i"},
+			[]string{"helper", "worker"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := recordedContainerNames(&gen.Sandbox{ContainerImages: tc.in})
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// Native sidecars live in initContainers[] with restartPolicy: Always, and the
+// kubelet serves their logs like any other container. Leaving them out of the
+// selectable set would make the egress proxy unreadable on exactly the
+// clusters that run it that way.
+func TestPodContainerSelection(t *testing.T) {
+	pod := &corev1.Pod{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "sandbox"}},
+		InitContainers: []corev1.Container{
+			{Name: "envd-injector"},
+			{Name: "egress-proxy", RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways)},
+		},
+	}}
+	if names := containerNames(pod); len(names) != 3 || names[0] != "sandbox" {
+		t.Fatalf("every container must be selectable, sandbox first: %v", names)
+	}
+	def := defaultLogContainers(pod)
+	if len(def) != 1 || def[0].Name != "sandbox" {
+		t.Fatalf("the default must be the sandbox container alone, got %+v", def)
+	}
+
+	// A Template is free to name its container something else; falling back to
+	// every container there would reintroduce the noise this avoids.
+	odd := &corev1.Pod{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "main"}, {Name: "helper"}},
+	}}
+	if d := defaultLogContainers(odd); len(d) != 1 || d[0].Name != "main" {
+		t.Fatalf("expected the first container as the fallback, got %+v", d)
 	}
 }

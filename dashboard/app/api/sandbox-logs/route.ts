@@ -50,6 +50,13 @@ import type { components } from "@/lib/api/schema"
 
 type Sandbox = components["schemas"]["Sandbox"]
 
+/**
+ * The sandbox's own container. A Pod also runs the egress proxy and the
+ * injector init containers, whose output belongs to the platform rather than
+ * the user. Callers name another container explicitly to read it.
+ */
+const SANDBOX_CONTAINER = "sandbox"
+
 // ─── External log service config ──────────────────────────────────────────────
 
 interface LogConfig {
@@ -126,13 +133,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // 3. Parse body
   let sandbox: Sandbox
   let clusterID: string
+  let container: string
   try {
-    const body = (await request.json()) as { sandbox?: Sandbox; clusterID?: string }
+    const body = (await request.json()) as {
+      sandbox?: Sandbox
+      clusterID?: string
+      container?: string
+    }
     if (!body.sandbox) {
       return NextResponse.json({ error: "sandbox is required" }, { status: 400 })
     }
     sandbox = body.sandbox
     clusterID = body.clusterID ?? "default"
+    container = body.container?.trim() || SANDBOX_CONTAINER
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
   }
@@ -176,6 +189,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     filters: {
       ...extraFilters,
       pod_name: { op: "eq", value: podName },
+      // The collector ships every container of the Pod. Without this the
+      // egress proxy's per-connection lines — one per outbound request it
+      // evaluates — are interleaved with the sandbox's own output, and there
+      // are far more of them.
+      container_name: { op: "eq", value: container },
       ...(containerIdRaw ? { container_id: { op: "eq", value: containerIdRaw } } : {}),
     },
     start_time: startTime,

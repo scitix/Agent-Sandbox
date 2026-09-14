@@ -99,3 +99,40 @@ unconditional `/init` before any template turns this on; otherwise sandboxes in
 that template are permanently unusable. It ships default-off for that reason.
 
 Files: `main.go`.
+
+## 0003-skip-mmds-poll-when-not-firecracker.patch
+
+**Base:** envd 0.9.0 (`0c2108b1b76a66d18cf095d51fd7c51c703648ae`), **with 0001
+and 0002 already applied**.
+
+**Problem.** `-isnotfc` already suppresses the MMDS poll `main.go` starts at
+boot, but `internal/api/init.go` starts a second one on **every** `/init`,
+unconditionally. AgentBox sends an `/init` to every sandbox, so every sandbox
+polls.
+
+MMDS is Firecracker's metadata service at `169.254.169.254`. Outside a microVM
+nothing answers, so the poll can only run its deadline out: one request every
+50ms for 60s — **1200 per sandbox, every time**. Each is a real connection
+attempt that the pod's egress filter evaluates and logs, which is how it was
+found: a sidecar log that was almost entirely
+
+```
+level=INFO msg="egress denied" host=169.254.169.254 port=80 match=ssrf
+```
+
+at a steady 50ms cadence for the first minute of every sandbox's life.
+
+**Fix.** Gate that goroutine on `!a.isNotFC`, the same flag `main.go` already
+uses for its own poll. The two values it would have fetched
+(`E2B_SANDBOX_ID` / `E2B_TEMPLATE_ID`) are known to the orchestrator, which can
+put them in the `/init` body it is already sending.
+
+`host.PollForMMDSOpts` is indirected through a package-level `var` so the test
+can assert both directions — that the poll does not start outside Firecracker,
+and still does inside it. Without the seam the behaviour is only observable as
+network traffic.
+
+Files: `internal/api/init.go` (+ `init_test.go`).
+
+Also a candidate for upstreaming: the boot-time poll is already gated, so
+gating this one is the same decision applied consistently.

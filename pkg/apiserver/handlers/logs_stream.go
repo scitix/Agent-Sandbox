@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -172,6 +173,10 @@ func LogsStreamHandler(
 			}
 		}
 		source := c.Query("source")
+		// Which container to stream. Empty means the sandbox's own — see
+		// findLiveSandboxPod. A client offers the choice from the container list
+		// the non-streaming logs endpoint returns.
+		container := c.Query("container")
 
 		auth := middleware.AuthFromContext(c)
 		namespace := auth.Namespace
@@ -228,6 +233,9 @@ func LogsStreamHandler(
 		// Try fetching live pod logs.
 		if clientset != nil {
 			podName, containerName, liveErr := findLiveSandboxPod(ctx, sandboxSvc, namespace, sandboxID)
+			if container != "" {
+				containerName = container
+			}
 			if liveErr == nil {
 				logOpts := buildPodLogOpts(containerName, lines)
 				truncated, streamErr := streamPodLogsToEnc(ctx, clientset, namespace, podName, logOpts, c.Writer, enc)
@@ -266,11 +274,24 @@ func findLiveSandboxPod(ctx context.Context, sandboxSvc service.SandboxService, 
 	if result.PodName == "" {
 		return "", "", fmt.Errorf("sandbox has no pod")
 	}
-	// Pick the first container name from ContainerImages (sandbox pods typically have one main container).
+	// The sandbox's own container, not "whichever came first". Ranging over the
+	// map picked a random one per call — Go randomises map order — so a Pod
+	// running the egress proxy alongside the sandbox streamed the proxy's
+	// per-connection lines about half the time, and which one you got changed
+	// between refreshes of the same page.
+	containerName = service.SandboxContainerName
 	if result.ContainerImages != nil {
-		for name := range *result.ContainerImages {
-			containerName = name
-			break
+		if _, ok := (*result.ContainerImages)[containerName]; !ok {
+			// A Template is free to name it something else. Pick deterministically
+			// so at least the same request keeps giving the same answer.
+			names := make([]string, 0, len(*result.ContainerImages))
+			for name := range *result.ContainerImages {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			if len(names) > 0 {
+				containerName = names[0]
+			}
 		}
 	}
 	return result.PodName, containerName, nil

@@ -980,6 +980,13 @@ export interface components {
              *     asked about it".
              */
             scope?: string;
+            /**
+             * @description Every container of the sandbox Pod whose log can be read, the sandbox's own first.
+             *     Includes init containers: on a Kubernetes with native sidecars the egress proxy is one,
+             *     and the kubelet serves its log like any other. A client uses this to offer the choice;
+             *     omitting `container` reads the sandbox container alone.
+             */
+            containers?: string[];
             /** @description When source=runtime, the runtime name whose log file was read */
             runtimeName?: string;
         };
@@ -3142,7 +3149,12 @@ export interface operations {
     GetSandboxLogs: {
         parameters: {
             query?: {
-                /** @description Filter by container name. When omitted, logs from all containers are returned. */
+                /**
+                 * @description Which container's log to read. Defaults to the sandbox's own container — a Pod also runs
+                 *     the egress proxy and the injector init containers, whose output is the platform's rather
+                 *     than the user's, and the proxy logs a line per connection it evaluates. Name any container
+                 *     from `containers` in the response to read that one instead; an unknown name is a 400.
+                 */
                 container?: string;
                 /** @description Return only the last N lines. 0 or absent means return all lines. */
                 lines?: number;

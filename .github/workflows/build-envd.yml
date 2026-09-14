@@ -49,7 +49,7 @@ on:
           overwrite an existing tag in place, and templates pull IfNotPresent. Reset
           it to empty whenever infra_ref moves.
         required: false
-        default: "-1"
+        default: "-2"
 
 env:
   REGISTRY: ghcr.io
@@ -112,7 +112,7 @@ jobs:
           # `inputs` is empty on a push event, so the fallback is what actually
           # applies most of the time — same shape as infra_ref above. Keep the two
           # defaults in step with build-envd.sh's ENVD_IMAGE_SUFFIX.
-          echo "envd_image_tag=${ENVD_VERSION}${{ github.event.inputs.envd_image_suffix || '-1' }}" >> "$GITHUB_OUTPUT"
+          echo "envd_image_tag=${ENVD_VERSION}${{ github.event.inputs.envd_image_suffix || '-2' }}" >> "$GITHUB_OUTPUT"
           echo "Detected envd version: ${ENVD_VERSION}"
           cp bin/envd ${{ github.workspace }}/installer/runtimes/envd/envd
 

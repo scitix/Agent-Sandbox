@@ -105,9 +105,10 @@ cp "$ENVD_SRC_DIR/bin/envd" ./envd
 # a genuinely new envd version reads as "the second build of X" when it is the
 # first build of Y.
 #
-# Currently -1: envd is still 0.9.0, but the entrypoint gained the verbose /
-# extra-flags handling after :0.9.0 was published.
-ENVD_IMAGE_SUFFIX=${ENVD_IMAGE_SUFFIX:-"-1"}
+# Currently -2: envd is still 0.9.0, but the image has changed twice since
+# :0.9.0 was published — the entrypoint's verbose / extra-flags handling (-1),
+# and patch 0003, which stops the per-sandbox MMDS poll (-2).
+ENVD_IMAGE_SUFFIX=${ENVD_IMAGE_SUFFIX:-"-2"}
 ENVD_VERSIONED_TAG="${REGISTRY_PREFIX}${ENVD_IMAGE_NAME}:${ENVD_VERSION}${ENVD_IMAGE_SUFFIX}"
 ENVD_LATEST_TAG="${REGISTRY_PREFIX}${ENVD_IMAGE_NAME}:latest"
 

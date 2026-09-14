@@ -1390,7 +1390,7 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 			// The Pod is gone, but the lines were shipped before it was
 			// recycled. Answering "not found" for a sandbox that finished two
 			// minutes ago is the least useful true statement available.
-			return s.getCentralLogs(ctx, namespace, sandboxID, lines)
+			return s.getCentralLogs(ctx, namespace, sandboxID, container, lines)
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
@@ -1415,16 +1415,29 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 		logOpts.TailLines = &n
 	}
 
-	// Collect logs from the requested container(s).
+	// Collect logs from the requested container.
+	//
+	// Default to the sandbox container alone. A Pod also carries the egress
+	// proxy and the injector init containers, and their output is the
+	// platform's, not the user's: the proxy in particular logs a line per
+	// connection it evaluates, which buries what the sandbox itself printed.
+	// Reading every container by default made the answer to "what did my
+	// sandbox do" mostly about something else.
 	var entries []gen.SandboxLogEntry
 	var totalBytes int64
-	containersToFetch := pod.Spec.Containers
+	containersToFetch := defaultLogContainers(pod)
 	if container != "" {
-		for _, c := range pod.Spec.Containers {
+		containersToFetch = nil
+		for _, c := range allPodContainers(pod) {
 			if c.Name == container {
 				containersToFetch = []corev1.Container{c}
 				break
 			}
+		}
+		if len(containersToFetch) == 0 {
+			return nil, domain.NewBadRequest(fmt.Sprintf(
+				"sandbox %s/%s has no container %q; it has %s",
+				namespace, sandboxID, container, strings.Join(containerNames(pod), ", ")))
 		}
 	}
 	for _, c := range containersToFetch {
@@ -1455,6 +1468,7 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 		Entries:    entries,
 		TotalBytes: &totalBytes,
 		Source:     gen.SandboxLogsResultSource("live"),
+		Containers: ptr.To(containerNames(pod)),
 	}, nil
 }
 
@@ -1467,7 +1481,7 @@ func (s *k8sSandboxService) GetLogs(ctx context.Context, namespace, sandboxID st
 // container output at all" are one indistinguishable outcome at the transport.
 // Whatever is returned therefore carries the scope that produced it.
 func (s *k8sSandboxService) getCentralLogs(
-	ctx context.Context, namespace, sandboxID string, lines int,
+	ctx context.Context, namespace, sandboxID, container string, lines int,
 ) (*gen.SandboxLogsResult, *domain.AppError) {
 	gone := fmt.Sprintf("sandbox %s/%s has ended and its pod was recycled", namespace, sandboxID)
 	if s.centralLogs == nil || !s.centralLogs.Ready() {
@@ -1497,13 +1511,20 @@ func (s *k8sSandboxService) getCentralLogs(
 	if sb.TerminatedAt != nil {
 		end = sb.TerminatedAt.Add(time.Second)
 	}
+	// Default to the sandbox container, for the same reason the live path does:
+	// the collector ships every container, and the egress proxy's per-connection
+	// lines would otherwise dominate the answer.
+	if container == "" {
+		container = SandboxContainerName
+	}
 	opts := logclient.QueryOptions{
-		PodName: sb.PodName,
-		Filters: scope.Filters,
-		Project: logclient.ProjectFor(scope.SplitProject, namespace),
-		Start:   sb.ClaimedAt.Add(-time.Second),
-		End:     end,
-		Limit:   lines,
+		PodName:   sb.PodName,
+		Container: container,
+		Filters:   scope.Filters,
+		Project:   logclient.ProjectFor(scope.SplitProject, namespace),
+		Start:     sb.ClaimedAt.Add(-time.Second),
+		End:       end,
+		Limit:     lines,
 	}
 	asked := opts.Scope(s.centralLogs.DefaultProject())
 
@@ -1535,7 +1556,82 @@ func (s *k8sSandboxService) getCentralLogs(
 		TotalBytes: &totalBytes,
 		Source:     gen.SandboxLogsResultSource("central"),
 		Scope:      ptr.To(asked),
+		// The Pod is gone, so the real container list is gone with it. The
+		// record keeps the images it ran, keyed by container name, which is the
+		// same set — and offering nothing would leave a client unable to reach
+		// the sidecar's log for exactly the sandbox whose failure is being
+		// investigated.
+		Containers: ptr.To(recordedContainerNames(sb)),
 	}, nil
+}
+
+// SandboxContainerName is the sandbox's own container: the one running the
+// user's image. It is containers[0] by construction — the renderer and the
+// in-place image update both address it by that index — and everything else in
+// the Pod (the egress proxy, the tini/envd injectors) is the platform's.
+const SandboxContainerName = "sandbox"
+
+// allPodContainers is every container whose log can be read, regular and init
+// alike.
+//
+// Init containers are included because the egress proxy is one of them on a
+// Kubernetes new enough for native sidecars (initContainers[] with
+// restartPolicy: Always). The kubelet does not distinguish the two for logs —
+// `kubectl logs -c <name>` works either way — so neither does this.
+func allPodContainers(pod *corev1.Pod) []corev1.Container {
+	out := make([]corev1.Container, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers))
+	out = append(out, pod.Spec.Containers...)
+	out = append(out, pod.Spec.InitContainers...)
+	return out
+}
+
+// defaultLogContainers is what a request that names no container reads: the
+// sandbox container alone.
+//
+// Falls back to containers[0] when no container is literally named "sandbox",
+// which is how a hand-written Template can shape a Pod. Returning everything
+// in that case would reintroduce exactly the noise this exists to avoid.
+func defaultLogContainers(pod *corev1.Pod) []corev1.Container {
+	for _, c := range pod.Spec.Containers {
+		if c.Name == SandboxContainerName {
+			return []corev1.Container{c}
+		}
+	}
+	if len(pod.Spec.Containers) > 0 {
+		return pod.Spec.Containers[:1]
+	}
+	return nil
+}
+
+// recordedContainerNames reconstructs the container list for a sandbox whose
+// Pod no longer exists, from the per-container images its record kept. The
+// sandbox's own container is listed first, matching the live path's ordering.
+func recordedContainerNames(sb *gen.Sandbox) []string {
+	if sb.ContainerImages == nil || len(*sb.ContainerImages) == 0 {
+		return []string{SandboxContainerName}
+	}
+	names := make([]string, 0, len(*sb.ContainerImages))
+	for name := range *sb.ContainerImages {
+		if name != SandboxContainerName {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if _, ok := (*sb.ContainerImages)[SandboxContainerName]; ok {
+		return append([]string{SandboxContainerName}, names...)
+	}
+	return names
+}
+
+// containerNames lists every readable container, for an error message that
+// tells the caller what they could have asked for.
+func containerNames(pod *corev1.Pod) []string {
+	all := allPodContainers(pod)
+	names := make([]string, 0, len(all))
+	for _, c := range all {
+		names = append(names, c.Name)
+	}
+	return names
 }
 
 // splitLogLines splits raw Kubernetes log output into individual log lines,

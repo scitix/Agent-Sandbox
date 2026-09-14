@@ -16,7 +16,7 @@
 
 "use client"
 
-import { useRef, useEffect, useState, useCallback } from "react"
+import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Search, X, ChevronUp, ChevronDown, Download } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -35,6 +35,13 @@ import { useExternalLogsConfigured } from "@/hooks/use-external-logs"
 import { useClusterID } from "@/hooks/use-cluster-id"
 
 // ─── Lines selector ───────────────────────────────────────────────────────────
+
+/**
+ * The sandbox's own container, and the default. A Pod also runs the egress
+ * proxy and the injector init containers; the proxy logs a line per outbound
+ * connection it evaluates, which buries what the sandbox itself printed.
+ */
+const SANDBOX_CONTAINER = "sandbox"
 
 const LINE_OPTIONS = [
   { label: "All", value: 0 },
@@ -92,6 +99,9 @@ interface LogViewerProps {
 function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
   const { t } = useTranslation()
   const [lines, setLines] = useState(100)
+  // Which container to read. Empty means the sandbox's own — the server
+  // resolves that, so the two halves cannot disagree about what "default" is.
+  const [container, setContainer] = useState("")
   const [metaInfo, setMetaInfo] = useState<NdjsonMeta | null>(null)
   // isStreaming: true while an NDJSON stream is actively open (no meta line received yet).
   // Used to drive the "live" breathing indicator.
@@ -135,6 +145,15 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
 
   const sandbox = sandboxEnvelope?.sandbox
   const sandboxStatus = sandbox?.status ?? ""
+  // Every container whose log can be read, the sandbox's own first. Taken from
+  // the record rather than a separate call: it is the same set the server
+  // reports on the logs endpoint, and it is already loaded here.
+  const containers = useMemo(() => {
+    const names = Object.keys(sandbox?.containerImages ?? {})
+    if (names.length === 0) return [SANDBOX_CONTAINER]
+    const rest = names.filter((n) => n !== SANDBOX_CONTAINER).sort()
+    return names.includes(SANDBOX_CONTAINER) ? [SANDBOX_CONTAINER, ...rest] : rest
+  }, [sandbox?.containerImages])
   const isTerminated =
     sandboxStatus === "Completed" ||
     sandboxStatus === "Failed" ||
@@ -325,7 +344,10 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
       return
     }
 
-    const linesParam = lines > 0 ? `?lines=${lines}` : ""
+    const params = new URLSearchParams()
+    if (lines > 0) params.set("lines", String(lines))
+    if (container) params.set("container", container)
+    const linesParam = params.size > 0 ? `?${params}` : ""
 
     try {
       const impersonation = store.get(impersonationAtom)
@@ -342,7 +364,7 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
         fetchInit = {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ sandbox, clusterID }),
+          body: JSON.stringify({ sandbox, clusterID, container: container || undefined }),
           signal: controller.signal,
         }
       } else {
@@ -414,7 +436,16 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
         setIsStreaming(false)
       }
     }
-  }, [abortRef, lines, clusterID, sandboxId, isTerminated, isExternalLogsConfigured, sandbox])
+  }, [
+    abortRef,
+    lines,
+    container,
+    clusterID,
+    sandboxId,
+    isTerminated,
+    isExternalLogsConfigured,
+    sandbox,
+  ])
 
   const [xtermReady, setXtermReady] = useState(false)
   useEffect(() => {
@@ -444,6 +475,33 @@ function LogViewer({ sandboxId, clusterID, abortRef }: LogViewerProps) {
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* ── Combined toolbar: lines selector + status + search ── */}
       <div className="border-border flex h-[33px] shrink-0 items-center gap-2 border-b px-3">
+        {/* Container selector. Shown only when there is a choice to make: a Pod
+            without the egress gateway runs one container, and a dropdown with a
+            single entry is just noise. */}
+        {containers.length > 1 && (
+          <Select
+            value={container || SANDBOX_CONTAINER}
+            onValueChange={(val) => {
+              if (val) setContainer(val === SANDBOX_CONTAINER ? "" : val)
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-6 gap-1 border-0 bg-transparent px-1.5 font-mono text-xs shadow-none focus-visible:ring-0"
+              aria-label={t("sandboxes.logs.container")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {containers.map((name) => (
+                <SelectItem key={name} value={name} className="font-mono text-xs">
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         {/* Lines selector (hidden for external logs — always returns full history) */}
         {!(isTerminated && isExternalLogsConfigured) && (
           <>

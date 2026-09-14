@@ -195,6 +195,7 @@
   "sandboxes.form.idleTimeoutDesc": "未设置时，沙箱不会因空闲而自动终止。设置后，沙箱将在空闲指定时长后被终止。",
   "sandboxes.tab.overview": "概览",
   "sandboxes.logs": "日志",
+  "sandboxes.logs.container": "容器",
   "sandboxes.sandboxLogs": "沙箱：{{sandboxId}}",
   "sandboxes.connecting": "连接中...",
   "sandboxes.connected": "已连接",

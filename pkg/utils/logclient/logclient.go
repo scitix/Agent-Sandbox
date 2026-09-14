@@ -174,6 +174,10 @@ type QueryOptions struct {
 	// not optional in practice: pod names are unique per cluster, not globally,
 	// so an unscoped query can return another cluster's output for the same name.
 	Filters map[string]string
+	// Container narrows the query to one container of the Pod. Empty returns
+	// every container the collector shipped — which for a sandbox Pod means the
+	// egress proxy's per-connection lines mixed in with the sandbox's own.
+	Container string
 	// Project overrides the configured log store for this query. Empty uses
 	// Config.Project. A deployment that shards its store by namespace needs a
 	// different value per query, not per process — see ProjectFor.
@@ -198,12 +202,15 @@ func (o QueryOptions) Scope(defaultProject string) string {
 	if project == "" {
 		project = "(none)"
 	}
-	filters := make([]string, 0, len(o.Filters)+1)
+	filters := make([]string, 0, len(o.Filters)+2)
 	for k, v := range o.Filters {
 		filters = append(filters, k+"="+v)
 	}
 	sort.Strings(filters)
 	filters = append(filters, "pod_name="+o.PodName)
+	if o.Container != "" {
+		filters = append(filters, "container_name="+o.Container)
+	}
 	return fmt.Sprintf("project=%s filters=[%s] window=%s..%s",
 		project, strings.Join(filters, " "),
 		o.Start.UTC().Format(time.RFC3339), o.End.UTC().Format(time.RFC3339))
@@ -220,7 +227,7 @@ func (c *Client) Query(ctx context.Context, opts QueryOptions) ([]Entry, error) 
 
 	body := map[string]any{
 		"kind":       "container_stdout",
-		"filters":    buildFilters(opts.PodName, opts.Filters),
+		"filters":    buildFilters(opts.PodName, opts.Container, opts.Filters),
 		"start_time": opts.Start.UnixMilli(),
 		"end_time":   opts.End.UnixMilli(),
 		"sort_order": "asc",
@@ -286,12 +293,15 @@ func withProject(endpoint, override, fallback string) (string, error) {
 }
 
 // buildFilters wraps every value in the service's equality-matcher shape.
-func buildFilters(podName string, extra map[string]string) map[string]any {
-	out := make(map[string]any, len(extra)+1)
+func buildFilters(podName, container string, extra map[string]string) map[string]any {
+	out := make(map[string]any, len(extra)+2)
 	for k, v := range extra {
 		out[k] = map[string]string{"op": "eq", "value": v}
 	}
 	out["pod_name"] = map[string]string{"op": "eq", "value": podName}
+	if container != "" {
+		out["container_name"] = map[string]string{"op": "eq", "value": container}
+	}
 	return out
 }
 

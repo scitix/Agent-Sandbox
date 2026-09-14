@@ -61,6 +61,11 @@ class SandboxLogsResult:
                 and time window. An empty result and a mis-scoped query are the same 200 with no rows over
                 the wire, so this is the only way to tell "the sandbox printed nothing" from "nobody was
                 asked about it".
+            containers (list[str] | Unset): Every container of the sandbox Pod whose log can be read, the sandbox's own
+                first.
+                Includes init containers: on a Kubernetes with native sidecars the egress proxy is one,
+                and the kubelet serves its log like any other. A client uses this to offer the choice;
+                omitting `container` reads the sandbox container alone.
             runtime_name (str | Unset): When source=runtime, the runtime name whose log file was read
      """
 
@@ -73,6 +78,7 @@ class SandboxLogsResult:
     captured_at: datetime.datetime | Unset = UNSET
     total_bytes: int | Unset = UNSET
     scope: str | Unset = UNSET
+    containers: list[str] | Unset = UNSET
     runtime_name: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -107,6 +113,12 @@ class SandboxLogsResult:
 
         scope = self.scope
 
+        containers: list[str] | Unset = UNSET
+        if not isinstance(self.containers, Unset):
+            containers = self.containers
+
+
+
         runtime_name = self.runtime_name
 
 
@@ -127,6 +139,8 @@ class SandboxLogsResult:
             field_dict["totalBytes"] = total_bytes
         if scope is not UNSET:
             field_dict["scope"] = scope
+        if containers is not UNSET:
+            field_dict["containers"] = containers
         if runtime_name is not UNSET:
             field_dict["runtimeName"] = runtime_name
 
@@ -175,6 +189,9 @@ class SandboxLogsResult:
 
         scope = d.pop("scope", UNSET)
 
+        containers = cast(list[str], d.pop("containers", UNSET))
+
+
         runtime_name = d.pop("runtimeName", UNSET)
 
         sandbox_logs_result = cls(
@@ -187,6 +204,7 @@ class SandboxLogsResult:
             captured_at=captured_at,
             total_bytes=total_bytes,
             scope=scope,
+            containers=containers,
             runtime_name=runtime_name,
         )
 
