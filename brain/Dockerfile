@@ -82,17 +82,33 @@ COPY sdk/hands/typescript /sdk/hands/typescript
 # Replacing the link farm with a real copy makes node_modules self-contained, so
 # the final image needs neither the source tree nor a path that agrees with this
 # stage's layout. The check afterwards is the general form of the same problem:
-# any remaining broken link means something else is still reaching outside.
+# no link inside node_modules may resolve outside it.
+#
+# It asks that question directly rather than looking for broken links, because
+# the two are not the same set in either direction. A dangling link can be
+# perfectly legitimate: msgpackr's optional native dependency is gated on
+# os/cpu, so on one architecture the install leaves .bin/download-msgpackr-
+# prebuilds pointing at a package it correctly did not fetch — inside
+# node_modules, and harmless. And a link reaching outside can resolve just fine
+# in THIS stage, where the source tree still exists, and only dangle in the
+# final image, which is exactly the failure being guarded against.
 RUN set -eu; \
     bun install --frozen-lockfile --production; \
     rm -rf node_modules/@scitix/agentbox-hands; \
     mkdir -p node_modules/@scitix; \
     cp -R /sdk/hands/typescript node_modules/@scitix/agentbox-hands; \
     rm -rf node_modules/@scitix/agentbox-hands/node_modules; \
-    dangling=$(find node_modules -xtype l | head -20); \
-    if [ -n "$dangling" ]; then \
+    find node_modules -type l > /tmp/links; \
+    escaping=""; \
+    while IFS= read -r link; do \
+    target=$(readlink -m "$link"); \
+    case "$target" in "$PWD/node_modules"/*) continue ;; esac; \
+    escaping="$escaping$link -> $target\n"; \
+    done < /tmp/links; \
+    rm -f /tmp/links; \
+    if [ -n "$escaping" ]; then \
     echo "node_modules has links pointing outside itself:" >&2; \
-    echo "$dangling" >&2; \
+    printf '%b' "$escaping" >&2; \
     exit 1; \
     fi
 

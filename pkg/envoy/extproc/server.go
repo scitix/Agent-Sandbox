@@ -231,7 +231,15 @@ func (s *Server) handleRequestHeaders(ctx context.Context, httpHeaders *extProcP
 			return immediateError(typev3.StatusCode_BadGateway, "sandbox is not in a healthy state")
 		}
 		if errors.Is(routeErr, ErrSandboxRouteNotFound) {
-			return immediateError(typev3.StatusCode_NotFound, "sandbox not found")
+			// 502, not 404, and the E2B SDK is the reason. On the sandbox data
+			// plane it reads 502 as "this sandbox is gone": Sandbox.is_running()
+			// special-cases it to return False (that is the documented
+			// `kill(); is_running() -> False`), and every other envd call maps it
+			// to a timeout error that tells the caller their sandbox expired. 404
+			// on that surface means "no such file in a live sandbox" — so
+			// answering 404 here both breaks is_running and hands anyone else a
+			// diagnosis pointing at the wrong thing entirely.
+			return immediateError(typev3.StatusCode_BadGateway, "sandbox not found")
 		}
 		return immediateError(typev3.StatusCode_ServiceUnavailable, "failed to resolve sandbox route")
 	}

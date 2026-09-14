@@ -87,8 +87,9 @@ func newTestRouter(t *testing.T, cache *RouteCache, fallback bool, pods ...*core
 //     sandbox-id label mismatch                     → 502
 //   phase ∈ {Starting, Idle, Failed, empty, other} → 502
 //
-// Every error case maps to BadGateway (502), never NotFound (404), except
-// the top-level cache-miss-with-fallback-off and parameter-validation paths.
+// Every routing error is served as BadGateway (502) — including the definitive
+// cache-miss, because that is how an E2B client learns its sandbox is gone.
+// 404 is left to parameter-validation paths.
 // --------------------------------------------------------------------------
 
 func TestRouter_CacheHit_Running_ReturnsRoute(t *testing.T) {

@@ -28,9 +28,14 @@ import (
 
 // ErrSandboxRouteNotFound signals that the sandbox is unknown to the router:
 // neither the cache nor (when fallback is enabled) the sandbox-id informer
-// index returned any mapping. Mapped to HTTP 404 by the ExtProc server.
-// Callers receiving this should treat the sandbox ID as definitively absent
-// (never existed, or evicted long enough ago that every trace is gone).
+// index returned any mapping. Callers receiving this should treat the sandbox
+// ID as definitively absent (never existed, or evicted long enough ago that
+// every trace is gone).
+//
+// Like ErrSandboxRouteBadGateway it is served as HTTP 502, because on this
+// surface that is what "the sandbox is gone" means to an E2B client; see the
+// mapping in the ExtProc server. The two are still distinguishable by their
+// message, which is what a human reading a log needs.
 var ErrSandboxRouteNotFound = errors.New("sandbox route not found")
 
 // ErrSandboxRouteBadGateway signals that the router knows the sandbox exists
