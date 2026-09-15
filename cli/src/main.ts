@@ -401,9 +401,9 @@ function verbIntent(verb: string, collection: boolean): Verb {
 function bodyShape(spec: { plural: string; parent?: string }): string {
   switch (spec.plural) {
     case 'envs':
-      return 'the file is `{"overrides": {…}}` — an env update carries overrides and nothing else, so the whole object `--json` prints is NOT a valid body: applying it would clear them.'
+      return 'the file is the body `abx envs <env> --json --editable` prints. Create and update take the SAME shape, and the fields fixed at create (`templateRef`, `mode`, `labels`, `annotations`) have to come back unchanged — an update that drops one is refused rather than quietly kept. The whole object `--json` prints is NOT that body.'
     case 'pools':
-      return 'the file is `{"replicas": n, "minReplicas": n, "maxReplicas": n, "updateStrategy": …}` — the size and its bounds, not the pool’s resource shape.'
+      return 'the file is the body `abx envs <env> pools <pool> --json --editable` prints: the size, its bounds, and the resource shape the pool was created with (`instanceType`/`multiplier`/`inlineResources`), which is fixed and must come back unchanged.'
     case 'scaling-groups':
       return 'the file is `{"enabled": bool, "minReplicas": n, "maxReplicas": n, "scaleUpPolicy": {…}, "scaleDownPolicy": {…}}`.'
     case 'templates':
@@ -418,9 +418,9 @@ function bodyShape(spec: { plural: string; parent?: string }): string {
 function bodySummary(spec: { plural: string }): string {
   switch (spec.plural) {
     case 'envs':
-      return 'PUTs `overrides` alone — NOT the whole object `--json` prints (applying that clears them)'
+      return 'PUTs the whole writable shape — read it with `--json --editable` first'
     case 'pools':
-      return 'PUTs the size and its bounds, not the pool’s resource shape'
+      return 'PUTs the size, its bounds and the fixed resource shape — read it with `--json --editable`'
     case 'scaling-groups':
       return 'PUTs the group’s bounds and policies'
     case 'templates':
@@ -1061,6 +1061,44 @@ async function currentBounds(
   env: string,
   pool: string,
 ): Promise<Record<string, unknown>> {
+  // The write body first, and the env's member config only as a fallback.
+  //
+  // `scale` puts this back on the wire unchanged, and the fields a PUT must
+  // carry now include the ones the read shape does not show at all
+  // (`instanceType`, `multiplier`, the labels the server stamped on create), so
+  // reading the env's projection is what made `scale` a 400 on a server that
+  // enforces the contract. The member's own `editable` is that same body, which
+  // is what it exists for. The fallback covers a server too old to project it,
+  // where the narrower body is still accepted.
+  const editable = await poolEditable(ctx, env, pool)
+  if (editable) return editable
+  return await memberBounds(ctx, env, pool)
+}
+
+/** The body a write to this member takes, as the server projects it. */
+async function poolEditable(
+  ctx: Context,
+  env: string,
+  pool: string,
+): Promise<Record<string, unknown> | null> {
+  const envelope = await request<Record<string, any>>(
+    ctx,
+    'GET',
+    `/envs/${encodeURIComponent(env)}/sandboxpools/${encodeURIComponent(pool)}`,
+  )
+  const editable = envelope?.editable
+  if (!editable || typeof editable !== 'object') return null
+  // Everything but the number being set, so the PUT carries the fixed half back
+  // byte for byte.
+  const { replicas: _replicas, ...rest } = editable as Record<string, unknown>
+  return rest
+}
+
+async function memberBounds(
+  ctx: Context,
+  env: string,
+  pool: string,
+): Promise<Record<string, unknown>> {
   const envelope = await request<Record<string, any>>(ctx, 'GET', `/envs/${encodeURIComponent(env)}`)
   const spec = (envelope.env ?? envelope)?.spec ?? {}
   for (const cluster of spec.clusters ?? []) {
@@ -1214,6 +1252,17 @@ async function write(
   // A bare `-` is stdin: the document a caller built in a pipeline never has to
   // be spilled to a file (and a file literally named `-` is not a thing anyone
   // means to name).
+  // YAML is refused by NAME rather than by what the parser says about it: the
+  // API takes JSON, an agent that writes YAML has made a decision about format
+  // rather than a syntax slip, and "Unexpected identifier" does not tell it
+  // which of the two the CLI wanted.
+  if (file !== '-' && /\.(ya?ml)$/i.test(file)) {
+    throw new CliError(
+      `this CLI takes JSON, not YAML (${file})`,
+      'the body is a JSON document — the same one the API takes. Convert it first ' +
+        '(for example `yq -o=json`, or write it out with --json) and apply that.',
+    )
+  }
   const body = JSON.parse(file === '-' ? await Bun.stdin.text() : await Bun.file(file).text())
 
   if (collection) {
@@ -1228,30 +1277,4 @@ async function write(
   await request(ctx, 'PUT', path, body)
   console.log(`applied ${file} to ${what}`)
   return 0
-}
-
-/**
- * The editable bounds a member currently declares.
- *
- * They live on the Env, not on the Pool: the Pool is the materialised object
- * and the member config is the request that produced it. Reading the Env is
- * therefore the only way to resend those bounds untouched.
- */
-async function currentMemberConfig(ctx: Context, a: Address): Promise<Record<string, unknown>> {
-  const env = a.sub ? a.id : undefined
-  if (!env) return {}
-  const payload = await request<Record<string, any>>(ctx, 'GET', `/envs/${encodeURIComponent(env)}`)
-  const spec = (payload.env ?? payload).spec ?? {}
-  for (const cluster of spec.clusters ?? []) {
-    for (const m of cluster.members ?? []) {
-      if (m.name !== a.subId) continue
-      const c = m.config ?? {}
-      const out: Record<string, unknown> = {}
-      if (c.minReplicas !== undefined) out.minReplicas = c.minReplicas
-      if (c.maxReplicas !== undefined) out.maxReplicas = c.maxReplicas
-      if (c.updateStrategy !== undefined) out.updateStrategy = c.updateStrategy
-      return out
-    }
-  }
-  return {}
 }

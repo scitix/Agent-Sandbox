@@ -427,6 +427,18 @@ describe('--editable is the body a write takes, not the object', () => {
   })
 })
 
+describe('-f takes JSON, and says which format it wanted', () => {
+  it('refuses a YAML file by name, not with a parser error', async () => {
+    const file = join(workdir, 'env.yaml')
+    await Bun.write(file, 'name: demo-env\ntemplateRef:\n  name: tmpl\n')
+    const { code, err } = await cli(['envs', 'apply', '-f', file, '--cluster', 'prod-foo'])
+    expect(code).toBe(1)
+    expect(err).toContain('takes JSON, not YAML')
+    // The message has to name the way out, not just the mistake.
+    expect(err).toContain('--json')
+  })
+})
+
 describe('--filter belongs to a list', () => {
   it('a list takes a filter', async () => {
     const { code, out } = await cli(['envs', '--cluster', 'prod-foo', '--filter', 'mode=WarmPool'])
