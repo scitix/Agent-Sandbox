@@ -25,20 +25,17 @@ import (
 // must be non-blocking and safe to call from multiple goroutines concurrently.
 //
 // The typical implementation is k8sSandboxService, which routes these events
-// to the poolClaimScheduler (to wake waiters) and to the ExtProc gRPC client
-// (to invalidate the route cache).
+// to the poolClaimScheduler to wake waiters.
+//
+// Releasing a sandbox notifies nobody else. The same atomic update that moves
+// the Pod to Idle strips its sandbox-id label, and every reader — the gateway
+// included — resolves a sandbox through the informer index built on that
+// label, so the mapping disappears on its own the moment the write lands.
 type IdleNotifier interface {
 	// NotifyIdleAvailable is called whenever a Pod successfully transitions to
 	// the Idle phase (Stopping → Idle via MarkUpdateCompleted). Wakes any
 	// waiting Create requests for the corresponding pool.
 	NotifyIdleAvailable(namespace, poolName string)
-
-	// OnSandboxReleased is called at the same Stopping → Idle transition,
-	// carrying the sandbox ID that was just released. Implementations should
-	// invalidate any cached mapping keyed on sandboxID (e.g. the ExtProc
-	// route cache) so subsequent router queries return NotFound instead of
-	// briefly hitting a stale entry.
-	OnSandboxReleased(ctx context.Context, sandboxID string)
 }
 
 // SandboxReadyHook is called in a goroutine after a Starting pod successfully

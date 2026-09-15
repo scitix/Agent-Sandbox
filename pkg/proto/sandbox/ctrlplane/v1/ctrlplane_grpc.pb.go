@@ -34,8 +34,6 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ControlPlaneService_PushRoute_FullMethodName     = "/sandbox.ctrlplane.v1.ControlPlaneService/PushRoute"
-	ControlPlaneService_EvictRoute_FullMethodName    = "/sandbox.ctrlplane.v1.ControlPlaneService/EvictRoute"
 	ControlPlaneService_GetLastActive_FullMethodName = "/sandbox.ctrlplane.v1.ControlPlaneService/GetLastActive"
 )
 
@@ -47,19 +45,16 @@ const (
 // the ExtProc gateway. It is NOT exposed to end users; the server binds to an
 // in-cluster port and authenticates callers with the shared admin key.
 type ControlPlaneServiceClient interface {
-	// PushRoute registers a sandbox_id -> (namespace, pod_name) mapping in the
-	// ExtProc in-memory cache so router queries can bypass the informer's
-	// sandbox-id index. The mapping carries NO phase and NO PodIP: those are
-	// read live from the Pod informer on each request, so the cache never goes
-	// stale across Pod lifecycle transitions (Starting -> Running -> Stopping).
-	PushRoute(ctx context.Context, in *PushRouteRequest, opts ...grpc.CallOption) (*PushRouteResponse, error)
-	// EvictRoute removes a sandbox_id from the ExtProc cache. Called by the
-	// Controller when a Pod completes Stopping -> Idle, so subsequent router
-	// queries for the released sandbox_id fall through to "not found" instead
-	// of briefly hitting a stale cache entry.
-	EvictRoute(ctx context.Context, in *EvictRouteRequest, opts ...grpc.CallOption) (*EvictRouteResponse, error)
 	// GetLastActive returns the per-sandbox last-activity timestamps tracked
 	// by ExtProc. Used by the Controller's IdleTimeoutReconciler.
+	//
+	// The only remaining call on this channel. PushRoute and EvictRoute, which
+	// maintained a route cache here, are gone: the gateway resolves a sandbox
+	// from the Pod informer's sandbox-id index, a label the claim writes before
+	// the Pod even leaves Starting, so there is nothing for the control plane to
+	// tell it. Removing them also removed the reason the gateway could not be
+	// replicated — a single gRPC connection pins to one backend Pod, so a push
+	// reached one replica and left the others disagreeing.
 	GetLastActive(ctx context.Context, in *GetLastActiveRequest, opts ...grpc.CallOption) (*GetLastActiveResponse, error)
 }
 
@@ -69,26 +64,6 @@ type controlPlaneServiceClient struct {
 
 func NewControlPlaneServiceClient(cc grpc.ClientConnInterface) ControlPlaneServiceClient {
 	return &controlPlaneServiceClient{cc}
-}
-
-func (c *controlPlaneServiceClient) PushRoute(ctx context.Context, in *PushRouteRequest, opts ...grpc.CallOption) (*PushRouteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PushRouteResponse)
-	err := c.cc.Invoke(ctx, ControlPlaneService_PushRoute_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *controlPlaneServiceClient) EvictRoute(ctx context.Context, in *EvictRouteRequest, opts ...grpc.CallOption) (*EvictRouteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(EvictRouteResponse)
-	err := c.cc.Invoke(ctx, ControlPlaneService_EvictRoute_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *controlPlaneServiceClient) GetLastActive(ctx context.Context, in *GetLastActiveRequest, opts ...grpc.CallOption) (*GetLastActiveResponse, error) {
@@ -109,19 +84,16 @@ func (c *controlPlaneServiceClient) GetLastActive(ctx context.Context, in *GetLa
 // the ExtProc gateway. It is NOT exposed to end users; the server binds to an
 // in-cluster port and authenticates callers with the shared admin key.
 type ControlPlaneServiceServer interface {
-	// PushRoute registers a sandbox_id -> (namespace, pod_name) mapping in the
-	// ExtProc in-memory cache so router queries can bypass the informer's
-	// sandbox-id index. The mapping carries NO phase and NO PodIP: those are
-	// read live from the Pod informer on each request, so the cache never goes
-	// stale across Pod lifecycle transitions (Starting -> Running -> Stopping).
-	PushRoute(context.Context, *PushRouteRequest) (*PushRouteResponse, error)
-	// EvictRoute removes a sandbox_id from the ExtProc cache. Called by the
-	// Controller when a Pod completes Stopping -> Idle, so subsequent router
-	// queries for the released sandbox_id fall through to "not found" instead
-	// of briefly hitting a stale cache entry.
-	EvictRoute(context.Context, *EvictRouteRequest) (*EvictRouteResponse, error)
 	// GetLastActive returns the per-sandbox last-activity timestamps tracked
 	// by ExtProc. Used by the Controller's IdleTimeoutReconciler.
+	//
+	// The only remaining call on this channel. PushRoute and EvictRoute, which
+	// maintained a route cache here, are gone: the gateway resolves a sandbox
+	// from the Pod informer's sandbox-id index, a label the claim writes before
+	// the Pod even leaves Starting, so there is nothing for the control plane to
+	// tell it. Removing them also removed the reason the gateway could not be
+	// replicated — a single gRPC connection pins to one backend Pod, so a push
+	// reached one replica and left the others disagreeing.
 	GetLastActive(context.Context, *GetLastActiveRequest) (*GetLastActiveResponse, error)
 	mustEmbedUnimplementedControlPlaneServiceServer()
 }
@@ -133,12 +105,6 @@ type ControlPlaneServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedControlPlaneServiceServer struct{}
 
-func (UnimplementedControlPlaneServiceServer) PushRoute(context.Context, *PushRouteRequest) (*PushRouteResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method PushRoute not implemented")
-}
-func (UnimplementedControlPlaneServiceServer) EvictRoute(context.Context, *EvictRouteRequest) (*EvictRouteResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method EvictRoute not implemented")
-}
 func (UnimplementedControlPlaneServiceServer) GetLastActive(context.Context, *GetLastActiveRequest) (*GetLastActiveResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetLastActive not implemented")
 }
@@ -161,42 +127,6 @@ func RegisterControlPlaneServiceServer(s grpc.ServiceRegistrar, srv ControlPlane
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&ControlPlaneService_ServiceDesc, srv)
-}
-
-func _ControlPlaneService_PushRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PushRouteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ControlPlaneServiceServer).PushRoute(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ControlPlaneService_PushRoute_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControlPlaneServiceServer).PushRoute(ctx, req.(*PushRouteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ControlPlaneService_EvictRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EvictRouteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ControlPlaneServiceServer).EvictRoute(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ControlPlaneService_EvictRoute_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControlPlaneServiceServer).EvictRoute(ctx, req.(*EvictRouteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _ControlPlaneService_GetLastActive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -224,14 +154,6 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "sandbox.ctrlplane.v1.ControlPlaneService",
 	HandlerType: (*ControlPlaneServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "PushRoute",
-			Handler:    _ControlPlaneService_PushRoute_Handler,
-		},
-		{
-			MethodName: "EvictRoute",
-			Handler:    _ControlPlaneService_EvictRoute_Handler,
-		},
 		{
 			MethodName: "GetLastActive",
 			Handler:    _ControlPlaneService_GetLastActive_Handler,

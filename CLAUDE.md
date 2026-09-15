@@ -292,7 +292,7 @@ check with `HOOK_SKIP=secrets git commit ...`. CI has no bypass.
 |--------|------|-------|
 | E2B compatibility layer | [`pkg/e2bcompat/`](pkg/e2bcompat/) | E2B SDK-compatible server (`:8090`) |
 | Prometheus metrics | [`pkg/metrics/README.md`](pkg/metrics/README.md) | Metric definitions, addition workflow, scrape config |
-| ExtProc routing | [`pkg/envoy/extproc/README.md`](pkg/envoy/extproc/README.md) | Envoy ExternalProcessor + routing policy |
+| ExtProc routing | [`pkg/envoy/extproc/README.md`](pkg/envoy/extproc/README.md) | Envoy ExternalProcessor + routing policy. The gateway is a pure reader of Kubernetes state: a sandbox resolves through the Pod informer's sandbox-id index, a label the claim writes before the Pod leaves Starting, so nothing is pushed to it and it can be rebuilt or replicated freely. |
 | Native REST API | [`pkg/apiserver/README.md`](pkg/apiserver/README.md) | OpenAPI-first generation flow, field mapping |
 | Plugin system | [`pkg/framework/`](pkg/framework/) | Plugin (lifecycle hooks) + Provider (data source abstraction) interfaces |
 | HTTP logging | [`pkg/utils/httplog.go`](pkg/utils/httplog.go) | RequestID middleware + AppError structured logging |

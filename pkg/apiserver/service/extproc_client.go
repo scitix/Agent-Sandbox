@@ -26,22 +26,18 @@ import (
 	ctrlplanev1 "github.com/scitix/agent-sandbox/pkg/proto/sandbox/ctrlplane/v1"
 )
 
-// RouteInfo is the set of fields the Controller pushes to ExtProc after a
-// successful sandbox claim. SandboxID is the raw UUID (no cluster prefix).
-// Phase and PodIP are intentionally absent: ExtProc reads both live from the
-// Pod informer at request time, so this payload never carries stale state.
-type RouteInfo struct {
-	SandboxID string
-	Namespace string
-	PodName   string
-}
-
 // ExtProcClient is the Controller-side view of the ExtProc control-plane RPC.
 // Implementations are safe for concurrent use; close via Close when the
 // process is shutting down.
+//
+// One call, in one direction: the gateway reports activity it observed, which
+// is the only thing it knows that the control plane cannot read from
+// Kubernetes. Routing used to travel the other way — a cache the Controller
+// pushed into after each claim — and does not any more, because the gateway
+// derives it from the sandbox-id label the claim already writes. That deletion
+// is what makes the gateway replicable: a gRPC connection pins to one backend
+// Pod, so anything pushed over this channel reaches exactly one replica.
 type ExtProcClient interface {
-	PushRoute(ctx context.Context, r RouteInfo) error
-	EvictRoute(ctx context.Context, sandboxID string) error
 	GetLastActive(ctx context.Context) (map[string]time.Time, error)
 	Close() error
 }
@@ -90,28 +86,6 @@ func normalizeGRPCTarget(target string) string {
 type grpcExtProcClient struct {
 	conn *grpc.ClientConn
 	stub ctrlplanev1.ControlPlaneServiceClient
-}
-
-// PushRoute sends a PushRoute RPC with a 2 s timeout. Callers may pass a
-// shorter ctx deadline; whichever is tighter wins.
-func (c *grpcExtProcClient) PushRoute(ctx context.Context, r RouteInfo) error {
-	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	_, err := c.stub.PushRoute(callCtx, &ctrlplanev1.PushRouteRequest{
-		SandboxId: r.SandboxID,
-		Namespace: r.Namespace,
-		PodName:   r.PodName,
-	})
-	return err
-}
-
-// EvictRoute sends an EvictRoute RPC with a 2 s timeout. Used when a Pod
-// completes Stopping → Idle so the ExtProc cache drops the stale mapping.
-func (c *grpcExtProcClient) EvictRoute(ctx context.Context, sandboxID string) error {
-	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	_, err := c.stub.EvictRoute(callCtx, &ctrlplanev1.EvictRouteRequest{SandboxId: sandboxID})
-	return err
 }
 
 // GetLastActive fetches the per-sandbox last-activity snapshot. Timestamps

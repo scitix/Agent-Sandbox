@@ -72,7 +72,6 @@ func Run() {
 	var activityTrackerGCInterval time.Duration
 	var localClusterID string
 	var clustersConfigMapName string
-	var enableSandboxIndexerFallback bool
 
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&extprocBindAddress, "extproc-bind-address", ":9002",
@@ -90,7 +89,7 @@ func Run() {
 		"Duration for which API key Validate results are cached in memory.")
 	flag.StringVar(&internalAPIBindAddress, "internal-api-bind-address", ":9003",
 		"The address the internal gRPC control-plane server binds to. "+
-			"Exposes ControlPlaneService to the Controller for route push and idle-timeout polling.")
+			"Exposes ControlPlaneService to the Controller for idle-timeout polling.")
 	flag.DurationVar(&activityTrackerGCInterval, "activity-tracker-gc-interval", 5*time.Minute,
 		"Interval at which ActivityTracker GC runs to remove stale sandbox entries.")
 	defaultLocalClusterID := os.Getenv("LOCAL_CLUSTER_ID")
@@ -100,9 +99,6 @@ func Run() {
 	flag.StringVar(&clustersConfigMapName, "clusters-configmap-name", "agentbox-clusters-config",
 		"Name of the ConfigMap (in the operator namespace) that contains cross-cluster gateway configuration. "+
 			"The ConfigMap should have a 'clusters.yaml' key. Reloaded every 30s.")
-	flag.BoolVar(&enableSandboxIndexerFallback, "extproc-sandbox-indexer-fallback", true,
-		"If true, fall back to the Pod informer's sandbox-id index when the in-memory route cache misses. "+
-			"Set to false to serve only from the route cache for testing pure-push mode.")
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -146,13 +142,11 @@ func Run() {
 	// Background GC removes stale entries for pods that are no longer Running.
 	tracker := extprocsvc.NewActivityTrackerWithGC(mgr.GetClient(), activityTrackerGCInterval)
 
-	// RouteCache: Controller pushes sandbox routes here via the internal gRPC
-	// API so ExtProc can serve traffic without waiting for its informer cache
-	// to catch up to the sandbox-id label write. Entries expire after 1 min;
-	// the informer path is the correctness fallback.
-	routeCache := extprocsvc.NewRouteCache(1 * time.Minute)
-
-	sandboxRouter := extprocsvc.NewK8sSandboxRouter(mgr.GetClient(), sandboxPort, routeCache, enableSandboxIndexerFallback)
+	// The router holds no state of its own: it answers from the Pod informer's
+	// sandbox-id index, which the claim populates before the Pod leaves
+	// Starting. Nothing has to be pushed here for routing to be correct, which
+	// is what lets this process run as many replicas as it likes.
+	sandboxRouter := extprocsvc.NewK8sSandboxRouter(mgr.GetClient(), sandboxPort)
 
 	// Load cluster config for cross-cluster data-plane routing (optional).
 	// Uses informer watch to reload automatically when the ConfigMap changes.
@@ -180,8 +174,8 @@ func Run() {
 	}
 
 	// Internal gRPC server: exposes ControlPlaneService so the Controller can
-	// push new sandbox routes (PushRoute) and poll last-active timestamps
-	// (GetLastActive). Auth uses the shared admin key via a unary interceptor.
+	// poll last-active timestamps (GetLastActive). Auth uses the shared admin
+	// key via a unary interceptor.
 	internalLis, err := net.Listen("tcp", internalAPIBindAddress)
 	if err != nil {
 		setupLog.Error(err, "Failed to listen on internal API address", "address", internalAPIBindAddress)
@@ -194,13 +188,18 @@ func Run() {
 		setupLog.Info("admin key empty; internal gRPC server will accept unauthenticated requests (dev mode)")
 	}
 	internalGRPC := grpc.NewServer(internalGRPCOpts...)
-	ctrlplanev1.RegisterControlPlaneServiceServer(internalGRPC, extprocsvc.NewInternalGRPCServer(routeCache, tracker))
+	ctrlplanev1.RegisterControlPlaneServiceServer(internalGRPC, extprocsvc.NewInternalGRPCServer(tracker))
 
 	errCh := make(chan error, 3)
 
-	// Seed ActivityTracker + RouteCache from K8s once the manager cache is
-	// warm. We run this in a dedicated goroutine because WaitForCacheSync
-	// blocks until the Pod informer has populated.
+	// Seed the ActivityTracker from K8s once the manager cache is warm. We run
+	// this in a dedicated goroutine because WaitForCacheSync blocks until the
+	// Pod informer has populated.
+	//
+	// Only the tracker needs seeding. Routing is derived from the informer, so
+	// it is correct the moment the cache is warm and needs no warm-up of its
+	// own; activity is observed traffic, which no amount of reading Kubernetes
+	// can reconstruct, so it is restored from the annotations instead.
 	go func() {
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
 			setupLog.Info("cache sync timed out, skipping seed")
@@ -244,33 +243,8 @@ func Run() {
 			setupLog.Info("ActivityTracker seeded from K8s", "sandboxes", trackerSeeded)
 		}
 
-		// RouteCache seed: needs ALL claimed pods regardless of phase. The
-		// router checks phase live on every request, so seeding a Starting
-		// pod is correct — it returns 502 until the Pod reaches Running.
-		// A separate list scan is cheap because it hits the informer cache.
-		allPods := &corev1.PodList{}
-		if listErr := mgr.GetClient().List(ctx, allPods); listErr != nil {
-			setupLog.Error(listErr, "RouteCache: failed to list pods for seed")
-		} else {
-			routeSeeded := 0
-			for i := range allPods.Items {
-				pod := &allPods.Items[i]
-				sandboxID := pod.Labels[agentsv1alpha1.SandboxIDLabelKey]
-				if sandboxID == "" {
-					continue
-				}
-				routeCache.Put(sandboxID, extprocsvc.RouteEntry{
-					Namespace: pod.Namespace,
-					PodName:   pod.Name,
-				})
-				routeSeeded++
-			}
-			setupLog.Info("RouteCache seeded from K8s", "routes", routeSeeded)
-		}
-
-		// Caches are warm and seeds are complete — start background GC.
+		// Cache is warm and the seed is complete — start background GC.
 		tracker.StartGC(ctx)
-		routeCache.StartGC(ctx, 30*time.Second)
 	}()
 
 	go func() {

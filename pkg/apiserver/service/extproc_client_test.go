@@ -30,41 +30,24 @@ import (
 	ctrlplanev1 "github.com/scitix/agent-sandbox/pkg/proto/sandbox/ctrlplane/v1"
 )
 
-// fakeServer captures the last request and the authorization metadata so
-// tests can assert on them.
+// fakeServer captures the authorization metadata and serves the one RPC this
+// channel still carries.
 type fakeServer struct {
 	ctrlplanev1.UnimplementedControlPlaneServiceServer
-	lastPush    *ctrlplanev1.PushRouteRequest
-	lastEvict   *ctrlplanev1.EvictRouteRequest
-	lastAuthHdr string
-	pushErr     error
-	lastActive  map[string]string
-}
-
-func (f *fakeServer) PushRoute(ctx context.Context, req *ctrlplanev1.PushRouteRequest) (*ctrlplanev1.PushRouteResponse, error) {
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if v := md.Get("authorization"); len(v) > 0 {
-			f.lastAuthHdr = v[0]
-		}
-	}
-	f.lastPush = req
-	if f.pushErr != nil {
-		return nil, f.pushErr
-	}
-	return &ctrlplanev1.PushRouteResponse{}, nil
-}
-
-func (f *fakeServer) EvictRoute(ctx context.Context, req *ctrlplanev1.EvictRouteRequest) (*ctrlplanev1.EvictRouteResponse, error) {
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if v := md.Get("authorization"); len(v) > 0 {
-			f.lastAuthHdr = v[0]
-		}
-	}
-	f.lastEvict = req
-	return &ctrlplanev1.EvictRouteResponse{}, nil
+	lastAuthHdr   string
+	lastActive    map[string]string
+	lastActiveErr error
 }
 
 func (f *fakeServer) GetLastActive(ctx context.Context, _ *ctrlplanev1.GetLastActiveRequest) (*ctrlplanev1.GetLastActiveResponse, error) {
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if v := md.Get("authorization"); len(v) > 0 {
+			f.lastAuthHdr = v[0]
+		}
+	}
+	if f.lastActiveErr != nil {
+		return nil, f.lastActiveErr
+	}
 	return &ctrlplanev1.GetLastActiveResponse{LastActive: f.lastActive}, nil
 }
 
@@ -90,60 +73,6 @@ func startFakeExtProc(t *testing.T, srvImpl *fakeServer) (ExtProcClient, func())
 	}
 }
 
-func TestExtProcClient_PushRoute_SendsFields(t *testing.T) {
-	fake := &fakeServer{}
-	cli, cleanup := startFakeExtProc(t, fake)
-	defer cleanup()
-
-	err := cli.PushRoute(context.Background(), RouteInfo{
-		SandboxID: "sb1",
-		Namespace: "default",
-		PodName:   "pod-x",
-	})
-	if err != nil {
-		t.Fatalf("PushRoute: %v", err)
-	}
-	if fake.lastPush == nil {
-		t.Fatal("server did not receive a request")
-	}
-	if fake.lastPush.SandboxId != "sb1" || fake.lastPush.Namespace != "default" ||
-		fake.lastPush.PodName != "pod-x" {
-		t.Fatalf("unexpected request: %+v", fake.lastPush)
-	}
-	if fake.lastAuthHdr != "Bearer s3cret" {
-		t.Fatalf("expected 'Bearer s3cret', got %q", fake.lastAuthHdr)
-	}
-}
-
-func TestExtProcClient_PushRoute_ServerErrorPropagates(t *testing.T) {
-	fake := &fakeServer{pushErr: status.Error(codes.InvalidArgument, "bad")}
-	cli, cleanup := startFakeExtProc(t, fake)
-	defer cleanup()
-
-	err := cli.PushRoute(context.Background(), RouteInfo{
-		SandboxID: "sb1", Namespace: "default", PodName: "pod-x",
-	})
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("expected InvalidArgument, got %v", err)
-	}
-}
-
-func TestExtProcClient_EvictRoute_SendsCorrectField(t *testing.T) {
-	fake := &fakeServer{}
-	cli, cleanup := startFakeExtProc(t, fake)
-	defer cleanup()
-
-	if err := cli.EvictRoute(context.Background(), "sb-bye"); err != nil {
-		t.Fatalf("EvictRoute: %v", err)
-	}
-	if fake.lastEvict == nil || fake.lastEvict.SandboxId != "sb-bye" {
-		t.Fatalf("unexpected evict request: %+v", fake.lastEvict)
-	}
-	if fake.lastAuthHdr != "Bearer s3cret" {
-		t.Fatalf("expected 'Bearer s3cret', got %q", fake.lastAuthHdr)
-	}
-}
-
 func TestExtProcClient_GetLastActive_ParsesTimestamps(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	fake := &fakeServer{lastActive: map[string]string{
@@ -162,6 +91,41 @@ func TestExtProcClient_GetLastActive_ParsesTimestamps(t *testing.T) {
 	}
 	if _, ok := out["sb2"]; ok {
 		t.Fatal("malformed timestamp should be skipped")
+	}
+}
+
+// The admin key has to reach the gateway on every call. This assertion used to
+// ride along on PushRoute; with routing gone, GetLastActive is the only RPC
+// left to carry it, and an unauthenticated control channel would be a quiet
+// regression — the server would refuse, the reconciler would log and skip, and
+// idle sandboxes would simply stop being reclaimed.
+func TestExtProcClient_SendsTheAdminKey(t *testing.T) {
+	fake := &fakeServer{lastActive: map[string]string{}}
+	cli, cleanup := startFakeExtProc(t, fake)
+	defer cleanup()
+
+	if _, err := cli.GetLastActive(context.Background()); err != nil {
+		t.Fatalf("GetLastActive: %v", err)
+	}
+	if fake.lastAuthHdr != "Bearer s3cret" {
+		t.Fatalf("expected 'Bearer s3cret', got %q", fake.lastAuthHdr)
+	}
+}
+
+// A server-side failure must reach the caller rather than being reported as an
+// empty snapshot: the reconciler skips its sweep on error, but an empty map
+// would read as "nothing has been active", which releases live sandboxes.
+func TestExtProcClient_ServerErrorPropagates(t *testing.T) {
+	fake := &fakeServer{lastActiveErr: status.Error(codes.InvalidArgument, "bad")}
+	cli, cleanup := startFakeExtProc(t, fake)
+	defer cleanup()
+
+	out, err := cli.GetLastActive(context.Background())
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+	if out != nil {
+		t.Fatalf("a failed call must not return a snapshot, got %+v", out)
 	}
 }
 

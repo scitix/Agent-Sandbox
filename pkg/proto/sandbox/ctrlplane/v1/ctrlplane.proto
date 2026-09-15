@@ -22,38 +22,18 @@ option go_package = "github.com/scitix/agent-sandbox/pkg/proto/sandbox/ctrlplane
 // the ExtProc gateway. It is NOT exposed to end users; the server binds to an
 // in-cluster port and authenticates callers with the shared admin key.
 service ControlPlaneService {
-  // PushRoute registers a sandbox_id -> (namespace, pod_name) mapping in the
-  // ExtProc in-memory cache so router queries can bypass the informer's
-  // sandbox-id index. The mapping carries NO phase and NO PodIP: those are
-  // read live from the Pod informer on each request, so the cache never goes
-  // stale across Pod lifecycle transitions (Starting -> Running -> Stopping).
-  rpc PushRoute(PushRouteRequest) returns (PushRouteResponse);
-
-  // EvictRoute removes a sandbox_id from the ExtProc cache. Called by the
-  // Controller when a Pod completes Stopping -> Idle, so subsequent router
-  // queries for the released sandbox_id fall through to "not found" instead
-  // of briefly hitting a stale cache entry.
-  rpc EvictRoute(EvictRouteRequest) returns (EvictRouteResponse);
-
   // GetLastActive returns the per-sandbox last-activity timestamps tracked
   // by ExtProc. Used by the Controller's IdleTimeoutReconciler.
+  //
+  // The only remaining call on this channel. PushRoute and EvictRoute, which
+  // maintained a route cache here, are gone: the gateway resolves a sandbox
+  // from the Pod informer's sandbox-id index, a label the claim writes before
+  // the Pod even leaves Starting, so there is nothing for the control plane to
+  // tell it. Removing them also removed the reason the gateway could not be
+  // replicated — a single gRPC connection pins to one backend Pod, so a push
+  // reached one replica and left the others disagreeing.
   rpc GetLastActive(GetLastActiveRequest) returns (GetLastActiveResponse);
 }
-
-message PushRouteRequest {
-  // Raw sandbox UUID (no cluster prefix).
-  string sandbox_id = 1;
-  string namespace  = 2;
-  string pod_name   = 3;
-}
-
-message PushRouteResponse {}
-
-message EvictRouteRequest {
-  string sandbox_id = 1;
-}
-
-message EvictRouteResponse {}
 
 message GetLastActiveRequest {}
 

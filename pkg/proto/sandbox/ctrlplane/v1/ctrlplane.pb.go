@@ -36,183 +36,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type PushRouteRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Raw sandbox UUID (no cluster prefix).
-	SandboxId     string `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Namespace     string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	PodName       string `protobuf:"bytes,3,opt,name=pod_name,json=podName,proto3" json:"pod_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PushRouteRequest) Reset() {
-	*x = PushRouteRequest{}
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PushRouteRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PushRouteRequest) ProtoMessage() {}
-
-func (x *PushRouteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PushRouteRequest.ProtoReflect.Descriptor instead.
-func (*PushRouteRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *PushRouteRequest) GetSandboxId() string {
-	if x != nil {
-		return x.SandboxId
-	}
-	return ""
-}
-
-func (x *PushRouteRequest) GetNamespace() string {
-	if x != nil {
-		return x.Namespace
-	}
-	return ""
-}
-
-func (x *PushRouteRequest) GetPodName() string {
-	if x != nil {
-		return x.PodName
-	}
-	return ""
-}
-
-type PushRouteResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PushRouteResponse) Reset() {
-	*x = PushRouteResponse{}
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PushRouteResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PushRouteResponse) ProtoMessage() {}
-
-func (x *PushRouteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PushRouteResponse.ProtoReflect.Descriptor instead.
-func (*PushRouteResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{1}
-}
-
-type EvictRouteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EvictRouteRequest) Reset() {
-	*x = EvictRouteRequest{}
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EvictRouteRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EvictRouteRequest) ProtoMessage() {}
-
-func (x *EvictRouteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EvictRouteRequest.ProtoReflect.Descriptor instead.
-func (*EvictRouteRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *EvictRouteRequest) GetSandboxId() string {
-	if x != nil {
-		return x.SandboxId
-	}
-	return ""
-}
-
-type EvictRouteResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EvictRouteResponse) Reset() {
-	*x = EvictRouteResponse{}
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EvictRouteResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EvictRouteResponse) ProtoMessage() {}
-
-func (x *EvictRouteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EvictRouteResponse.ProtoReflect.Descriptor instead.
-func (*EvictRouteResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{3}
-}
-
 type GetLastActiveRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -221,7 +44,7 @@ type GetLastActiveRequest struct {
 
 func (x *GetLastActiveRequest) Reset() {
 	*x = GetLastActiveRequest{}
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[4]
+	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -233,7 +56,7 @@ func (x *GetLastActiveRequest) String() string {
 func (*GetLastActiveRequest) ProtoMessage() {}
 
 func (x *GetLastActiveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[4]
+	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -246,7 +69,7 @@ func (x *GetLastActiveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLastActiveRequest.ProtoReflect.Descriptor instead.
 func (*GetLastActiveRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{4}
+	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{0}
 }
 
 type GetLastActiveResponse struct {
@@ -259,7 +82,7 @@ type GetLastActiveResponse struct {
 
 func (x *GetLastActiveResponse) Reset() {
 	*x = GetLastActiveResponse{}
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[5]
+	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -271,7 +94,7 @@ func (x *GetLastActiveResponse) String() string {
 func (*GetLastActiveResponse) ProtoMessage() {}
 
 func (x *GetLastActiveResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[5]
+	mi := &file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -284,7 +107,7 @@ func (x *GetLastActiveResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLastActiveResponse.ProtoReflect.Descriptor instead.
 func (*GetLastActiveResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{5}
+	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *GetLastActiveResponse) GetLastActive() map[string]string {
@@ -298,28 +121,15 @@ var File_sandbox_ctrlplane_v1_ctrlplane_proto protoreflect.FileDescriptor
 
 const file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDesc = "" +
 	"\n" +
-	"$sandbox/ctrlplane/v1/ctrlplane.proto\x12\x14sandbox.ctrlplane.v1\"j\n" +
-	"\x10PushRouteRequest\x12\x1d\n" +
-	"\n" +
-	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1c\n" +
-	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x19\n" +
-	"\bpod_name\x18\x03 \x01(\tR\apodName\"\x13\n" +
-	"\x11PushRouteResponse\"2\n" +
-	"\x11EvictRouteRequest\x12\x1d\n" +
-	"\n" +
-	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\x14\n" +
-	"\x12EvictRouteResponse\"\x16\n" +
+	"$sandbox/ctrlplane/v1/ctrlplane.proto\x12\x14sandbox.ctrlplane.v1\"\x16\n" +
 	"\x14GetLastActiveRequest\"\xb4\x01\n" +
 	"\x15GetLastActiveResponse\x12\\\n" +
 	"\vlast_active\x18\x01 \x03(\v2;.sandbox.ctrlplane.v1.GetLastActiveResponse.LastActiveEntryR\n" +
 	"lastActive\x1a=\n" +
 	"\x0fLastActiveEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\xbe\x02\n" +
-	"\x13ControlPlaneService\x12\\\n" +
-	"\tPushRoute\x12&.sandbox.ctrlplane.v1.PushRouteRequest\x1a'.sandbox.ctrlplane.v1.PushRouteResponse\x12_\n" +
-	"\n" +
-	"EvictRoute\x12'.sandbox.ctrlplane.v1.EvictRouteRequest\x1a(.sandbox.ctrlplane.v1.EvictRouteResponse\x12h\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\x7f\n" +
+	"\x13ControlPlaneService\x12h\n" +
 	"\rGetLastActive\x12*.sandbox.ctrlplane.v1.GetLastActiveRequest\x1a+.sandbox.ctrlplane.v1.GetLastActiveResponseBLZJgithub.com/scitix/agent-sandbox/pkg/proto/sandbox/ctrlplane/v1;ctrlplanev1b\x06proto3"
 
 var (
@@ -334,26 +144,18 @@ func file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescGZIP() []byte {
 	return file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDescData
 }
 
-var file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_sandbox_ctrlplane_v1_ctrlplane_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_sandbox_ctrlplane_v1_ctrlplane_proto_goTypes = []any{
-	(*PushRouteRequest)(nil),      // 0: sandbox.ctrlplane.v1.PushRouteRequest
-	(*PushRouteResponse)(nil),     // 1: sandbox.ctrlplane.v1.PushRouteResponse
-	(*EvictRouteRequest)(nil),     // 2: sandbox.ctrlplane.v1.EvictRouteRequest
-	(*EvictRouteResponse)(nil),    // 3: sandbox.ctrlplane.v1.EvictRouteResponse
-	(*GetLastActiveRequest)(nil),  // 4: sandbox.ctrlplane.v1.GetLastActiveRequest
-	(*GetLastActiveResponse)(nil), // 5: sandbox.ctrlplane.v1.GetLastActiveResponse
-	nil,                           // 6: sandbox.ctrlplane.v1.GetLastActiveResponse.LastActiveEntry
+	(*GetLastActiveRequest)(nil),  // 0: sandbox.ctrlplane.v1.GetLastActiveRequest
+	(*GetLastActiveResponse)(nil), // 1: sandbox.ctrlplane.v1.GetLastActiveResponse
+	nil,                           // 2: sandbox.ctrlplane.v1.GetLastActiveResponse.LastActiveEntry
 }
 var file_sandbox_ctrlplane_v1_ctrlplane_proto_depIdxs = []int32{
-	6, // 0: sandbox.ctrlplane.v1.GetLastActiveResponse.last_active:type_name -> sandbox.ctrlplane.v1.GetLastActiveResponse.LastActiveEntry
-	0, // 1: sandbox.ctrlplane.v1.ControlPlaneService.PushRoute:input_type -> sandbox.ctrlplane.v1.PushRouteRequest
-	2, // 2: sandbox.ctrlplane.v1.ControlPlaneService.EvictRoute:input_type -> sandbox.ctrlplane.v1.EvictRouteRequest
-	4, // 3: sandbox.ctrlplane.v1.ControlPlaneService.GetLastActive:input_type -> sandbox.ctrlplane.v1.GetLastActiveRequest
-	1, // 4: sandbox.ctrlplane.v1.ControlPlaneService.PushRoute:output_type -> sandbox.ctrlplane.v1.PushRouteResponse
-	3, // 5: sandbox.ctrlplane.v1.ControlPlaneService.EvictRoute:output_type -> sandbox.ctrlplane.v1.EvictRouteResponse
-	5, // 6: sandbox.ctrlplane.v1.ControlPlaneService.GetLastActive:output_type -> sandbox.ctrlplane.v1.GetLastActiveResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	2, // 0: sandbox.ctrlplane.v1.GetLastActiveResponse.last_active:type_name -> sandbox.ctrlplane.v1.GetLastActiveResponse.LastActiveEntry
+	0, // 1: sandbox.ctrlplane.v1.ControlPlaneService.GetLastActive:input_type -> sandbox.ctrlplane.v1.GetLastActiveRequest
+	1, // 2: sandbox.ctrlplane.v1.ControlPlaneService.GetLastActive:output_type -> sandbox.ctrlplane.v1.GetLastActiveResponse
+	2, // [2:3] is the sub-list for method output_type
+	1, // [1:2] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -370,7 +172,7 @@ func file_sandbox_ctrlplane_v1_ctrlplane_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDesc), len(file_sandbox_ctrlplane_v1_ctrlplane_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

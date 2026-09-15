@@ -309,12 +309,10 @@ func (r *SandboxPoolReconciler) syncInplaceUpdatePhases(ctx context.Context, san
 				}
 				// Collect idle notification: fire AFTER the errgroup so that the
 				// informer cache has a chance to reflect the apiserver write before
-				// refreshReady() runs. OnSandboxReleased is time-insensitive (cache
-				// eviction), so it is also deferred to the same batch.
+				// refreshReady() runs.
 				notifyPools = append(notifyPools, notifyEntry{
 					namespace:  podSnap.Namespace,
 					poolName:   podSnap.Labels[agentsv1alpha1.SandboxPoolLabelKey],
-					sandboxID:  record.SandboxId,
 					notifyIdle: r.IdleNotifier != nil,
 				})
 				mu.Unlock()
@@ -365,9 +363,6 @@ func (r *SandboxPoolReconciler) syncInplaceUpdatePhases(ctx context.Context, san
 				r.IdleNotifier.NotifyIdleAvailable(e.namespace, e.poolName)
 				notified[key] = struct{}{}
 			}
-			if e.sandboxID != "" {
-				r.IdleNotifier.OnSandboxReleased(ctx, e.sandboxID)
-			}
 		}
 	}
 
@@ -377,7 +372,6 @@ func (r *SandboxPoolReconciler) syncInplaceUpdatePhases(ctx context.Context, san
 type notifyEntry struct {
 	namespace  string
 	poolName   string
-	sandboxID  string
 	notifyIdle bool
 }
 

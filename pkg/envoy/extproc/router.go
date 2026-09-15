@@ -26,16 +26,18 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
-// ErrSandboxRouteNotFound signals that the sandbox is unknown to the router:
-// neither the cache nor (when fallback is enabled) the sandbox-id informer
-// index returned any mapping. Callers receiving this should treat the sandbox
-// ID as definitively absent (never existed, or evicted long enough ago that
-// every trace is gone).
+// ErrSandboxRouteNotFound signals that no Pod carries this sandbox ID.
 //
-// Like ErrSandboxRouteBadGateway it is served as HTTP 502, because on this
-// surface that is what "the sandbox is gone" means to an E2B client; see the
-// mapping in the ExtProc server. The two are still distinguishable by their
-// message, which is what a human reading a log needs.
+// Served as HTTP 502, the same as ErrSandboxRouteBadGateway, and the two are
+// deliberately not distinguished on the wire. This router cannot actually tell
+// "gone" from "not yet visible": its only source is an informer cache, so an
+// index miss means *either* the sandbox never existed *or* this replica has
+// not seen it yet. A 404 would promise a permanence we are not in a position
+// to assert, and the caller's correct move is the same either way — retry, and
+// give up on your own schedule.
+//
+// The distinction survives where it is useful: the two errors carry different
+// messages, which is what a human reading a log needs.
 var ErrSandboxRouteNotFound = errors.New("sandbox route not found")
 
 // ErrSandboxRouteBadGateway signals that the router knows the sandbox exists
@@ -63,79 +65,58 @@ type SandboxRouter interface {
 	ResolveSandboxRoute(ctx context.Context, sandboxID string, port int) (*SandboxRoute, error)
 }
 
-// K8sSandboxRouter resolves sandbox routes using two independent data sources:
+// K8sSandboxRouter resolves sandbox routes from one data source: the Pod
+// informer, queried through the sandbox-id index.
 //
-//   - RouteCache, populated by Controller push/evict, answers "does sandbox X
-//     exist, and if so on which (ns, pod_name)?". It carries NO phase or IP —
-//     those would go stale across Pod lifecycle transitions.
-//   - Pod informer (via mgr.GetClient()), answers "what is the live state of
-//     (ns, pod_name)?". Consulted at request time to check phase + IP.
+// # Why nobody tells the gateway about a sandbox
 //
-// Each request reads the Pod exactly once: via client.Get by name on cache
-// hit, or via the sandbox-id indexer on cache miss (when fallback is on).
-// Both paths funnel into finalize() which applies the phase/label/IP checks.
+// The mapping this router needs — sandbox ID to Pod — is a label the claim
+// writes onto the Pod in the same CAS that moves it Idle → Starting. The
+// indexer is built on that label, so every replica of this process can resolve
+// a sandbox from the moment it is claimed, without being told. There was once
+// a cache the control plane pushed into, to skip the milliseconds between that
+// write and the watch event arriving here. It is gone, for two reasons:
 //
-// The fallback to indexer is gated by enableFallback. With fallback OFF, cache
-// misses are served as NotFound immediately — useful for verifying the
-// pure-push model in testing.
+//   - Nothing is waiting on those milliseconds any more. Create returns only
+//     after the sandbox is armed — runtimes answering, env vars delivered, CA
+//     installed, egress policy and credentials pushed — which is seconds of
+//     round trips, all of it after the label write this router keys on. By the
+//     time a caller holds an ID, the informer has long since caught up.
+//   - A pushed cache cannot survive replication. The control plane holds one
+//     gRPC connection, which pins to a single backend Pod, so a push reaches
+//     one replica and the others answer differently for the same sandbox. An
+//     informer needs no such coordination: each replica watches the apiserver
+//     and arrives at the same answer on its own.
+//
+// So this process is a pure reader of Kubernetes state. It can be restarted,
+// rebuilt, or scaled to any number of replicas with no control-plane
+// involvement at all.
 type K8sSandboxRouter struct {
-	k8sClient      client.Client
-	cache          *RouteCache // may be nil in tests / dev
-	enableFallback bool
+	k8sClient client.Client
 }
 
 // NewK8sSandboxRouter creates a K8sSandboxRouter.
 // The defaultPort parameter is kept for compatibility but is not used when the caller
 // provides a port via headers or URL.
-// cache may be nil, in which case the router only uses the informer path.
-// When enableFallback is false, cache misses short-circuit to NotFound without
-// consulting the sandbox-id informer index.
-func NewK8sSandboxRouter(c client.Client, defaultPort int, cache *RouteCache, enableFallback bool) *K8sSandboxRouter {
-	return &K8sSandboxRouter{k8sClient: c, cache: cache, enableFallback: enableFallback}
+func NewK8sSandboxRouter(c client.Client, defaultPort int) *K8sSandboxRouter {
+	return &K8sSandboxRouter{k8sClient: c}
 }
 
 // ResolveSandboxRoute returns the live Pod IP for the given sandbox, or one
 // of ErrSandboxRouteNotFound / ErrSandboxRouteBadGateway. Exactly one Pod
-// read is performed per request.
+// read is performed per request, served from the informer cache.
 func (r *K8sSandboxRouter) ResolveSandboxRoute(ctx context.Context, sandboxID string, reqPort int) (*SandboxRoute, error) {
 	if sandboxID == "" || reqPort <= 0 || reqPort > 65535 {
 		return nil, ErrSandboxRouteNotFound
 	}
 
-	// Fast path: cache hit. Read the Pod by (ns, name) from the informer
-	// cache. A missing Pod object means the informer hasn't observed what the
-	// Controller push said exists — classic lag window, return 502 so the
-	// caller retries instead of treating it as a permanent 404.
-	if r.cache != nil {
-		if e, ok := r.cache.Get(sandboxID); ok {
-			pod := &corev1.Pod{}
-			if err := r.k8sClient.Get(ctx, client.ObjectKey{Namespace: e.Namespace, Name: e.PodName}, pod); err != nil {
-				return nil, ErrSandboxRouteBadGateway
-			}
-			return r.finalize(pod, sandboxID, reqPort)
-		}
-	}
-
-	// Cache miss + fallback disabled: serve NotFound. In pure-push mode the
-	// cache is authoritative; if it has no entry, the sandbox is absent.
-	if !r.enableFallback {
-		return nil, ErrSandboxRouteNotFound
-	}
-
-	// Cache miss + fallback enabled: consult the sandbox-id informer index.
-	// If the index also has nothing, the sandbox really does not exist.
+	// The sandbox-id index. A miss means no Pod carries this ID: either it
+	// never existed, or it was released and the label stripped.
 	pod, err := indexer.GetPodBySandboxID(ctx, r.k8sClient, sandboxID)
 	if err != nil {
 		return nil, ErrSandboxRouteNotFound
 	}
-	route, ferr := r.finalize(pod, sandboxID, reqPort)
-	// Backfill the cache on a successful fallback resolve so subsequent
-	// requests skip the index lookup. Skip on non-success to avoid caching
-	// a pod that's about to transition.
-	if ferr == nil && r.cache != nil {
-		r.cache.Put(sandboxID, RouteEntry{Namespace: pod.Namespace, PodName: pod.Name})
-	}
-	return route, ferr
+	return r.finalize(pod, sandboxID, reqPort)
 }
 
 // finalize applies the label/phase/IP decision table on the single Pod object
@@ -143,8 +124,7 @@ func (r *K8sSandboxRouter) ResolveSandboxRoute(ctx context.Context, sandboxID st
 // in one place guarantees the "one Pod read per request" contract.
 //
 // Decision table:
-//   - phase ∈ {Running, Stopping}, sandbox-id label matches, PodIP set,
-//     and the sandbox is armed                                        → 200
+//   - phase ∈ {Running, Stopping}, sandbox-id label matches, PodIP set → 200
 //     Stopping is still routable because the pod hasn't been recycled yet
 //     and its runtime may continue to serve in-flight client traffic.
 //   - phase ∈ {Running, Stopping}, sandbox-id label mismatches         → 502
@@ -152,13 +132,6 @@ func (r *K8sSandboxRouter) ResolveSandboxRoute(ctx context.Context, sandboxID st
 //     stranded in our cache. Caller should retry (and usually will hit a
 //     cache-miss / indexer-miss next, yielding the definitive 404).
 //   - phase ∈ {Running, Stopping}, PodIP empty                         → 502
-//   - phase = Running, not yet armed                                   → 502
-//     The image is in place but the sandbox is not set up: its env vars,
-//     injected CA, egress policy and credentials are still being delivered.
-//     Serving here is how a first command used to see an empty environment,
-//     or leave carrying a decoy credential. The create path waits for the
-//     mark, so this only fires for callers that got an ID another way
-//     (connect by ID, a console session, a retained handle).
 //   - any other phase (Starting, Idle, Failed, empty, unknown)         → 502
 //     Starting specifically must not route: the container is swapping
 //     images and answering there would leak into the previous sandbox's
@@ -174,24 +147,8 @@ func (r *K8sSandboxRouter) finalize(pod *corev1.Pod, sandboxID string, reqPort i
 		if pod.Status.PodIP == "" {
 			return nil, ErrSandboxRouteBadGateway
 		}
-		if !sandboxArmed(pod, sandboxID) {
-			return nil, ErrSandboxRouteBadGateway
-		}
 		return &SandboxRoute{PodIP: pod.Status.PodIP, Port: reqPort}, nil
 	default:
 		return nil, ErrSandboxRouteBadGateway
 	}
-}
-
-// sandboxArmed reports whether the pod carries the arming mark for this
-// sandbox.
-//
-// Stopping pods are exempt: they were armed while Running, and the release path
-// strips the mark, so requiring it would cut off in-flight traffic during
-// teardown — the one case where the old behaviour is the correct one.
-func sandboxArmed(pod *corev1.Pod, sandboxID string) bool {
-	if pod.Labels[agentsv1alpha1.SandboxPhaseLabelKey] != string(agentsv1alpha1.SandboxPhaseRunning) {
-		return true
-	}
-	return pod.Annotations[agentsv1alpha1.SandboxArmedAnnotationKey] == sandboxID
 }

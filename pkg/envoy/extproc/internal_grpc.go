@@ -25,61 +25,25 @@ import (
 )
 
 // InternalGRPCServer implements the ControlPlaneService gRPC contract for the
-// Controller → ExtProc control channel. It wraps the in-memory RouteCache
-// (for PushRoute) and the ActivityTracker (for GetLastActive).
+// Controller → ExtProc control channel, which now carries exactly one call.
+//
+// Routing used to travel here too, as a cache the Controller pushed into. It
+// does not any more: the router resolves a sandbox from the Pod informer's
+// sandbox-id index, which is populated by the claim itself, so the gateway
+// needs to be told nothing to route correctly. What is left is the reverse
+// direction — activity observed at the gateway, which only the gateway knows.
 type InternalGRPCServer struct {
 	ctrlplanev1.UnimplementedControlPlaneServiceServer
 
-	Cache   *RouteCache
 	Tracker *ActivityTracker
 }
 
-// NewInternalGRPCServer constructs the server. Both dependencies may not be nil.
-func NewInternalGRPCServer(cache *RouteCache, tracker *ActivityTracker) *InternalGRPCServer {
-	return &InternalGRPCServer{Cache: cache, Tracker: tracker}
-}
-
-// PushRoute registers a sandbox_id → (namespace, pod_name) mapping so the
-// router can serve traffic without waiting for the informer's sandbox-id
-// index to catch up. The mapping carries no phase or IP: those are read live
-// from the Pod informer on every request.
-func (s *InternalGRPCServer) PushRoute(_ context.Context, req *ctrlplanev1.PushRouteRequest) (*ctrlplanev1.PushRouteResponse, error) {
-	if req.GetSandboxId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
-	}
-	if req.GetNamespace() == "" {
-		return nil, status.Error(codes.InvalidArgument, "namespace is required")
-	}
-	if req.GetPodName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "pod_name is required")
-	}
-	if s.Cache == nil {
-		return nil, status.Error(codes.FailedPrecondition, "route cache is not configured")
-	}
-	s.Cache.Put(req.GetSandboxId(), RouteEntry{
-		Namespace: req.GetNamespace(),
-		PodName:   req.GetPodName(),
-	})
-	return &ctrlplanev1.PushRouteResponse{}, nil
-}
-
-// EvictRoute removes a sandbox_id from the cache. Invoked by the Controller
-// when a Pod completes Stopping → Idle, so subsequent router queries for the
-// released sandbox_id immediately fall through to the informer fallback path
-// (if enabled) or return NotFound, rather than pointing to a stale Pod.
-func (s *InternalGRPCServer) EvictRoute(_ context.Context, req *ctrlplanev1.EvictRouteRequest) (*ctrlplanev1.EvictRouteResponse, error) {
-	if req.GetSandboxId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
-	}
-	if s.Cache == nil {
-		return nil, status.Error(codes.FailedPrecondition, "route cache is not configured")
-	}
-	s.Cache.Delete(req.GetSandboxId())
-	return &ctrlplanev1.EvictRouteResponse{}, nil
+// NewInternalGRPCServer constructs the server.
+func NewInternalGRPCServer(tracker *ActivityTracker) *InternalGRPCServer {
+	return &InternalGRPCServer{Tracker: tracker}
 }
 
 // GetLastActive returns per-sandbox activity timestamps as RFC3339 strings.
-// Replaces the former HTTP /internal/sandboxes/last-active endpoint.
 func (s *InternalGRPCServer) GetLastActive(_ context.Context, _ *ctrlplanev1.GetLastActiveRequest) (*ctrlplanev1.GetLastActiveResponse, error) {
 	if s.Tracker == nil {
 		return nil, status.Error(codes.FailedPrecondition, "activity tracker is not configured")

@@ -18,7 +18,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -37,14 +36,12 @@ const bufSize = 1024 * 1024
 type grpcHarness struct {
 	conn   *grpc.ClientConn
 	client ctrlplanev1.ControlPlaneServiceClient
-	cache  *RouteCache
 	server *grpc.Server
 }
 
 func newGRPCHarness(t *testing.T, adminKey string) *grpcHarness {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
-	cache := NewRouteCache(time.Minute)
 	tracker := NewActivityTracker()
 	tracker.Touch("sb1")
 
@@ -54,7 +51,7 @@ func newGRPCHarness(t *testing.T, adminKey string) *grpcHarness {
 		srvOpts = append(srvOpts, grpc.UnaryInterceptor(AdminKeyUnaryInterceptor(mgr)))
 	}
 	srv := grpc.NewServer(srvOpts...)
-	ctrlplanev1.RegisterControlPlaneServiceServer(srv, NewInternalGRPCServer(cache, tracker))
+	ctrlplanev1.RegisterControlPlaneServiceServer(srv, NewInternalGRPCServer(tracker))
 
 	go func() { _ = srv.Serve(lis) }()
 
@@ -73,81 +70,12 @@ func newGRPCHarness(t *testing.T, adminKey string) *grpcHarness {
 	return &grpcHarness{
 		conn:   conn,
 		client: ctrlplanev1.NewControlPlaneServiceClient(conn),
-		cache:  cache,
 		server: srv,
 	}
 }
 
 func authCtx(key string) context.Context {
 	return metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+key)
-}
-
-func TestInternalGRPC_PushRoute_NoAuth(t *testing.T) {
-	h := newGRPCHarness(t, "")
-
-	resp, err := h.client.PushRoute(context.Background(), &ctrlplanev1.PushRouteRequest{
-		SandboxId: "sb1",
-		Namespace: "default",
-		PodName:   "pod-1",
-	})
-	if err != nil {
-		t.Fatalf("PushRoute: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("nil response")
-	}
-	e, ok := h.cache.Get("sb1")
-	if !ok {
-		t.Fatal("cache miss after PushRoute")
-	}
-	if e.Namespace != "default" || e.PodName != "pod-1" {
-		t.Fatalf("unexpected cache entry: %+v", e)
-	}
-}
-
-func TestInternalGRPC_PushRoute_MissingFields(t *testing.T) {
-	h := newGRPCHarness(t, "")
-
-	cases := []*ctrlplanev1.PushRouteRequest{
-		{Namespace: "default", PodName: "pod-1"}, // missing sandbox_id
-		{SandboxId: "sb1", PodName: "pod-1"},     // missing namespace
-		{SandboxId: "sb1", Namespace: "default"}, // missing pod_name
-	}
-	for _, c := range cases {
-		_, err := h.client.PushRoute(context.Background(), c)
-		if status.Code(err) != codes.InvalidArgument {
-			t.Fatalf("expected InvalidArgument for %+v, got %v", c, err)
-		}
-	}
-}
-
-func TestInternalGRPC_EvictRoute_RemovesCacheEntry(t *testing.T) {
-	h := newGRPCHarness(t, "")
-
-	// Seed.
-	if _, err := h.client.PushRoute(context.Background(), &ctrlplanev1.PushRouteRequest{
-		SandboxId: "sb1", Namespace: "default", PodName: "pod-1",
-	}); err != nil {
-		t.Fatalf("PushRoute seed: %v", err)
-	}
-	if _, ok := h.cache.Get("sb1"); !ok {
-		t.Fatal("expected cache hit after seed")
-	}
-
-	if _, err := h.client.EvictRoute(context.Background(), &ctrlplanev1.EvictRouteRequest{SandboxId: "sb1"}); err != nil {
-		t.Fatalf("EvictRoute: %v", err)
-	}
-	if _, ok := h.cache.Get("sb1"); ok {
-		t.Fatal("expected cache miss after EvictRoute")
-	}
-}
-
-func TestInternalGRPC_EvictRoute_EmptySandboxID(t *testing.T) {
-	h := newGRPCHarness(t, "")
-	_, err := h.client.EvictRoute(context.Background(), &ctrlplanev1.EvictRouteRequest{})
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("expected InvalidArgument, got %v", err)
-	}
 }
 
 func TestInternalGRPC_GetLastActive(t *testing.T) {
@@ -163,9 +91,7 @@ func TestInternalGRPC_GetLastActive(t *testing.T) {
 
 func TestInternalGRPC_AuthRejectsMissingMetadata(t *testing.T) {
 	h := newGRPCHarness(t, "s3cret")
-	_, err := h.client.PushRoute(context.Background(), &ctrlplanev1.PushRouteRequest{
-		SandboxId: "sb1", Namespace: "default", PodName: "pod-1",
-	})
+	_, err := h.client.GetLastActive(context.Background(), &ctrlplanev1.GetLastActiveRequest{})
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("expected Unauthenticated, got %v", err)
 	}
@@ -173,9 +99,7 @@ func TestInternalGRPC_AuthRejectsMissingMetadata(t *testing.T) {
 
 func TestInternalGRPC_AuthRejectsBadKey(t *testing.T) {
 	h := newGRPCHarness(t, "s3cret")
-	_, err := h.client.PushRoute(authCtx("wrong"), &ctrlplanev1.PushRouteRequest{
-		SandboxId: "sb1", Namespace: "default", PodName: "pod-1",
-	})
+	_, err := h.client.GetLastActive(authCtx("wrong"), &ctrlplanev1.GetLastActiveRequest{})
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("expected Unauthenticated, got %v", err)
 	}
@@ -183,9 +107,7 @@ func TestInternalGRPC_AuthRejectsBadKey(t *testing.T) {
 
 func TestInternalGRPC_AuthAcceptsBearer(t *testing.T) {
 	h := newGRPCHarness(t, "s3cret")
-	_, err := h.client.PushRoute(authCtx("s3cret"), &ctrlplanev1.PushRouteRequest{
-		SandboxId: "sb1", Namespace: "default", PodName: "pod-1",
-	})
+	_, err := h.client.GetLastActive(authCtx("s3cret"), &ctrlplanev1.GetLastActiveRequest{})
 	if err != nil {
 		t.Fatalf("expected OK, got %v", err)
 	}
@@ -195,9 +117,7 @@ func TestInternalGRPC_AuthAcceptsRawKey(t *testing.T) {
 	// Interceptor should also accept the raw key without "Bearer " prefix.
 	h := newGRPCHarness(t, "s3cret")
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "s3cret")
-	_, err := h.client.PushRoute(ctx, &ctrlplanev1.PushRouteRequest{
-		SandboxId: "sb1", Namespace: "default", PodName: "pod-1",
-	})
+	_, err := h.client.GetLastActive(ctx, &ctrlplanev1.GetLastActiveRequest{})
 	if err != nil {
 		t.Fatalf("expected OK, got %v", err)
 	}

@@ -707,11 +707,6 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		// previous sandbox's rules or decoys into the next claim.
 		managedAnnoKeyList = append(managedAnnoKeyList, agentsv1alpha1.SandboxEgressInjectAnnotationKey)
 	}
-	// Arming always happens, so the two arming annotations are always managed:
-	// a recycled Pod must never carry the previous sandbox's arming verdict.
-	managedAnnoKeyList = append(managedAnnoKeyList,
-		agentsv1alpha1.SandboxArmedAnnotationKey,
-		agentsv1alpha1.SandboxArmErrorAnnotationKey)
 	sort.Strings(managedAnnoKeyList)
 	managedAnnotationKeys, encErr := json.Marshal(managedAnnoKeyList)
 	if encErr != nil {
@@ -888,16 +883,13 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 		return nil, domain.NewInternal("claimed pod is missing sandbox ID label", nil)
 	}
 
-	// Push the new route to ExtProc so it can serve traffic immediately
-	// without waiting for its informer cache to observe the sandbox-id label.
-	// On push failure, fall back to a single 500 ms probe — the informer
-	// almost always catches up within that window. On happy path, no probe.
-	pushErr := s.pushRouteToExtProc(ctx, result.SandboxId, pod)
-	if pushErr != nil {
-		klog.InfoS("Create: ExtProc push failed, running fallback endpoint probe",
-			"sandboxID", result.SandboxId, "error", pushErr)
-		s.probeEndpointReady(ctx, pool, result.Endpoints)
-	}
+	// The gateway is not told about this sandbox, and does not need to be: it
+	// resolves one from the Pod informer's sandbox-id index, and that label was
+	// written by the claim, several seconds and an entire arming sequence ago.
+	// Pushing a route here used to buy the milliseconds between that write and
+	// the gateway's watch event — a window nothing waits in any more, at the
+	// cost of a control-plane channel the gateway could not be replicated
+	// behind.
 
 	// If the client disconnected while we were pushing/probing the route, release
 	// the sandbox so the pod returns to Idle instead of being stranded until idle-timeout.
@@ -2060,103 +2052,6 @@ func (s *k8sSandboxService) NotifyIdleAvailable(namespace, poolName string) {
 	if sched != nil {
 		sched.NotifyIdle()
 	}
-}
-
-// OnSandboxReleased implements sandboxpool.IdleNotifier. It invalidates the
-// ExtProc route cache entry for the released sandbox so subsequent router
-// queries return NotFound rather than briefly hitting a stale entry. The call
-// is best-effort: failures are logged and swallowed because TTL (1 min) and
-// the router's live label check already provide correctness.
-func (s *k8sSandboxService) OnSandboxReleased(ctx context.Context, sandboxID string) {
-	if s.extprocClient == nil || sandboxID == "" {
-		return
-	}
-	if err := s.extprocClient.EvictRoute(ctx, sandboxID); err != nil {
-		klog.V(2).InfoS("OnSandboxReleased: extproc EvictRoute failed",
-			"sandboxID", sandboxID, "error", err)
-	}
-}
-
-// pushRouteToExtProc registers the freshly-claimed Pod's sandbox-id →
-// (ns, pod_name) mapping in the ExtProc route cache so the router can serve
-// traffic immediately, without waiting for the ExtProc informer to observe
-// the sandbox-id label on the Pod. The payload intentionally does NOT carry
-// Phase or PodIP: the router reads both live from its own Pod informer at
-// request time, so this push never becomes stale across Pod lifecycle
-// transitions (Starting → Running → Stopping).
-// The sandbox ID pushed is always the raw UUID (no cluster prefix), because
-// cross-cluster prefix stripping happens inside the ExtProc router before it
-// consults the cache.
-func (s *k8sSandboxService) pushRouteToExtProc(ctx context.Context, prefixedSandboxID string, pod *corev1.Pod) error {
-	if s.extprocClient == nil {
-		return fmt.Errorf("extproc client not configured")
-	}
-	rawID := s.stripSandboxID(prefixedSandboxID)
-	return s.extprocClient.PushRoute(ctx, RouteInfo{
-		SandboxID: rawID,
-		Namespace: pod.Namespace,
-		PodName:   pod.Name,
-	})
-}
-
-// probeEndpointReady runs a single 500 ms probe against the first runtime
-// endpoint and returns when the endpoint no longer reports "sandbox not
-// found". Any other response (including HTTP errors) is considered ready —
-// the probe is only a fallback guard, not a real readiness check. The
-// endpoint probe only makes sense when a gateway base URL is configured and
-// the pool has at least one endpoint.
-func (s *k8sSandboxService) probeEndpointReady(ctx context.Context, pool *agentsv1alpha1.SandboxPool, endpoints *map[string]gen.SandboxEndpoint) {
-	if s.gatewayBaseURL == "" || endpoints == nil || len(*endpoints) == 0 || pool == nil || len(pool.Spec.Runtimes) == 0 {
-		return
-	}
-	endpoint, ok := (*endpoints)[pool.Spec.Runtimes[0].Name]
-	if !ok {
-		return
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		if endpointReady(probeCtx, s.httpClient, endpoint.Url) {
-			return
-		}
-		select {
-		case <-probeCtx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-// endpointReady returns true when a GET against url does not look like a
-// "sandbox not found" gateway 404. It is intentionally lenient: any non-404
-// response, any non-JSON body, or any parse error counts as ready. We only
-// keep probing on the very specific shape that ExtProc returns for a missing
-// route.
-func endpointReady(ctx context.Context, httpClient *http.Client, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return true
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return true
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusNotFound {
-		return true
-	}
-	var body struct {
-		Error string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return true
-	}
-	return !strings.Contains(body.Error, "sandbox not found")
 }
 
 // ---------------------------------------------------------------------------
