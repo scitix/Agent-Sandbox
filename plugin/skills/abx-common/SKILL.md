@@ -47,15 +47,25 @@ Two settings are required, resolved as flag → environment →
 
 | Setting | Flag | Environment |
 |---|---|---|
-| API base | `--endpoint` | `AGENTBOX_ENDPOINT` |
+| Console address | `--endpoint` | `AGENTBOX_ENDPOINT` |
 | Credential | `--api-key` | `AGENTBOX_API_KEY` |
 
-That is the whole setup. Which header the key travels in is read off the
-endpoint — a console BFF address (`/api/clusters/…`) takes `Authorization:
-Bearer`, a cluster API takes `AGENTBOX-API-KEY` — so there is no scheme to set.
-`--auth-scheme` and `--web-base` exist as overrides for an address of neither
-shape, and are otherwise unnecessary. The console links in output are derived
-from the endpoint too.
+That is the whole setup. The endpoint is the console's own address — the one a
+person types in a browser — and **one address reaches every cluster** the
+platform has.
+
+Which header the key travels in follows from that, so there is no scheme to
+set: the console takes `Authorization: Bearer`, a cluster API takes
+`AGENTBOX-API-KEY`. `--auth-scheme` is an override for a deployment answering to
+neither, and is otherwise unnecessary. Console links in output are derived from
+the endpoint too.
+
+**The exception**: a sandbox with no network route to the console is configured
+with `--cluster-api` (`AGENTBOX_CLUSTER_API`) pointing at one cluster's own API
+instead. Everything below about choosing a cluster then does not apply — that
+address answers for one cluster and refuses any other. You will not choose this;
+whoever deployed the platform did, and it shows up already set in the
+environment.
 
 Under the Claude Code plugin the key is in the OS keychain and a hook writes
 the config file. **Do not read that file, echo the key, or pass it on a command
@@ -76,15 +86,18 @@ Management calls are per cluster, and the cluster is chosen **per command** with
 a platform, and that platform may have several clusters, so a default would
 quietly answer for whichever one happened to be set.
 
-An endpoint whose path contains `{cluster}` routes for every cluster and
-`--cluster` substitutes into it; when there is exactly one cluster it is filled
-in for you. An endpoint without a placeholder answers for its own cluster and
-**refuses** a `--cluster` naming a different one. That refusal is deliberate:
-returning the local cluster's rows under another cluster's name is data that is
-confidently mislabelled, and a reader cannot tell.
+Through a console — the normal case — `--cluster` reaches any cluster the
+platform has, and when there is exactly one it is filled in for you.
+
+In the `--cluster-api` exception above, the address answers for its own cluster
+and **refuses** a `--cluster` naming a different one. That refusal is
+deliberate: returning the local cluster's rows under another cluster's name is
+data that is confidently mislabelled, and a reader cannot tell. Treat the
+refusal as the truth about that sandbox, not as something to work around — there
+is no route to the other cluster from there.
 
 ```bash
-abx clusters                    # what this endpoint can reach
+abx clusters                    # what this deployment can reach
 abx envs --cluster <cluster-id> # choose one for this command
 ```
 

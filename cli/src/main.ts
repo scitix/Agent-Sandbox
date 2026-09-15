@@ -52,8 +52,9 @@ import {
 import {
   CliError,
   clusterListUrl,
-  derivedWebBase,
-  routesByPath,
+  consoleBase,
+  consoleBaseOf,
+  viaConsole,
   type Context,
 } from './context'
 import {
@@ -156,30 +157,37 @@ function contextFrom(flags: Record<string, string | boolean>, file: FileConfig =
   // address arrives as an environment variable and the credential is injected
   // on the way out, and that deployment is the only one such a sandbox should
   // reach. A config file it never had cannot redirect it somewhere else.
+  // Normalised, because the previous form of this setting carried the console's
+  // mount and routing placeholder — `.../api/clusters/{cluster}` — and a config
+  // written then must keep working. `consoleBaseOf` strips exactly that suffix.
+  const rawEndpoint = str(
+    'endpoint',
+    env('AGENTBOX_ENDPOINT') || entry.endpoint || '',
+  )
   const ctx: Context = {
     contextName: selected.name,
-    endpoint: str('endpoint', env('AGENTBOX_ENDPOINT') || entry.endpoint || ''),
+    endpoint: rawEndpoint ? consoleBaseOf(rawEndpoint) : '',
+    // The exception, not the norm: a sandbox in a cluster's own network can be
+    // handed this to reach that cluster directly. Everywhere else — including
+    // production sandboxes — the console base above is the way in.
+    clusterApi:
+      str('cluster-api', env('AGENTBOX_CLUSTER_API') || entry.clusterApi || '') ||
+      undefined,
     apiKey: str('api-key', env('AGENTBOX_API_KEY') || entry.apiKey || ''),
     cluster: str('cluster', env('AGENTBOX_CLUSTER') || entry.cluster || '') || undefined,
-    // Only set when the caller insists; otherwise the endpoint's shape decides
+    // Only set when the caller insists; otherwise console vs direct mode decides
     // (`headers()`), because which header the far end reads is a property of
     // the address, not something a person setting up a CLI should have to know.
     authScheme: (str('auth-scheme', env('AGENTBOX_AUTH_SCHEME') || entry.authScheme || '') ||
       undefined) as Context['authScheme'],
     format,
-    webBase:
-      str('web-base', env('AGENTBOX_WEB_BASE') || entry.webBase || '') || undefined,
   }
-  if (!ctx.endpoint) {
+  if (!ctx.endpoint && !ctx.clusterApi) {
     throw new CliError(
       'no endpoint configured',
-      `pass --endpoint, set AGENTBOX_ENDPOINT, or write it to ${configPath()}`,
+      `pass --endpoint with your console's address, or set AGENTBOX_ENDPOINT / write it to ${configPath()}`,
     )
   }
-  // A BFF endpoint already names its console one level up, so the links in
-  // hints can be built without a second address being configured. Only when the
-  // caller gave none AND the shape does not imply one does it stay unset.
-  if (!ctx.webBase) ctx.webBase = derivedWebBase(ctx)
   if (!ctx.apiKey) {
     throw new CliError(
       'no API key configured',
@@ -215,7 +223,8 @@ function usage(): string {
     'Global flags:',
     '  --context <name>     which deployment (see `abx context`)',
     '  --cluster <id>       cluster this command addresses',
-    '  --endpoint <url>     API base; a {cluster} placeholder routes by path',
+    "  --endpoint <url>     the console's address; reaches every cluster",
+    '  --cluster-api <url>  one cluster\'s own API, bypassing the console',
     '  --api-key <key>      platform credential',
     '  --filter key=value   narrow a list; keys are the column headings',
     '  --limit <n>          rows to print (default 200)',
@@ -360,7 +369,7 @@ export async function run(argv: string[]): Promise<number> {
       return printRows(resourceOf('clusters')!, rows, ctx, { resource: 'clusters' }, flags, filters)
     }
   }
-  if (!ctx.cluster && routesByPath(ctx)) {
+  if (!ctx.cluster && viaConsole(ctx)) {
     ctx.cluster = await soleCluster(ctx)
   }
 
@@ -399,8 +408,8 @@ export async function run(argv: string[]): Promise<number> {
       address.view
         ? `"${address.view}" is not served by the API`
         : 'nothing to read at that address',
-      address.view && ctx.webBase
-        ? `it is a console view:\n  ${ctx.webBase.replace(/\/+$/, '')}${consolePath(address)}`
+      address.view && consoleBase(ctx)
+        ? `it is a console view:\n  ${consoleBase(ctx)}${consolePath(address)}`
         : `try \`abx ${address.resource} --help\` for what it does have`,
     )
   }
@@ -447,13 +456,14 @@ async function contextCommand(
           'assistant page and look for the setup panel. Or write it yourself:',
           '',
           '  abx context set <name> \\',
-          '    --endpoint https://<console>/agentbox/api/clusters/{cluster} \\',
+          '    --endpoint https://<console>/agentbox \\',
           '    --api-key agbx_...',
           '',
-          'That is the whole setup. The auth header and the console links are',
-          'read off the endpoint, so neither is a flag. A single-cluster',
-          'platform fills in the cluster for you; otherwise any command',
-          'takes --cluster <id> (see `abx clusters`).',
+          'That is the whole setup: the console address and the key. One',
+          'address reaches every cluster — a single-cluster platform fills it',
+          'in for you, otherwise any command takes --cluster <id> (see',
+          '`abx clusters`). The auth header follows from the address, so it',
+          'is not a flag.',
         ].join('\n'),
       )
       return 0
@@ -462,7 +472,11 @@ async function contextCommand(
     for (const n of names) {
       const e = cfg.contexts![n]
       const mark = n === cfg.currentContext ? '*' : ' '
-      console.log(`${mark} ${n.padEnd(width)}  ${e.endpoint ?? '—'}${e.cluster ? `  (${e.cluster})` : ''}`)
+      // A direct-mode context has no console address, so show the cluster API
+      // it does have — and say which it is, because the two behave differently
+      // (one reaches every cluster, the other refuses --cluster).
+      const addr = e.clusterApi ? `${e.clusterApi}  [direct]` : (e.endpoint ?? '—')
+      console.log(`${mark} ${n.padEnd(width)}  ${addr}${e.cluster ? `  (${e.cluster})` : ''}`)
     }
     return 0
   }
@@ -481,13 +495,19 @@ async function contextCommand(
   if (verb === 'set') {
     if (!name) throw new CliError('name the context', 'abx context set <name> --endpoint … --api-key …')
     const entry: ContextEntry = { ...(cfg.contexts?.[name] ?? {}) }
-    if (str('endpoint')) entry.endpoint = str('endpoint')
+    // Stored as the console's base. An older config may hold the mount and the
+    // routing placeholder too; normalising on the way in means the file is
+    // rewritten into today's shape the first time it is touched.
+    if (str('endpoint')) entry.endpoint = consoleBaseOf(str('endpoint'))
+    if (str('cluster-api')) entry.clusterApi = str('cluster-api')
     if (str('api-key')) entry.apiKey = str('api-key')
     if (str('cluster')) entry.cluster = str('cluster')
-    if (str('web-base')) entry.webBase = str('web-base')
     if (str('auth-scheme')) entry.authScheme = str('auth-scheme') as ContextEntry['authScheme']
-    if (!entry.endpoint) {
-      throw new CliError('a context needs an endpoint', 'pass --endpoint')
+    if (!entry.endpoint && !entry.clusterApi) {
+      throw new CliError(
+        'a context needs an address',
+        "pass --endpoint with your console's address (--cluster-api only to bypass the console)",
+      )
     }
     cfg.contexts = { ...(cfg.contexts ?? {}), [name]: entry }
     // First one becomes current: a single configured deployment with no default
@@ -514,7 +534,7 @@ async function contextCommand(
 }
 
 /**
- * The one cluster this endpoint reaches, when there is exactly one.
+ * The one cluster the console reaches, when there is exactly one.
  *
  * A deployment with a single cluster should not have to name it on every
  * command; one with several must, because picking for the caller would report
@@ -540,11 +560,11 @@ async function soleCluster(ctx: Context): Promise<string> {
   if (ids.length === 1) return ids[0]
   throw new CliError(
     ids.length
-      ? 'this endpoint reaches several clusters and this command needs one'
+      ? 'this platform has several clusters and this command needs one'
       : 'could not work out which cluster to use',
     ids.length
       ? `pass --cluster with one of them:\nreachable: ${ids.join(', ')}`
-      : 'pass --cluster <id>; `abx clusters` lists what this endpoint reaches',
+      : 'pass --cluster <id>; `abx clusters` lists what this deployment reaches',
   )
 }
 
@@ -576,15 +596,15 @@ function printRows(
 }
 
 /**
- * Refuse a --cluster this endpoint cannot answer for.
+ * Refuse a --cluster this address cannot answer for.
  *
  * Returning the local cluster's rows under another cluster's name is
- * confidently mislabelled data, and a reader has no way to tell. An endpoint
- * whose path carries `{cluster}` routes for itself, so the question does not
- * arise there.
+ * confidently mislabelled data, and a reader has no way to tell. The console
+ * routes to every cluster, so the question only arises in direct mode, where
+ * the address answers for exactly one.
  */
 async function assertClusterServed(ctx: Context): Promise<void> {
-  if (!ctx.cluster || routesByPath(ctx)) return
+  if (!ctx.cluster || viaConsole(ctx)) return
   let served: string | undefined
   try {
     const cs = normalize(await request<unknown>(ctx, 'GET', '/clusters'))
@@ -596,8 +616,12 @@ async function assertClusterServed(ctx: Context): Promise<void> {
   }
   if (served && served !== ctx.cluster) {
     throw new CliError(
-      `this endpoint serves cluster "${served}", not "${ctx.cluster}"`,
-      'point --endpoint at that cluster, or use an endpoint whose path contains {cluster}',
+      `this address serves cluster "${served}", not "${ctx.cluster}"`,
+      'it is a single cluster\'s API. To reach several clusters, point --endpoint ' +
+        "at the console instead; one address reaches them all. If this sandbox has " +
+        'no route to the console, "' +
+        served +
+        '" is the only cluster it can reach.',
     )
   }
 }
@@ -683,8 +707,9 @@ async function refuseIfAgent(ctx: Context, reason: string, a: Address): Promise<
     return
   }
   if (mode !== 'agent') return
-  const where = ctx.webBase
-    ? `\ndo it as yourself:\n  ${ctx.webBase.replace(/\/+$/, '')}${consolePath({ cluster: ctx.cluster, resource: a.resource })}`
+  const web = consoleBase(ctx)
+  const where = web
+    ? `\ndo it as yourself:\n  ${web}${consolePath({ cluster: ctx.cluster, resource: a.resource })}`
     : ''
   throw new CliError(`this key may not do that: ${reason}`, `open the console and do it there${where}`)
 }

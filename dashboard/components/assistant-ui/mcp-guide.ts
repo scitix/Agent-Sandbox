@@ -81,7 +81,7 @@ export interface GuideVars {
   domain: string
   https: boolean
   pool: string
-  /** `abx --endpoint` for this deployment: the console's BFF, routed by path. */
+  /** `abx --endpoint` for this deployment: this console's own address. */
   endpoint: string
   /** Name to save the context under. */
   ctx: string
@@ -94,14 +94,11 @@ export function mcpGuide(input: McpGuideInput, locale: Locale): string {
     domain: input.dataURL ? stripScheme(input.dataURL) : "<data-plane>",
     https: input.dataURL ? !isPlainHttp(input.dataURL) : true,
     pool: input.poolName || "YOUR_ENV",
-    // One endpoint for every cluster: the `{cluster}` placeholder is what makes
-    // a per-command `--cluster` a substitution rather than a claim the address
-    // cannot honour. It is also the only setting the reader has to supply —
-    // which header the key travels in and where the console lives are both read
-    // off this address.
-    endpoint: consoleBase
-      ? `${consoleBase}/api/clusters/{cluster}`
-      : "https://<console>/agentbox/api/clusters/{cluster}",
+    // This console's own address, and the only one a reader has to supply: one
+    // address reaches every cluster, so `--cluster` on a command selects among
+    // them rather than being a claim the address cannot honour. Which header
+    // the key travels in follows from it too.
+    endpoint: consoleBase || "https://<console>/agentbox",
     ctx: contextName(consoleBase),
   }
   return locale === "en" ? english(v) : chinese(v)
@@ -137,7 +134,7 @@ abx context set ${v.ctx} \\
 abx envs
 \`\`\`
 
-That is the whole setup — the endpoint and the key. Which header the key travels in and where the console lives are both read off the endpoint, so there is nothing else to say. If your platform has more than one cluster, \`abx clusters\` lists them and any command takes \`--cluster <id>\`; with a single cluster it is filled in for you.
+That is the whole setup — this console's address and the key. One address reaches every cluster this platform has: \`abx clusters\` lists them and any command takes \`--cluster <id>\`, and with a single cluster it is filled in for you. Which header the key travels in follows from the address, so there is nothing else to say.
 
 If you use more than one AgentBox platform, add each as its own context and switch with \`abx context use <name>\`. A context is which platform; \`--cluster\` is which of its clusters, per command.
 
@@ -223,7 +220,7 @@ abx context set ${v.ctx} \\
 abx envs
 \`\`\`
 
-就这么两样 —— endpoint 和 key。key 走哪个 header、控制台在哪儿，都是从 endpoint 上读出来的，不用另外配。平台如果有多个集群，\`abx clusters\` 会列出来，任意命令加 \`--cluster <id>\` 即可；只有一个集群时会自动填上。
+就这么两样 —— 控制台地址和 key。一个地址通向平台的所有集群：\`abx clusters\` 列出它们，任意命令加 \`--cluster <id>\` 即可；只有一个集群时会自动填上。key 走哪个 header 也是从地址推出来的，不用另外配。
 
 如果你同时用多个 AgentBox 平台，各加一个 context，用 \`abx context use <name>\` 切换。context 决定是哪个平台，\`--cluster\` 决定是这个平台的哪个集群（逐命令指定）。
 

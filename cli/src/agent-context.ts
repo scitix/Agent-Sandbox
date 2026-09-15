@@ -73,7 +73,8 @@ export function agentContext(version: string, gates: Record<string, boolean> | n
     },
     flags: {
       '--cluster': 'cluster this command addresses',
-      '--endpoint': 'API base; a {cluster} placeholder makes one endpoint route to every cluster',
+      '--endpoint': "the console's address; one address reaches every cluster",
+      '--cluster-api': "one cluster's own API base, bypassing the console; --cluster is then refused",
       '--api-key': 'platform credential',
       '--filter': 'key=value, repeatable',
       '--limit': 'rows to print (default 200)',
@@ -83,8 +84,10 @@ export function agentContext(version: string, gates: Record<string, boolean> | n
     },
     auth: {
       note:
-        'Only --endpoint and --api-key are ever required. Which header the key travels in is read off the endpoint: a console BFF address (/api/clusters/…) takes Authorization: Bearer, a cluster API takes AGENTBOX-API-KEY.',
-      override: '--auth-scheme api-key|bearer forces it, for an address of neither shape.',
+        'Only --endpoint and --api-key are ever required. Which header the key travels in follows from the mode: the console takes Authorization: Bearer, a cluster API takes AGENTBOX-API-KEY.',
+      override: '--auth-scheme api-key|bearer forces it, for a deployment that answers to neither.',
+      modes:
+        'Console mode is the default and the norm: --endpoint is the console address, and --cluster picks any cluster behind it. Direct mode is the exception, entered by setting --cluster-api (AGENTBOX_CLUSTER_API) to one cluster\'s own API — for a sandbox with no route to the console. That address answers for one cluster, so --cluster is refused rather than silently ignored.',
     },
     roots: gatedOut(rootResources(), gates).map((r) => r.plural),
     resources: resources.map((r) => ({

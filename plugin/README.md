@@ -28,14 +28,39 @@ The binary lands in `~/.local/bin`, the skills in `~/.agents/skills`. Then name
 the deployment you are talking to:
 
 ```sh
-abx context set <name>   --endpoint 'https://<console>/agentbox/api/clusters/{cluster}'   --api-key agbx_...
+abx context set <name> \
+  --endpoint 'https://<console>/agentbox' \
+  --api-key agbx_...
 ```
 
-Two settings, and that is the whole setup. Which header the key travels in and
-where the console lives are both read off the endpoint; a `{cluster}` placeholder
-is what lets one endpoint reach every cluster. Each deployment's own console
-prints that line with its address filled in — this repository ships none, because
-the addresses belong to whoever deployed the platform.
+Two settings, and that is the whole setup. The endpoint is your console's
+address — the one you type in a browser — and **one address reaches every
+cluster** that platform has: `abx clusters` lists them, and any command takes
+`--cluster <id>`. Which header the key travels in follows from the address, so
+it is not a flag either. Each deployment's own console prints that line with its
+address filled in — this repository ships none, because the addresses belong to
+whoever deployed the platform.
+
+### When there is no console to reach
+
+A sandbox running inside a cluster that has no route to the console is the one
+exception. It is told so explicitly:
+
+```sh
+abx context set <name> \
+  --cluster-api 'http://<cluster-api-host>' \
+  --api-key agbx_...
+```
+
+That address answers for **one** cluster, so `abx --cluster <other>` is refused
+rather than quietly returning the local cluster's rows under another cluster's
+name, and console links are omitted because there is no console to link to.
+This is opt-in on purpose — a CLI that silently fell back to one cluster would
+be a platform shrinking to a fraction of itself with no error to notice.
+
+A platform that embeds `abx` sets whichever applies through the environment
+(`AGENTBOX_ENDPOINT`, or `AGENTBOX_CLUSTER_API` for the exception), so the
+sandbox reaches that deployment and no other.
 
 ## More than one platform
 
@@ -49,15 +74,14 @@ abx --context <name> envs   # just this command
 
 `--cluster` is the other axis and stays independent: a context is which
 platform, `--cluster` is which of its clusters. It belongs on the command, not in
-the context — `abx clusters` lists what an endpoint reaches, and when there is
+the context — `abx clusters` lists what a console reaches, and when there is
 exactly one it is filled in for you. With two contexts configured and no default
 chosen, commands are refused rather than guessing — a command that quietly ran
 against the wrong platform is the failure this prevents.
 
 Environment variables still win over the file, which is what makes a sandbox
-work: a platform that embeds `abx` passes its own address in the environment
-and injects the token on the way out, so that sandbox reaches that deployment
-and no other.
+work: the platform passes its own address in the environment and injects the
+token on the way out.
 
 ## What is in here
 

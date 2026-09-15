@@ -17,7 +17,7 @@
 import type { ColumnSpec, ResourceSpec } from '@headless/index'
 import type { Address } from '@headless/index'
 import { childrenOf, cliArgs, consolePath, hasConsolePage } from '@headless/index'
-import { CliError, type Context } from './context'
+import { CliError, consoleBase, type Context } from './context'
 
 /** Rows past this are not printed. Context is not free and nobody reads 8000 rows. */
 const DEFAULT_LIMIT = 200
@@ -155,16 +155,22 @@ export function hints(spec: ResourceSpec, ctx: Context, a: Address): string {
   // Only when the page exists. A "view in console" line pointing at a 404 is
   // worse than no line: it reads as a working alternative right up until it is
   // clicked, and instancetypes deliberately has no page.
-  if (ctx.webBase && hasConsolePage(a)) {
-    parts.push(`view:\n  ${ctx.webBase.replace(/\/+$/, '')}${consolePath(a)}`)
+  //
+  // Direct mode has no console base at all, so these links are simply omitted
+  // there rather than guessed — a sandbox reaching one cluster's API has no way
+  // to know where, or whether, a console is published.
+  const web = consoleBase(ctx)
+  if (web && hasConsolePage(a)) {
+    parts.push(`view:\n  ${web}${consolePath(a)}`)
   }
   parts.push(`hint:\n${lines.join('\n')}`)
   return parts.join('\n')
 }
 
 function viewHint(ctx: Context, a: Address): string {
-  return ctx.webBase && hasConsolePage(a)
-    ? `view:\n  ${ctx.webBase.replace(/\/+$/, '')}${consolePath(a)}`
+  const web = consoleBase(ctx)
+  return web && hasConsolePage(a)
+    ? `view:\n  ${web}${consolePath(a)}`
     : `hint:\n  abx ${cliArgs({ ...a, view: undefined, cluster: undefined }).join(' ')}  # back up one level`
 }
 

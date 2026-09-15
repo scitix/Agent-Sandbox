@@ -135,22 +135,30 @@ the other either hands the agent a useless token (no rules) or a real one
 {{- $_ := set $env "AGENTBOX_APPROVAL_TOOL" "request_approval" -}}
 {{- if $inj.enabled -}}
 {{- if $inj.bffEndpoint -}}
-{{- /* Routes by cluster in its path, so `abx --cluster X` reaches X through
-       this one address. Bearer, not an API key: this is the dashboard's own
-       session credential. */ -}}
+{{- /* The console: one address reaching every cluster, so `abx --cluster X`
+       reaches X through it. Bearer, not an API key: this is the dashboard's
+       own session credential. */ -}}
 {{- $_ := set $env "AGENTBOX_ENDPOINT" $inj.bffEndpoint -}}
 {{- $_ := set $env "AGENTBOX_AUTH_SCHEME" "bearer" -}}
 {{- $_ := set $env "AGENTBOX_API_KEY" ($inj.bffDecoy | default "") -}}
 {{- /* Which cluster the sandbox is in, so ordinary commands need no --cluster.
-       Without it a path-routing endpoint can reach several clusters and names
-       none, so every command — including `whoami` — has to be told which one,
-       which reads as the tool being broken rather than unconfigured.
+       Without it the console can reach several clusters and names none, so
+       every command — including `whoami` — has to be told which one, which
+       reads as the tool being broken rather than unconfigured.
        `--cluster X` still reaches any other. */ -}}
 {{- with $inj.clusterID -}}
 {{- $_ := set $env "AGENTBOX_CLUSTER" . -}}
 {{- end -}}
-{{- else if $inj.nativeHost -}}
-{{- $_ := set $env "AGENTBOX_ENDPOINT" (printf "http://%s" $inj.nativeHost) -}}
+{{- else if (or $inj.clusterApi $inj.nativeHost) -}}
+{{- /* Direct mode, for a sandbox with no route to the console. This sets
+       AGENTBOX_CLUSTER_API rather than AGENTBOX_ENDPOINT: the CLI treats the
+       two as different modes, and only the dedicated variable makes it refuse
+       `--cluster <other>` instead of answering with this cluster's rows under
+       another cluster's name.
+
+       `nativeHost` is the older spelling of the same thing and still works, so
+       a deployment configured before the split keeps running unchanged. */ -}}
+{{- $_ := set $env "AGENTBOX_CLUSTER_API" (printf "http://%s" (coalesce $inj.clusterApi $inj.nativeHost)) -}}
 {{- $_ := set $env "AGENTBOX_API_KEY" ($inj.decoy | default "") -}}
 {{- end -}}
 {{- if $inj.e2bHost -}}
@@ -209,10 +217,11 @@ a credential problem and sends everyone looking at the key.
 {{- $allow = append $allow $host -}}
 {{- $hdr := dict "Authorization" (printf "Bearer ${e2b.secrets.%s}" ($inj.bffSecretName | default "abx-jwt")) -}}
 {{- $_ := set $rules $host (list (dict "transform" (dict "headers" $hdr))) -}}
-{{- else if $inj.nativeHost -}}
-{{- $allow = append $allow $inj.nativeHost -}}
+{{- else if (or $inj.clusterApi $inj.nativeHost) -}}
+{{- $direct := coalesce $inj.clusterApi $inj.nativeHost -}}
+{{- $allow = append $allow $direct -}}
 {{- $hdr := dict "AGENTBOX-API-KEY" (printf "${e2b.secrets.%s}" ($inj.nativeSecretName | default "abx-key")) -}}
-{{- $_ := set $rules $inj.nativeHost (list (dict "transform" (dict "headers" $hdr))) -}}
+{{- $_ := set $rules $direct (list (dict "transform" (dict "headers" $hdr))) -}}
 {{- end -}}
 {{- if $inj.e2bHost -}}
 {{- $allow = append $allow $inj.e2bHost -}}
@@ -294,7 +303,7 @@ does take a different credential. It just no longer defaults to a second name.
 {{- $names := list -}}
 {{- if $inj.bffEndpoint -}}
 {{- $names = append $names ($inj.bffSecretName | default "abx-jwt") -}}
-{{- else if $inj.nativeHost -}}
+{{- else if (or $inj.clusterApi $inj.nativeHost) -}}
 {{- $names = append $names ($inj.nativeSecretName | default "abx-key") -}}
 {{- end -}}
 {{- if $inj.e2bHost -}}

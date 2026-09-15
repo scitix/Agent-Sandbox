@@ -374,15 +374,9 @@ assistant:
       # Set it only if this deployment's E2B surface genuinely takes a
       # different credential from its native one.
       e2bSecretName: ""
-      # --- one cluster, addressed directly -------------------------------
       # Hosts, as the sandbox resolves them. These must be routable names: the
       # sidecar never intercepts loopback, and 127.0.0.0/8 sits in a deny tier
       # no policy field can open.
-      #
-      # This shape answers for ONE cluster: the management routes carry no
-      # cluster parameter and nothing behind them forwards. Use it when the
-      # assistant only ever manages the cluster it claims sandboxes from.
-      nativeHost: ""
       e2bHost: ""
       # Allowed but not injected — envd traffic carries its own credential.
       dataHost: ""
@@ -390,21 +384,28 @@ assistant:
       # a leak is recognisable.
       decoy: "agbx_decoy_0000000000000000000000000000000000000000000000000000000000000"
 
-      # --- every cluster, through the dashboard ---------------------------
-      # The alternative, and the better one where the assistant must manage
-      # more than the cluster it runs sandboxes on.
+      # --- the console: how a sandbox reaches the platform ----------------
+      # This is the way in. Set `bffEndpoint` and leave `clusterApi` empty
+      # unless the exception below applies.
+      #
+      # One address reaches every cluster, so an assistant can manage the whole
+      # platform rather than only the cluster it happens to run in — and the
+      # address a person is told to use is the same one the sandbox uses.
       #
       # The dashboard's BFF is addressed per cluster in its PATH and proxies to
       # that cluster's API using the registry and host aliases the hub already
       # holds — so it answers for EVERY registered cluster from one address,
-      # and the sandbox needs no route to any cluster gateway itself. Set the
-      # full URL template including the `{cluster}` placeholder, e.g.
-      #   https://console.example.com/agentbox/api/clusters/{cluster}
+      # and the sandbox needs no route to any cluster gateway itself.
+      #
+      # The console's own base, e.g.
+      #   https://console.example/agentbox
+      # The per-cluster mount underneath it is the CLI's business, so it is not
+      # written here. An older value carrying `/api/clusters/{cluster}` is
+      # normalised away on read and keeps working unchanged.
       #
       # It takes `Authorization: Bearer <session JWT>` rather than an API key,
       # which is fine for injection: the token lives a week and a sandbox lives
       # an hour, so the value pushed at arm time cannot expire underneath it.
-      # Set both this and its vault entry, and leave nativeHost empty.
       bffEndpoint: ""
       bffSecretName: abx-jwt
       # The host to allow out, when it differs from the endpoint's own host
@@ -412,8 +413,8 @@ assistant:
       bffHost: ""
       # Which cluster the sandbox itself is in, used as the DEFAULT for `abx`
       # so ordinary commands need no --cluster. Only meaningful alongside
-      # bffEndpoint: a path-routing address reaches several clusters and names
-      # none of them, so without this every command has to be told which one —
+      # bffEndpoint: the console reaches several clusters and names none of
+      # them, so without this every command has to be told which one —
       # including `whoami`, which is about the credential rather than a cluster
       # and reads as the tool being broken. `--cluster X` still reaches any
       # other cluster.
@@ -421,6 +422,28 @@ assistant:
       # A decoy of JWT shape, so a client that inspects it before sending does
       # not reject it out of hand.
       bffDecoy: "eyJhbGciOiJIUzI1NiJ9.decoy.decoy"
+
+      # --- the exception: one cluster, addressed directly -----------------
+      # Only for a sandbox that CANNOT reach the console — a hub and worker on
+      # separate clusters with no route between them is the case this exists
+      # for. Everywhere else, including every production deployment, leave this
+      # empty and use `bffEndpoint` above.
+      #
+      # It is opt-in rather than a fallback on purpose: a sandbox that quietly
+      # dropped to one cluster because an address looked a certain way would be
+      # a platform silently shrinking to a fraction of itself. Naming this
+      # value is the operator saying they know.
+      #
+      # The trade-off comes with it, and the CLI states it rather than hiding
+      # it: this address answers for ONE cluster — the management routes carry
+      # no cluster parameter and nothing behind them forwards — so
+      # `abx --cluster <other>` is REFUSED in such a sandbox rather than
+      # answering with the local cluster's rows under another cluster's name.
+      # Console links are omitted too, since there is no console to link to.
+      #
+      # A host, not a URL: the scheme is http (see the port note in each
+      # deployment's values — the sidecar only injects on :80 and :443).
+      clusterApi: ""
 
   # Conversation history. An emptyDir loses every thread on restart.
   #

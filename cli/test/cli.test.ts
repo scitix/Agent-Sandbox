@@ -42,15 +42,23 @@ import {
   type FileConfig,
 } from '../src/contexts'
 import { agentContext } from '../src/agent-context'
-import { CliError, baseUrl, clusterListUrl, derivedWebBase, headers, type Context } from '../src/context'
+import {
+  CliError,
+  baseUrl,
+  clusterListUrl,
+  consoleBase,
+  consoleBaseOf,
+  headers,
+  viaConsole,
+  type Context,
+} from '../src/context'
 
 const ctx: Context = {
-  endpoint: 'https://example.test/api',
+  endpoint: 'https://example.test',
   apiKey: 'k',
   cluster: 'demo',
   authScheme: 'api-key',
   format: 'table',
-  webBase: 'https://example.test',
 }
 
 /** Pull the `abx …` commands out of a hint block. */
@@ -265,24 +273,25 @@ describe('contexts name deployments, clusters name their clusters', () => {
   })
 })
 
-describe('which cluster is a question, not a precondition', () => {
-  const bff: Context = { ...ctx, endpoint: 'https://c.test/agentbox/api/clusters/{cluster}', cluster: undefined }
+describe('the console is the default way in', () => {
+  const console_: Context = { ...ctx, endpoint: 'https://c.test/agentbox', cluster: undefined }
 
-  it('asks for the cluster list one level above the placeholder', () => {
-    // "Which clusters are there" cannot be answered by first naming one. A
-    // path-routing endpoint publishes the list at the level its placeholder
-    // sits in, so that is where it is asked — and `abx clusters` therefore
-    // needs no --cluster at all.
-    expect(clusterListUrl(bff)).toBe('https://c.test/agentbox/api/clusters')
+  it('an endpoint alone means console mode', () => {
+    // The mode is not a setting anyone chooses. Configuring only a console
+    // address — which is what a person copies out of their browser — is
+    // console mode, and that is the overwhelmingly common case.
+    expect(viaConsole(console_)).toBe(true)
   })
 
-  it('has no such level when the endpoint serves one cluster', () => {
-    expect(clusterListUrl({ ...ctx, endpoint: 'https://one.test/api' })).toBeNull()
+  it('asks for the cluster list above the per-cluster mount', () => {
+    // "Which clusters are there" cannot be answered by first naming one, so it
+    // is asked one level up — and `abx clusters` therefore needs no --cluster.
+    expect(clusterListUrl(console_)).toBe('https://c.test/agentbox/api/clusters')
   })
 
   it('refuses with the next command rather than a bare demand', () => {
     try {
-      baseUrl(bff)
+      baseUrl(console_)
       throw new Error('should have thrown')
     } catch (e) {
       expect(e).toBeInstanceOf(CliError)
@@ -294,35 +303,70 @@ describe('which cluster is a question, not a precondition', () => {
     }
   })
 
-  it('still substitutes when a cluster is known', () => {
-    expect(baseUrl({ ...bff, cluster: 'x' })).toBe('https://c.test/agentbox/api/clusters/x/v1')
+  it('routes to whichever cluster the command names', () => {
+    expect(baseUrl({ ...console_, cluster: 'x' })).toBe('https://c.test/agentbox/api/clusters/x/v1')
+    expect(baseUrl({ ...console_, cluster: 'y' })).toBe('https://c.test/agentbox/api/clusters/y/v1')
   })
 })
 
-describe('the endpoint decides the auth header, not a flag', () => {
-  it('a console BFF endpoint gets the key as a Bearer token', () => {
-    // The BFF proxy reads Authorization only; the cluster API reads the other
-    // header. Telling them apart from the address means a reader who copied a
-    // URL out of the console never has to learn which is which.
-    const bff = { ...ctx, endpoint: 'https://c.test/agentbox/api/clusters/{cluster}', authScheme: undefined }
-    expect(headers(bff).Authorization).toBe('Bearer k')
-    expect(headers(bff)['AGENTBOX-API-KEY']).toBeUndefined()
+describe('direct mode is the exception, and has to be asked for', () => {
+  const direct: Context = { ...ctx, clusterApi: 'https://cluster.test/api', cluster: undefined }
+
+  it('is entered only by naming a cluster API', () => {
+    expect(viaConsole(direct)).toBe(false)
+    // Nothing about an endpoint's shape can trigger it: a sandbox that cannot
+    // reach the console has to be told so explicitly, so the fallback is never
+    // silent.
+    expect(viaConsole({ ...ctx, endpoint: 'https://anything.test/whatever' })).toBe(true)
   })
 
-  it('a cluster API endpoint gets the key as AGENTBOX-API-KEY', () => {
-    const api = { ...ctx, endpoint: 'https://cluster.test/api', authScheme: undefined }
+  it('goes straight to that cluster, with no console in the path', () => {
+    expect(baseUrl(direct)).toBe('https://cluster.test/api/v1')
+  })
+
+  it('publishes no cluster list one level up, because there is no console', () => {
+    expect(clusterListUrl(direct)).toBeNull()
+  })
+
+  it('offers no console links, rather than inventing an address', () => {
+    expect(consoleBase(direct)).toBeUndefined()
+    expect(consoleBase(ctx)).toBe('https://example.test')
+  })
+})
+
+describe('the mode decides the auth header, not a flag', () => {
+  it('console mode sends the key as a Bearer token', () => {
+    // The BFF proxy reads Authorization only; a cluster API reads the other
+    // header. Deriving it from the mode means a reader who copied a URL out of
+    // the console never has to learn which is which.
+    const viaBff = { ...ctx, authScheme: undefined }
+    expect(headers(viaBff).Authorization).toBe('Bearer k')
+    expect(headers(viaBff)['AGENTBOX-API-KEY']).toBeUndefined()
+  })
+
+  it('direct mode sends the key as AGENTBOX-API-KEY', () => {
+    const api = { ...ctx, clusterApi: 'https://cluster.test/api', authScheme: undefined }
     expect(headers(api)['AGENTBOX-API-KEY']).toBe('k')
     expect(headers(api).Authorization).toBeUndefined()
   })
 
-  it('an explicit scheme is the escape hatch for an address of neither shape', () => {
-    const forced = { ...ctx, endpoint: 'https://cluster.test/api', authScheme: 'bearer' as const }
+  it('an explicit scheme is the escape hatch for a deployment answering to neither', () => {
+    const forced = { ...ctx, clusterApi: 'https://cluster.test/api', authScheme: 'bearer' as const }
     expect(headers(forced).Authorization).toBe('Bearer k')
   })
+})
 
-  it('the console base is derived from the BFF endpoint, one level up', () => {
-    const bff = { ...ctx, endpoint: 'https://c.test/agentbox/api/clusters/{cluster}' }
-    expect(derivedWebBase(bff)).toBe('https://c.test/agentbox')
-    expect(derivedWebBase({ ...ctx, endpoint: 'https://cluster.test/api' })).toBeUndefined()
+describe('a config written for the older endpoint form keeps working', () => {
+  it('drops the console mount and the routing placeholder', () => {
+    // Endpoints used to be stored with `/api/clusters/{cluster}` attached,
+    // because that was the string the CLI substituted into. Normalising on read
+    // means nobody has to rewrite a working config by hand.
+    expect(consoleBaseOf('https://c.test/agentbox/api/clusters/{cluster}')).toBe('https://c.test/agentbox')
+    expect(consoleBaseOf('https://c.test/agentbox/api/clusters')).toBe('https://c.test/agentbox')
+  })
+
+  it('leaves an address that is already a console base alone', () => {
+    expect(consoleBaseOf('https://c.test/agentbox')).toBe('https://c.test/agentbox')
+    expect(consoleBaseOf('https://c.test/agentbox/')).toBe('https://c.test/agentbox')
   })
 })

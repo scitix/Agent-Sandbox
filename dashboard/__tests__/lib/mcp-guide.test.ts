@@ -54,13 +54,20 @@ describe('the setup guide carries this deployment and no other', () => {
       const doc = mcpGuide(LIVE, locale)
       // Named after the deployment, not after the front-door word.
       expect(doc).toContain('abx context set acme')
-      // One endpoint for every cluster: the placeholder is what makes a
-      // per-command `--cluster` a substitution rather than an unanswerable
-      // claim. Only endpoint and key are set here — the auth header and the
-      // console base are read off the endpoint, so neither is a flag.
-      expect(doc).toContain('https://console.acme.example/agentbox/api/clusters/{cluster}')
+      // The console's own address, exactly as it appears in the browser — one
+      // address for every cluster, so `--cluster` selects among them rather
+      // than being a claim the address cannot honour. It is also the only
+      // setting given: the auth header follows from it.
+      expect(doc).toContain(`--endpoint '${LIVE.consoleBase}'`)
       expect(doc).not.toContain('--auth-scheme')
       expect(doc).not.toContain('--web-base')
+      // The mount and the routing placeholder are the CLI's business, not
+      // something a reader should be asked to paste.
+      expect(doc).not.toContain('{cluster}')
+      expect(doc).not.toContain('/api/clusters')
+      // Direct mode is for a sandbox with no route to a console. Nobody
+      // reading this page is in that position — they have the console open.
+      expect(doc).not.toContain('--cluster-api')
       // abx leads; the E2B SDK is still there for the sandboxes themselves.
       expect(doc.indexOf('abx context set')).toBeLessThan(doc.indexOf('patch_e2b'))
       expect(doc).toContain(LIVE.e2bURL)
@@ -69,7 +76,7 @@ describe('the setup guide carries this deployment and no other', () => {
 
   it('degrades to placeholders rather than to somebody else’s address', () => {
     const doc = mcpGuide({}, 'en')
-    expect(doc).toContain('https://<console>/agentbox/api/clusters/{cluster}')
+    expect(doc).toContain('https://<console>/agentbox')
     expect(doc).not.toMatch(/https:\/\/console\.[a-z]/)
   })
 })

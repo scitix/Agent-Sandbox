@@ -23,9 +23,9 @@
  * silently: the command succeeds, against the wrong platform.
  *
  * A context is one deployment's address plus the credential for it. `--cluster`
- * still selects WITHIN a deployment, because an endpoint carrying `{cluster}`
- * reaches every cluster that platform has. So the two axes stay separate:
- * context is which platform, cluster is which of its clusters.
+ * still selects WITHIN a deployment, because the console reaches every cluster
+ * that platform has. So the two axes stay separate: context is which platform,
+ * cluster is which of its clusters.
  *
  * Nothing here ships with a context in it. The addresses belong to whoever
  * deployed the platform, and each deployment's own console prints the
@@ -39,11 +39,16 @@ import { mkdir } from 'node:fs/promises'
 
 /** One deployment: where it is, and who you are on it. */
 export interface ContextEntry {
+  /** The console's base address — the normal way in, reaching every cluster. */
   endpoint?: string
+  /**
+   * A single cluster's own API base, for a caller with no route to the console.
+   * Setting it switches this context to direct mode; leave it unset otherwise.
+   */
+  clusterApi?: string
   apiKey?: string
   cluster?: string
   authScheme?: 'api-key' | 'bearer'
-  webBase?: string
 }
 
 /**
