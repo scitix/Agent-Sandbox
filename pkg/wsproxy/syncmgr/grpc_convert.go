@@ -103,8 +103,15 @@ func clusterConfigToProto(cfg cluster.ClusterConfig) *syncv1.ClusterConfig {
 				Type: r.Type,
 			})
 		}
-		if c.Logs != nil && len(c.Logs.Filters) > 0 {
-			entry.Logs = &syncv1.LogsConfig{Filters: maps.Clone(c.Logs.Filters)}
+		// Carried whenever either half is set. Gating on the filters alone
+		// dropped a cluster that is sharded but unfiltered, and the Worker then
+		// queried the store that holds nothing — answered with 200 and no rows,
+		// so the loss looked like a sandbox that printed nothing.
+		if c.Logs != nil && (len(c.Logs.Filters) > 0 || c.Logs.SplitProject) {
+			entry.Logs = &syncv1.LogsConfig{
+				Filters:      maps.Clone(c.Logs.Filters),
+				SplitProject: c.Logs.SplitProject,
+			}
 		}
 		out.Clusters = append(out.Clusters, entry)
 	}

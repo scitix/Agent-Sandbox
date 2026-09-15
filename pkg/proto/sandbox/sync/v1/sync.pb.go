@@ -1975,8 +1975,15 @@ func (x *GatewayConfig) GetDataHeaders() map[string]string {
 // LogsConfig scopes central-log-service queries to one cluster. Without it a
 // query by pod name would match same-named pods on other clusters.
 type LogsConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Filters       map[string]string      `protobuf:"bytes,1,rep,name=filters,proto3" json:"filters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Filters map[string]string      `protobuf:"bytes,1,rep,name=filters,proto3" json:"filters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// This cluster's container output is sharded across two log stores by
+	// namespace, so the store has to be chosen per query rather than per
+	// deployment. Only the hub is configured with the list of such clusters, so
+	// a Worker learns it from this snapshot or not at all — and not learning it
+	// is silent: the service answers 200 with an empty body for the store that
+	// holds nothing, which reads exactly like a sandbox that printed nothing.
+	SplitProject  bool `protobuf:"varint,2,opt,name=split_project,json=splitProject,proto3" json:"split_project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2016,6 +2023,13 @@ func (x *LogsConfig) GetFilters() map[string]string {
 		return x.Filters
 	}
 	return nil
+}
+
+func (x *LogsConfig) GetSplitProject() bool {
+	if x != nil {
+		return x.SplitProject
+	}
+	return false
 }
 
 type ClusterEntry struct {
@@ -2737,10 +2751,11 @@ const file_sandbox_sync_v1_sync_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
 	"\x10DataHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8c\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb1\x01\n" +
 	"\n" +
 	"LogsConfig\x12B\n" +
-	"\afilters\x18\x01 \x03(\v2(.sandbox.sync.v1.LogsConfig.FiltersEntryR\afilters\x1a:\n" +
+	"\afilters\x18\x01 \x03(\v2(.sandbox.sync.v1.LogsConfig.FiltersEntryR\afilters\x12#\n" +
+	"\rsplit_project\x18\x02 \x01(\bR\fsplitProject\x1a:\n" +
 	"\fFiltersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa7\x03\n" +

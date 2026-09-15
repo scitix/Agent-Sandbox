@@ -140,3 +140,49 @@ func TestAgentModeSurvivesKeyCreation(t *testing.T) {
 		t.Fatal("the flag stopped at the Hub; the gate would never see it")
 	}
 }
+
+// The log-store shard flag has to ride the snapshot too.
+//
+// Only the Hub is configured with the list of sharded clusters, so this
+// conversion is the Worker's only way to learn it. It did not carry the flag,
+// which meant a Worker serving a finished sandbox's logs queried whichever
+// store the endpoint defaulted to. On a sharded cluster that is the store its
+// namespaces are not in, and the service answers an unmatched query with 200
+// and no rows — so the Worker reported "no logs" for a sandbox whose logs were
+// sitting in the other store the whole time.
+func TestTheLogShardFlagRidesTheClusterSnapshot(t *testing.T) {
+	out := clusterConfigToProto(cluster.ClusterConfig{
+		Clusters: []cluster.ClusterEntry{{
+			ID: "c1",
+			Logs: &cluster.LogsConfig{
+				Filters:      map[string]string{"cluster": "prod-foo"},
+				SplitProject: true,
+			},
+		}},
+	})
+	if out.Clusters[0].Logs == nil {
+		t.Fatal("the logs scope was dropped entirely")
+	}
+	if !out.Clusters[0].Logs.SplitProject {
+		t.Fatal("splitProject stopped at the Hub; the Worker would query the wrong store")
+	}
+	if got := out.Clusters[0].Logs.Filters["cluster"]; got != "prod-foo" {
+		t.Fatalf("filters: got %q", got)
+	}
+}
+
+// A cluster that is sharded but declares no filters still has something to say.
+//
+// The guard used to be `len(Filters) > 0`, which discarded the whole logs
+// block for such a cluster — taking the shard flag with it, silently.
+func TestShardedWithoutFiltersStillCarriesTheScope(t *testing.T) {
+	out := clusterConfigToProto(cluster.ClusterConfig{
+		Clusters: []cluster.ClusterEntry{{
+			ID:   "c1",
+			Logs: &cluster.LogsConfig{SplitProject: true},
+		}},
+	})
+	if out.Clusters[0].Logs == nil || !out.Clusters[0].Logs.SplitProject {
+		t.Fatal("a sharded cluster with no filters lost its shard flag")
+	}
+}

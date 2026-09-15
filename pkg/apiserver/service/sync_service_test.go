@@ -657,3 +657,52 @@ func TestMultiplexing_SnapshotDoesNotBlockRPC(t *testing.T) {
 		t.Errorf("maxLatency %v > 2s — multiplexing likely broken (large snapshot blocking RPCs)", maxLatency)
 	}
 }
+
+// The Worker half of the log-store shard flag.
+//
+// The Hub's converter sends it; this one has to land it, and for a while
+// neither did. A Worker that does not know its cluster is sharded queries the
+// endpoint's default store for a finished sandbox's logs — the store its own
+// namespaces are not in — and gets 200 with no rows, which is indistinguishable
+// from a sandbox that printed nothing.
+func TestWatchClusterConfig_CarriesTheLogShardFlag(t *testing.T) {
+	hub, cc := startHubAndConnect(t)
+	sink := &stubClusterSink{}
+
+	hub.hub.cfgEvents <- &syncv1.ClusterConfigEvent{Snapshot: &syncv1.ClusterConfig{
+		Clusters: []*syncv1.ClusterEntry{{
+			Id:  "cluster-a",
+			Url: "https://a",
+			Logs: &syncv1.LogsConfig{
+				Filters:      map[string]string{"cluster": "prod-foo"},
+				SplitProject: true,
+			},
+		}},
+	}}
+
+	svc := service.NewSyncServiceFull(newFakeSyncStore(t), nil, sink)
+	id := svc.OnConnect(cc)
+	defer svc.OnDisconnect(id)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(sink.snapshot()) >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	snap := sink.snapshot()
+	if len(snap) == 0 || len(snap[0].Clusters) == 0 {
+		t.Fatal("no snapshot reached the sink")
+	}
+	logs := snap[0].Clusters[0].Logs
+	if logs == nil {
+		t.Fatal("the logs scope was dropped on the way in")
+	}
+	if !logs.SplitProject {
+		t.Fatal("splitProject did not survive the wire; this Worker would query the wrong store")
+	}
+	if logs.Filters["cluster"] != "prod-foo" {
+		t.Errorf("filters = %+v", logs.Filters)
+	}
+}

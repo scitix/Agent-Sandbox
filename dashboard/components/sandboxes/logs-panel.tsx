@@ -120,11 +120,18 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
   })
   const sandbox = envelope?.sandbox
   const status = sandbox?.status ?? ""
-  const isTerminated =
-    status === "Completed" || status === "Failed" || status === "Canceled" || status === "Released"
+  // Which finished sandboxes the central log service will answer for, and the
+  // same list the BFF enforces — asking it about any other status is a 400,
+  // which surfaces in the toolbar as a bare "HTTP 400" where "no logs" is meant.
+  //
+  // Canceled is the one deliberately left out: it means the sandbox was
+  // released before it ever reached Running, so there is no container output to
+  // go looking for. It falls through to the live path, which finds no Pod and
+  // renders an empty view — the truthful answer for a run that never happened.
+  const useCentralForStatus = status === "Completed" || status === "Failed" || status === "Released"
 
   const { data: logsConfig } = useQuery(sandboxLogsConfigQueryOptions())
-  const useCentral = isTerminated && (logsConfig?.configured ?? false)
+  const useCentral = useCentralForStatus && (logsConfig?.configured ?? false)
   // Both of these arrive asynchronously, and each one flipping restarts the
   // fetch. Waiting until they have both landed is what makes the view load
   // once: without it the first two runs are thrown away, and the discarded

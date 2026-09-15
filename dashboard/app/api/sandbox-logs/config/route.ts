@@ -20,16 +20,19 @@
  * Returns whether the external log service is configured on this BFF instance.
  * The response is not sensitive — no auth required.
  *
+ * The gate is URL + token, matching getLogConfig() in the sibling route that
+ * actually serves the query. LOG_APP_ID is NOT part of it: its absence selects
+ * Bearer auth rather than the signed scheme, so requiring it here reported
+ * "not configured" on every Bearer deployment — and a false answer is silent,
+ * because the viewer's only reaction is to keep asking the live-stream endpoint,
+ * which has nothing to say about a Pod that no longer exists.
+ *
  * Response: { configured: boolean }
  */
 
 import { NextResponse } from "next/server"
 
 export function GET(): NextResponse {
-  const configured = !!(
-    process.env.LOG_DOWNLOAD_URL &&
-    process.env.LOG_APP_ID &&
-    process.env.LOG_TOKEN
-  )
+  const configured = !!(process.env.LOG_DOWNLOAD_URL && process.env.LOG_TOKEN)
   return NextResponse.json({ configured })
 }

@@ -644,8 +644,16 @@ func protoToClusterConfig(p *syncv1.ClusterConfig) cluster.ClusterConfig {
 				Type: r.Type,
 			})
 		}
-		if c.Logs != nil && len(c.Logs.Filters) > 0 {
-			entry.Logs = &cluster.LogsConfig{Filters: maps.Clone(c.Logs.Filters)}
+		// Both halves, and kept whenever either is set — see the mirrored
+		// comment in syncmgr/grpc_convert.go. SplitProject is what tells this
+		// Worker which of the two log stores holds its own namespaces; without
+		// it a finished sandbox's logs are queried from the wrong one and come
+		// back empty with no error to say why.
+		if c.Logs != nil && (len(c.Logs.Filters) > 0 || c.Logs.SplitProject) {
+			entry.Logs = &cluster.LogsConfig{
+				Filters:      maps.Clone(c.Logs.Filters),
+				SplitProject: c.Logs.SplitProject,
+			}
 		}
 		out.Clusters = append(out.Clusters, entry)
 	}

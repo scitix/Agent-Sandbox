@@ -296,6 +296,7 @@ check with `HOOK_SKIP=secrets git commit ...`. CI has no bypass.
 | Native REST API | [`pkg/apiserver/README.md`](pkg/apiserver/README.md) | OpenAPI-first generation flow, field mapping |
 | Plugin system | [`pkg/framework/`](pkg/framework/) | Plugin (lifecycle hooks) + Provider (data source abstraction) interfaces |
 | HTTP logging | [`pkg/utils/httplog.go`](pkg/utils/httplog.go) | RequestID middleware + AppError structured logging |
+| Central sandbox logs | [`pkg/utils/logclient/README.md`](pkg/utils/logclient/README.md) | Reading a finished sandbox's logs after its Pod is recycled. Every failure on this path is a 200 with an empty body, so each hop reports what it asked (`QueryOptions.Scope`). Four independent hops — console feature gate, the streaming endpoint's fallback, the `splitProject` flag's ride on the sync snapshot, and the query itself — and any one of them renders the same empty panel. |
 | Version management | [`CLAUDE.md #version-management`](#version-management) | VERSION file + sync-version + client version negotiation |
 
 ---

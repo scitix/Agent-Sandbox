@@ -317,6 +317,13 @@ message GatewayConfig {
 // query by pod name would match same-named pods on other clusters.
 message LogsConfig {
   map<string, string> filters = 1;
+  // This cluster's container output is sharded across two log stores by
+  // namespace, so the store has to be chosen per query rather than per
+  // deployment. Only the hub is configured with the list of such clusters, so
+  // a Worker learns it from this snapshot or not at all — and not learning it
+  // is silent: the service answers 200 with an empty body for the store that
+  // holds nothing, which reads exactly like a sandbox that printed nothing.
+  bool split_project = 2;
 }
 
 message ClusterEntry {

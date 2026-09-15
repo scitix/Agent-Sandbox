@@ -37,6 +37,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
 
+	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
@@ -256,9 +257,98 @@ func LogsStreamHandler(
 			}
 		}
 
-		// No live pod found — nothing to stream.
-		writeMeta("live", false, "")
+		// ── 3. No live Pod — the sandbox has ended ─────────────────────────────
+		// Its Pod was recycled, so there is nothing left to follow, but the
+		// lines were shipped to the central service before it went. The
+		// non-streaming endpoint has answered from there since the integration
+		// landed; this is the same answer, written out in the stream's own
+		// frame format so a caller that asked to stream gets one reply shape
+		// whether the sandbox is still running or finished an hour ago.
+		//
+		// It is a query, not a stream: everything is already written, so the
+		// whole result is encoded at once and the stream ends.
+		streamCentralLogsToEnc(ctx, sandboxSvc, namespace, sandboxID, container, lines, enc, writeMeta)
 	}
+}
+
+// historicalLogReader is the one method the finished-sandbox path needs.
+// Narrow because the full SandboxService is a couple of dozen methods, and a
+// test for this behaviour should not have to stand up a Kubernetes client to
+// assert what gets written to a stream.
+type historicalLogReader interface {
+	GetLogs(ctx context.Context, namespace, sandboxID string, params gen.GetSandboxLogsParams) (*gen.SandboxLogsResult, *domain.AppError)
+}
+
+// streamCentralLogsToEnc writes a finished sandbox's central-service logs to an
+// NDJSON encoder, ending the stream with its own meta line.
+//
+// A query that matches nothing is answered with an empty result rather than an
+// error, and there are several distinct reasons that happens — the wrong log
+// store, an unscoped cluster, a cluster that ships no container output at all.
+// The service returns the scope it used alongside the rows; when there are no
+// rows, that scope is emitted as a system line so the reader can tell which
+// case they are looking at instead of staring at a blank panel.
+func streamCentralLogsToEnc(
+	ctx context.Context,
+	sandboxSvc historicalLogReader,
+	namespace, sandboxID, container string,
+	lines int,
+	enc *json.Encoder,
+	writeMeta func(src string, truncated bool, podName string),
+) {
+	params := gen.GetSandboxLogsParams{}
+	if container != "" {
+		params.Container = &container
+	}
+	if lines > 0 {
+		params.Lines = &lines
+	}
+
+	result, appErr := sandboxSvc.GetLogs(ctx, namespace, sandboxID, params)
+	if appErr != nil {
+		// Including "this sandbox does not exist" and "this deployment has no
+		// central log service". Both are the answer to the question asked, so
+		// they belong in the stream rather than in a status code the viewer has
+		// already committed to 200.
+		now := time.Now().UTC()
+		_ = enc.Encode(streamLogEntry{
+			Timestamp:     &now,
+			ContainerName: "system",
+			Log:           fmt.Sprintf("[agentbox] %s", appErr.Message),
+		})
+		writeMeta("central", false, "")
+		return
+	}
+
+	podName := ""
+	if result.PodName != nil {
+		podName = *result.PodName
+	}
+	for i := range result.Entries {
+		e := streamLogEntry{
+			ContainerName: result.Entries[i].Container,
+			Log:           result.Entries[i].Log,
+			PodName:       podName,
+			NamespaceName: namespace,
+		}
+		if result.Entries[i].Timestamp != nil {
+			e.Timestamp = result.Entries[i].Timestamp
+		}
+		if encErr := enc.Encode(e); encErr != nil {
+			return
+		}
+	}
+
+	if len(result.Entries) == 0 && result.Scope != nil && *result.Scope != "" {
+		now := time.Now().UTC()
+		_ = enc.Encode(streamLogEntry{
+			Timestamp:     &now,
+			ContainerName: "system",
+			Log:           fmt.Sprintf("[agentbox] no logs matched (%s)", *result.Scope),
+		})
+	}
+
+	writeMeta("central", result.Truncated, podName)
 }
 
 // findLiveSandboxPod returns the pod name and primary container name for a live (non-terminated) sandbox.
