@@ -134,6 +134,10 @@ func Setup(r *gin.Engine, svcs Services, authMiddleware gin.HandlerFunc) {
 	apiMiddlewares := []gen.MiddlewareFunc{
 		gen.MiddlewareFunc(authMiddleware),
 		gen.MiddlewareFunc(middleware.NewVersionCheckMiddleware()),
+		// A body that carries a field the schema does not have is refused
+		// rather than decoded with the field dropped. Sits with the other
+		// per-route middlewares because it needs the matched route template.
+		gen.MiddlewareFunc(middleware.StrictBody()),
 	}
 	// The approval gate runs LAST of the three, and both of its neighbours are
 	// load-bearing: it needs the principal auth established, and it needs the
