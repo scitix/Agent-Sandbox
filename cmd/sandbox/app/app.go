@@ -639,6 +639,10 @@ func Run(opts Options) {
 	// (applies the resulting transition after Commit). They MUST be the
 	// same instance.
 	scaleDownTracker := autoscalingstate.NewScaleDownTracker()
+	// Shared by the autoscaler and the Pool phase-transition events: both can
+	// repeat an identical record indefinitely when a Pool is stuck, and both
+	// write straight to the API server.
+	eventThrottle := autoscalingstate.NewEventThrottle()
 	autoscalingLoader := &autoscalingstate.Loader{
 		Client:     mgr.GetClient(),
 		Schedulers: schedulerLookup,
@@ -646,6 +650,11 @@ func Run(opts Options) {
 		Prober:     &sandboxpool.PluginProber{PluginManager: pluginManager},
 		Clock:      autoscalingstate.SystemClock(),
 		ScaleDown:  scaleDownTracker,
+		// Scopes member lookups and the replica write to this cluster's Env
+		// segment. Must match the SandboxEnv Reconciler's LocalClusterID
+		// below — that is the reconciler which reads the write back.
+		LocalClusterID: localClusterID,
+		EventThrottle:  eventThrottle,
 	}
 	if err := (&sandboxpool.SandboxPoolReconciler{
 		Client:                   mgr.GetClient(),
@@ -660,6 +669,7 @@ func Run(opts Options) {
 		AutoscalingLoader:        autoscalingLoader,
 		AutoscalingEventRecorder: mgr.GetEventRecorder("sandboxpool-autoscaler"),
 		ScaleDown:                scaleDownTracker,
+		EventThrottle:            eventThrottle,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxPool")
 		os.Exit(1)
@@ -679,6 +689,12 @@ func Run(opts Options) {
 	// federated routing input is visible via kubectl. nil in single-cluster.
 	if fedRegistry != nil {
 		envReconciler.Federation = fedRegistry
+	}
+	// The same catalog that drives cross-cluster routing also tells the
+	// reconciler which cluster segments still correspond to a real cluster,
+	// so a renamed or removed cluster does not leave a segment behind.
+	if clusterStore != nil {
+		envReconciler.Clusters = clusterStore
 	}
 	if err := envReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxEnv")

@@ -356,7 +356,7 @@ func shouldYieldToHigherPriority(snap *Snapshot) bool {
 		if sib.Name == snap.Pool.Name {
 			continue
 		}
-		sibCfg := findMemberConfig(snap.Env, sib.Name)
+		sibCfg := findMemberConfig(snap.Env, snap.LocalClusterID, sib.Name)
 		if sibCfg == nil {
 			continue
 		}

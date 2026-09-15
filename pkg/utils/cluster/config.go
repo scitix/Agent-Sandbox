@@ -527,6 +527,23 @@ func (s *Store) All() []ClusterEntry {
 	return entries
 }
 
+// KnownClusterIDs returns the IDs of every cluster currently in the catalog,
+// sorted. An empty result means the catalog has not been populated yet —
+// callers must treat that as "unknown", never as "no cluster exists": the
+// store starts empty and fills in asynchronously once the ConfigMap informer
+// syncs, so an early reader sees the same empty slice a genuinely unconfigured
+// deployment would.
+func (s *Store) KnownClusterIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.clusters))
+	for id := range s.clusters {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // LoadFromData parses YAML data (e.g. from a ConfigMap data field) and replaces the store contents.
 // An empty or nil input clears the store (no clusters configured).
 func (s *Store) LoadFromData(data []byte) error {

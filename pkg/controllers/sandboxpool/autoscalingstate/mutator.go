@@ -277,7 +277,9 @@ func (m *Mutator) Commit(ctx context.Context, c client.Client, recorder events.E
 			return fmt.Errorf("autoscalingstate: SetTargetReplicas called without owning Env in Snapshot")
 		}
 		envKey := client.ObjectKey{Namespace: m.snap.Env.Namespace, Name: m.snap.Env.Name}
-		if err := patchEnvMemberReplicasWithRetry(ctx, c, envKey, m.snap.Pool.Name, *m.targetReplicas); err != nil {
+		if err := patchEnvMemberReplicasWithRetry(
+			ctx, c, envKey, m.snap.LocalClusterID, m.snap.Pool.Name, *m.targetReplicas,
+		); err != nil {
 			return fmt.Errorf("patch env %s/%s member %q replicas: %w",
 				m.snap.Env.Namespace, m.snap.Env.Name, m.snap.Pool.Name, err)
 		}
@@ -310,7 +312,14 @@ func (m *Mutator) Commit(ctx context.Context, c client.Client, recorder events.E
 	//    and the message has already been formatted in EmitEvent so we
 	//    pass it through as the literal `note`.
 	if recorder != nil {
+		poolRef := types.NamespacedName{Namespace: m.snap.Pool.Namespace, Name: m.snap.Pool.Name}
 		for _, ev := range m.events {
+			// The throttle drops a repeat of an identical message; a changed
+			// message always gets through. See EventThrottle for why the
+			// autoscaler produces repeats at all.
+			if !m.snap.EventThrottle.Allow(poolRef, ev.reason, ev.message, m.snap.Now) {
+				continue
+			}
 			recorder.Eventf(m.snap.Pool, nil, ev.eventType, ev.reason, ev.action, "%s", ev.message)
 		}
 	}
@@ -440,25 +449,37 @@ func (m *Mutator) probeAccepted(ctx context.Context, from, target int32) (int32,
 }
 
 // patchEnvMemberReplicasWithRetry updates the named member's Spec.Replicas
-// in the owning Env's spec to target. Walks every cluster segment so the
-// helper works regardless of which cluster the member lives in — the
-// Pool autoscaler does not need to know the local cluster ID. A member
-// not found is reported as an error so the caller (and observability) can
-// distinguish "Pool reconciler ran against stale Env" from "wrote
-// successfully".
+// in the owning Env's spec to target, within the cluster segment this
+// operator owns. A member not found is reported as an error so the caller
+// (and observability) can distinguish "Pool reconciler ran against stale Env"
+// from "wrote successfully".
+//
+// The local-segment scoping is what makes the write land somewhere a
+// reconciler will read it. Only the Worker whose LocalClusterID matches a
+// segment materialises Pools from it (see desiredLocalMembers); writing the
+// target into any other segment records the decision where nothing acts on
+// it, so the Pool never grows and the autoscaler re-decides the same
+// scale-up every cooldown window, forever.
 //
 // Re-reads the Env on every retry so conflicts caused by unrelated spec
 // drift (other members, autoscaling toggles, etc.) don't blow up the
 // autoscaler.
-func patchEnvMemberReplicasWithRetry(ctx context.Context, c client.Client, key client.ObjectKey, poolName string, target int32) error {
+func patchEnvMemberReplicasWithRetry(
+	ctx context.Context,
+	c client.Client,
+	key client.ObjectKey,
+	localClusterID, poolName string,
+	target int32,
+) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cur := &agentsv1alpha1.SandboxEnv{}
 		if err := c.Get(ctx, key, cur); err != nil {
 			return err
 		}
-		ci, mi, ok := findMemberIndex(cur, poolName)
+		ci, mi, ok := findMemberIndex(cur, localClusterID, poolName)
 		if !ok {
-			return fmt.Errorf("member %q not present in env %s/%s", poolName, key.Namespace, key.Name)
+			return fmt.Errorf("member %q not present in cluster segment %q of env %s/%s",
+				poolName, localClusterID, key.Namespace, key.Name)
 		}
 		if cur.Spec.Clusters[ci].Members[mi].Spec.Replicas == target {
 			return nil
@@ -470,11 +491,22 @@ func patchEnvMemberReplicasWithRetry(ctx context.Context, c client.Client, key c
 }
 
 // findMemberIndex returns the (clusterIdx, memberIdx) coordinates of the
-// member named poolName inside env.Spec, or ok=false when no such
-// member exists. Member names are unique across the Env so the first
-// match is authoritative.
-func findMemberIndex(env *agentsv1alpha1.SandboxEnv, poolName string) (clusterIdx, memberIdx int, ok bool) {
+// member named poolName inside the env.Spec cluster segment matching
+// localClusterID, or ok=false when no such member exists there.
+//
+// Member names are unique within a segment but NOT across segments: fanning
+// one Env out to several clusters gives the same Pool name an entry under
+// each, and renaming a cluster leaves the old segment behind with every name
+// still in it. The first match across all segments is therefore not
+// authoritative for any particular cluster.
+//
+// An empty localClusterID scans every segment, for the single-cluster
+// deployment where LOCAL_CLUSTER_ID was never set.
+func findMemberIndex(env *agentsv1alpha1.SandboxEnv, localClusterID, poolName string) (clusterIdx, memberIdx int, ok bool) {
 	for ci := range env.Spec.Clusters {
+		if localClusterID != "" && env.Spec.Clusters[ci].ClusterID != localClusterID {
+			continue
+		}
 		ms := env.Spec.Clusters[ci].Members
 		for mi := range ms {
 			if ms[mi].Name == poolName {

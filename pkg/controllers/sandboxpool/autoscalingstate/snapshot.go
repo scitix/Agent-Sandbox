@@ -113,6 +113,17 @@ type Snapshot struct {
 	// when wired; left zero in unit tests that don't exercise the
 	// cache-lag gate or the Started/Completed event pairing.
 	ScaleDownSession ScaleDownSessionView
+
+	// LocalClusterID is copied from Loader.LocalClusterID. Every member
+	// lookup downstream — this Pool's config, a sibling's config, and the
+	// replica write in Mutator.Commit — is scoped to the Env cluster segment
+	// carrying this ID. See Loader.LocalClusterID for why.
+	LocalClusterID string
+
+	// EventThrottle suppresses repeats of an identical autoscaler event for
+	// this Pool. nil allows every event through, which is the behaviour unit
+	// tests asserting on emitted events expect.
+	EventThrottle *EventThrottle
 }
 
 // IsAutoscalingEnabled reports whether the decision logic should consider
@@ -298,6 +309,29 @@ type Loader struct {
 	// reconciler holds — two instances silently defeat the cache-lag
 	// gate.
 	ScaleDown *ScaleDownTracker
+
+	// LocalClusterID is the cluster this operator runs in. It scopes every
+	// member lookup to env.Spec.Clusters[] segment matching it, both when
+	// reading a member's config and when writing its replica target.
+	//
+	// This is not a nicety: a Pool autoscaled here must resolve to *this*
+	// cluster's member entry. Pool names repeat across cluster segments by
+	// design, so an unscoped lookup can read the config of a member belonging
+	// to another cluster and — worse — write the scale-up target there, where
+	// no reconciler in this cluster will ever act on it. The autoscaler then
+	// re-decides the same growth forever while the Pool stays at its original
+	// size.
+	//
+	// Empty means single-cluster (LOCAL_CLUSTER_ID unset): lookups fall back
+	// to scanning every segment, which is correct when there is only one.
+	LocalClusterID string
+
+	// EventThrottle rate-limits repeated autoscaler events so a Pool that
+	// keeps re-deciding the same thing cannot flood the API server. nil
+	// disables throttling (every event is posted), which is what unit tests
+	// asserting on emitted events want. Safe to share with other emitters —
+	// entries are keyed by (Pool, reason).
+	EventThrottle *EventThrottle
 }
 
 // Load assembles a Snapshot for the given Pool. The Pool argument is
@@ -323,7 +357,13 @@ func (l *Loader) Load(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (*S
 		clk = SystemClock()
 	}
 
-	snap := &Snapshot{Pool: pool, Prober: l.Prober, Now: clk.Now()}
+	snap := &Snapshot{
+		Pool:           pool,
+		Prober:         l.Prober,
+		Now:            clk.Now(),
+		LocalClusterID: l.LocalClusterID,
+		EventThrottle:  l.EventThrottle,
+	}
 
 	// 1) In-process signals first — these are pure memory reads so we
 	//    never short-circuit them on later errors.
@@ -361,7 +401,7 @@ func (l *Loader) Load(ctx context.Context, pool *agentsv1alpha1.SandboxPool) (*S
 	snap.Env = env
 
 	// 3) Resolve the member config and the scaling group.
-	snap.MemberConfig = findMemberConfig(env, pool.Name)
+	snap.MemberConfig = findMemberConfig(env, l.LocalClusterID, pool.Name)
 	if snap.MemberConfig != nil && snap.MemberConfig.ScalingGroup != "" && env.Spec.Autoscaling != nil {
 		snap.Group = findGroup(env.Spec.Autoscaling.Groups, snap.MemberConfig.ScalingGroup)
 	}
@@ -413,11 +453,26 @@ func resolveEnvName(pool *agentsv1alpha1.SandboxPool) (string, bool) {
 // findMemberConfig returns a pointer into env.Spec.Clusters[].Members[]
 // matching poolName, or nil when no match is found. The caller treats the
 // pointer as read-only.
-func findMemberConfig(env *agentsv1alpha1.SandboxEnv, poolName string) *agentsv1alpha1.EnvClusterMemberConfig {
+//
+// Only the segment whose ClusterID equals localClusterID is searched. Member
+// names are unique *within* a cluster segment, not across them: the same Pool
+// name routinely appears under several clusters (that is how one Env fans a
+// workload out), and a renamed cluster leaves a stale segment carrying the old
+// ID behind. Scanning every segment would resolve this Pool's config against
+// whichever segment happened to be listed first, which is neither this
+// cluster's config nor a segment this operator may write to.
+//
+// An empty localClusterID falls back to scanning every segment — the
+// single-cluster case, where the operator was started without
+// LOCAL_CLUSTER_ID and there is only one segment to find.
+func findMemberConfig(env *agentsv1alpha1.SandboxEnv, localClusterID, poolName string) *agentsv1alpha1.EnvClusterMemberConfig {
 	if env == nil {
 		return nil
 	}
 	for i := range env.Spec.Clusters {
+		if localClusterID != "" && env.Spec.Clusters[i].ClusterID != localClusterID {
+			continue
+		}
 		ms := env.Spec.Clusters[i].Members
 		for j := range ms {
 			if ms[j].Name == poolName {
@@ -452,8 +507,17 @@ func (l *Loader) listSiblings(
 	// Build the index of {pool name -> scaling group} from the Env so
 	// we can filter the listed Pools without re-resolving member configs
 	// per pool. This is O(members) once vs O(members * pools) inline.
+	//
+	// Scoped to the local segment for the same reason as findMemberConfig:
+	// the Pools this lists are local objects, so their group membership must
+	// be read from the local segment. A foreign segment declaring the same
+	// Pool name under a different group would otherwise silently include or
+	// exclude a local sibling from the group aggregate.
 	groupByName := map[string]string{}
 	for ci := range env.Spec.Clusters {
+		if l.LocalClusterID != "" && env.Spec.Clusters[ci].ClusterID != l.LocalClusterID {
+			continue
+		}
 		for mi := range env.Spec.Clusters[ci].Members {
 			m := &env.Spec.Clusters[ci].Members[mi]
 			groupByName[m.Name] = m.Config.ScalingGroup

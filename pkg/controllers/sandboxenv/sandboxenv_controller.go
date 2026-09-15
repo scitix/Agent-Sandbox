@@ -39,6 +39,11 @@
 //     mutates the segment matching its own LocalClusterID. See ownership.go.
 //   - A Hub-driven Sync (not implemented) will populate foreign segments;
 //     this Reconciler ignores them.
+//   - Segments naming a cluster the deployment no longer has — the residue a
+//     cluster rename leaves behind — are pruned before anything else runs, so
+//     no lookup can resolve a member against a cluster that is gone. See
+//     segmentprune.go, including the three guards that stop an unsynced
+//     cluster catalog from deleting live configuration.
 package sandboxenv
 
 import (
@@ -127,6 +132,14 @@ type SandboxEnvReconciler struct {
 	// visible via kubectl. nil in single-cluster mode.
 	Federation FederationReader
 
+	// Clusters, when non-nil, is the deployment's cluster catalog. It lets
+	// the reconciler drop spec/status cluster segments naming a cluster that
+	// no longer exists — the residue a cluster rename leaves behind. nil
+	// disables pruning entirely, as does an unpopulated catalog; see
+	// pruneStaleClusterSegments for why an empty list can never authorise a
+	// deletion.
+	Clusters ClusterCatalog
+
 	// ImageRegistry, when non-nil, rewrites container images to this cluster's
 	// registry while re-rendering auto-update members.
 	//
@@ -181,6 +194,16 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// emit an informational log; never refuse to reconcile the local segment.
 	if hasForeignClusterSegments(env, r.LocalClusterID) {
 		log.V(3).Info("Env contains foreign cluster segments; local Reconciler will only touch the local segment")
+	}
+
+	// Drop segments naming a cluster the deployment no longer has. Runs first
+	// so everything downstream — group sync, member materialisation, status
+	// aggregation — sees the converged segment list. A patch here invalidates
+	// the in-memory copy, so requeue instead of continuing against it.
+	if pruned, err := r.pruneStaleClusterSegments(ctx, env); err != nil {
+		return ctrl.Result{}, err
+	} else if pruned {
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Keep autoscaling groups in lockstep with the ScalingGroups members

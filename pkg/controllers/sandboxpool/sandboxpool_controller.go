@@ -131,6 +131,12 @@ type SandboxPoolReconciler struct {
 	// cmd/sandbox/app for wire-up.
 	AutoscalingLoader *autoscalingstate.Loader
 
+	// EventThrottle, when non-nil, suppresses repeats of an identical
+	// phase-transition event for the same Pool. Share the instance with the
+	// autoscaler's Loader: both emit about the same Pools, and a Pool that is
+	// stuck repeats on both paths at once.
+	EventThrottle *autoscalingstate.EventThrottle
+
 	// AutoscalingEventRecorder is the events-API event recorder used
 	// by the autoscaler's Mutator.Commit to emit ScaleUp / ScaleDown
 	// events on the SandboxPool. May be nil; in that case the
@@ -339,6 +345,13 @@ func (r *SandboxPoolReconciler) handleDeletion(ctx context.Context, sandboxPool 
 			Name:      sandboxPool.Name,
 		})
 	}
+	// And the event-throttle state, so a Pool recreated under the same name
+	// reports its first transition immediately instead of inheriting the
+	// previous incarnation's suppression window.
+	r.EventThrottle.Forget(types.NamespacedName{
+		Namespace: sandboxPool.Namespace,
+		Name:      sandboxPool.Name,
+	})
 
 	return reconcile.Result{}, nil
 }

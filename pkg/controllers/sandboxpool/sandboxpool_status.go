@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
@@ -482,6 +484,13 @@ func buildPhaseSelectors(poolName string) map[string]string {
 
 // emitPhaseTransitionEvent sends a Kubernetes Event when the pool phase changes.
 // Only fires on transitions (old != new) to avoid flooding the event stream.
+//
+// "Only on transitions" bounds nothing on its own: a Pool that cannot reach its
+// target oscillates between phases (ScalingUp → Ready → ScalingUp as pods churn),
+// and every lap is a transition, so the same pair of messages repeats for as long
+// as the Pool is stuck. Each one is an API-server write. The throttle — shared
+// with the autoscaler — suppresses a repeat of an identical message while letting
+// any changed message through immediately.
 func (r *SandboxPoolReconciler) emitPhaseTransitionEvent(
 	pool *agentsv1alpha1.SandboxPool,
 	oldPhase, newPhase agentsv1alpha1.SandboxPoolPhase,
@@ -490,28 +499,37 @@ func (r *SandboxPoolReconciler) emitPhaseTransitionEvent(
 	if r.Recorder == nil || oldPhase == newPhase {
 		return
 	}
+	emit := func(eventType, reason, action, format string, args ...any) {
+		message := fmt.Sprintf(format, args...)
+		if !r.EventThrottle.Allow(
+			types.NamespacedName{Namespace: pool.Namespace, Name: pool.Name},
+			reason, message, time.Now(),
+		) {
+			return
+		}
+		r.Recorder.Eventf(pool, nil, eventType, reason, action, "%s", message)
+	}
+	total := status.IdleReplicas + status.RunningReplicas + status.StartingReplicas +
+		status.StoppingReplicas + status.FailedReplicas
 	switch newPhase {
 	case agentsv1alpha1.SandboxPoolPhaseScalingUp:
-		r.Recorder.Eventf(pool, nil, corev1.EventTypeNormal, string(agentsv1alpha1.SandboxPoolPhaseScalingUp), "ScaleUp",
-			"Scaling up pool from %d to %d replicas",
-			status.IdleReplicas+status.RunningReplicas+status.StartingReplicas+status.StoppingReplicas+status.FailedReplicas,
-			pool.Spec.Replicas)
+		emit(corev1.EventTypeNormal, string(agentsv1alpha1.SandboxPoolPhaseScalingUp), "ScaleUp",
+			"Scaling up pool from %d to %d replicas", total, pool.Spec.Replicas)
 	case agentsv1alpha1.SandboxPoolPhaseScalingDown:
-		r.Recorder.Eventf(pool, nil, corev1.EventTypeNormal, string(agentsv1alpha1.SandboxPoolPhaseScalingDown), "ScaleDown",
+		emit(corev1.EventTypeNormal, string(agentsv1alpha1.SandboxPoolPhaseScalingDown), "ScaleDown",
 			"Scaling down pool from %d to %d: waiting for %d running pod(s) to release",
-			status.IdleReplicas+status.RunningReplicas+status.StartingReplicas+status.StoppingReplicas+status.FailedReplicas,
-			pool.Spec.Replicas, status.RunningReplicas)
+			total, pool.Spec.Replicas, status.RunningReplicas)
 	case agentsv1alpha1.SandboxPoolPhaseReady:
 		if oldPhase == agentsv1alpha1.SandboxPoolPhaseDegraded {
-			r.Recorder.Eventf(pool, nil, corev1.EventTypeNormal, "PoolRecovered", "Recover",
+			emit(corev1.EventTypeNormal, "PoolRecovered", "Recover",
 				"Pool reached desired state: %d replicas, %d idle", pool.Spec.Replicas, status.IdleReplicas)
 		} else {
-			r.Recorder.Eventf(pool, nil, corev1.EventTypeNormal, "PoolReady", "Sync",
+			emit(corev1.EventTypeNormal, "PoolReady", "Sync",
 				"Pool reached desired state: %d replicas, %d idle", pool.Spec.Replicas, status.IdleReplicas)
 		}
 	case agentsv1alpha1.SandboxPoolPhaseDegraded:
 		if status.FailedReplicas > 0 {
-			r.Recorder.Eventf(pool, nil, corev1.EventTypeWarning, string(agentsv1alpha1.SandboxPoolPhaseDegraded), "Degraded",
+			emit(corev1.EventTypeWarning, string(agentsv1alpha1.SandboxPoolPhaseDegraded), "Degraded",
 				"%d pod(s) failed, creating replacements", status.FailedReplicas)
 		}
 		// UnavailableIdleReplicas (NotReady) transitions are intentionally not

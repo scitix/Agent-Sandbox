@@ -38,6 +38,16 @@ const defaultEventListLimit = 100
 // still land in corev1. Merging both lets the timeline surface every
 // signal the operator would expect to see, regardless of which API path
 // the emitter took.
+//
+// The two APIs are two *views* of one set of stored objects, not two sets:
+// an event written through events.k8s.io/v1 is readable through core/v1 as
+// well. A plain merge therefore returns every controller event twice — once
+// richly (with Action and the Series count) and once flattened (no Action,
+// Count 0, no FirstTimestamp), which reads as a duplicated timeline rather
+// than as one event seen two ways. Results are keyed by the Event object's
+// own name, with the events.k8s.io view winning: it is the same record with
+// more of its fields populated. Events that exist only in core/v1 carry
+// distinct names and survive untouched.
 func (s *k8sSandboxEnvService) ListEvents(ctx context.Context, namespace, name string, limit int) ([]gen.EnvEvent, *domain.AppError) {
 	if limit <= 0 || limit > 500 {
 		limit = defaultEventListLimit
@@ -77,7 +87,18 @@ func (s *k8sSandboxEnvService) ListEvents(ctx context.Context, namespace, name s
 		return false
 	}
 
-	out := make([]gen.EnvEvent, 0, limit)
+	// Keyed by the Event object's own metadata.name so the two API views of
+	// one stored object collapse into a single entry. Insertion order is kept
+	// separately because the final sort is by timestamp and Go map iteration
+	// would otherwise reshuffle same-timestamp events between calls.
+	byName := make(map[string]gen.EnvEvent, limit)
+	var order []string
+	put := func(name string, item gen.EnvEvent) {
+		if _, seen := byName[name]; !seen {
+			order = append(order, name)
+		}
+		byName[name] = item
+	}
 
 	// Legacy corev1 events. Some controllers (and built-in kubelet/scheduler
 	// signals) still write here; ignore List errors so a missing API or RBAC
@@ -108,7 +129,7 @@ func (s *k8sSandboxEnvService) ListEvents(ctx context.Context, namespace, name s
 				t := ev.EventTime.Time
 				item.LastTimestamp = &t
 			}
-			out = append(out, item)
+			put(ev.Name, item)
 		}
 	}
 
@@ -155,8 +176,15 @@ func (s *k8sSandboxEnvService) ListEvents(ctx context.Context, namespace, name s
 			if ev.DeprecatedCount > 0 {
 				item.Count = int(ev.DeprecatedCount)
 			}
-			out = append(out, item)
+			// Overwrites the core/v1 view of the same object deliberately:
+			// same record, more fields populated.
+			put(ev.Name, item)
 		}
+	}
+
+	out := make([]gen.EnvEvent, 0, len(order))
+	for _, name := range order {
+		out = append(out, byName[name])
 	}
 
 	// Newest first; events with no timestamp sort last.
