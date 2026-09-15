@@ -57,6 +57,9 @@ type Sandbox = components["schemas"]["Sandbox"]
  */
 const SANDBOX_CONTAINER = "sandbox"
 
+/** Line cap when the caller names none. Matches the viewer's wrap limit. */
+const DEFAULT_LIMIT = 1000
+
 // ─── External log service config ──────────────────────────────────────────────
 
 interface LogConfig {
@@ -134,11 +137,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let sandbox: Sandbox
   let clusterID: string
   let container: string
+  let from: string | undefined
+  let to: string | undefined
+  let keyword: string
+  let limit: number
   try {
     const body = (await request.json()) as {
       sandbox?: Sandbox
       clusterID?: string
       container?: string
+      from?: string
+      to?: string
+      keyword?: string
+      limit?: number
     }
     if (!body.sandbox) {
       return NextResponse.json({ error: "sandbox is required" }, { status: 400 })
@@ -146,6 +157,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     sandbox = body.sandbox
     clusterID = body.clusterID ?? "default"
     container = body.container?.trim() || SANDBOX_CONTAINER
+    from = body.from
+    to = body.to
+    keyword = body.keyword?.trim() || ""
+    limit = Number.isFinite(body.limit) ? Number(body.limit) : DEFAULT_LIMIT
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
   }
@@ -181,8 +196,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const containerIdRaw = ""
 
   const podName = sandbox.podName
-  const startTime = new Date(sandbox.claimedAt).getTime() - 1_000
-  const endTime = new Date(sandbox.terminatedAt ?? sandbox.claimedAt).getTime() + 1_000
+  // The caller's window when it gave one, otherwise the run itself. startedAt
+  // rather than claimedAt: claiming precedes arming, and the seconds before the
+  // sandbox was usable are not what anyone is looking for. Both ends are widened
+  // by a second — the record's clock and the log shipper's are not the same one,
+  // and the line written just before teardown is often the interesting one.
+  const startTime = from
+    ? new Date(from).getTime()
+    : new Date(sandbox.startedAt ?? sandbox.claimedAt).getTime() - 1_000
+  const endTime = to
+    ? new Date(to).getTime()
+    : new Date(sandbox.terminatedAt ?? sandbox.claimedAt).getTime() + 1_000
 
   const requestBody = {
     kind: "container_stdout",
@@ -199,6 +223,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     start_time: startTime,
     end_time: endTime,
     sort_order: "asc",
+    limit,
+    // Server-side substring match. Left off entirely when empty: the gateway
+    // treats an empty `query` as a filter that matches nothing rather than as
+    // no filter.
+    ...(keyword ? { query: keyword } : {}),
   }
 
   // 7. Call the external log service and stream the NDJSON response

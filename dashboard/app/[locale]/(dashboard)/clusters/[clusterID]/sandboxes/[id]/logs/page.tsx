@@ -18,7 +18,7 @@
 
 import { use } from "react"
 
-import { SandboxLogsPanel } from "@/components/sandboxes/logs-sheet"
+import { SandboxLogsPanel } from "@/components/sandboxes/logs-panel"
 
 interface PageProps {
   params: Promise<{ clusterID: string; id: string; locale: string }>
