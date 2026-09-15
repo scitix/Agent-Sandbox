@@ -42,7 +42,7 @@ import {
   type FileConfig,
 } from '../src/contexts'
 import { agentContext } from '../src/agent-context'
-import { CliError, baseUrl, clusterListUrl, type Context } from '../src/context'
+import { CliError, baseUrl, clusterListUrl, derivedWebBase, headers, type Context } from '../src/context'
 
 const ctx: Context = {
   endpoint: 'https://example.test/api',
@@ -286,14 +286,43 @@ describe('which cluster is a question, not a precondition', () => {
       throw new Error('should have thrown')
     } catch (e) {
       expect(e).toBeInstanceOf(CliError)
-      // Not "pass --cluster" and nothing else: the durable fix is a default on
-      // the context, and `abx clusters` is how you find the id to put there.
-      expect((e as CliError).hint).toContain('abx context set')
+      // The cluster is named per command, not baked into the context: the
+      // durable answer is `abx clusters` to find the id, then `--cluster` on
+      // the command that needs it.
+      expect((e as CliError).hint).toContain('--cluster')
       expect((e as CliError).hint).toContain('abx clusters')
     }
   })
 
   it('still substitutes when a cluster is known', () => {
     expect(baseUrl({ ...bff, cluster: 'x' })).toBe('https://c.test/agentbox/api/clusters/x/v1')
+  })
+})
+
+describe('the endpoint decides the auth header, not a flag', () => {
+  it('a console BFF endpoint gets the key as a Bearer token', () => {
+    // The BFF proxy reads Authorization only; the cluster API reads the other
+    // header. Telling them apart from the address means a reader who copied a
+    // URL out of the console never has to learn which is which.
+    const bff = { ...ctx, endpoint: 'https://c.test/agentbox/api/clusters/{cluster}', authScheme: undefined }
+    expect(headers(bff).Authorization).toBe('Bearer k')
+    expect(headers(bff)['AGENTBOX-API-KEY']).toBeUndefined()
+  })
+
+  it('a cluster API endpoint gets the key as AGENTBOX-API-KEY', () => {
+    const api = { ...ctx, endpoint: 'https://cluster.test/api', authScheme: undefined }
+    expect(headers(api)['AGENTBOX-API-KEY']).toBe('k')
+    expect(headers(api).Authorization).toBeUndefined()
+  })
+
+  it('an explicit scheme is the escape hatch for an address of neither shape', () => {
+    const forced = { ...ctx, endpoint: 'https://cluster.test/api', authScheme: 'bearer' as const }
+    expect(headers(forced).Authorization).toBe('Bearer k')
+  })
+
+  it('the console base is derived from the BFF endpoint, one level up', () => {
+    const bff = { ...ctx, endpoint: 'https://c.test/agentbox/api/clusters/{cluster}' }
+    expect(derivedWebBase(bff)).toBe('https://c.test/agentbox')
+    expect(derivedWebBase({ ...ctx, endpoint: 'https://cluster.test/api' })).toBeUndefined()
   })
 })

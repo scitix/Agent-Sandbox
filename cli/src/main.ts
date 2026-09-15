@@ -49,7 +49,13 @@ import {
   type Address,
   type Verb,
 } from '@headless/index'
-import { CliError, clusterListUrl, routesByPath, type Context } from './context'
+import {
+  CliError,
+  clusterListUrl,
+  derivedWebBase,
+  routesByPath,
+  type Context,
+} from './context'
 import {
   AmbiguousContextError,
   UnknownContextError,
@@ -155,10 +161,14 @@ function contextFrom(flags: Record<string, string | boolean>, file: FileConfig =
     endpoint: str('endpoint', env('AGENTBOX_ENDPOINT') || entry.endpoint || ''),
     apiKey: str('api-key', env('AGENTBOX_API_KEY') || entry.apiKey || ''),
     cluster: str('cluster', env('AGENTBOX_CLUSTER') || entry.cluster || '') || undefined,
+    // Only set when the caller insists; otherwise the endpoint's shape decides
+    // (`headers()`), because which header the far end reads is a property of
+    // the address, not something a person setting up a CLI should have to know.
     authScheme: (str('auth-scheme', env('AGENTBOX_AUTH_SCHEME') || entry.authScheme || '') ||
-      'api-key') as 'api-key' | 'bearer',
+      undefined) as Context['authScheme'],
     format,
-    webBase: str('web-base', env('AGENTBOX_WEB_BASE') || entry.webBase || '') || undefined,
+    webBase:
+      str('web-base', env('AGENTBOX_WEB_BASE') || entry.webBase || '') || undefined,
   }
   if (!ctx.endpoint) {
     throw new CliError(
@@ -166,6 +176,10 @@ function contextFrom(flags: Record<string, string | boolean>, file: FileConfig =
       `pass --endpoint, set AGENTBOX_ENDPOINT, or write it to ${configPath()}`,
     )
   }
+  // A BFF endpoint already names its console one level up, so the links in
+  // hints can be built without a second address being configured. Only when the
+  // caller gave none AND the shape does not imply one does it stay unset.
+  if (!ctx.webBase) ctx.webBase = derivedWebBase(ctx)
   if (!ctx.apiKey) {
     throw new CliError(
       'no API key configured',
@@ -434,7 +448,12 @@ async function contextCommand(
           '',
           '  abx context set <name> \\',
           '    --endpoint https://<console>/agentbox/api/clusters/{cluster} \\',
-          '    --api-key agbx_... --auth-scheme bearer --cluster <default-cluster>',
+          '    --api-key agbx_...',
+          '',
+          'That is the whole setup. The auth header and the console links are',
+          'read off the endpoint, so neither is a flag. A single-cluster',
+          'platform fills in the cluster for you; otherwise any command',
+          'takes --cluster <id> (see `abx clusters`).',
         ].join('\n'),
       )
       return 0
@@ -501,6 +520,11 @@ async function contextCommand(
  * command; one with several must, because picking for the caller would report
  * one cluster's answer under no label at all. The refusal lists them, so the
  * next command is a copy-paste rather than another lookup.
+ *
+ * `--cluster` is per command and stays that way: a context names a platform,
+ * and a platform has more than one cluster, so a default on the context would
+ * silently answer for whichever one happened to be set — the mislabelled-rows
+ * failure this whole mechanism exists to avoid.
  */
 async function soleCluster(ctx: Context): Promise<string> {
   const listUrl = clusterListUrl(ctx)
@@ -517,10 +541,10 @@ async function soleCluster(ctx: Context): Promise<string> {
   throw new CliError(
     ids.length
       ? 'this endpoint reaches several clusters and this command needs one'
-      : 'this endpoint reaches several clusters and this command needs one',
+      : 'could not work out which cluster to use',
     ids.length
-      ? `pass --cluster, or set a default with \`abx context set <name> --cluster <id>\`\nreachable: ${ids.join(', ')}`
-      : 'pass --cluster, or set a default with `abx context set <name> --cluster <id>`',
+      ? `pass --cluster with one of them:\nreachable: ${ids.join(', ')}`
+      : 'pass --cluster <id>; `abx clusters` lists what this endpoint reaches',
   )
 }
 

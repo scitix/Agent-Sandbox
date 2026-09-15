@@ -21,8 +21,13 @@ export interface Context {
   endpoint: string
   apiKey: string
   cluster?: string
-  /** `api-key` addresses one cluster's API; `bearer` addresses the console BFF. */
-  authScheme: 'api-key' | 'bearer'
+  /**
+   * How the key travels. Omitted is the normal case: the endpoint's shape
+   * decides it, so a caller never has to know which header the far end reads.
+   * Set only to override the derived answer — the escape hatch for an address
+   * that does not look like either of the two shapes.
+   */
+  authScheme?: 'api-key' | 'bearer'
   format: 'table' | 'json' | 'csv'
   webBase?: string
 }
@@ -38,6 +43,33 @@ export interface Context {
  * different cluster's name is worse than an error.
  */
 export const routesByPath = (ctx: Context): boolean => ctx.endpoint.includes('{cluster}')
+
+/**
+ * Is this endpoint the console's BFF rather than a cluster API of its own?
+ *
+ * The two answer for the same platform but read the credential from different
+ * places: a cluster API takes `AGENTBOX-API-KEY`, while the console proxy only
+ * inspects `Authorization: Bearer`. The shape that tells them apart is the
+ * console's own mount point, `/api/clusters` — a caller who copied the address
+ * out of the console has no reason to know which header the far end wants, so
+ * the URL is read instead of a flag being demanded.
+ */
+export const isConsoleBff = (ctx: Context): boolean => /\/api\/clusters(\/|$)/.test(ctx.endpoint)
+
+/**
+ * The console base a BFF endpoint hangs off, when there is one.
+ *
+ * `https://example.com/agentbox/api/clusters/{cluster}` is the console's proxy
+ * mount; the pages it serves sit at `https://example.com/agentbox` one level
+ * up. Deriving it means the console links in a hint are right without anyone
+ * being asked to retype the same host twice.
+ */
+export function derivedWebBase(ctx: Context): string | undefined {
+  if (!isConsoleBff(ctx)) return undefined
+  const at = ctx.endpoint.search(/\/api\/clusters(\/|$)/)
+  if (at <= 0) return undefined
+  return ctx.endpoint.slice(0, at).replace(/\/+$/, '') || undefined
+}
 
 /**
  * Where to ask WHICH clusters exist, when the endpoint routes by path.
@@ -59,7 +91,7 @@ export function baseUrl(ctx: Context): string {
     if (!ctx.cluster) {
       throw new CliError(
         'this endpoint reaches several clusters and this command needs one',
-        'pass --cluster, or set a default:\n  abx context set <name> --cluster <id>\n`abx clusters` lists them and needs none.',
+        'pass --cluster <id>; `abx clusters` lists them and needs none.',
       )
     }
     e = e.replaceAll('{cluster}', ctx.cluster)
@@ -69,7 +101,8 @@ export function baseUrl(ctx: Context): string {
 
 export function headers(ctx: Context): Record<string, string> {
   const h: Record<string, string> = { Accept: 'application/json' }
-  if (ctx.authScheme === 'bearer') h.Authorization = `Bearer ${ctx.apiKey}`
+  const scheme = ctx.authScheme ?? (isConsoleBff(ctx) ? 'bearer' : 'api-key')
+  if (scheme === 'bearer') h.Authorization = `Bearer ${ctx.apiKey}`
   else h['AGENTBOX-API-KEY'] = ctx.apiKey
   return h
 }

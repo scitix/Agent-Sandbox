@@ -43,8 +43,6 @@ export interface McpGuideInput {
   poolName?: string
   /** This console's own origin + basePath, e.g. read off `window.location`. */
   consoleBase?: string
-  /** Cluster currently being viewed — the context's default cluster. */
-  clusterID?: string
 }
 
 /**
@@ -87,8 +85,6 @@ export interface GuideVars {
   endpoint: string
   /** Name to save the context under. */
   ctx: string
-  cluster: string
-  consoleBase: string
 }
 
 export function mcpGuide(input: McpGuideInput, locale: Locale): string {
@@ -99,13 +95,14 @@ export function mcpGuide(input: McpGuideInput, locale: Locale): string {
     https: input.dataURL ? !isPlainHttp(input.dataURL) : true,
     pool: input.poolName || "YOUR_ENV",
     // One endpoint for every cluster: the `{cluster}` placeholder is what makes
-    // `--cluster` a substitution rather than a claim the address cannot honour.
+    // a per-command `--cluster` a substitution rather than a claim the address
+    // cannot honour. It is also the only setting the reader has to supply —
+    // which header the key travels in and where the console lives are both read
+    // off this address.
     endpoint: consoleBase
       ? `${consoleBase}/api/clusters/{cluster}`
       : "https://<console>/agentbox/api/clusters/{cluster}",
     ctx: contextName(consoleBase),
-    cluster: input.clusterID || "<cluster>",
-    consoleBase: consoleBase || "https://<console>/agentbox",
   }
   return locale === "en" ? english(v) : chinese(v)
 }
@@ -135,15 +132,14 @@ curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/lates
 \`\`\`bash
 abx context set ${v.ctx} \\
   --endpoint '${v.endpoint}' \\
-  --api-key agbx_... \\
-  --auth-scheme bearer \\
-  --cluster ${v.cluster} \\
-  --web-base ${v.consoleBase}
+  --api-key agbx_...
 
 abx envs
 \`\`\`
 
-If you use more than one AgentBox platform, add each as its own context and switch with \`abx context use <name>\`. \`--cluster\` is the other axis: a context is which platform, \`--cluster\` is which of its clusters.
+That is the whole setup — the endpoint and the key. Which header the key travels in and where the console lives are both read off the endpoint, so there is nothing else to say. If your platform has more than one cluster, \`abx clusters\` lists them and any command takes \`--cluster <id>\`; with a single cluster it is filled in for you.
+
+If you use more than one AgentBox platform, add each as its own context and switch with \`abx context use <name>\`. A context is which platform; \`--cluster\` is which of its clusters, per command.
 
 \`\`\`bash
 abx agent-context     # the whole CLI as JSON — hand this to an agent
@@ -222,15 +218,14 @@ curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/lates
 \`\`\`bash
 abx context set ${v.ctx} \\
   --endpoint '${v.endpoint}' \\
-  --api-key agbx_... \\
-  --auth-scheme bearer \\
-  --cluster ${v.cluster} \\
-  --web-base ${v.consoleBase}
+  --api-key agbx_...
 
 abx envs
 \`\`\`
 
-如果你同时用多个 AgentBox 平台，各加一个 context，用 \`abx context use <name>\` 切换。\`--cluster\` 是另一个维度：context 决定是哪个平台，\`--cluster\` 决定是这个平台的哪个集群。
+就这么两样 —— endpoint 和 key。key 走哪个 header、控制台在哪儿，都是从 endpoint 上读出来的，不用另外配。平台如果有多个集群，\`abx clusters\` 会列出来，任意命令加 \`--cluster <id>\` 即可；只有一个集群时会自动填上。
+
+如果你同时用多个 AgentBox 平台，各加一个 context，用 \`abx context use <name>\` 切换。context 决定是哪个平台，\`--cluster\` 决定是这个平台的哪个集群（逐命令指定）。
 
 \`\`\`bash
 abx agent-context     # 整个 CLI 的 JSON 描述 —— 直接丢给 agent

@@ -42,14 +42,20 @@ for segment, so `/clusters/c/envs/e/pools/p` and
 
 ## Authentication
 
-Four settings, resolved as flag → environment → `~/.config/abx/config.json`:
+Two settings are required, resolved as flag → environment →
+`~/.config/abx/config.json`:
 
 | Setting | Flag | Environment |
 |---|---|---|
 | API base | `--endpoint` | `AGENTBOX_ENDPOINT` |
 | Credential | `--api-key` | `AGENTBOX_API_KEY` |
-| Cluster | `--cluster` | `AGENTBOX_CLUSTER` |
-| Console base | `--web-base` | `AGENTBOX_WEB_BASE` |
+
+That is the whole setup. Which header the key travels in is read off the
+endpoint — a console BFF address (`/api/clusters/…`) takes `Authorization:
+Bearer`, a cluster API takes `AGENTBOX-API-KEY` — so there is no scheme to set.
+`--auth-scheme` and `--web-base` exist as overrides for an address of neither
+shape, and are otherwise unnecessary. The console links in output are derived
+from the endpoint too.
 
 Under the Claude Code plugin the key is in the OS keychain and a hook writes
 the config file. **Do not read that file, echo the key, or pass it on a command
@@ -65,16 +71,21 @@ pretend. Administrative work across tenants belongs in the console.
 
 ## Clusters
 
-Management calls are per cluster. An endpoint whose path contains `{cluster}`
-routes for every cluster and `--cluster` substitutes into it; an endpoint
-without one answers for its own cluster and **refuses** a `--cluster` naming a
-different one. That refusal is deliberate: returning the local cluster's rows
-under another cluster's name is data that is confidently mislabelled, and a
-reader cannot tell.
+Management calls are per cluster, and the cluster is chosen **per command** with
+`--cluster` (`AGENTBOX_CLUSTER`). It is not part of the context: a context names
+a platform, and that platform may have several clusters, so a default would
+quietly answer for whichever one happened to be set.
+
+An endpoint whose path contains `{cluster}` routes for every cluster and
+`--cluster` substitutes into it; when there is exactly one cluster it is filled
+in for you. An endpoint without a placeholder answers for its own cluster and
+**refuses** a `--cluster` naming a different one. That refusal is deliberate:
+returning the local cluster's rows under another cluster's name is data that is
+confidently mislabelled, and a reader cannot tell.
 
 ```bash
 abx clusters                    # what this endpoint can reach
-abx envs --cluster <cluster-id>
+abx envs --cluster <cluster-id> # choose one for this command
 ```
 
 ## Output

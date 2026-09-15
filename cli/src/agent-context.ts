@@ -81,6 +81,11 @@ export function agentContext(version: string, gates: Record<string, boolean> | n
       '--csv': 'machine output, flat',
       '--wide': 'include the columns held back by default',
     },
+    auth: {
+      note:
+        'Only --endpoint and --api-key are ever required. Which header the key travels in is read off the endpoint: a console BFF address (/api/clusters/…) takes Authorization: Bearer, a cluster API takes AGENTBOX-API-KEY.',
+      override: '--auth-scheme api-key|bearer forces it, for an address of neither shape.',
+    },
     roots: gatedOut(rootResources(), gates).map((r) => r.plural),
     resources: resources.map((r) => ({
       plural: r.plural,

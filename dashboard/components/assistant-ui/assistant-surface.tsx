@@ -182,7 +182,6 @@ function McpEntry({ cluster }: { cluster: string }) {
       e2bURL: entry?.gateway?.e2bURL,
       dataURL: entry?.gateway?.dataURL,
       consoleBase,
-      clusterID: cluster,
     },
     locale
   )

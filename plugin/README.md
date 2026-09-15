@@ -28,12 +28,14 @@ The binary lands in `~/.local/bin`, the skills in `~/.agents/skills`. Then name
 the deployment you are talking to:
 
 ```sh
-abx context set <name>   --endpoint 'https://<console>/agentbox/api/clusters/{cluster}'   --api-key agbx_... --auth-scheme bearer --cluster <default-cluster>
+abx context set <name>   --endpoint 'https://<console>/agentbox/api/clusters/{cluster}'   --api-key agbx_...
 ```
 
-Each deployment's own console prints that line with its addresses filled in —
-this repository ships none, because the addresses belong to whoever deployed
-the platform.
+Two settings, and that is the whole setup. Which header the key travels in and
+where the console lives are both read off the endpoint; a `{cluster}` placeholder
+is what lets one endpoint reach every cluster. Each deployment's own console
+prints that line with its address filled in — this repository ships none, because
+the addresses belong to whoever deployed the platform.
 
 ## More than one platform
 
@@ -46,9 +48,11 @@ abx --context <name> envs   # just this command
 ```
 
 `--cluster` is the other axis and stays independent: a context is which
-platform, `--cluster` is which of its clusters. With two contexts configured
-and no default chosen, commands are refused rather than guessing — a command
-that quietly ran against the wrong platform is the failure this prevents.
+platform, `--cluster` is which of its clusters. It belongs on the command, not in
+the context — `abx clusters` lists what an endpoint reaches, and when there is
+exactly one it is filled in for you. With two contexts configured and no default
+chosen, commands are refused rather than guessing — a command that quietly ran
+against the wrong platform is the failure this prevents.
 
 Environment variables still win over the file, which is what makes a sandbox
 work: a platform that embeds `abx` passes its own address in the environment

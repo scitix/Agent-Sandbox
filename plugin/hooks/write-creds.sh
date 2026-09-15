@@ -20,20 +20,14 @@ umask 077
 
 endpoint="${CLAUDE_PLUGIN_OPTION_ENDPOINT:-}"
 api_key="${CLAUDE_PLUGIN_OPTION_API_KEY:-}"
-cluster="${CLAUDE_PLUGIN_OPTION_CLUSTER:-}"
-web_base="${CLAUDE_PLUGIN_OPTION_WEB_BASE:-}"
-auth_scheme="${CLAUDE_PLUGIN_OPTION_AUTH_SCHEME:-}"
 
 [ -n "$endpoint" ] && [ -n "$api_key" ] || exit 0
 
 {
   printf '{\n'
   printf '  "endpoint": "%s",\n' "$endpoint"
-  printf '  "apiKey": "%s"' "$api_key"
-  [ -n "$cluster" ] && printf ',\n  "cluster": "%s"' "$cluster"
-  [ -n "$web_base" ] && printf ',\n  "webBase": "%s"' "$web_base"
-  [ -n "$auth_scheme" ] && printf ',\n  "authScheme": "%s"' "$auth_scheme"
-  printf '\n}\n'
+  printf '  "apiKey": "%s"\n' "$api_key"
+  printf '}\n'
 } >"$dir/config.json"
 
 chmod 600 "$dir/config.json"

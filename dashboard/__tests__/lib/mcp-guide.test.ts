@@ -30,7 +30,6 @@ const LIVE = {
   e2bURL: 'https://gw.example.test/agent-sandbox/api/e2b',
   dataURL: 'https://gw.example.test/agent-sandbox/api/data',
   consoleBase: 'https://console.acme.example/agentbox',
-  clusterID: 'cluster-a',
 }
 
 describe('the setup guide carries this deployment and no other', () => {
@@ -55,10 +54,13 @@ describe('the setup guide carries this deployment and no other', () => {
       const doc = mcpGuide(LIVE, locale)
       // Named after the deployment, not after the front-door word.
       expect(doc).toContain('abx context set acme')
-      // One endpoint for every cluster: the placeholder is what makes
-      // --cluster a substitution rather than an unanswerable claim.
+      // One endpoint for every cluster: the placeholder is what makes a
+      // per-command `--cluster` a substitution rather than an unanswerable
+      // claim. Only endpoint and key are set here — the auth header and the
+      // console base are read off the endpoint, so neither is a flag.
       expect(doc).toContain('https://console.acme.example/agentbox/api/clusters/{cluster}')
-      expect(doc).toContain('--cluster cluster-a')
+      expect(doc).not.toContain('--auth-scheme')
+      expect(doc).not.toContain('--web-base')
       // abx leads; the E2B SDK is still there for the sandboxes themselves.
       expect(doc.indexOf('abx context set')).toBeLessThan(doc.indexOf('patch_e2b'))
       expect(doc).toContain(LIVE.e2bURL)
