@@ -28,13 +28,15 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="CreateSandboxEnvRequestLabels")
+T = TypeVar("T", bound="StringMap")
 
 
 
 @_attrs_define
-class CreateSandboxEnvRequestLabels:
-    
+class StringMap:
+    """ Free-form string key/value metadata (labels or annotations).
+
+     """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
@@ -54,12 +56,12 @@ class CreateSandboxEnvRequestLabels:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        create_sandbox_env_request_labels = cls(
+        string_map = cls(
         )
 
 
-        create_sandbox_env_request_labels.additional_properties = d
-        return create_sandbox_env_request_labels
+        string_map.additional_properties = d
+        return string_map
 
     @property
     def additional_keys(self) -> list[str]:

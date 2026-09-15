@@ -28,13 +28,7 @@ from .approval_request_status import ApprovalRequestStatus
 from .cluster_summary import ClusterSummary
 from .create_api_key_request import CreateAPIKeyRequest
 from .create_api_key_result import CreateAPIKeyResult
-from .create_env_sandbox_pool_request import CreateEnvSandboxPoolRequest
-from .create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations
-from .create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels
 from .create_sandbox_env_request import CreateSandboxEnvRequest
-from .create_sandbox_env_request_annotations import CreateSandboxEnvRequestAnnotations
-from .create_sandbox_env_request_labels import CreateSandboxEnvRequestLabels
-from .create_sandbox_env_request_mode import CreateSandboxEnvRequestMode
 from .create_sandbox_request import CreateSandboxRequest
 from .create_sandbox_request_annotations import CreateSandboxRequestAnnotations
 from .create_sandbox_request_container_images import CreateSandboxRequestContainerImages
@@ -151,10 +145,12 @@ from .sandbox_template_summary import SandboxTemplateSummary
 from .self_create_api_key_request import SelfCreateAPIKeyRequest
 from .self_create_api_key_request_mode import SelfCreateAPIKeyRequestMode
 from .set_sandbox_timeout_request import SetSandboxTimeoutRequest
+from .string_map import StringMap
 from .teams_result import TeamsResult
 from .update_env_autoscaling_group_request import UpdateEnvAutoscalingGroupRequest
-from .update_env_sandbox_pool_request import UpdateEnvSandboxPoolRequest
-from .update_sandbox_env_request import UpdateSandboxEnvRequest
+from .upsert_sandbox_env_request import UpsertSandboxEnvRequest
+from .upsert_sandbox_env_request_mode import UpsertSandboxEnvRequestMode
+from .upsert_sandbox_pool_request import UpsertSandboxPoolRequest
 from .upsert_sandbox_template_request import UpsertSandboxTemplateRequest
 from .user_sandbox_statistics import UserSandboxStatistics
 from .user_sandbox_statistics_by_status import UserSandboxStatisticsByStatus
@@ -182,13 +178,7 @@ __all__ = (
     "ClusterSummary",
     "CreateAPIKeyRequest",
     "CreateAPIKeyResult",
-    "CreateEnvSandboxPoolRequest",
-    "CreateEnvSandboxPoolRequestAnnotations",
-    "CreateEnvSandboxPoolRequestLabels",
     "CreateSandboxEnvRequest",
-    "CreateSandboxEnvRequestAnnotations",
-    "CreateSandboxEnvRequestLabels",
-    "CreateSandboxEnvRequestMode",
     "CreateSandboxRequest",
     "CreateSandboxRequestAnnotations",
     "CreateSandboxRequestContainerImages",
@@ -305,10 +295,12 @@ __all__ = (
     "SelfCreateAPIKeyRequest",
     "SelfCreateAPIKeyRequestMode",
     "SetSandboxTimeoutRequest",
+    "StringMap",
     "TeamsResult",
     "UpdateEnvAutoscalingGroupRequest",
-    "UpdateEnvSandboxPoolRequest",
-    "UpdateSandboxEnvRequest",
+    "UpsertSandboxEnvRequest",
+    "UpsertSandboxEnvRequestMode",
+    "UpsertSandboxPoolRequest",
     "UpsertSandboxTemplateRequest",
     "UserSandboxStatistics",
     "UserSandboxStatisticsByStatus",

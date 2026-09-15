@@ -117,9 +117,7 @@ def sync_detailed(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):  Example: {'name': 'my-env', 'templateRef': {'name':
-            'e2b-envd'}, 'mode': 'WarmPool', 'overrides': {'gateway': {'enabled': True}}, 'labels':
-            {'team': 'ai-infra'}}.
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,9 +150,7 @@ def sync(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):  Example: {'name': 'my-env', 'templateRef': {'name':
-            'e2b-envd'}, 'mode': 'WarmPool', 'overrides': {'gateway': {'enabled': True}}, 'labels':
-            {'team': 'ai-infra'}}.
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,9 +178,7 @@ async def asyncio_detailed(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):  Example: {'name': 'my-env', 'templateRef': {'name':
-            'e2b-envd'}, 'mode': 'WarmPool', 'overrides': {'gateway': {'enabled': True}}, 'labels':
-            {'team': 'ai-infra'}}.
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -217,9 +211,7 @@ async def asyncio(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):  Example: {'name': 'my-env', 'templateRef': {'name':
-            'e2b-envd'}, 'mode': 'WarmPool', 'overrides': {'gateway': {'enabled': True}}, 'labels':
-            {'team': 'ai-infra'}}.
+        body (CreateSandboxEnvRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

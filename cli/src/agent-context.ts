@@ -44,8 +44,31 @@ export function gatedOut(resources: readonly ResourceSpec[], gates: Record<strin
   return resources.filter((r) => !r.gate || gates[r.gate] !== false)
 }
 
-export function agentContext(version: string, gates: Record<string, boolean> | null = null) {
-  const resources = gatedOut(RESOURCES, gates)
+/**
+ * Resources this credential can actually reach.
+ *
+ * An admin-only resource is dropped for anyone who is not an admin, for the
+ * same reason a gated one is: an agent reading this document treats everything
+ * in it as available, and a command whose only possible answer is `admin api
+ * key required` costs a round trip and teaches it that the document is wrong.
+ * `null` — no answer yet — shows everything, because hiding a command the
+ * caller does have is not recoverable from the API's own error.
+ */
+function roleOut(
+  resources: readonly ResourceSpec[],
+  gates: Record<string, boolean> | null,
+  role: string | null,
+) {
+  const visible = gatedOut(resources, gates)
+  return role === null || role === 'admin' ? visible : visible.filter((r) => !r.admin)
+}
+
+export function agentContext(
+  version: string,
+  gates: Record<string, boolean> | null = null,
+  role: string | null = null,
+) {
+  const resources = roleOut(RESOURCES, gates, role)
   return {
     tool: 'abx',
     version,
@@ -89,7 +112,7 @@ export function agentContext(version: string, gates: Record<string, boolean> | n
       modes:
         'Console mode is the default and the norm: --endpoint is the console address, and --cluster picks any cluster behind it. Direct mode is the exception, entered by setting --cluster-api (AGENTBOX_CLUSTER_API) to one cluster\'s own API — for a sandbox with no route to the console. That address answers for one cluster, so --cluster is refused rather than silently ignored.',
     },
-    roots: gatedOut(rootResources(), gates).map((r) => r.plural),
+    roots: roleOut(rootResources(), gates, role).map((r) => r.plural),
     resources: resources.map((r) => ({
       plural: r.plural,
       kind: r.kind,

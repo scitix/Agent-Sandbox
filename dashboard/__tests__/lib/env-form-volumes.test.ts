@@ -84,8 +84,9 @@ describe("env-form volumes", () => {
       valuesWith([
         { claimName: "ds", mountPath: "/volume/ds", subPath: undefined, readOnly: false },
       ]),
+      envWith({}),
     )
-    expect(body.overrides.volumes).toEqual([
+    expect(body.overrides?.volumes).toEqual([
       { claimName: "ds", mountPath: "/volume/ds", readOnly: false },
     ])
   })
@@ -94,15 +95,18 @@ describe("env-form volumes", () => {
   // clear the mounts. Emitting [] explicitly is how the user removes the last
   // one, and emitting it always is what makes that unambiguous.
   it("always emits a volumes array, empty when nothing is mounted", () => {
-    const body = formValuesToUpdateBody(valuesWith([]))
-    expect(body.overrides.volumes).toEqual([])
+    const body = formValuesToUpdateBody(valuesWith([]), envWith({}))
+    expect(body.overrides?.volumes).toEqual([])
   })
 
   // buildOverrides used to return undefined when every override was blank,
   // which made formValuesToUpdateBody send {} — read by the server as
   // "overrides not supplied", so clearing everything was a silent no-op.
   it("returns an overrides object even when every field is blank", () => {
-    const body = formValuesToUpdateBody({ ...envFormDefaults(), name: "e", templateName: "t" })
+    const body = formValuesToUpdateBody(
+      { ...envFormDefaults(), name: "e", templateName: "t" },
+      envWith({}),
+    )
     expect(body.overrides).toBeDefined()
     expect(typeof body.overrides).toBe("object")
   })

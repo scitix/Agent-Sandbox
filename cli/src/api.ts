@@ -46,14 +46,28 @@ export async function requestAt<T = unknown>(
   method: string,
   body?: unknown,
 ): Promise<T> {
-  const res = await fetch(url, {
-    method,
-    headers: {
-      ...headers(ctx),
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method,
+      headers: {
+        ...headers(ctx),
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch (err) {
+    // A TLS or DNS failure arrives as a runtime string ("unknown certificate
+    // verification error") with no indication of which address produced it —
+    // and the address is the part the caller can do something about. Said
+    // plainly, and said as retryable, because most of these are.
+    const why = err instanceof Error ? err.message : String(err)
+    throw new CliError(
+      `could not reach ${url}: ${why}`,
+      'nothing was sent. Check the address and that the platform is up, then run it again — ' +
+        '`abx context list` shows which deployment this command resolved to.',
+    )
+  }
 
   const text = await res.text()
   let parsed: unknown
@@ -65,15 +79,35 @@ export async function requestAt<T = unknown>(
 
   if (res.ok) return parsed as T
 
-  const payload = parsed as { error?: string; detail?: unknown; approval?: { url?: string } }
+  const payload = parsed as {
+    error?: string
+    errorCode?: string
+    detail?: unknown
+    approval?: { url?: string }
+  }
   const msg = payload.error ?? `${res.status} ${res.statusText}`
 
-  if (res.status === 428 || payload.approval?.url) {
+  // The gate answers with APPROVAL_REQUIRED and a `detail` block carrying the
+  // link a person needs. Reading it from `payload.approval` (which the server
+  // has never sent) threw the whole thing away and printed the doubled
+  // "this write is held for approval: approval required: …" instead.
+  if (payload.errorCode === 'APPROVAL_REQUIRED' || res.status === 428) {
     throw new CliError(
-      `this write is held for approval: ${msg}`,
-      payload.approval?.url
-        ? `a person releases it here:\n  ${payload.approval.url}\nthe command succeeds once they do — re-run it then.`
-        : undefined,
+      `this write is waiting for a person: ${approvalSummary(payload.detail, msg)}`,
+      approvalHint(payload.detail),
+    )
+  }
+  // Never going to be granted, and deliberately not an approval: an agent that
+  // cannot tell this from the case above polls for a decision nobody will ever
+  // be asked to make.
+  if (payload.errorCode === 'FORBIDDEN_FOR_AGENT') {
+    const detail = payload.detail as { summary?: string; url?: string } | undefined
+    const what = detail?.summary ?? msg
+    throw new CliError(
+      `this credential cannot do that at all: ${what}`,
+      'there is no request to wait on here, and nothing an agent key can do to change that — ' +
+        'a person does it as themselves' +
+        (detail?.url ? `:\n  ${detail.url}` : ' in the console.'),
     )
   }
   if (res.status === 403) {
@@ -85,7 +119,52 @@ export async function requestAt<T = unknown>(
   throw new CliError(msg, typeof payload.detail === 'object' ? JSON.stringify(payload.detail) : undefined)
 }
 
+/** What the person is being asked, from the 428's structured detail. */
+function approvalSummary(detail: unknown, fallback: string): string {
+  const d = detail as { summary?: string } | undefined
+  return d?.summary ?? fallback.replace(/^approval required:\s*/, '')
+}
+
+/**
+ * Everything the caller needs to know about a held write, in the order it
+ * needs it: where a person releases it, which request this is, and that there
+ * is nothing to retry until they do.
+ */
+function approvalHint(detail: unknown): string {
+  const d = (detail ?? {}) as {
+    approvalId?: string
+    operation?: string
+    onceOnly?: boolean
+    url?: string
+    expiresAt?: string
+  }
+  const lines: string[] = []
+  lines.push(
+    d.url
+      ? `a person releases it here:\n  ${d.url}`
+      : 'this deployment publishes no console address, so ask whoever runs it to release the request.',
+  )
+  const facts = [d.operation ? `${d.operation}` : '', d.onceOnly ? 'single-use' : ''].filter(Boolean)
+  if (d.approvalId || facts.length) {
+    lines.push(
+      `approval ${d.approvalId ?? '(unknown id)'}${facts.length ? ` (${facts.join(', ')})` : ''}` +
+        `${d.expiresAt ? ` expires at ${d.expiresAt}.` : '.'}`,
+    )
+  }
+  lines.push(
+    're-running this command after they decide is how it goes through: there is nothing to\n' +
+      'retry before then, and an agent key cannot decide its own request.',
+  )
+  return lines.join('\n')
+}
+
 function hintFor403(msg: string): string | undefined {
+  // An admin route reached with a tenant key. This one has nothing to do with
+  // approvals or with what an agent key may mint: it is a role, and the answer
+  // is either an admin key or the console.
+  if (/admin\b/i.test(msg)) {
+    return 'that is an admin surface: use an admin key, or do it in the console as an admin'
+  }
   if (/impersonat/i.test(msg)) {
     // Not a permission problem, and not one this CLI offers a flag for. It
     // speaks as one tenant, whoever the key belongs to; acting as somebody

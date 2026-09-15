@@ -24,7 +24,7 @@ from ... import errors
 
 from ...models.error_response import ErrorResponse
 from ...models.sandbox_pool_envelope import SandboxPoolEnvelope
-from ...models.update_env_sandbox_pool_request import UpdateEnvSandboxPoolRequest
+from ...models.upsert_sandbox_pool_request import UpsertSandboxPoolRequest
 from typing import cast
 
 
@@ -33,7 +33,7 @@ def _get_kwargs(
     name: str,
     pool_name: str,
     *,
-    body: UpdateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -120,7 +120,7 @@ def sync_detailed(
     pool_name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
     """ Update a member SandboxPool
@@ -128,23 +128,41 @@ def sync_detailed(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
-            is a PUT and it
-            means it: a field left out is one the caller wants REMOVED. That is the
-            only way "take the ceiling off" can be expressed — while an omitted
-            field meant "leave unchanged" there was no request that could clear
-            minReplicas, maxReplicas or updateStrategy, and the form's empty box
-            reported success without doing anything.
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
-            `replicas` is the exception: it is the pool's size rather than a bound,
-            an autoscaling group may own it outright, and omitting it leaves the
-            pool the size it is — never scales it to zero.
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
 
-            Update a member SandboxPool. Resource shape, instanceType, labels and
-            annotations are immutable post-create; this PUT accepts replica
-            adjustments and updateStrategy changes. When the scalingGroup has
-            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
-            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,7 +191,7 @@ def sync(
     pool_name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
     """ Update a member SandboxPool
@@ -181,23 +199,41 @@ def sync(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
-            is a PUT and it
-            means it: a field left out is one the caller wants REMOVED. That is the
-            only way "take the ceiling off" can be expressed — while an omitted
-            field meant "leave unchanged" there was no request that could clear
-            minReplicas, maxReplicas or updateStrategy, and the form's empty box
-            reported success without doing anything.
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
-            `replicas` is the exception: it is the pool's size rather than a bound,
-            an autoscaling group may own it outright, and omitting it leaves the
-            pool the size it is — never scales it to zero.
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
 
-            Update a member SandboxPool. Resource shape, instanceType, labels and
-            annotations are immutable post-create; this PUT accepts replica
-            adjustments and updateStrategy changes. When the scalingGroup has
-            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
-            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,7 +257,7 @@ async def asyncio_detailed(
     pool_name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
     """ Update a member SandboxPool
@@ -229,23 +265,41 @@ async def asyncio_detailed(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
-            is a PUT and it
-            means it: a field left out is one the caller wants REMOVED. That is the
-            only way "take the ceiling off" can be expressed — while an omitted
-            field meant "leave unchanged" there was no request that could clear
-            minReplicas, maxReplicas or updateStrategy, and the form's empty box
-            reported success without doing anything.
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
-            `replicas` is the exception: it is the pool's size rather than a bound,
-            an autoscaling group may own it outright, and omitting it leaves the
-            pool the size it is — never scales it to zero.
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
 
-            Update a member SandboxPool. Resource shape, instanceType, labels and
-            annotations are immutable post-create; this PUT accepts replica
-            adjustments and updateStrategy changes. When the scalingGroup has
-            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
-            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -274,7 +328,7 @@ async def asyncio(
     pool_name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
     """ Update a member SandboxPool
@@ -282,23 +336,41 @@ async def asyncio(
     Args:
         name (str):
         pool_name (str):
-        body (UpdateEnvSandboxPoolRequest): Desired state of this member's editable bounds. This
-            is a PUT and it
-            means it: a field left out is one the caller wants REMOVED. That is the
-            only way "take the ceiling off" can be expressed — while an omitted
-            field meant "leave unchanged" there was no request that could clear
-            minReplicas, maxReplicas or updateStrategy, and the form's empty box
-            reported success without doing anything.
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
+              - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+              - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
-            `replicas` is the exception: it is the pool's size rather than a bound,
-            an autoscaling group may own it outright, and omitting it leaves the
-            pool the size it is — never scales it to zero.
+            where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+            `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+            Members in the same `scalingGroup` share an autoscaling policy.
 
-            Update a member SandboxPool. Resource shape, instanceType, labels and
-            annotations are immutable post-create; this PUT accepts replica
-            adjustments and updateStrategy changes. When the scalingGroup has
-            autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
-            entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+            Sizing accepts three shapes:
+              - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                `instanceType × multiplier` envelope (default `multiplier` = 1).
+              - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                reservation still charges quota for the whole instance.
+              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                per-Pool resource requests/limits.
+            `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+            `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+            real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
+             Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
+            'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
+            'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
+            'https://quota.example/q/1'}}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

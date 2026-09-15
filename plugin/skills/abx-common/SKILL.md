@@ -106,8 +106,8 @@ abx envs --cluster <cluster-id> # choose one for this command
 Three registers, and the middle one is the default:
 
 - **table** — a header line, a count, a `view:` link to the same page in the
-  console, and `hint:` lines naming what to do next. Truncated at 200 rows with
-  the filters that would narrow it.
+  console where the console has a page for it, and `hint:` lines naming what to
+  do next. Truncated at 200 rows with the filters that would narrow it.
 - `--json` — the raw API shape. No header, no hints. Use it when piping.
 - `--csv` — flat, for a spreadsheet or `cut`.
 
@@ -115,24 +115,40 @@ Three registers, and the middle one is the default:
 list, where **key is a column heading** — the heading, the filter key and the
 CSV column are one name on purpose.
 
-You have a shell. Use it: `abx pools --json | jq`, loops, aggregation. That is
+You have a shell. Use it: `abx envs <env> pools --json | jq`, loops, aggregation. That is
 the point of a CLI over a tool-per-operation surface, and the sandbox you are
 probably running in has no real credentials in it anyway — the egress sidecar
 substitutes them on the way out.
 
 ## Writes, and approval
 
-`apply` is a **PUT of the whole object**. A field the file leaves out is a
-field you are asking to **remove**. So the shape of any edit is:
+`apply` is a **PUT of the desired state** — a field the file leaves out is a
+field you are asking to **remove**. The file is NOT the object `--json` prints:
+it is only the editable part, and the editable part differs per address:
+
+| Address | The file holds |
+|---|---|
+| `abx envs <env>` | `{"overrides": {…}}` |
+| `abx envs <env> pools <pool>` | `{"replicas": n, "minReplicas": n, "maxReplicas": n, "updateStrategy": {…}}` |
+| `abx envs <env> scaling-groups <group>` | `{"enabled": bool, "minReplicas": n, "maxReplicas": n, "scaleUpPolicy": {…}, "scaleDownPolicy": {…}}` |
+| `abx admin-templates <t>` (admin key) | `{"crdJson": "<the whole SandboxTemplate as a JSON string>"}` |
+
+So the shape of an edit is:
 
 ```bash
-abx envs demo pools demo-1c2gi --json > pool.json
-# edit pool.json
+cat > pool.json <<'JSON'
+{"replicas": 2, "minReplicas": 1, "maxReplicas": 8}
+JSON
 abx envs demo pools demo-1c2gi apply -f pool.json
 ```
 
-Never hand-write the file from scratch unless you mean to clear everything you
-omitted.
+Creating is the same verb against the collection — `abx envs apply -f env.json`
+is the POST — so there is one word for "make it look like this" either way.
+
+Piping `--json` into `apply` is not a valid body and is the fastest way to lose
+state: those keys are nested (`spec.replicas`), the PUT reads top-level ones, and
+the ones it does not find are the ones it clears. Read the current values with
+`--json`, then send back the fields named in the table.
 
 `scale --replicas N` is the exception: one field, no clearing, and it re-sends
 the current bounds unchanged. Use it when size is all you are changing.

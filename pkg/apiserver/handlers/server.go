@@ -544,7 +544,21 @@ func (s *Server) GetSandboxEnv(ctx context.Context, req gen.GetSandboxEnvRequest
 		result.EnvDocs = nil
 	}
 
-	return gen.GetSandboxEnv200JSONResponse{Env: *result}, nil
+	return gen.GetSandboxEnv200JSONResponse{Env: *result, Editable: s.envEditable(ctx, auth.Namespace, req.Name)}, nil
+}
+
+// envEditable returns the write body for an Env, best effort.
+//
+// Best effort because the object has already been read or written: a client
+// that cannot be handed the projection has lost a convenience, and turning
+// that into a failed request would be trading a small one for a large one.
+// Callers that must have it — `abx --editable` — say so when it is absent.
+func (s *Server) envEditable(ctx context.Context, namespace, name string) *gen.UpsertSandboxEnvRequest {
+	body, appErr := s.env.Editable(ctx, namespace, name)
+	if appErr != nil {
+		return nil
+	}
+	return body
 }
 
 func (s *Server) CreateSandboxEnv(ctx context.Context, req gen.CreateSandboxEnvRequestObject) (gen.CreateSandboxEnvResponseObject, error) {
@@ -600,7 +614,7 @@ func (s *Server) CreateSandboxEnv(ctx context.Context, req gen.CreateSandboxEnvR
 			return gen.CreateSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.CreateSandboxEnv201JSONResponse{Env: *result}, nil
+	return gen.CreateSandboxEnv201JSONResponse{Env: *result, Editable: s.envEditable(ctx, auth.Namespace, req.Body.Name)}, nil
 }
 
 func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvRequestObject) (gen.UpdateSandboxEnvResponseObject, error) {
@@ -612,6 +626,20 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 		Name:      req.Name,
 		Namespace: auth.Namespace,
 	}
+	// The fixed fields travel with the request so the service can refuse a body
+	// that drops or rewrites one, naming the value in force. `name` is not among
+	// them: it is the path.
+	templateRef := agentsv1alpha1.SandboxEnvTemplateRef{Name: req.Body.TemplateRef.Name}
+	if req.Body.TemplateRef.Version != nil {
+		templateRef.Version = *req.Body.TemplateRef.Version
+	}
+	input.TemplateRef = &templateRef
+	input.Mode = req.Body.Mode
+	// The body's maps are the generated `StringMap`; the service takes the plain
+	// map it writes into the CR. Same underlying type, so this is a view, not a
+	// copy — nothing here mutates it.
+	input.Labels = (*map[string]string)(req.Body.Labels)
+	input.Annotations = (*map[string]string)(req.Body.Annotations)
 	if req.Body.Overrides != nil {
 		ov, err := envOverridesFromGen(req.Body.Overrides)
 		if err != nil {
@@ -639,7 +667,7 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 			return gen.UpdateSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.UpdateSandboxEnv200JSONResponse{Env: *result}, nil
+	return gen.UpdateSandboxEnv200JSONResponse{Env: *result, Editable: s.envEditable(ctx, auth.Namespace, req.Name)}, nil
 }
 
 func (s *Server) DeleteSandboxEnv(ctx context.Context, req gen.DeleteSandboxEnvRequestObject) (gen.DeleteSandboxEnvResponseObject, error) {
@@ -881,7 +909,10 @@ func (s *Server) CreateEnvSandboxPool(ctx context.Context, req gen.CreateEnvSand
 			return gen.CreateEnvSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.CreateEnvSandboxPool202JSONResponse{Template: *result}, nil
+	return gen.CreateEnvSandboxPool202JSONResponse{
+		Template: *result,
+		Editable: s.poolEditable(ctx, auth.Namespace, req.Name, result.Name),
+	}, nil
 }
 
 func (s *Server) ListEnvSandboxPools(ctx context.Context, req gen.ListEnvSandboxPoolsRequestObject) (gen.ListEnvSandboxPoolsResponseObject, error) {
@@ -914,7 +945,36 @@ func (s *Server) GetEnvSandboxPool(ctx context.Context, req gen.GetEnvSandboxPoo
 			return gen.GetEnvSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.GetEnvSandboxPool200JSONResponse{Template: *result}, nil
+	return gen.GetEnvSandboxPool200JSONResponse{
+		Template: *result,
+		Editable: s.poolEditable(ctx, auth.Namespace, req.Name, req.PoolName),
+	}, nil
+}
+
+// poolEditable returns the write body for a member Pool, best effort — see
+// envEditable for why a missing projection does not fail the request.
+func (s *Server) poolEditable(ctx context.Context, namespace, envName, poolName string) *gen.UpsertSandboxPoolRequest {
+	body, appErr := s.env.MemberEditable(ctx, namespace, envName, poolName, s.forwarder.LocalClusterID())
+	if appErr != nil {
+		return nil
+	}
+	return body
+}
+
+// groupEditable is the write body for an autoscaling group. Every field is
+// mutable here — a group has no shape of its own, it is a policy — so the body
+// is the group minus its name, which the path carries.
+func groupEditable(g *gen.EnvAutoscalingGroup) *gen.UpdateEnvAutoscalingGroupRequest {
+	if g == nil {
+		return nil
+	}
+	return &gen.UpdateEnvAutoscalingGroupRequest{
+		Enabled:         g.Enabled,
+		MinReplicas:     g.MinReplicas,
+		MaxReplicas:     g.MaxReplicas,
+		ScaleUpPolicy:   g.ScaleUpPolicy,
+		ScaleDownPolicy: g.ScaleDownPolicy,
+	}
 }
 
 func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSandboxPoolRequestObject) (gen.UpdateEnvSandboxPoolResponseObject, error) {
@@ -938,6 +998,14 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 	if req.Body.UpdateStrategy != nil {
 		patch.UpdateStrategy = updateStrategyFromGen(req.Body.UpdateStrategy)
 	}
+	// The shape, carried so the service can refuse a body that drops or changes
+	// it: the body a client sends is now the one it can read back, so losing the
+	// instance type means it was built from the wrong source.
+	patch.InstanceType = req.Body.InstanceType
+	patch.Multiplier = req.Body.Multiplier
+	patch.InlineResources = inlineResourcesFromGen(req.Body.InlineResources)
+	patch.Labels = (*map[string]string)(req.Body.Labels)
+	patch.Annotations = (*map[string]string)(req.Body.Annotations)
 	result, appErr := s.env.UpdateMember(ctx, auth.Namespace, req.Name, req.PoolName, s.forwarder.LocalClusterID(), patch)
 	if appErr != nil {
 		switch appErr.Code {
@@ -951,7 +1019,10 @@ func (s *Server) UpdateEnvSandboxPool(ctx context.Context, req gen.UpdateEnvSand
 			return gen.UpdateEnvSandboxPool500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.UpdateEnvSandboxPool200JSONResponse{Template: *result}, nil
+	return gen.UpdateEnvSandboxPool200JSONResponse{
+		Template: *result,
+		Editable: s.poolEditable(ctx, auth.Namespace, req.Name, req.PoolName),
+	}, nil
 }
 
 func (s *Server) DeleteEnvSandboxPool(ctx context.Context, req gen.DeleteEnvSandboxPoolRequestObject) (gen.DeleteEnvSandboxPoolResponseObject, error) {
@@ -1017,7 +1088,7 @@ func (s *Server) GetEnvAutoscalingGroup(ctx context.Context, req gen.GetEnvAutos
 			return gen.GetEnvAutoscalingGroup500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.GetEnvAutoscalingGroup200JSONResponse{Group: *result}, nil
+	return gen.GetEnvAutoscalingGroup200JSONResponse{Group: *result, Editable: groupEditable(result)}, nil
 }
 
 func (s *Server) UpdateEnvAutoscalingGroup(ctx context.Context, req gen.UpdateEnvAutoscalingGroupRequestObject) (gen.UpdateEnvAutoscalingGroupResponseObject, error) {
@@ -1043,7 +1114,7 @@ func (s *Server) UpdateEnvAutoscalingGroup(ctx context.Context, req gen.UpdateEn
 			return gen.UpdateEnvAutoscalingGroup500JSONResponse(errResp(ctx, appErr)), nil
 		}
 	}
-	return gen.UpdateEnvAutoscalingGroup200JSONResponse{Group: *result}, nil
+	return gen.UpdateEnvAutoscalingGroup200JSONResponse{Group: *result, Editable: groupEditable(result)}, nil
 }
 
 func (s *Server) DeleteEnvAutoscalingGroup(ctx context.Context, req gen.DeleteEnvAutoscalingGroupRequestObject) (gen.DeleteEnvAutoscalingGroupResponseObject, error) {

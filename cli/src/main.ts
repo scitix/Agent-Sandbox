@@ -60,16 +60,28 @@ import {
 import {
   AmbiguousContextError,
   UnknownContextError,
+  cachedRole,
   configPath,
   contextNames,
   readConfig,
   selectContext,
+  whoamiCacheKey,
   writeConfig,
+  writeWhoamiCache,
   type ContextEntry,
   type FileConfig,
 } from './contexts'
 import { request, requestAt } from './api'
-import { applyFilters, hints, renderCsv, renderTable, visibleColumns } from './render'
+import {
+  applyFilters,
+  hints,
+  renderCsv,
+  renderDetail,
+  renderLogs,
+  renderLogsCsv,
+  renderTable,
+  visibleColumns,
+} from './render'
 import { agentContext } from './agent-context'
 
 declare const AGBX_CLI_VERSION: string
@@ -79,6 +91,37 @@ interface Parsed {
   positional: string[]
   flags: Record<string, string | boolean>
   filters: [string, string][]
+}
+
+/**
+ * Every flag the CLI has, and whether it must be given a value.
+ *
+ * A flag nobody reads is worse than a missing one: `abx envs --nope` used to
+ * come back with a normal list of envs, so a caller who mistyped a flag (or
+ * followed a stale document) learned that the flag did nothing rather than that
+ * it does not exist. Naming the valid set in the refusal is the part that makes
+ * it recoverable in one retry.
+ */
+const FLAGS: Record<string, boolean> = {
+  context: true,
+  cluster: true,
+  endpoint: true,
+  'cluster-api': true,
+  'api-key': true,
+  'auth-scheme': true,
+  filter: true,
+  limit: true,
+  format: true,
+  f: true,
+  file: true,
+  replicas: true,
+  json: false,
+  editable: false,
+  csv: false,
+  wide: false,
+  version: false,
+  help: false,
+  h: false,
 }
 
 function parseArgs(argv: string[]): Parsed {
@@ -91,13 +134,19 @@ function parseArgs(argv: string[]): Parsed {
       positional.push(a)
       continue
     }
+    if (a === '--') {
+      positional.push(...argv.slice(i + 1))
+      break
+    }
     let key = a.replace(/^--?/, '')
     let value: string | undefined
     const eq = key.indexOf('=')
     if (eq !== -1) {
       value = key.slice(eq + 1)
       key = key.slice(0, eq)
-    } else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('-')) {
+    } else if (argv[i + 1] !== undefined && (!argv[i + 1].startsWith('-') || argv[i + 1] === '-')) {
+      // A bare `-` is a value, not the start of another flag: it is stdin, and
+      // `-f -` is how a caller hands over a document it did not write to disk.
       value = argv[++i]
     }
     if (key === 'filter') {
@@ -110,7 +159,28 @@ function parseArgs(argv: string[]): Parsed {
     }
     flags[key] = value ?? true
   }
+  assertFlags(flags)
   return { positional, flags, filters }
+}
+
+/** Refuse a flag no command reads, and a flag that was left without its value. */
+function assertFlags(flags: Record<string, string | boolean>): void {
+  const known = Object.keys(FLAGS).map((f) => (f.length === 1 ? `-${f}` : `--${f}`))
+  for (const [key, value] of Object.entries(flags)) {
+    if (FLAGS[key] === undefined) {
+      throw new CliError(`unknown flag "${key.length === 1 ? '-' : '--'}${key}"`, `known flags: ${known.join(', ')}`)
+    }
+    // `abx envs --cluster` with nothing after it used to read as "no cluster
+    // given" and then fail somewhere else entirely, which is a confusing way to
+    // be told about a missing value.
+    if (FLAGS[key] && typeof value !== 'string') {
+      throw new CliError(`--${key} needs a value`, `for example: --${key} <${key === 'limit' ? 'n' : 'value'}>`)
+    }
+  }
+  const limit = flags.limit
+  if (typeof limit === 'string' && !/^\d+$/.test(limit)) {
+    throw new CliError(`--limit takes a number, got "${limit}"`, 'it is how many rows to print; the default is 200')
+  }
 }
 
 function contextFrom(flags: Record<string, string | boolean>, file: FileConfig = {}): Context {
@@ -197,8 +267,22 @@ function contextFrom(flags: Record<string, string | boolean>, file: FileConfig =
   return ctx
 }
 
-function usage(): string {
+/**
+ * What a caller may see, given what their key is.
+ *
+ * `role` is null whenever it could not be established — no cache, no config,
+ * no network. Unknown shows everything on purpose: a help page that hides a
+ * command because the CLI failed to reach the API is a help page that lies
+ * about what the platform has, and an error the API would have returned anyway
+ * is recoverable where a hidden command is not.
+ */
+function visibleRoots(role: string | null) {
   const roots = rootResources()
+  return role === 'admin' || role === null ? roots : roots.filter((r) => !r.admin)
+}
+
+function usage(role: string | null): string {
+  const roots = visibleRoots(role)
   const width = Math.max(...roots.map((r) => r.plural.length))
   return [
     'abx — the AgentBox platform CLI.',
@@ -228,15 +312,16 @@ function usage(): string {
     '  --api-key <key>      platform credential',
     '  --filter key=value   narrow a list; keys are the column headings',
     '  --limit <n>          rows to print (default 200)',
+    '  --editable           print the body a write takes, not the object',
     '  --json | --csv       machine output (drops headers and hints)',
     '  --wide               include the columns held back by default',
+    '  --version            print the CLI version',
   ].join('\n')
 }
 
-function resourceHelp(token: string): string {
-  const spec = resourceOf(token)
-  if (!spec) throw new CliError(`unknown resource "${token}"`, `known: ${ROOT_SEGMENTS.join(', ')}`)
+function resourceHelp(spec: (typeof RESOURCES)[number]): string {
   const out = [`${spec.plural} — ${spec.describe}`, '']
+  if (spec.helpNote) out.push(spec.helpNote, '')
   if (spec.parent) {
     out.push(`Addressed under its ${resourceOf(spec.parent)?.kind}:`, `  abx ${spec.parent} <id> ${spec.plural}`, '')
   }
@@ -270,6 +355,15 @@ function resourceHelp(token: string): string {
   for (const c of visibleColumns(spec, true)) {
     out.push(`  ${c.id}${c.optional ? ' (--wide)' : ''} — ${c.describe}`)
   }
+  if (spec.detailFields?.length) {
+    // A get is not a row of the list, and the fields it prints are not the
+    // columns. Saying so here is what stops a reader from concluding that the
+    // list is all there is.
+    out.push('', `Detail (abx ${writeExample(spec)}) — the shape a get prints:`)
+    for (const f of spec.detailFields) {
+      out.push(`  ${f.id}${f.text ? ' (full text)' : ''} — ${f.describe}`)
+    }
+  }
   if (supports(spec, 'apply') || supports(spec, 'delete') || supports(spec, 'create')) {
     out.push(
       '',
@@ -278,7 +372,7 @@ function resourceHelp(token: string): string {
         ? [`  abx ${spec.parent ? `${spec.parent} <${resourceOf(spec.parent)?.kind}> ` : ''}${spec.plural} apply -f FILE   # create`]
         : []),
       ...(supports(spec, 'apply')
-        ? [`  abx ${writeExample(spec)} apply -f FILE   # PUT the whole object; an omitted field is cleared`]
+        ? [`  abx ${writeExample(spec)} apply -f FILE   # ${bodySummary(spec)}`]
         : []),
       ...(supports(spec, 'delete') ? [`  abx ${writeExample(spec)} delete`] : []),
     )
@@ -293,6 +387,48 @@ function resourceHelp(token: string): string {
 function verbIntent(verb: string, collection: boolean): Verb {
   if (verb === 'apply') return collection ? 'create' : 'apply'
   return verb as Verb
+}
+
+/**
+ * What `apply -f` expects the file to contain.
+ *
+ * The trap this closes: an update body is NOT the object `--json` prints. For
+ * an env the PUT body is `overrides` alone, so copying the full object out of
+ * `--json` and applying it clears every override the env had — a foot-gun that
+ * cost nothing to describe here and would cost a caller their state to find out
+ * about. Server-exported request bodies replace this when they land.
+ */
+function bodyShape(spec: { plural: string; parent?: string }): string {
+  switch (spec.plural) {
+    case 'envs':
+      return 'the file is `{"overrides": {…}}` — an env update carries overrides and nothing else, so the whole object `--json` prints is NOT a valid body: applying it would clear them.'
+    case 'pools':
+      return 'the file is `{"replicas": n, "minReplicas": n, "maxReplicas": n, "updateStrategy": …}` — the size and its bounds, not the pool’s resource shape.'
+    case 'scaling-groups':
+      return 'the file is `{"enabled": bool, "minReplicas": n, "maxReplicas": n, "scaleUpPolicy": {…}, "scaleDownPolicy": {…}}`.'
+    case 'templates':
+    case 'admin-templates':
+      return 'the file is `{"crdJson": "…"}` — the whole SandboxTemplate object as a JSON string.'
+    default:
+      return `the file is the JSON request body for ${spec.plural}; \`abx ${spec.parent ?? spec.plural} --help\` names the fields.`
+  }
+}
+
+/** The same thing in one line, for places that have one line to give. */
+function bodySummary(spec: { plural: string }): string {
+  switch (spec.plural) {
+    case 'envs':
+      return 'PUTs `overrides` alone — NOT the whole object `--json` prints (applying that clears them)'
+    case 'pools':
+      return 'PUTs the size and its bounds, not the pool’s resource shape'
+    case 'scaling-groups':
+      return 'PUTs the group’s bounds and policies'
+    case 'templates':
+    case 'admin-templates':
+      return 'PUTs `{crdJson}` — the whole template as a JSON string'
+    default:
+      return 'PUT the whole object; an omitted field is cleared'
+  }
 }
 
 function writeExample(spec: { plural: string; kind: string; parent?: string }): string {
@@ -313,56 +449,119 @@ function summary(describe: string): string {
 // cannot quietly grow a verb the help text has never heard of.
 const WRITE_VERBS = new Set(['apply', 'delete', 'scale', ...actionNames()])
 
+/**
+ * Verbs this CLI used to have, and what to do instead.
+ *
+ * Every one of these appears in a document somewhere in this repository, and
+ * the failure they produce on their own is a 404 for an object named "create" —
+ * which tells the caller nothing about the spelling that works. Only consulted
+ * when the caller is clearly trying to write, so an env that really is called
+ * `create` stays readable.
+ */
+const REMOVED_VERBS: Record<string, string> = {
+  create: 'creating is `apply -f FILE` against the collection — the file IS the request body',
+  update: 'updating is `apply -f FILE` against the item',
+  patch:
+    'there is no partial apply: `apply -f FILE` sends the whole object, and a field the file omits is cleared',
+  post: 'creating is `apply -f FILE` against the collection',
+}
+
+/** How long the help path will wait for a whoami before showing everything. */
+const HELP_WHOAMI_TIMEOUT_MS = 3000
+
 export async function run(argv: string[]): Promise<number> {
   const { positional, flags, filters } = parseArgs(argv)
 
-  if (!positional.length || flags.help || flags.h) {
-    if (positional.length && resourceOf(positional[0])) {
-      console.log(resourceHelp(positional[0]))
-      return 0
-    }
-    console.log(usage())
+  // `--version` and `version` are the same question, and neither should print
+  // a usage page: a version is what a bug report needs, and a caller who asked
+  // for one and got a wall of prose has to guess whether the answer was in it.
+  if (flags.version || (positional.length === 1 && positional[0] === 'version')) {
+    console.log(VERSION)
     return 0
   }
+
   const fileConfig: FileConfig = await readConfig()
+
+  if (!positional.length || flags.help || flags.h) {
+    // What to advertise depends on who is asking, and the answer is cached
+    // beside the config. A help page must not fail because the network is slow,
+    // so anything unknown falls back to showing everything.
+    const role = await roleForHelp(fileConfig, flags)
+    const spec = positional.length ? resourceOf(positional[0]) : undefined
+    if (spec) {
+      console.log(resourceHelp(spec))
+      return 0
+    }
+    console.log(usage(role))
+    return 0
+  }
 
   if (positional[0] === 'context' || positional[0] === 'contexts') {
     return await contextCommand(positional.slice(1), flags, fileConfig)
   }
 
-  if (positional[0] === 'version') {
-    console.log(VERSION)
-    return 0
-  }
   if (positional[0] === 'agent-context') {
     // Credentials are optional here: without them the document still describes
-    // the whole CLI, it just cannot narrow itself to this deployment.
+    // the whole CLI, it just cannot narrow itself to this deployment — neither
+    // by its feature gates nor by the caller's role.
     let gates: Record<string, boolean> | null = null
+    let role: string | null = await roleForHelp(fileConfig, flags)
     try {
-      gates = await request<Record<string, boolean>>(
-        contextFrom(flags, fileConfig),
-        'GET',
-        '/feature-gates',
-      )
+      const ctx = contextFrom(flags, fileConfig)
+      gates = await request<Record<string, boolean>>(ctx, 'GET', '/feature-gates')
+      role = await roleForHelp(fileConfig, flags, ctx) ?? role
     } catch {
       gates = null
     }
-    console.log(JSON.stringify(agentContext(VERSION, gates), null, 2))
+    console.log(JSON.stringify(agentContext(VERSION, gates, role), null, 2))
     return 0
   }
 
+  // Whoami answers about the credential, not about a cluster: the same key has
+  // the same role and team on every cluster the platform reaches, and only the
+  // namespace it resolves to is per cluster. Asking for one anyway reads as the
+  // tool being broken, so it takes the first reachable cluster and says nothing
+  // about which — there is nothing the choice changes that the caller could act
+  // on.
+  if (positional[0] === 'whoami') {
+    const ctx = contextFrom(flags, fileConfig)
+    const who = await whoami(ctx)
+    await recordWhoami(ctx, who)
+    console.log(ctx.format === 'json' ? JSON.stringify(who) : JSON.stringify(who, null, 2))
+    return 0
+  }
+
+  // Split the address from a trailing verb. The verb goes last so reading and
+  // writing share one address: an agent that just listed something appends a
+  // word rather than learning a second grammar.
+  const tail = positional[positional.length - 1]
+  if (REMOVED_VERBS[tail] && (flags.f !== undefined || flags.file !== undefined)) {
+    throw new CliError(`"${tail}" is not a verb any more`, REMOVED_VERBS[tail])
+  }
+  const verb = WRITE_VERBS.has(tail) ? (positional.pop() as string) : undefined
+
+  const parsed = parsePositional(positional)
+  if (!parsed) {
+    throw new CliError(
+      `too many arguments: ${positional.join(' ')}`,
+      'the deepest address is `<resource> <id> <sub> <sub-id> <view>`',
+    )
+  }
+
+  // The address is checked before anything about the deployment is, so a
+  // mistyped resource is answered with "unknown resource" rather than with
+  // advice about a cluster — or a missing endpoint — it was never going to
+  // reach. Nothing below this line can run without a valid address.
+  const bad = addressError(parsed)
+  if (bad) throw new CliError(bad)
+
   const ctx = contextFrom(flags, fileConfig)
 
-  // Two questions that precede picking a cluster, and must not require one.
-  //
   // "Which clusters are there" cannot be answered by first naming one, and an
   // endpoint that routes by path publishes the list one level above its
-  // placeholder — so that is where it is asked. `whoami` is about the
-  // credential rather than a cluster, but the API that answers it is per
-  // cluster, so it borrows a default: the only cluster when there is one, and
-  // a refusal naming them when there are several. Guessing between them would
-  // report a namespace resolved somewhere the caller did not ask about.
-  if (positional[0] === 'clusters' && !ctx.cluster) {
+  // placeholder — so that is where it is asked, and `abx clusters` therefore
+  // needs no --cluster at all.
+  if (parsed.resource === 'clusters' && !ctx.cluster) {
     const listUrl = clusterListUrl(ctx)
     if (listUrl) {
       const rows = normalize(await requestAt<unknown>(listUrl, ctx, 'GET'))
@@ -373,31 +572,19 @@ export async function run(argv: string[]): Promise<number> {
     ctx.cluster = await soleCluster(ctx)
   }
 
-  if (positional[0] === 'whoami') {
-    const who = await request<Record<string, unknown>>(ctx, 'GET', '/auth/whoami')
-    console.log(ctx.format === 'json' ? JSON.stringify(who) : JSON.stringify(who, null, 2))
-    return 0
-  }
+  const address: Address = { cluster: ctx.cluster, ...parsed }
+  await assertClusterServed(ctx)
 
-  // Split the address from a trailing verb. The verb goes last so reading and
-  // writing share one address: an agent that just listed something appends a
-  // word rather than learning a second grammar.
-  const verb = WRITE_VERBS.has(positional[positional.length - 1])
-    ? (positional.pop() as string)
-    : undefined
-
-  const parsed = parsePositional(positional)
-  if (!parsed) {
+  if (filters.length && (address.id || address.subId)) {
+    // A filter narrows a list — that is what it is for, and `abx envs
+    // --filter mode=WarmPool` is the common case. On a get it silently
+    // filtered the one row away and printed "0 total", which reads as an
+    // empty platform rather than a filter that cannot apply here.
     throw new CliError(
-      `too many arguments: ${positional.join(' ')}`,
-      'the deepest address is `<resource> <id> <sub> <sub-id> <view>`',
+      '--filter narrows a list, and this address is one object',
+      `drop the filter, or narrow \`abx ${address.resource}\` instead`,
     )
   }
-  const address: Address = { cluster: ctx.cluster, ...parsed }
-
-  const bad = addressError(address)
-  if (bad) throw new CliError(bad)
-  await assertClusterServed(ctx)
 
   const resolved = resolveApi(address)
   if (!resolved) {
@@ -410,20 +597,40 @@ export async function run(argv: string[]): Promise<number> {
         : 'nothing to read at that address',
       address.view && consoleBase(ctx)
         ? `it is a console view:\n  ${consoleBase(ctx)}${consolePath(address)}`
-        : `try \`abx ${address.resource} --help\` for what it does have`,
+        : deeperHint(address) ?? `try \`abx ${address.resource} --help\` for what it does have`,
     )
   }
 
   if (verb) return await write(ctx, verb, address, resolved, flags)
 
+  if (flags.editable && resolved.collection) {
+    // Refused before the request: the answer is about the address, not about
+    // what the server happens to have.
+    throw new CliError(
+      '--editable prints what ONE object takes',
+      `the body belongs to one ${resolved.spec.kind}; name it, or use --json for the list`,
+    )
+  }
+
   const payload = await request<unknown>(ctx, 'GET', resolved.path)
+
+  if (flags.editable) return printEditable(payload, resolved, ctx)
+
   const rows = normalize(payload, resolved.listField)
-  if (ctx.format === 'json' && !resolved.collection) {
+  if (resolved.collection) return printRows(resolved.spec, rows, ctx, address, flags, filters)
+
+  if (resolved.view) return printView(resolved.view, payload, ctx, address)
+
+  if (ctx.format === 'json') {
     // A `get` answers with the object, not a one-element list.
-    console.log(JSON.stringify(rows[0] ?? null))
+    console.log(JSON.stringify(stripEnvDocs(resolved.spec, rows[0] ?? null)))
     return 0
   }
-  return printRows(resolved.spec, rows, ctx, address, flags, filters)
+  // A one-row CSV is what `--csv` asks for, and the detail view is not that:
+  // it is a page for a person, and the flat shape is for a spreadsheet.
+  if (ctx.format === 'csv') return printRows(resolved.spec, rows, ctx, address, flags, filters)
+  if (!resolved.spec.detailFields?.length) return printRows(resolved.spec, rows, ctx, address, flags, filters)
+  return printDetail(resolved.spec, rows[0] ?? {}, ctx, address, flags)
 }
 
 /**
@@ -568,6 +775,150 @@ async function soleCluster(ctx: Context): Promise<string> {
   )
 }
 
+/**
+ * The first cluster this deployment reaches.
+ *
+ * Used only by `whoami`, where the choice genuinely does not matter: a
+ * credential's role, mode, team and user are the same on every cluster, and the
+ * one field that is per cluster — the namespace it resolves to — is reported
+ * rather than selected on. Asking for `--cluster` first made the command read
+ * as broken, which is what the deployment's own chart comment says about it.
+ */
+async function firstCluster(ctx: Context): Promise<string> {
+  const listUrl = clusterListUrl(ctx)
+  const rows = listUrl ? normalize(await requestAt<unknown>(listUrl, ctx, 'GET')) : []
+  const id = rows.map((c) => String(c.id ?? '')).filter(Boolean)[0]
+  if (!id) {
+    throw new CliError(
+      'this platform reports no clusters',
+      'nothing is reachable behind this address yet',
+    )
+  }
+  return id
+}
+
+/** Who this credential is, asked of a cluster it can reach. */
+async function whoami(ctx: Context): Promise<Record<string, unknown>> {
+  if (!ctx.cluster && viaConsole(ctx)) {
+    return request<Record<string, unknown>>(
+      { ...ctx, cluster: await firstCluster(ctx) },
+      'GET',
+      '/auth/whoami',
+    )
+  }
+  return request<Record<string, unknown>>(ctx, 'GET', '/auth/whoami')
+}
+
+/** Remember what whoami said, so the help page can be decided offline. */
+async function recordWhoami(ctx: Context, who: Record<string, unknown>): Promise<void> {
+  const str = (k: string) => (typeof who[k] === 'string' ? (who[k] as string) : undefined)
+  await writeWhoamiCache(whoamiCacheKey(ctx.contextName, ctx.endpoint || ctx.clusterApi || '', ctx.apiKey), {
+    role: str('role'),
+    mode: str('mode'),
+    user: str('user'),
+    team: str('team'),
+    at: new Date().toISOString(),
+  })
+}
+
+/**
+ * What role to render help for, best effort and never fatal.
+ *
+ * The cache first, because that is the only answer available without a network;
+ * a live whoami when there is no cache; and null — which shows everything —
+ * when neither works. Hiding a resource because the CLI could not reach the API
+ * would be the help page inventing a platform that has less in it than the real
+ * one, and the error the API would give is one the caller can act on.
+ */
+async function roleForHelp(
+  cfg: FileConfig,
+  flags: Record<string, string | boolean>,
+  known?: Context,
+): Promise<string | null> {
+  // The cache is keyed on the credential, so resolving the context (and with it
+  // the address and key) comes first. An unknown or ambiguous context is
+  // somebody else's error to report, so a failure here just means "no cache".
+  let ctx: Context | undefined = known
+  if (!ctx) {
+    try {
+      ctx = contextFrom(flags, cfg)
+    } catch {
+      ctx = undefined
+    }
+  }
+  if (ctx) {
+    const key = whoamiCacheKey(ctx.contextName, ctx.endpoint || ctx.clusterApi || '', ctx.apiKey)
+    const cached = await cachedRole(key)
+    if (cached) return cached
+  }
+  try {
+    ctx = ctx ?? contextFrom(flags, cfg)
+    const who = await withTimeout(whoami(ctx), HELP_WHOAMI_TIMEOUT_MS)
+    await recordWhoami(ctx, who)
+    return typeof who.role === 'string' ? who.role : null
+  } catch {
+    return null
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
+/** Where a caller who named a resource that is only a parent should go next. */
+function deeperHint(a: Address): string | undefined {
+  const spec = resourceOf(a.resource)
+  if (!spec || !a.id) return undefined
+  const kids = childrenOf(spec.plural)
+  if (!kids.length) return undefined
+  // `abx teams team1` used to answer "nothing to read at that address", which
+  // is true and useless: the thing to read is one level further down.
+  return [
+    'that address itself holds nothing — go one level deeper:',
+    ...kids.map((c) => `  abx ${a.resource} ${a.id} ${c.plural}`),
+  ].join('\n')
+}
+
+/**
+ * `--editable` — the body a write takes, rather than the object it produces.
+ *
+ * These are two different documents and treating them as one is a trap that
+ * bites silently: `abx envs X --json` returns the whole resource, and feeding
+ * that back to `apply -f` asks the API to clear every field the file does not
+ * carry — which for an env means every override. The projection printed here
+ * comes from the server (the same schema the PUT accepts), so this output is
+ * exactly what `apply -f` takes.
+ */
+function printEditable(
+  payload: unknown,
+  resolved: { spec: (typeof RESOURCES)[number]; collection: boolean },
+  ctx: Context,
+): number {
+  const editable = (payload as Record<string, unknown> | null)?.['editable']
+  if (editable === undefined || editable === null) {
+    throw new CliError(
+      'this deployment returns no editable body for that object',
+      'the field arrives with the write contract that pairs create and update.\n' +
+        'until this API has it, --json is the raw object — and the raw object is NOT\n' +
+        'the file `apply -f` takes: sending it clears what it leaves out',
+    )
+  }
+  console.log(ctx.format === 'json' ? JSON.stringify(editable) : JSON.stringify(editable, null, 2))
+  return 0
+}
+
 /** Print a result set in whichever format was asked for. */
 function printRows(
   spec: (typeof RESOURCES)[number],
@@ -596,6 +947,73 @@ function printRows(
 }
 
 /**
+ * Print one object in the shape the registry says a get has.
+ *
+ * The child tables cost two extra requests (the env's pools and its autoscaling
+ * groups), which is why they are only fetched for the table view: `--json` is a
+ * promise about the response, and making it fetch three of them would keep that
+ * promise with a different document than the one asked for.
+ */
+async function printDetail(
+  spec: (typeof RESOURCES)[number],
+  item: Record<string, unknown>,
+  ctx: Context,
+  address: Address,
+  flags: Record<string, string | boolean>,
+): Promise<number> {
+  const extras: { spec: (typeof RESOURCES)[number]; rows: Record<string, unknown>[] }[] = []
+  for (const child of childrenOf(spec.plural)) {
+    if (!child.inParentDetail) continue
+    const resolved = resolveApi({ ...address, sub: child.plural, subId: undefined, view: undefined })
+    if (!resolved) continue
+    const rows = normalize(await request<unknown>(ctx, 'GET', resolved.path), resolved.listField)
+    extras.push({ spec: child, rows })
+  }
+  console.log(renderDetail(spec, item, ctx, address, extras))
+  return 0
+}
+
+/** A view — logs today — which is a snapshot rather than a row set. */
+function printView(
+  view: { segment: string; shape?: 'logs' },
+  payload: unknown,
+  ctx: Context,
+  address: Address,
+): number {
+  if (ctx.format === 'json') {
+    console.log(JSON.stringify(payload))
+    return 0
+  }
+  if (ctx.format === 'csv') {
+    console.log(renderLogsCsv(payload))
+    return 0
+  }
+  console.log(view.shape === 'logs' ? renderLogs(payload, ctx, address) : JSON.stringify(payload, null, 2))
+  return 0
+}
+
+/**
+ * Drop the one field that is not safe to hand back, even as JSON.
+ *
+ * `envDocs` is Markdown rendered with the caller's own plaintext API key
+ * substituted in, so printing it puts a credential into whatever reads the
+ * output. The template's own docs are the same text with a placeholder instead,
+ * which is why they are safe to print — and why the note points there.
+ */
+function stripEnvDocs(spec: { plural: string }, obj: unknown): unknown {
+  if (spec.plural !== 'envs' || !obj || typeof obj !== 'object') return obj
+  const row = obj as Record<string, unknown>
+  if (!('envDocs' in row)) return obj
+  const { envDocs: _omitted, ...rest } = row
+  console.error(
+    'note: envDocs is omitted, even from --json — the server renders it with your own\n' +
+      '      plaintext API key substituted in. `abx templates <name>` prints the same\n' +
+      '      documentation with a placeholder where the key goes.',
+  )
+  return rest
+}
+
+/**
  * Refuse a --cluster this address cannot answer for.
  *
  * Returning the local cluster's rows under another cluster's name is
@@ -608,7 +1026,12 @@ async function assertClusterServed(ctx: Context): Promise<void> {
   let served: string | undefined
   try {
     const cs = normalize(await request<unknown>(ctx, 'GET', '/clusters'))
-    const local = cs.find((c) => c.isLocal === true) ?? (cs.length === 1 ? cs[0] : undefined)
+    // `local`, not `isLocal`: the field this API sends is spelled without the
+    // prefix (ClusterSummary, required [id, local]). Reading the wrong name
+    // made the guard inert for every deployment that has more than one cluster
+    // in its routing table, which is where it matters — the answer then came
+    // from THIS cluster under the other one's name.
+    const local = cs.find((c) => c.local === true) ?? (cs.length === 1 ? cs[0] : undefined)
     served = local?.id as string | undefined
   } catch {
     // Never let a diagnostic lookup be the thing that fails the command.
@@ -783,9 +1206,15 @@ async function write(
 
   const file = typeof flags.f === 'string' ? flags.f : typeof flags.file === 'string' ? flags.file : ''
   if (!file) {
-    throw new CliError('apply needs -f FILE', 'write the desired state as JSON, then `apply -f` it')
+    throw new CliError(
+      'apply needs -f FILE',
+      bodyShape(spec) + `\n\`-f -\` reads the document from stdin instead.`,
+    )
   }
-  const body = JSON.parse(await Bun.file(file).text())
+  // A bare `-` is stdin: the document a caller built in a pipeline never has to
+  // be spilled to a file (and a file literally named `-` is not a thing anyone
+  // means to name).
+  const body = JSON.parse(file === '-' ? await Bun.stdin.text() : await Bun.file(file).text())
 
   if (collection) {
     if (!supports(spec, 'create')) throw new CliError(`"${spec.plural}" cannot be created here`)

@@ -22,9 +22,9 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
-from ...models.create_env_sandbox_pool_request import CreateEnvSandboxPoolRequest
 from ...models.error_response import ErrorResponse
 from ...models.sandbox_pool_envelope import SandboxPoolEnvelope
+from ...models.upsert_sandbox_pool_request import UpsertSandboxPoolRequest
 from typing import cast
 
 
@@ -32,7 +32,7 @@ from typing import cast
 def _get_kwargs(
     name: str,
     *,
-    body: CreateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -125,15 +125,14 @@ def sync_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
     """ Add a member SandboxPool to an Env
 
     Args:
         name (str):
-        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
-            derives:
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
               - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
               - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
@@ -154,6 +153,16 @@ def sync_detailed(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
              Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
             'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
             'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
@@ -184,15 +193,14 @@ def sync(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
     """ Add a member SandboxPool to an Env
 
     Args:
         name (str):
-        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
-            derives:
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
               - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
               - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
@@ -213,6 +221,16 @@ def sync(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
              Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
             'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
             'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
@@ -238,15 +256,14 @@ async def asyncio_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> Response[ErrorResponse | SandboxPoolEnvelope]:
     """ Add a member SandboxPool to an Env
 
     Args:
         name (str):
-        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
-            derives:
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
               - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
               - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
@@ -267,6 +284,16 @@ async def asyncio_detailed(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
              Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
             'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
             'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':
@@ -297,15 +324,14 @@ async def asyncio(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEnvSandboxPoolRequest,
+    body: UpsertSandboxPoolRequest,
 
 ) -> ErrorResponse | SandboxPoolEnvelope | None:
     """ Add a member SandboxPool to an Env
 
     Args:
         name (str):
-        body (CreateEnvSandboxPoolRequest): Add a member SandboxPool to an Env. The server
-            derives:
+        body (UpsertSandboxPoolRequest): Add a member SandboxPool to an Env. The server derives:
               - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
               - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
 
@@ -326,6 +352,16 @@ async def asyncio(
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
+
+            This is also what an update takes, and what `GET` returns as `editable`:
+            one body for create, update and export, so a client edits what the API
+            handed it rather than translating between two subsets that drift.
+
+            The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+            at create. An update must carry them back unchanged — omitting one or
+            changing one is a 400 that names the value in force, because a body that
+            loses the instance type is a caller bug, not a request for a smaller
+            machine.
              Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0,
             'maxReplicas': 4, 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'},
             'limits': {'cpu': '100m', 'memory': '500Mi'}}, 'labels': {'quota.scitix.ai/url':

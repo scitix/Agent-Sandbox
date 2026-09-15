@@ -35,17 +35,28 @@ if TYPE_CHECKING:
 
 
 
-T = TypeVar("T", bound="CreateSandboxEnvRequest")
+T = TypeVar("T", bound="UpsertSandboxEnvRequest")
 
 
 
 @_attrs_define
-class CreateSandboxEnvRequest:
-    """ 
+class UpsertSandboxEnvRequest:
+    """ What a client may set on an Env — the SAME body for create and update,
+    and the body `GET /envs/{name}` returns as `editable`.
+
+    One shape rather than two subsets, because two subsets drift: while
+    create accepted `mode` and update did not, a person editing an Env had
+    no way to send back what the API had just handed them, and the file a
+    client exported from a read was not a file a write accepted.
+
+    Fields marked `x-immutable` are fixed at create. An update must carry
+    them UNCHANGED: leaving one out, or sending a different value, is a 400
+    that names the value in force rather than a silent ignore — a body that
+    drops the template is far more likely to be a bug in the caller than a
+    request to have no template.
+
         Attributes:
             template_ref (SandboxEnvTemplateRef):
-            name (str): RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey +
-                QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit.
             mode (UpsertSandboxEnvRequestMode | Unset): WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod
                 per sandbox and tears it down after, trading start latency for holding no capacity between runs. Fixed after
                 create. Default: UpsertSandboxEnvRequestMode.WARMPOOL.
@@ -57,12 +68,10 @@ class CreateSandboxEnvRequest:
      """
 
     template_ref: SandboxEnvTemplateRef
-    name: str
     mode: UpsertSandboxEnvRequestMode | Unset = UpsertSandboxEnvRequestMode.WARMPOOL
     overrides: EnvOverrides | Unset = UNSET
     labels: StringMap | Unset = UNSET
     annotations: StringMap | Unset = UNSET
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
 
@@ -73,8 +82,6 @@ class CreateSandboxEnvRequest:
         from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef # noqa: PLC0415
         from ..models.string_map import StringMap # noqa: PLC0415
         template_ref = self.template_ref.to_dict()
-
-        name = self.name
 
         mode: str | Unset = UNSET
         if not isinstance(self.mode, Unset):
@@ -95,10 +102,9 @@ class CreateSandboxEnvRequest:
 
 
         field_dict: dict[str, Any] = {}
-        field_dict.update(self.additional_properties)
+
         field_dict.update({
             "templateRef": template_ref,
-            "name": name,
         })
         if mode is not UNSET:
             field_dict["mode"] = mode
@@ -123,8 +129,6 @@ class CreateSandboxEnvRequest:
 
 
 
-
-        name = d.pop("name")
 
         _mode = d.pop("mode", UNSET)
         mode: UpsertSandboxEnvRequestMode | Unset
@@ -166,31 +170,13 @@ class CreateSandboxEnvRequest:
 
 
 
-        create_sandbox_env_request = cls(
+        upsert_sandbox_env_request = cls(
             template_ref=template_ref,
-            name=name,
             mode=mode,
             overrides=overrides,
             labels=labels,
             annotations=annotations,
         )
 
+        return upsert_sandbox_env_request
 
-        create_sandbox_env_request.additional_properties = d
-        return create_sandbox_env_request
-
-    @property
-    def additional_keys(self) -> list[str]:
-        return list(self.additional_properties.keys())
-
-    def __getitem__(self, key: str) -> Any:
-        return self.additional_properties[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.additional_properties[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del self.additional_properties[key]
-
-    def __contains__(self, key: str) -> bool:
-        return key in self.additional_properties

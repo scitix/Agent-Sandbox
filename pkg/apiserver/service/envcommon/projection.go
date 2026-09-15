@@ -156,3 +156,51 @@ func embeddedTemplateToYAML(emb agentsv1alpha1.EmbeddedSandboxTemplate) string {
 	}
 	return string(b)
 }
+
+// InlineResourcesToGen flattens corev1.ResourceRequirements into the wire
+// ResourceRequirements shape (Quantity string maps). Returns nil when the input
+// carries no observable values.
+//
+// Shared rather than private to the env service because the member's editable
+// body needs it too: `UpsertSandboxPoolRequest.inlineResources` is the same
+// field the create accepted, and two conversions of one number would be two
+// places for it to drift.
+func InlineResourcesToGen(rr *corev1.ResourceRequirements) *gen.ResourceRequirements {
+	if rr == nil {
+		return nil
+	}
+	out := &gen.ResourceRequirements{}
+	if len(rr.Requests) > 0 {
+		req := quantityMapToGen(rr.Requests)
+		out.Requests = &req
+	}
+	if len(rr.Limits) > 0 {
+		lim := quantityMapToGen(rr.Limits)
+		out.Limits = &lim
+	}
+	if out.Requests == nil && out.Limits == nil {
+		return nil
+	}
+	return out
+}
+
+func quantityMapToGen(rl corev1.ResourceList) map[string]string {
+	out := make(map[string]string, len(rl))
+	for k, v := range rl {
+		out[string(k)] = v.String()
+	}
+	return out
+}
+
+// UpdateStrategyToGen projects a member's rollout policy onto the wire shape
+// carried by both the create and the update body.
+func UpdateStrategyToGen(s *agentsv1alpha1.EnvUpdateStrategy) *gen.EnvUpdateStrategy {
+	if s == nil {
+		return nil
+	}
+	out := &gen.EnvUpdateStrategy{AutoUpdate: s.AutoUpdate}
+	if s.MaxUnavailable != nil {
+		out.MaxUnavailable = ptr.To(s.MaxUnavailable.String())
+	}
+	return out
+}

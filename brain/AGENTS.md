@@ -225,10 +225,12 @@ read steps yourself and report; **confirm before each write.**
    JSON
    abx envs apply -f env.json
    ```
-4. **`abx quotas --as-team <t> --as-user <u>`** — what they may charge against.
-   **An empty list is a normal answer, not an error**: it means no quota is
-   configured for that team, and a pool can still be created without one. Say
-   exactly that rather than treating it as a failure.
+4. **`abx quotas`** — what they may charge against. It lists the quotas of the
+   credential in hand (`GET /quotas` takes no team/user parameters; acting as
+   someone else means holding their key). **An empty list is a normal answer,
+   not an error**: it means no quota is configured for that team, and a pool can
+   still be created without one. Say exactly that rather than treating it as a
+   failure.
 5. **`abx instancetypes`** — pick a size. Explain the cost column.
 6. **Add capacity.** Without a pool the Env hands out nothing.
 

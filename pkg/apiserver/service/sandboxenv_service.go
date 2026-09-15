@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -52,6 +53,13 @@ type EnvShellService interface {
 	List(ctx context.Context, namespace, team, user string) ([]gen.SandboxEnvSummary, *domain.AppError)
 	// Get returns a single Env or NotFound.
 	Get(ctx context.Context, namespace, name string) (*gen.SandboxEnv, *domain.AppError)
+	// Editable returns the body a write to this Env takes, read off the live
+	// object — the same shape Update accepts, so a client can export it, edit
+	// it and send it straight back. It is separate from Get because the read
+	// shape is not the write shape: handing a reader the object and calling it
+	// a request body is what made an exported file clear the fields it did not
+	// carry.
+	Editable(ctx context.Context, namespace, name string) (*gen.UpsertSandboxEnvRequest, *domain.AppError)
 	// Create posts a new SandboxEnv shell. The body carries TemplateRef +
 	// Overrides + optional ImagePullSecret only — Members are added via
 	// AddMember (from the embedded MemberPoolService), which also
@@ -131,6 +139,19 @@ type UpdateSandboxEnvInput struct {
 	// only two expressible intents would be "replace" and "revoke", and every
 	// ordinary edit would mean the second.
 	KeepImagePullSecret bool
+
+	// The Env's fixed fields, carried so the update can check them.
+	//
+	// A nil pointer means the body did not mention the field at all. For a
+	// fixed field that is NOT the same as "leave it alone": the fields a client
+	// can set are one shape now (see UpsertSandboxEnvRequest), so a body that
+	// loses the template is almost always the caller having built itself out of
+	// a read shape that does not contain it — and answering 400 with the value
+	// in force turns a silent wrong write into one line of advice.
+	TemplateRef *agentsv1alpha1.SandboxEnvTemplateRef
+	Mode        *gen.UpsertSandboxEnvRequestMode
+	Labels      *map[string]string
+	Annotations *map[string]string
 }
 
 // k8sSandboxEnvService is the default SandboxEnvService implementation. The
@@ -336,24 +357,26 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 	if err := validateEnvOverrides(input.Overrides); err != nil {
 		return nil, err
 	}
-	// Volume checks need the Env's Template, so resolve the Env first. This read
-	// is outside the retry loop below: it only supplies templateRef.Name, which
-	// is immutable after create.
-	if input.Overrides != nil && len(input.Overrides.Volumes) > 0 {
-		existing := &agentsv1alpha1.SandboxEnv{}
-		key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
-		if err := s.client.Get(ctx, key, existing); err != nil {
-			if k8serrors.IsNotFound(err) {
-				return nil, domain.NewNotFound(fmt.Sprintf("env %q not found", input.Name))
-			}
-			return nil, domain.NewInternal(err.Error(), err)
+	// One read, two jobs: the fixed fields to check against, and the Template
+	// name the volume checks need. Both are outside the retry loop below, which
+	// is where the actual write happens.
+	existing := &agentsv1alpha1.SandboxEnv{}
+	key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
+	if err := s.client.Get(ctx, key, existing); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("env %q not found", input.Name))
 		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+	if appErr := checkEnvFixedFields(existing, input); appErr != nil {
+		return nil, appErr
+	}
+	if input.Overrides != nil && len(input.Overrides.Volumes) > 0 {
 		if err := s.validateEnvVolumes(
 			ctx, input.Namespace, existing.Spec.TemplateRef.Name, input.Overrides); err != nil {
 			return nil, err
 		}
 	}
-	key := types.NamespacedName{Namespace: input.Namespace, Name: input.Name}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &agentsv1alpha1.SandboxEnv{}
 		if err := s.client.Get(ctx, key, current); err != nil {
@@ -439,6 +462,125 @@ func envToGen(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnv {
 		result.Labels = &labels
 	}
 	return result
+}
+
+// envToSummary projects a SandboxEnv onto the lightweight List shape. It
+// The write body for this Env, read off the live object.
+//
+// Same shape as Update takes, which is the point: an export from here can be
+// edited and sent straight back. The read projection cannot serve as one — it
+// is not the same document, and a client that treats it as one clears
+// everything it does not happen to copy over.
+func envEditableToGen(env *agentsv1alpha1.SandboxEnv) *gen.UpsertSandboxEnvRequest {
+	out := &gen.UpsertSandboxEnvRequest{
+		TemplateRef: gen.SandboxEnvTemplateRef{Name: env.Spec.TemplateRef.Name},
+	}
+	if env.Spec.TemplateRef.Version != "" {
+		out.TemplateRef.Version = ptr.To(env.Spec.TemplateRef.Version)
+	}
+	if env.Spec.Mode != "" {
+		mode := gen.UpsertSandboxEnvRequestMode(env.Spec.Mode)
+		out.Mode = &mode
+	}
+	out.Overrides = envOverridesToGen(env.Spec.Overrides)
+	if len(env.Labels) > 0 {
+		labels := gen.StringMap(maps.Clone(env.Labels))
+		out.Labels = &labels
+	}
+	if len(env.Annotations) > 0 {
+		annotations := gen.StringMap(maps.Clone(env.Annotations))
+		out.Annotations = &annotations
+	}
+	return out
+}
+
+func (s *k8sSandboxEnvService) Editable(ctx context.Context, namespace, name string) (*gen.UpsertSandboxEnvRequest, *domain.AppError) {
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, env); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("env %q not found", name))
+		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+	return envEditableToGen(env), nil
+}
+
+// checkEnvFixedFields refuses an update that drops or changes a field the Env
+// was created with.
+//
+// "Absent" is deliberately not read as "leave it alone". A client that exported
+// the editable body cannot lose a field by accident; one that built a body by
+// hand and lost one has almost certainly built it from the read shape, and the
+// half of the mistake worth surfacing is that it probably meant to send
+// something else too. Naming the value in force is what makes the refusal
+// recoverable in one retry.
+func checkEnvFixedFields(live *agentsv1alpha1.SandboxEnv, in UpdateSandboxEnvInput) *domain.AppError {
+	if in.TemplateRef == nil {
+		if live.Spec.TemplateRef.Name != "" {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"templateRef is fixed at create and this env is rendered from %q; an update must carry it unchanged — to change templates, create a new env and move the traffic over",
+				live.Spec.TemplateRef.Name))
+		}
+	} else if in.TemplateRef.Name != live.Spec.TemplateRef.Name ||
+		in.TemplateRef.Version != live.Spec.TemplateRef.Version {
+		return domain.NewBadRequest(fmt.Sprintf(
+			"templateRef is fixed at create: this env is %q (version %q) and the request says %q (version %q); create a new env to change templates",
+			live.Spec.TemplateRef.Name, live.Spec.TemplateRef.Version,
+			in.TemplateRef.Name, in.TemplateRef.Version))
+	}
+
+	if in.Mode == nil {
+		if live.Spec.Mode != "" {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"mode is fixed at create and this env is %q; an update must carry it unchanged",
+				live.Spec.Mode))
+		}
+	} else if agentsv1alpha1.SandboxEnvMode(*in.Mode) != live.Spec.Mode {
+		return domain.NewBadRequest(fmt.Sprintf(
+			"mode is fixed at create: this env is %q and the request says %q; create a new env to change it",
+			live.Spec.Mode, *in.Mode))
+	}
+
+	if appErr := checkEnvFixedMap("labels", in.Labels, live.Labels); appErr != nil {
+		return appErr
+	}
+	return checkEnvFixedMap("annotations", in.Annotations, live.Annotations)
+}
+
+// checkEnvFixedMap compares one fixed map field. Absent is acceptable only when
+// there is nothing in force to preserve.
+func checkEnvFixedMap(field string, want *map[string]string, live map[string]string) *domain.AppError {
+	if want == nil {
+		if len(live) == 0 {
+			return nil
+		}
+		return domain.NewBadRequest(fmt.Sprintf(
+			"%s are fixed at create and this env has %d of them; an update must carry them unchanged (read them back with `--json --editable`)",
+			field, len(live)))
+	}
+	if maps.Equal(live, *want) {
+		return nil
+	}
+	return domain.NewBadRequest(fmt.Sprintf(
+		"%s are fixed at create and cannot be changed here; this env has %s",
+		field, renderStringMap(live)))
+}
+
+// renderStringMap is for error text: stable order, and short.
+func renderStringMap(m map[string]string) string {
+	if len(m) == 0 {
+		return "(none)"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, m[k]))
+	}
+	return strings.Join(parts, " ")
 }
 
 // envToSummary projects a SandboxEnv onto the lightweight List shape. It

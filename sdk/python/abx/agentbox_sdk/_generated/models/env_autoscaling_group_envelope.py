@@ -22,10 +22,12 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
   from ..models.env_autoscaling_group import EnvAutoscalingGroup
+  from ..models.update_env_autoscaling_group_request import UpdateEnvAutoscalingGroupRequest
 
 
 
@@ -40,9 +42,17 @@ class EnvAutoscalingGroupEnvelope:
     """ 
         Attributes:
             group (EnvAutoscalingGroup):
+            editable (UpdateEnvAutoscalingGroupRequest | Unset): Desired state of one autoscaling group. This is a PUT and
+                it means it:
+                a field left out is one the caller wants REMOVED. That is the only way
+                "take the ceiling off" can be expressed — while an omitted field meant
+                "leave unchanged" there was no request that could clear minReplicas,
+                maxReplicas or a policy, and the form's empty box reported success
+                without doing anything.
      """
 
     group: EnvAutoscalingGroup
+    editable: UpdateEnvAutoscalingGroupRequest | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -51,7 +61,12 @@ class EnvAutoscalingGroupEnvelope:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
+        from ..models.update_env_autoscaling_group_request import UpdateEnvAutoscalingGroupRequest # noqa: PLC0415
         group = self.group.to_dict()
+
+        editable: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.editable, Unset):
+            editable = self.editable.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -59,6 +74,8 @@ class EnvAutoscalingGroupEnvelope:
         field_dict.update({
             "group": group,
         })
+        if editable is not UNSET:
+            field_dict["editable"] = editable
 
         return field_dict
 
@@ -67,14 +84,26 @@ class EnvAutoscalingGroupEnvelope:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.env_autoscaling_group import EnvAutoscalingGroup # noqa: PLC0415
+        from ..models.update_env_autoscaling_group_request import UpdateEnvAutoscalingGroupRequest # noqa: PLC0415
         d = dict(src_dict)
         group = EnvAutoscalingGroup.from_dict(d.pop("group"))
 
 
 
 
+        _editable = d.pop("editable", UNSET)
+        editable: UpdateEnvAutoscalingGroupRequest | Unset
+        if isinstance(_editable,  Unset):
+            editable = UNSET
+        else:
+            editable = UpdateEnvAutoscalingGroupRequest.from_dict(_editable)
+
+
+
+
         env_autoscaling_group_envelope = cls(
             group=group,
+            editable=editable,
         )
 
 

@@ -52,6 +52,7 @@ func newGatedRouter(s *Store, gatedCaller bool) (*gin.Engine, *[]string) {
 
 	r.POST("/v1/envs", mw, handler)
 	r.GET("/v1/envs", mw, handler)
+	r.PUT("/v1/envs/:name", mw, handler)
 	r.DELETE("/v1/envs/:name", mw, handler)
 	r.POST("/v1/unlisted", mw, handler)
 	r.POST("/v1/api-keys", mw, handler)
@@ -180,6 +181,76 @@ func TestTheSummaryNamesWhatIsBeingActedOn(t *testing.T) {
 	// And it must tell the client that "for this session" is not on offer here.
 	if !body.Detail.OnceOnly {
 		t.Fatal("a delete must be reported as once-only")
+	}
+}
+
+// Two calls that act on two different objects are two questions.
+//
+// They used to be one: the fingerprint was taken over the route TEMPLATE, and a
+// DELETE carries no body, so every delete from one credential produced the same
+// fingerprint. The person was then shown whichever env asked first, and their
+// answer released whatever the next retry happened to name.
+func TestDifferentObjectsAreDifferentRequests(t *testing.T) {
+	s, _ := newTestStore()
+	r, _ := newGatedRouter(s, true)
+
+	first := post(r, "DELETE", "/v1/envs/alpha", "", "s1")
+	second := post(r, "DELETE", "/v1/envs/beta", "", "s1")
+
+	if first.Code != StatusApprovalRequired || second.Code != StatusApprovalRequired {
+		t.Fatalf("both deletes must be challenged, got %d and %d", first.Code, second.Code)
+	}
+	pending, _ := s.List(context.Background(), alice)
+	if len(pending) != 2 {
+		t.Fatalf("expected one request per object, got %d", len(pending))
+	}
+	paths := map[string]bool{}
+	for _, p := range pending {
+		paths[p.Path] = true
+	}
+	if !paths["/v1/envs/alpha"] || !paths["/v1/envs/beta"] {
+		t.Fatalf("each request must name its own object, got %v", paths)
+	}
+
+	// And the same object twice is still one question: a client that retries
+	// while it waits must not bury the request a person is looking at.
+	again := post(r, "DELETE", "/v1/envs/alpha", "", "s1")
+	var body struct {
+		Detail Detail `json:"detail"`
+	}
+	if err := json.Unmarshal(again.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, p := range pending {
+		if p.Path == "/v1/envs/alpha" && p.ID != body.Detail.ApprovalID {
+			t.Fatalf("retrying the same call minted a second approval: %s vs %s", p.ID, body.Detail.ApprovalID)
+		}
+	}
+}
+
+// Updating an env is a write an agent credential must ask about. The catalogue
+// pinned it to PATCH, a route the spec has not had for as long as the gate has
+// existed, so this is the case that shipped as an open door.
+func TestUpdatingAnEnvIsChallenged(t *testing.T) {
+	s, _ := newTestStore()
+	r, _ := newGatedRouter(s, true)
+
+	w := post(r, "PUT", "/v1/envs/demo", `{"overrides":{"defaultIdleTimeout":"30m"}}`, "s1")
+	if w.Code != StatusApprovalRequired {
+		t.Fatalf("want %d for an env update, got %d: %s", StatusApprovalRequired, w.Code, w.Body)
+	}
+	var body struct {
+		Detail Detail `json:"detail"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Detail.Operation != "env.update" {
+		t.Fatalf("operation = %q", body.Detail.Operation)
+	}
+	// The path is the concrete one, so the approval names what it is about.
+	if !strings.Contains(body.Detail.Summary, "demo") {
+		t.Fatalf("summary should name the env, got %q", body.Detail.Summary)
 	}
 }
 

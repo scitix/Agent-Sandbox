@@ -25,7 +25,7 @@
 
 import { RESOURCES, childrenOf, resourceOf } from './resources'
 import type { Address } from './navigation'
-import type { ActionSpec, ResourceSpec, Verb } from './types'
+import type { ActionSpec, ResourceSpec, Verb, ViewSpec } from './types'
 
 export interface Resolved {
   /** The registry entry the address ultimately names. */
@@ -36,6 +36,13 @@ export interface Resolved {
   collection: boolean
   /** The response field holding the list, when the resource declares one. */
   listField?: string
+  /**
+   * The view the address bottomed out at, when it named one.
+   *
+   * Callers need it because a view's response is not a row set — the renderer
+   * that fits it is a property of the view, not of the resource it hangs off.
+   */
+  view?: ViewSpec
 }
 
 /**
@@ -74,7 +81,7 @@ export function resolveApi(a: Address): Resolved | null {
     // A view with no native path is real but served elsewhere — pool metrics
     // come from Prometheus, not from this API — so this is "no path", not
     // "no such view". addressError is what rejects a segment that is wrong.
-    return view?.api ? { spec, path: fill(view.api, ids), collection: false } : null
+    return view?.api ? { spec, path: fill(view.api, ids), collection: false, view } : null
   }
 
   const wantsItem = a.sub ? Boolean(a.subId) : Boolean(a.id)

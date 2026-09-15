@@ -610,6 +610,11 @@ func (s *Store) ownsKey(ctx context.Context, p Principal, keyID string) bool {
 // person agrees to — "create the environment called foo" is. Without the body,
 // a one-time approval for a harmless call would authorise any other call to the
 // same route.
+//
+// The path is in it for the same reason and has to be the CONCRETE path: a
+// request like `DELETE /v1/envs/:name` carries no body, so keying on the route
+// template made every delete from one credential share one fingerprint — and
+// one pending request, labelled with whichever env happened to ask first.
 func Fingerprint(method, path string, body []byte) string {
 	h := sha256.New()
 	h.Write([]byte(method))

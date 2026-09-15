@@ -89,6 +89,81 @@ export async function writeConfig(cfg: FileConfig): Promise<void> {
   await Bun.$`chmod 600 ${path}`.quiet().nothrow()
 }
 
+/**
+ * What the deployment last said about the caller's credential.
+ *
+ * Kept beside the config because it is the same kind of fact — a property of
+ * this deployment and this key — and cached because the CLI needs it to decide
+ * what to ADVERTISE, which happens before every command including ones that
+ * never reach the API. `abx --help` must not depend on the network, so the
+ * answer is remembered and re-asked only when someone runs `abx whoami`.
+ */
+export interface WhoamiCacheEntry {
+  role?: string
+  mode?: string
+  user?: string
+  team?: string
+  /** When it was recorded. There is no TTL: a role change is what `abx whoami` is for. */
+  at?: string
+}
+
+export function whoamiCachePath(): string {
+  return join(dirname(configPath()), 'whoami.json')
+}
+
+/**
+ * Which cache entry belongs to this run.
+ *
+ * Keyed on the CREDENTIAL, not just the context name. The role is a property of
+ * the key, and one machine can hold several keys for one deployment — a person
+ * with an admin key and an agent key, a plugin hook that rewrites the configured
+ * key, a test harness that keeps three keys in the same environment. Keying on
+ * the context alone made those share an entry, so the last `whoami` decided what
+ * every other key's help page advertised.
+ *
+ * The credential itself is hashed rather than stored: this only has to tell two
+ * keys apart, and a cache file is not a place to keep key material.
+ */
+export function whoamiCacheKey(
+  contextName: string | undefined,
+  endpoint: string,
+  apiKey: string,
+): string {
+  const hash = new Bun.CryptoHasher('sha256')
+  hash.update(`${endpoint}\n${apiKey}`)
+  return `${contextName ?? 'default'}:${hash.digest('hex').slice(0, 8)}`
+}
+
+export async function readWhoamiCache(): Promise<Record<string, WhoamiCacheEntry>> {
+  try {
+    return JSON.parse(await Bun.file(whoamiCachePath()).text()) as Record<string, WhoamiCacheEntry>
+  } catch {
+    // No cache is the normal state of a fresh install, and it is not worth a
+    // word of output: the caller falls back to asking, then to showing
+    // everything.
+    return {}
+  }
+}
+
+export async function writeWhoamiCache(
+  key: string,
+  entry: WhoamiCacheEntry,
+): Promise<void> {
+  const path = whoamiCachePath()
+  const all = await readWhoamiCache()
+  all[key] = entry
+  await mkdir(dirname(path), { recursive: true })
+  await Bun.write(path, JSON.stringify(all, null, 2) + '\n')
+  // The file names a person and their team. Same reasoning as the config.
+  await Bun.$`chmod 600 ${path}`.quiet().nothrow()
+}
+
+/** The cached role for that credential, when one was ever recorded. */
+export async function cachedRole(key: string): Promise<string | null> {
+  const entry = (await readWhoamiCache())[key]
+  return entry?.role ?? null
+}
+
 /** Every named context, in the order they should be listed. */
 export function contextNames(cfg: FileConfig): string[] {
   return Object.keys(cfg.contexts ?? {}).sort()

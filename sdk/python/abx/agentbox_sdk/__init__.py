@@ -61,7 +61,7 @@ from agentbox_sdk.models import (
     WhoAmIData,
 )
 
-__version__ = "0.0.0"
+__version__ = "0.1.4"
 
 __all__ = [
     # Client

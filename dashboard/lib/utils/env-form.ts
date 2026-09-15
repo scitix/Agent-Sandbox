@@ -23,6 +23,10 @@
 import { z } from "zod"
 
 import type { AgentSandboxEnv } from "@/lib/api/client"
+import type { components } from "@/lib/api/schema"
+
+/** The body a write to an Env takes — the same schema create uses. */
+export type UpsertEnvBody = components["schemas"]["UpsertSandboxEnvRequest"]
 
 // ─── Form schema ─────────────────────────────────────────────────────────────
 //
@@ -106,7 +110,10 @@ export type FormValues = z.infer<typeof formSchema>
 export const envFormDefaults = (): FormValues => envToFormValues(null)
 // ─── Form ↔ API mapping ──────────────────────────────────────────────────────
 
-export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
+export function envToFormValues(
+  env: AgentSandboxEnv | null,
+  editable?: UpsertEnvBody | null,
+): FormValues {
   if (!env) {
     return {
       name: "",
@@ -124,10 +131,14 @@ export function envToFormValues(env: AgentSandboxEnv | null): FormValues {
       volumeRows: [],
     }
   }
-  const overrides = env.spec.overrides
+  // The write shape when the server sent one. It is what the form will be sent
+  // back as, so reading the initial values from it is what keeps "open the form
+  // and press Save" a no-op: the two shapes agree on overrides today, and the
+  // day they do not, this line is the one that has to be right.
+  const overrides = editable?.overrides ?? env.spec.overrides
   return {
     name: env.name,
-    templateName: env.spec.templateRef.name,
+    templateName: (editable?.templateRef ?? env.spec.templateRef).name,
     image: overrides?.image,
     podCreationImagePolicy: overrides?.podCreationImagePolicy ?? "IdleImage",
     defaultStartupTimeout: overrides?.defaultStartupTimeout,
@@ -164,9 +175,37 @@ export function formValuesToCreateBody(v: FormValues) {
   }
 }
 
-export function formValuesToUpdateBody(v: FormValues) {
+/**
+ * The body a PUT takes: the same shape create takes, which means the fields the
+ * form does not edit are still part of it.
+ *
+ * `templateRef`, `mode` and the labels are fixed at create, and the API refuses
+ * an update that drops them — deliberately, because a body that has lost the
+ * template was built from the read shape rather than from the write shape, and
+ * accepting it silently would write an env nobody asked for. They are echoed
+ * back from the object this form was opened on.
+ */
+export function formValuesToUpdateBody(
+  v: FormValues,
+  env: AgentSandboxEnv,
+  editable?: UpsertEnvBody | null,
+): UpsertEnvBody {
+  // The fixed half comes from `editable` whenever the server sent it, and not
+  // from the resource: annotations are part of the write shape and are NOT in
+  // the read shape, so an env carrying any would otherwise lose them here — and
+  // losing a fixed field is a 400, not a quiet drop. The resource is only the
+  // fallback for a server too old to project `editable` at all.
+  const templateRef = editable?.templateRef ?? {
+    name: env.spec.templateRef.name,
+    ...(env.spec.templateRef.version ? { version: env.spec.templateRef.version } : {}),
+  }
+  const labels = editable?.labels ?? env.labels
   return {
-    overrides: buildOverrides(v),
+    templateRef,
+    mode: editable?.mode ?? env.spec.mode,
+    overrides: buildOverrides(v) as UpsertEnvBody["overrides"],
+    ...(labels ? { labels } : {}),
+    ...(editable?.annotations ? { annotations: editable.annotations } : {}),
   }
 }
 

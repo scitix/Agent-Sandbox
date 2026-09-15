@@ -118,6 +118,117 @@ export function renderCsv(
 }
 
 /**
+ * One object, as the thing it is.
+ *
+ * A get is not a one-row list, and rendering it with the list's columns is how
+ * `abx envs demo-env` came back with `templateName`, `mode` and every
+ * replica count printed as `—`: those fields are in the response, under
+ * `spec`/`status`, and the list's projection never looks there. The registry
+ * declares the get's own shape for exactly this reason.
+ *
+ * Text fields (a template's docs, a pool's pod-template YAML) print whole, with
+ * one line saying how much of them there is — the places that truncate are the
+ * ones that know what they are truncating for.
+ */
+export function renderDetail(
+  spec: ResourceSpec,
+  item: Record<string, unknown>,
+  ctx: Context,
+  a: Address,
+  extras: { spec: ResourceSpec; rows: Record<string, unknown>[] }[] = [],
+): string {
+  const title = [spec.kind, ctx.cluster, a.sub ? a.subId : a.id].filter(Boolean).join(' · ')
+  const out: string[] = [title, '']
+
+  const inline: [string, string][] = []
+  const blocks: [string, string][] = []
+  for (const f of spec.detailFields ?? []) {
+    const raw = at(item, f.path ?? f.id)
+    if (f.text) {
+      const body = raw === undefined || raw === null ? '' : String(raw)
+      blocks.push([`${f.id} (${body.length} chars)`, body])
+      continue
+    }
+    inline.push([f.id, format(raw)])
+  }
+
+  const width = Math.max(0, ...inline.map(([k]) => k.length))
+  for (const [k, v] of inline) out.push(`${k.padEnd(width)}  ${v}`)
+
+  for (const [head, body] of blocks) {
+    if (out[out.length - 1] !== '') out.push('')
+    out.push(head, '', body)
+  }
+
+  for (const child of extras) {
+    // The child list is already a table with its own heading and count; the
+    // blank line is what separates it from the fields above rather than making
+    // it read as one more field.
+    out.push('', renderTable(child.spec, child.rows, ctx))
+  }
+
+  out.push('', hints(spec, ctx, a))
+  return out.join('\n')
+}
+
+/**
+ * A log snapshot, which is not a row set and must not be rendered as one.
+ *
+ * `GET /sandboxes/{id}/logs` answers with the container list, where the lines
+ * came from and how complete they are — all of which are the difference between
+ * "the sandbox printed nothing" and "the wrong thing was asked", a distinction
+ * the API goes out of its way to preserve and a table throws away.
+ */
+export function renderLogs(payload: unknown, ctx: Context, a: Address): string {
+  const r = (payload ?? {}) as Record<string, unknown>
+  const entries = Array.isArray(r.entries) ? (r.entries as Record<string, unknown>[]) : []
+  const out: string[] = [`logs · ${a.id ?? a.subId ?? ''}`, '']
+
+  const meta: [string, string][] = []
+  const containers = Array.isArray(r.containers) ? r.containers.map(format) : []
+  if (containers.length) meta.push(['containers', containers.join(', ')])
+  if (r.source !== undefined) meta.push(['source', format(r.source)])
+  if (r.namespace !== undefined) meta.push(['namespace', format(r.namespace)])
+  if (r.podName !== undefined) meta.push(['pod', format(r.podName)])
+  if (r.capturedAt !== undefined) meta.push(['capturedAt', format(r.capturedAt)])
+  if (r.totalBytes !== undefined) meta.push(['totalBytes', format(r.totalBytes)])
+  if (r.truncated !== undefined) meta.push(['truncated', r.truncated ? 'yes' : 'no'])
+  // Empty for every source but `central`, and the only way to tell an empty
+  // result from a mis-scoped query there.
+  if (r.scope !== undefined && r.scope !== '') meta.push(['scope', format(r.scope)])
+
+  const width = Math.max(0, ...meta.map(([k]) => k.length))
+  for (const [k, v] of meta) out.push(`${k.padEnd(width)}  ${v}`)
+
+  if (!entries.length) {
+    out.push('', 'no log lines in this snapshot')
+    return out.join('\n')
+  }
+  out.push('')
+  for (const e of entries) {
+    const line = String(e.log ?? '')
+    const container = e.container === undefined ? '' : String(e.container)
+    const ts = e.timestamp === undefined ? '' : format(e.timestamp)
+    out.push(ts ? `${ts}  [${container}] ${line}` : `[${container}] ${line}`)
+  }
+  return out.join('\n')
+}
+
+/** The same snapshot as CSV, for the callers that asked for one. */
+export function renderLogsCsv(payload: unknown): string {
+  const r = (payload ?? {}) as Record<string, unknown>
+  const entries = Array.isArray(r.entries) ? (r.entries as Record<string, unknown>[]) : []
+  // An absent field is an absent column, not a dash: `—` is how the table view
+  // says "no value", and in a CSV it would be read as the literal text.
+  const plain = (v: unknown) => (v === null || v === undefined ? '' : format(v))
+  const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s)
+  return [
+    'timestamp,container,log',
+    ...entries.map((e) => [esc(plain(e.timestamp)), esc(plain(e.container)), esc(String(e.log ?? ''))].join(',')),
+  ].join('\n')
+}
+
+/**
  * What to do next, attached to what just happened.
  *
  * Three kinds: go deeper, go sideways to a related resource, or ask what the

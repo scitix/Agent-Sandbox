@@ -34,11 +34,12 @@ import {
 } from '@headless/index'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { applyFilters, hints, renderTable, visibleColumns } from '../src/render'
+import { applyFilters, hints, renderDetail, renderTable, visibleColumns } from '../src/render'
 import {
   AmbiguousContextError,
   UnknownContextError,
   selectContext,
+  whoamiCacheKey,
   type FileConfig,
 } from '../src/contexts'
 import { agentContext } from '../src/agent-context'
@@ -164,6 +165,87 @@ describe('filters refuse what they cannot honour', () => {
   })
 })
 
+describe('a detail view is the get, not the list', () => {
+  const envs = RESOURCES.find(r => r.plural === 'envs')!
+
+  it('reads every declared field through the path it declares', () => {
+    // The bug this encodes: a get printed the LIST's columns, so every field
+    // that lives under spec/status came out as `—` with the value sitting in
+    // the same response. A declared path that is not the id is the whole
+    // mechanism, so it is what gets asserted.
+    for (const spec of RESOURCES) {
+      if (!spec.detailFields?.length) continue
+      const item: Record<string, unknown> = {}
+      for (const f of spec.detailFields) {
+        const parts = (f.path ?? f.id).split('.')
+        let cur = item
+        for (const p of parts.slice(0, -1)) cur = (cur[p] ??= {}) as Record<string, unknown>
+        cur[parts[parts.length - 1]] = f.text ? 'x'.repeat(4000) : `${f.id}-value`
+      }
+      const out = renderDetail(spec, item, ctx, { cluster: ctx.cluster, resource: spec.plural, id: 'x' })
+      for (const f of spec.detailFields) {
+        if (f.text) {
+          expect(out, `${spec.plural}.${f.id}`).toContain(`${f.id} (4000 chars)`)
+        } else {
+          const line = new RegExp(`^${f.id}\\s+${f.id}-value$`, 'm')
+          expect(out, `${spec.plural}.${f.id} is not rendered`).toMatch(line)
+        }
+      }
+    }
+  })
+
+  it('an env detail carries no envDocs field at all', () => {
+    // Not a rendering choice: the server substitutes the caller's own plaintext
+    // key into that Markdown, so a field that would print it must not exist.
+    expect(envs.detailFields!.some(f => f.id === 'envDocs' || f.path === 'envDocs')).toBe(false)
+  })
+
+  it('a field the response does not carry reads as absent, not as its own name', () => {
+    const out = renderDetail(envs, {}, ctx, { cluster: ctx.cluster, resource: 'envs', id: 'e' })
+    expect(out).toMatch(/^template\s+—$/m)
+  })
+
+  it('the parent detail carries the child tables it declares', () => {
+    const child = childrenOf('envs').find(c => c.inParentDetail)!
+    const out = renderDetail(envs, { name: 'e' }, ctx, { cluster: ctx.cluster, resource: 'envs', id: 'e' }, [
+      { spec: child, rows: [{ name: 'e-pool' }] },
+    ])
+    expect(out).toContain('e-pool')
+    expect(out).toContain('hint:')
+  })
+})
+
+describe('the help page offers only what exists', () => {
+  it('never links to a console page the resource does not have', () => {
+    for (const spec of RESOURCES) {
+      if (spec.consolePage !== false) continue
+      const text = hints(spec, ctx, { cluster: ctx.cluster, resource: spec.plural, id: 'x' })
+      expect(text, `${spec.plural} links to a page that 404s`).not.toContain('view:')
+    }
+  })
+
+  it('an admin-only resource is named as one, and hidden from a tenant', () => {
+    for (const r of RESOURCES) {
+      if (!r.admin || r.parent) continue
+      expect(r.plural, `${r.plural} is admin-only but not named like it`).toStartWith('admin-')
+    }
+    const tenant = agentContext('test', null, 'tenant')
+    expect(tenant.roots).not.toContain('admin-teams')
+    expect(tenant.roots).not.toContain('admin-namespaces')
+    expect(tenant.resources.some(r => r.plural === 'admin-teams')).toBe(false)
+    // The template catalog is read by everyone; hiding it would say templates
+    // cannot be read at all.
+    expect(tenant.roots).toContain('templates')
+    const admin = agentContext('test', null, 'admin')
+    expect(admin.roots).toContain('admin-teams')
+  })
+
+  it('shows everything when the role could not be established', () => {
+    const unknown = agentContext('test', null, null)
+    expect(unknown.roots).toEqual(rootResources().map(r => r.plural))
+  })
+})
+
 describe('agent-context describes this CLI and no other', () => {
   const doc = agentContext('test')
 
@@ -270,6 +352,30 @@ describe('contexts name deployments, clusters name their clusters', () => {
       }
     }
     expect(selectContext({}).entry).toEqual({})
+  })
+})
+
+describe('the role cache follows the credential, not just the deployment', () => {
+  it('two keys for one context are two entries', () => {
+    // A person can hold an admin key and an agent key for the same platform,
+    // and a plugin hook can rewrite the configured one. Keyed on the context
+    // alone they shared an entry, so whichever ran `whoami` last decided what
+    // the other key's help page advertised — which showed up as an admin being
+    // told the admin commands do not exist.
+    const admin = whoamiCacheKey('work', 'https://c.test', 'agbx_admin')
+    const agent = whoamiCacheKey('work', 'https://c.test', 'agbx_agent')
+    expect(admin).not.toBe(agent)
+    expect(admin.startsWith('work:')).toBe(true)
+    // Two deployments with the same key are different entries too.
+    expect(whoamiCacheKey('a', 'https://a.test', 'k')).not.toBe(
+      whoamiCacheKey('b', 'https://b.test', 'k'),
+    )
+  })
+
+  it('names the context it came from, and never carries the key', () => {
+    const key = whoamiCacheKey(undefined, 'https://c.test', 'agbx_secret_value')
+    expect(key.startsWith('default:')).toBe(true)
+    expect(key).not.toContain('agbx_secret_value')
   })
 })
 

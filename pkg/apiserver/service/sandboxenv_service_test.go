@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"maps"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +36,35 @@ import (
 
 const envTestNamespace = "default"
 const envTestName = "env-a"
+const envTestTemplate = "envd-runtime"
+
+// updateEnvInput builds an update body with the fixed fields echoed back from
+// the live Env — what a client gets from `--json --editable`, and now what an
+// update must carry. Tests that are about something else call this so the
+// contract is spelled out once instead of at every call site.
+func updateEnvInput(env *agentsv1alpha1.SandboxEnv, overrides *agentsv1alpha1.EnvOverridesSpec) UpdateSandboxEnvInput {
+	ref := agentsv1alpha1.SandboxEnvTemplateRef{
+		Name:    env.Spec.TemplateRef.Name,
+		Version: env.Spec.TemplateRef.Version,
+	}
+	mode := gen.UpsertSandboxEnvRequestMode(env.Spec.Mode)
+	in := UpdateSandboxEnvInput{
+		Name:        env.Name,
+		Namespace:   env.Namespace,
+		Overrides:   overrides,
+		TemplateRef: &ref,
+		Mode:        &mode,
+	}
+	if len(env.Labels) > 0 {
+		labels := maps.Clone(env.Labels)
+		in.Labels = &labels
+	}
+	if len(env.Annotations) > 0 {
+		annotations := maps.Clone(env.Annotations)
+		in.Annotations = &annotations
+	}
+	return in
+}
 
 func newEnv(name, team, user string) *agentsv1alpha1.SandboxEnv {
 	return &agentsv1alpha1.SandboxEnv{
@@ -47,7 +77,7 @@ func newEnv(name, team, user string) *agentsv1alpha1.SandboxEnv {
 			},
 		},
 		Spec: agentsv1alpha1.SandboxEnvSpec{
-			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: "envd-runtime"},
+			TemplateRef: agentsv1alpha1.SandboxEnvTemplateRef{Name: envTestTemplate},
 			Mode:        agentsv1alpha1.SandboxEnvModeWarmPool,
 			Clusters: []agentsv1alpha1.EnvClusterSpec{
 				{
@@ -142,10 +172,13 @@ func TestEnvToSummary_ProjectsListShape(t *testing.T) {
 
 	s := envToSummary(env)
 
-	if got := ptr.Deref(s.TemplateName, ""); got != "envd-runtime" {
-		t.Errorf("TemplateName = %q, want envd-runtime", got)
+	if got := ptr.Deref(s.TemplateName, ""); got != envTestTemplate {
+		t.Errorf("TemplateName = %q, want %s", got, envTestTemplate)
 	}
-	if s.Mode == nil || *s.Mode != gen.WarmPool {
+	// The generated constant is per-enum (the same wire value appears on the
+	// spec, the summary and the write body), so this names the one the summary
+	// is built from rather than a shared `gen.WarmPool` that no longer exists.
+	if s.Mode == nil || *s.Mode != gen.SandboxEnvSummaryModeWarmPool {
 		t.Errorf("Mode = %v, want WarmPool", s.Mode)
 	}
 	if got := ptr.Deref(s.ScalingGroupCount, 0); got != 2 {
@@ -182,7 +215,7 @@ func TestSandboxEnvService_Get_ProjectsSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if result.Spec.TemplateRef.Name != "envd-runtime" {
+	if result.Spec.TemplateRef.Name != envTestTemplate {
 		t.Errorf("TemplateRef.Name = %s", result.Spec.TemplateRef.Name)
 	}
 	if string(result.Spec.Mode) != "WarmPool" {
@@ -254,11 +287,8 @@ func TestSandboxEnvService_Update_OverridesAreDesiredState(t *testing.T) {
 	env.Spec.Overrides = &agentsv1alpha1.EnvOverridesSpec{Image: "registry.example/keep:1"}
 	svc := newEnvService(t, env)
 
-	set, appErr := svc.Update(context.Background(), UpdateSandboxEnvInput{
-		Name:      envTestName,
-		Namespace: envTestNamespace,
-		Overrides: &agentsv1alpha1.EnvOverridesSpec{Image: "registry.example/replaced:2"},
-	})
+	set, appErr := svc.Update(context.Background(), updateEnvInput(env,
+		&agentsv1alpha1.EnvOverridesSpec{Image: "registry.example/replaced:2"}))
 	if appErr != nil {
 		t.Fatalf("update: %v", appErr)
 	}
@@ -266,10 +296,7 @@ func TestSandboxEnvService_Update_OverridesAreDesiredState(t *testing.T) {
 		t.Fatalf("overrides were not replaced wholesale: %+v", set.Spec.Overrides)
 	}
 
-	cleared, appErr := svc.Update(context.Background(), UpdateSandboxEnvInput{
-		Name:      envTestName,
-		Namespace: envTestNamespace,
-	})
+	cleared, appErr := svc.Update(context.Background(), updateEnvInput(env, nil))
 	if appErr != nil {
 		t.Fatalf("clearing update: %v", appErr)
 	}
@@ -289,15 +316,13 @@ func TestSandboxEnvService_Update_ClearingRegistryCredentialsDeletesTheSecret(t 
 	svc, k8s := newEnvServiceWithClient(t, env)
 	ctx := context.Background()
 
-	if _, appErr := svc.Update(ctx, UpdateSandboxEnvInput{
-		Name:      envTestName,
-		Namespace: envTestNamespace,
-		ImagePullSecret: &gen.ImagePullSecretInput{
-			Registries: []gen.RegistryCredential{
-				{Registry: "registry.example", Username: "u", Password: "p"},
-			},
+	withCreds := updateEnvInput(env, nil)
+	withCreds.ImagePullSecret = &gen.ImagePullSecretInput{
+		Registries: []gen.RegistryCredential{
+			{Registry: "registry.example", Username: "u", Password: "p"},
 		},
-	}); appErr != nil {
+	}
+	if _, appErr := svc.Update(ctx, withCreds); appErr != nil {
 		t.Fatalf("update with credentials: %v", appErr)
 	}
 
@@ -312,11 +337,9 @@ func TestSandboxEnvService_Update_ClearingRegistryCredentialsDeletesTheSecret(t 
 	// returned it, and the credentials survive. This is the common case: the
 	// passwords cannot be read back, so without it every unrelated edit would
 	// revoke them.
-	if _, appErr := svc.Update(ctx, UpdateSandboxEnvInput{
-		Name:                envTestName,
-		Namespace:           envTestNamespace,
-		KeepImagePullSecret: true,
-	}); appErr != nil {
+	keep := updateEnvInput(env, nil)
+	keep.KeepImagePullSecret = true
+	if _, appErr := svc.Update(ctx, keep); appErr != nil {
 		t.Fatalf("update that keeps credentials: %v", appErr)
 	}
 	if err := k8s.Get(ctx, key, sec); err != nil {
@@ -324,10 +347,7 @@ func TestSandboxEnvService_Update_ClearingRegistryCredentialsDeletesTheSecret(t 
 	}
 
 	// Dropping the flag is how "remove these credentials" is said.
-	if _, appErr := svc.Update(ctx, UpdateSandboxEnvInput{
-		Name:      envTestName,
-		Namespace: envTestNamespace,
-	}); appErr != nil {
+	if _, appErr := svc.Update(ctx, updateEnvInput(env, nil)); appErr != nil {
 		t.Fatalf("update without credentials: %v", appErr)
 	}
 	if err := k8s.Get(ctx, key, sec); !k8serrors.IsNotFound(err) {

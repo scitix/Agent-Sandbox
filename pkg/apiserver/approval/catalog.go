@@ -69,7 +69,14 @@ type Op struct {
 //
 // Keyed on the ROUTE TEMPLATE (`c.FullPath()`), never on the concrete URL: a
 // map keyed on the latter would be unbounded, and a prefix match over it would
-// be one path-traversal away from letting an ungated route look gated.
+// be one path-traversal away from letting an ungated route look gated. (The
+// FINGERPRINT of a held request is the other way round on purpose — see
+// `Fingerprint` — because that one is about which object is being acted on.)
+//
+// The key must be spelled exactly as gin registers it. A route the router does
+// not have matches nothing, so a stale key here is not a wrong answer but a
+// silent hole: the write goes through ungated. `TestEveryGatedRouteExistsInTheSpec`
+// is what keeps that from being possible.
 //
 // Anything absent from this map is ungated. That direction is chosen so a new
 // route ships closed-to-nothing rather than closed-to-everything: adding an
@@ -82,7 +89,7 @@ var gated = map[string]Op{
 	"PUT /v1/sandboxes/:sandboxId/timeout":                {ID: "sandbox.update", Summary: "Change a sandbox's timeout"},
 	"POST /v1/sandboxes/:sandboxId/exec":                  {ID: "sandbox.exec", Summary: "Run a command in a sandbox"},
 	"POST /v1/envs":                                       {ID: "env.create", Summary: "Create an environment"},
-	"PATCH /v1/envs/:name":                                {ID: "env.update", Summary: "Change an environment"},
+	"PUT /v1/envs/:name":                                  {ID: "env.update", Summary: "Change an environment"},
 	"DELETE /v1/envs/:name":                               {ID: "env.delete", OnceOnly: true, Summary: "Delete an environment"},
 	"POST /v1/envs/:name/sandboxpools":                    {ID: "pool.create", Summary: "Add a warm pool"},
 	"PUT /v1/envs/:name/sandboxpools/:poolName":           {ID: "pool.update", Summary: "Change a warm pool"},

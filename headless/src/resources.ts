@@ -38,6 +38,10 @@ export const RESOURCES: readonly ResourceSpec[] = [
     describe: 'Clusters this endpoint can reach.',
     api: { list: '/clusters' },
     clusterScoped: false,
+    // Switching clusters is a dropdown in the console's sidebar, not a page:
+    // `/clusters` has no route of its own, so a "view in console" link to it
+    // is a 404 wearing the clothes of a working alternative.
+    consolePage: false,
     columns: [
       { id: 'id', describe: 'Cluster id — the value every other command takes as --cluster.' },
       { id: 'name', describe: 'Display name.' },
@@ -59,6 +63,37 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { id: 'idleReplicas', describe: 'Pods available to claim right now.' },
       { id: 'ready', describe: 'Whether every member pool is serving.', filter: 'ready' },
       { id: 'team', describe: 'Owning team.', filter: 'team', optional: true },
+    ],
+    // The get response is a different shape, not a wider one: the template, the
+    // mode and every replica count sit under spec/status. Reusing the summary
+    // columns for it printed a row of dashes with the data sitting right there
+    // in the same response.
+    //
+    // `envDocs` is deliberately absent, and stays absent under --json: the
+    // server renders the caller's own plaintext key into that Markdown for
+    // agent credentials, so printing it would put a credential in a chat log.
+    detailFields: [
+      { id: 'name', describe: 'Env name.' },
+      { id: 'namespace', describe: 'Namespace the Env lives in.' },
+      { id: 'template', path: 'spec.templateRef.name', describe: 'The bound SandboxTemplate.' },
+      {
+        id: 'templateVersion',
+        path: 'spec.templateRef.version',
+        describe: 'Pinned template revision. Empty means follow the template’s current body.',
+      },
+      { id: 'mode', path: 'spec.mode', describe: 'WarmPool or OnDemandJob.' },
+      { id: 'team', describe: 'Owning team.' },
+      { id: 'user', describe: 'Owning user.' },
+      { id: 'createdAt', describe: 'When the Env was created.' },
+      { id: 'memberCount', path: 'status.memberCount', describe: 'Member pools across every cluster segment.' },
+      { id: 'desiredReplicas', path: 'status.desiredReplicas', describe: 'Sum of the members’ desired replicas.' },
+      { id: 'runningReplicas', path: 'status.runningReplicas', describe: 'Pods currently claimed by a sandbox.' },
+      { id: 'idleReplicas', path: 'status.idleReplicas', describe: 'Pods available to claim right now.' },
+      {
+        id: 'overrides',
+        path: 'spec.overrides',
+        describe: 'Written whole: `apply -f` replaces this object, it does not merge into it.',
+      },
     ],
     filters: [
       { key: 'name', describe: 'substring of the env name' },
@@ -89,6 +124,41 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { id: 'scalingGroup', describe: 'The autoscaling group this member belongs to.', filter: 'scalingGroup' },
       { id: 'phase', path: 'status.phase', describe: 'Pool phase.', filter: 'phase', optional: true },
     ],
+    inParentDetail: true,
+    // A pool is where the interesting numbers are, and the list view holds
+    // back most of them to stay readable. The detail view is the place to show
+    // the whole set — plus the rendered pod template, which is what a diff
+    // against a template edit is actually read against.
+    detailFields: [
+      { id: 'name', describe: 'Pool name.' },
+      { id: 'owningEnv', describe: 'The env this pool is a member of.' },
+      { id: 'namespace', describe: 'Namespace the pool lives in.' },
+      { id: 'phase', path: 'status.phase', describe: 'Pending, Ready, ScalingUp/Down, Degraded or Terminating.' },
+      { id: 'replicas', path: 'spec.replicas', describe: 'Desired size. Owned by the autoscaler when its group is enabled.' },
+      { id: 'idleReplicas', path: 'status.idleReplicas', describe: 'Pods available to claim right now.' },
+      {
+        id: 'unavailableIdleReplicas',
+        path: 'status.unavailableIdleReplicas',
+        describe: 'Idle pods that are not Ready — counted above, but unable to take a request.',
+      },
+      { id: 'runningReplicas', path: 'status.runningReplicas', describe: 'Pods currently claimed by a sandbox.' },
+      { id: 'startingReplicas', path: 'status.startingReplicas', describe: 'Pods still starting up.' },
+      { id: 'stoppingReplicas', path: 'status.stoppingReplicas', describe: 'Pods transitioning back to Idle.' },
+      { id: 'failedReplicas', path: 'status.failedReplicas', describe: 'Pods in a Failed state.' },
+      { id: 'pendingRequests', path: 'status.pendingRequests', describe: 'Claims queued against this pool.' },
+      { id: 'cpu', describe: 'CPU per pod, as requested.' },
+      { id: 'memory', describe: 'Memory per pod, as requested.' },
+      { id: 'scalingGroup', describe: 'The autoscaling group this member belongs to.' },
+      { id: 'templateVersion', describe: 'SandboxTemplate revision this pool was last rendered from.' },
+      { id: 'updateRevision', path: 'status.updateRevision', describe: 'Template revision the pool is rolling towards.' },
+      { id: 'updatedReplicas', path: 'status.updatedReplicas', describe: 'Pods already at updateRevision.' },
+      { id: 'createdAt', describe: 'When the pool was created.' },
+      {
+        id: 'specYaml',
+        describe: 'The rendered pod template, full text. What a template edit is diffed against.',
+        text: true,
+      },
+    ],
     filters: [
       { key: 'name', describe: 'substring of the pool name' },
       { key: 'owningEnv', describe: 'the owning env' },
@@ -113,6 +183,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
       verbs: ['apply', 'delete'],
     },
     detail: true,
+    inParentDetail: true,
     columns: [
       { id: 'name', describe: 'Group name, as member pools reference it.', filter: 'name' },
       { id: 'enabled', describe: 'Whether the autoscaler acts on this group at all.', filter: 'enabled' },
@@ -131,6 +202,50 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { key: 'name', describe: 'substring of the group name' },
       { key: 'enabled', describe: 'whether the group is active', values: ['true', 'false'] },
       { key: 'mode', describe: 'scale-up mode', values: ['Conservative', 'Default', 'Aggressive'] },
+    ],
+    // A group is four numbers and two policies; the list can only show three
+    // of them before it stops being a table.
+    detailFields: [
+      { id: 'name', describe: 'Group name.' },
+      { id: 'enabled', describe: 'Whether the autoscaler acts on this group at all.' },
+      { id: 'minReplicas', describe: 'Floor on the group’s aggregate replicas.' },
+      { id: 'maxReplicas', describe: 'Ceiling on the group’s aggregate replicas.' },
+      { id: 'scaleUpMode', path: 'scaleUpPolicy.mode', describe: 'Governs step size in both directions.' },
+      {
+        id: 'cooldownSeconds',
+        path: 'scaleUpPolicy.cooldownSeconds',
+        describe: 'Minimum gap between two scale-ups.',
+      },
+      {
+        id: 'idleThresholdSeconds',
+        path: 'scaleUpPolicy.idleThresholdSeconds',
+        describe: 'How long aggregate idle must stay zero before the proactive scale-up fires.',
+      },
+      {
+        id: 'idleZeroQuietWindowSeconds',
+        path: 'scaleUpPolicy.idleZeroQuietWindowSeconds',
+        describe: 'Suppresses that trigger when nothing has been claimed for this long.',
+      },
+      {
+        id: 'saturationCooldownSeconds',
+        path: 'scaleUpPolicy.saturationCooldownSeconds',
+        describe: 'How long a member stays marked saturated after a failed probe.',
+      },
+      {
+        id: 'idleTimeoutSeconds',
+        path: 'scaleDownPolicy.idleTimeoutSeconds',
+        describe: 'How long a Pod idles before it counts as removable.',
+      },
+      {
+        id: 'stabilizationSeconds',
+        path: 'scaleDownPolicy.stabilizationSeconds',
+        describe: 'Minimum gap between two scale-downs.',
+      },
+      {
+        id: 'protectionWindowSeconds',
+        path: 'scaleDownPolicy.protectionWindowSeconds',
+        describe: 'How long a marked Pod can still be claimed, cancelling its deletion.',
+      },
     ],
   },
   {
@@ -182,8 +297,36 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { key: 'team', describe: 'owning team' },
       { key: 'user', describe: 'owning user' },
     ],
+    detailFields: [
+      { id: 'sandboxId', describe: 'Sandbox id.' },
+      { id: 'status', describe: 'Lifecycle status.' },
+      { id: 'envName', describe: 'The env it was claimed from.' },
+      { id: 'poolName', describe: 'The member pool it was claimed from.' },
+      { id: 'namespace', describe: 'Namespace the pod runs in.' },
+      { id: 'podName', describe: 'The Kubernetes pod backing it.' },
+      { id: 'team', describe: 'Owning team.' },
+      { id: 'user', describe: 'Owning user.' },
+      { id: 'nodeName', describe: 'Node the pod was scheduled onto.' },
+      { id: 'cpu', describe: 'CPU allocated to the sandbox.' },
+      { id: 'memory', describe: 'Memory allocated to the sandbox.' },
+      { id: 'claimedAt', describe: 'When it was claimed.' },
+      { id: 'startedAt', describe: 'When it reached Running.' },
+      { id: 'terminatedAt', describe: 'When its workload ended.' },
+      { id: 'durationSeconds', describe: 'Wall-clock seconds, for a finished sandbox.' },
+      { id: 'idleTimeoutSeconds', describe: 'Idle timeout in effect for this sandbox alone.' },
+      { id: 'failureReason', describe: 'Machine-readable reason, when it failed.' },
+      { id: 'exitCode', describe: 'Exit code of the main container.' },
+      { id: 'failureMessage', describe: 'What went wrong, when it failed.' },
+      { id: 'metadata', describe: 'Key/value pairs supplied on create.' },
+      { id: 'containerImages', describe: 'Image per container in the pod.' },
+    ],
     views: [
-      { segment: 'logs', describe: 'Logs for this sandbox.', api: '/sandboxes/{sandboxId}/logs' },
+      {
+        segment: 'logs',
+        describe: 'Logs for this sandbox.',
+        api: '/sandboxes/{sandboxId}/logs',
+        shape: 'logs',
+      },
     ],
   },
   {
@@ -195,9 +338,30 @@ export const RESOURCES: readonly ResourceSpec[] = [
     columns: [
       { id: 'name', describe: 'Template name.', filter: 'name' },
       { id: 'version', describe: 'spec.version — names a template revision.' },
-      { id: 'description', describe: 'What this template is for.', optional: true },
+      { id: 'description', describe: 'What this template is for.' },
     ],
     filters: [{ key: 'name', describe: 'substring of the template name' }],
+    helpNote:
+      'This is the catalog everyone reads. Writing a template is `abx admin-templates`, which an admin key is required for.',
+    // The console's template page renders `docs`, and so does this: the whole
+    // point of a template's documentation is to be read. Unlike an env's
+    // `envDocs`, this one substitutes a placeholder for the API key rather than
+    // the caller's own token, so it is safe to print.
+    detailFields: [
+      { id: 'name', describe: 'Template name.' },
+      { id: 'version', describe: 'spec.version — names a template revision.' },
+      { id: 'description', describe: 'What this template is for.' },
+      { id: 'cpu', describe: 'CPU per pod, derived from the pod spec.' },
+      { id: 'memory', describe: 'Memory per pod, derived from the pod spec.' },
+      { id: 'syncSource', describe: 'global (synced from the hub) or local.' },
+      { id: 'createdAt', describe: 'When the template was created.' },
+      { id: 'docs', describe: 'Rendered Markdown documentation, full text.', text: true },
+      {
+        id: 'crdYaml',
+        describe: 'The raw SandboxTemplate object as YAML, full text. Includes the resourceVersion a PUT must carry back.',
+        text: true,
+      },
+    ],
   },
   {
     kind: 'instancetype',
@@ -284,6 +448,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     kind: 'admin-api-key',
     plural: 'admin-api-keys',
     describe: 'Every credential on the cluster. Admin only.',
+    admin: true,
     api: {
       list: '/admin/api-keys',
       item: '/admin/api-keys/{name}',
@@ -341,6 +506,29 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { key: 'status', describe: 'approval status' },
       { key: 'principal', describe: 'who asked' },
     ],
+    // An approval is a decision someone makes in the console. What the CLI can
+    // honestly answer is what was asked for, by whom, and how long is left —
+    // which is exactly what the list holds back to stay narrow.
+    detailFields: [
+      { id: 'id', describe: 'Approval id.' },
+      { id: 'status', describe: 'pending, approved, denied or expired.' },
+      { id: 'operation', describe: 'The operation being asked for. A grant is written against this.' },
+      { id: 'summary', describe: 'The request in one line, naming the object.' },
+      { id: 'method', describe: 'HTTP method of the held request.' },
+      { id: 'path', describe: 'Path of the held request.' },
+      { id: 'user', path: 'principal.user', describe: 'Who asked.' },
+      { id: 'team', path: 'principal.team', describe: 'The team they asked as.' },
+      { id: 'keyId', path: 'principal.keyId', describe: 'Which credential asked.' },
+      { id: 'sessionId', describe: 'The session it belongs to, when the caller declared one.' },
+      {
+        id: 'onceOnly',
+        describe: 'True for destructive and credential-minting calls: "for this session" is not on offer.',
+      },
+      { id: 'createdAt', describe: 'When it was asked for.' },
+      { id: 'expiresAt', describe: 'When it stops being answerable.' },
+      { id: 'decidedBy', describe: 'Who released or refused it.' },
+      { id: 'decidedAt', describe: 'When they did.' },
+    ],
     actions: [
       {
         name: 'approve',
@@ -393,9 +581,10 @@ export const RESOURCES: readonly ResourceSpec[] = [
   },
   {
     kind: 'team',
-    plural: 'teams',
+    plural: 'admin-teams',
     describe: 'Teams on this cluster. Admin only.',
     api: { list: '/admin/teams' },
+    admin: true,
     consolePage: false,
     columns: [{ id: 'name', describe: 'Team name.', filter: 'name' }],
     filters: [{ key: 'name', describe: 'substring of the team name' }],
@@ -403,18 +592,20 @@ export const RESOURCES: readonly ResourceSpec[] = [
   {
     kind: 'user',
     plural: 'users',
-    parent: 'teams',
+    parent: 'admin-teams',
     describe: 'Members of one team. Admin only.',
     api: { list: '/admin/teams/{team}/users' },
+    admin: true,
     consolePage: false,
     columns: [{ id: 'name', describe: 'Username.', filter: 'name' }],
     filters: [{ key: 'name', describe: 'substring of the username' }],
   },
   {
     kind: 'namespace',
-    plural: 'namespaces',
+    plural: 'admin-namespaces',
     describe: 'Kubernetes namespaces this cluster maps tenants into. Admin only.',
     api: { list: '/admin/namespaces' },
+    admin: true,
     consolePage: false,
     columns: [{ id: 'name', describe: 'Namespace name.', filter: 'name' }],
     filters: [{ key: 'name', describe: 'substring of the namespace' }],
@@ -436,6 +627,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     plural: 'admin-statistics',
     describe: 'The same counts across every tenant. Admin only.',
     api: { list: '/admin/statistics/sandboxes' },
+    admin: true,
     consolePage: false,
     columns: [
       { id: 'total', path: 'statistics.total', describe: 'Sandboxes in total.' },
@@ -454,6 +646,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
       itemReadable: false,
       verbs: ['create', 'apply', 'delete'],
     },
+    admin: true,
     consolePage: false,
     columns: [
       { id: 'name', describe: 'Template name.', filter: 'name' },
@@ -465,7 +658,12 @@ export const RESOURCES: readonly ResourceSpec[] = [
 ] as const
 
 export function resourceOf(token: string): ResourceSpec | undefined {
-  return RESOURCES.find((r) => r.plural === token || r.kind === token)
+  // Plurals only, and deliberately: `abx env` and `abx envs` being two
+  // spellings of one command means every error message has to know which one a
+  // reader used to explain itself, and half the plurals are irregular anyway
+  // (scaling-groups, admin-statistics). One token per resource, and the
+  // refusal names the set that works.
+  return RESOURCES.find((r) => r.plural === token)
 }
 
 /** Resources addressable at the top level — everything that is not a child. */

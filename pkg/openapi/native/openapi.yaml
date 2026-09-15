@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AgentBox API
-  version: "0.0.0"
+  version: "0.1.4"
   description: |
     AgentBox provides Sandbox lifecycle management and tenant API key provisioning.
 
@@ -278,6 +278,18 @@ components:
       description: "Admin-level API key. Same header as ApiKeyAuth but requires admin role."
 
   schemas:
+    # Free-form string key/value metadata. Named rather than written out at each
+    # use site because two inline maps with the same shape under schemas that
+    # share an `allOf` parent make openapi-python-client try to emit two models
+    # with the same generated name; it then drops the parent schema entirely,
+    # and with it every endpoint that references it. That failure is silent —
+    # the client is generated, just missing POST /envs.
+    StringMap:
+      type: object
+      description: "Free-form string key/value metadata (labels or annotations)."
+      additionalProperties:
+        type: string
+
     # =========================================================
     # Sandbox
     # =========================================================
@@ -863,6 +875,11 @@ components:
       properties:
         template:
           $ref: "#/components/schemas/SandboxPool"
+        editable:
+          $ref: "#/components/schemas/UpsertSandboxPoolRequest"
+          description: |
+            The body a write to this member Pool takes, read off the live member.
+            Same schema as the PUT; see `SandboxEnvEnvelope.editable`.
 
     SandboxPoolSummary:
       type: object
@@ -906,7 +923,16 @@ components:
           description: "Name of the SandboxEnv that owns this pool (resolved from OwnerReferences)."
 
     CreateEnvSandboxPoolRequest:
+      allOf:
+        - $ref: "#/components/schemas/UpsertSandboxPoolRequest"
+      description: |
+        Add a member SandboxPool to an Env. The Pool's name and scalingGroup are
+        derived from the effective resources — see `UpsertSandboxPoolRequest`,
+        which is the same body this takes.
+
+    UpsertSandboxPoolRequest:
       type: object
+      additionalProperties: false
       description: |
         Add a member SandboxPool to an Env. The server derives:
           - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
@@ -929,6 +955,16 @@ components:
         `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
         `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
         real size and Pools downsized differently land in distinct scaling groups.
+
+        This is also what an update takes, and what `GET` returns as `editable`:
+        one body for create, update and export, so a client edits what the API
+        handed it rather than translating between two subsets that drift.
+
+        The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+        at create. An update must carry them back unchanged — omitting one or
+        changing one is a 400 that names the value in force, because a body that
+        loses the instance type is a caller bug, not a request for a smaller
+        machine.
       example:
         instanceType: sci.c23-2
         multiplier: 1
@@ -947,14 +983,20 @@ components:
       properties:
         instanceType:
           type: string
+          x-immutable: true
+          x-immutable-lever: "add a member in the size you want, then remove this one"
           description: "InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod."
         multiplier:
           type: integer
           format: int32
           minimum: 1
+          x-immutable: true
+          x-immutable-lever: "add a member with the multiplier you want, then remove this one"
           description: "Multiplier applied to the InstanceType base resources to form the reservation envelope. Defaults to 1."
         inlineResources:
           $ref: "#/components/schemas/ResourceRequirements"
+          x-immutable: true
+          x-immutable-lever: "add a member with the resources you want, then remove this one"
           description: "Explicit per-Pool resource requests/limits. Used alone when instanceType is not supplied, or combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits."
         replicas:
           type: integer
@@ -971,21 +1013,24 @@ components:
           format: int32
           description: "Upper bound on this pool's replicas, enforced when the Env autoscaler distributes scale-up delta."
         labels:
-          type: object
-          additionalProperties:
-            type: string
+          allOf:
+            - $ref: "#/components/schemas/StringMap"
+          x-immutable: true
+          x-immutable-lever: "add a member with the labels you want, then remove this one"
           description: "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix)."
         annotations:
-          type: object
-          additionalProperties:
-            type: string
+          allOf:
+            - $ref: "#/components/schemas/StringMap"
+          x-immutable: true
+          x-immutable-lever: "add a member with the annotations you want, then remove this one"
           description: "Annotations stamped onto this member's SandboxPool."
         updateStrategy:
           $ref: "#/components/schemas/EnvUpdateStrategy"
           description: "Per-member rollout policy override. Unset inherits the Env overrides.updateStrategy, then autoUpdate=true / maxUnavailable=20%."
 
     UpdateEnvSandboxPoolRequest:
-      type: object
+      allOf:
+        - $ref: "#/components/schemas/UpsertSandboxPoolRequest"
       description: |
         Desired state of this member's editable bounds. This is a PUT and it
         means it: a field left out is one the caller wants REMOVED. That is the
@@ -998,29 +1043,13 @@ components:
         an autoscaling group may own it outright, and omitting it leaves the
         pool the size it is — never scales it to zero.
 
-        Update a member SandboxPool. Resource shape, instanceType, labels and
-        annotations are immutable post-create; this PUT accepts replica
-        adjustments and updateStrategy changes. When the scalingGroup has
-        autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
-        entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
-      properties:
-        replicas:
-          type: integer
-          format: int32
-          minimum: 0
-          description: "Initial / desired replica count. Rejected when this pool's scalingGroup has autoscaling enabled."
-        minReplicas:
-          type: integer
-          format: int32
-          minimum: 0
-          description: "Lower bound on this pool's replicas, enforced as a per-member scale-down floor by the Env autoscaler. Always accepted."
-        maxReplicas:
-          type: integer
-          format: int32
-          description: "Upper bound on this pool's replicas. Always accepted."
-        updateStrategy:
-          $ref: "#/components/schemas/EnvUpdateStrategy"
-          description: "Per-member rollout policy override. Mutable post-create — e.g. set autoUpdate=false to freeze this member during an incident."
+        Update a member SandboxPool. The body is the one create takes and the one
+        `GET` returns as `editable`; resource shape, instanceType, labels and
+        annotations are fixed at create and must be echoed back unchanged (see
+        `UpsertSandboxPoolRequest` for what each field means). When the
+        scalingGroup has autoscaling enabled (via env.spec.autoscaling.enabled +
+        a matching group entry), only `maxReplicas` is accepted — `replicas` is
+        owned by the autoscaler.
 
     ImagePullSecretInput:
       type: object
@@ -1698,6 +1727,14 @@ components:
       properties:
         env:
           $ref: "#/components/schemas/SandboxEnv"
+        editable:
+          $ref: "#/components/schemas/UpsertSandboxEnvRequest"
+          description: |
+            The body a write to this Env takes, read off the live object — the
+            same schema as `UpdateSandboxEnvRequest`, so what this returns can be
+            edited and sent straight back with apply/PUT. It exists because the
+            alternative, reusing the read shape as a write body, silently clears
+            every field the caller did not copy over.
 
     SandboxEnvSummary:
       type: object
@@ -1762,9 +1799,13 @@ components:
             $ref: "#/components/schemas/SandboxEnvSummary"
 
     UpdateSandboxEnvRequest:
-      type: object
+      allOf:
+        - $ref: "#/components/schemas/UpsertSandboxEnvRequest"
+      # The same shape as create (minus `name`, which is the path), on purpose:
+      # the body this takes is the body `GET /envs/{name}` returns as `editable`,
+      # so export → edit → apply round-trips with nothing to translate.
       description: |
-        Desired state of the editable Env shell. Members are managed through
+        Desired state of the Env. Members are managed through
         `/envs/{name}/sandboxpools/*` and autoscaling through
         `/envs/{name}/autoscaling/*`.
 
@@ -1773,6 +1814,12 @@ components:
         clears every override. Write-only credential values need not be echoed:
         their references round-trip through GET, so re-sending what GET returned
         preserves the stored material.
+
+        The fields marked `x-immutable` in `UpsertSandboxEnvRequest` are the one
+        exception, and in the other direction: an update must carry them back
+        UNCHANGED. Omitting one, or sending a different value, is a 400 that
+        names what is currently in force — a body that loses the template is
+        almost always a caller bug, and accepting it silently would hide it.
 
         A request carrying no `imagePullSecret` DELETES the backing Secret, not
         just the reference to it. Previously there was no call that could,
@@ -1783,9 +1830,6 @@ components:
         object, which meant the verb promised merge semantics the body never
         had. One verb per meaning: every editable object on this API is a PUT
         of its desired state.
-      properties:
-        overrides:
-          $ref: "#/components/schemas/EnvOverrides"
 
     UpdateEnvAutoscalingGroupRequest:
       type: object
@@ -1825,6 +1869,10 @@ components:
       properties:
         group:
           $ref: "#/components/schemas/EnvAutoscalingGroup"
+        editable:
+          $ref: "#/components/schemas/UpdateEnvAutoscalingGroupRequest"
+          description: |
+            The body a write to this group takes, read off the live group.
 
     ListEnvAutoscalingGroupsResult:
       type: object
@@ -1847,51 +1895,81 @@ components:
           type: string
           description: "'Deleted' on success."
 
-    CreateSandboxEnvRequest:
+    UpsertSandboxEnvRequest:
       type: object
-      required: [name, templateRef]
-      example:
-        name: my-env
-        templateRef:
-          name: e2b-envd
-        mode: WarmPool
-        overrides:
-          gateway:
-            enabled: true
-        labels:
-          team: ai-infra
+      required: [templateRef]
+      additionalProperties: false
+      description: |
+        What a client may set on an Env — the SAME body for create and update,
+        and the body `GET /envs/{name}` returns as `editable`.
+
+        One shape rather than two subsets, because two subsets drift: while
+        create accepted `mode` and update did not, a person editing an Env had
+        no way to send back what the API had just handed them, and the file a
+        client exported from a read was not a file a write accepted.
+
+        Fields marked `x-immutable` are fixed at create. An update must carry
+        them UNCHANGED: leaving one out, or sending a different value, is a 400
+        that names the value in force rather than a silent ignore — a body that
+        drops the template is far more likely to be a bug in the caller than a
+        request to have no template.
       properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 24
-          pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
-          description: "RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit."
         templateRef:
           allOf:
             - $ref: "#/components/schemas/SandboxEnvTemplateRef"
+          x-immutable: true
+          x-immutable-lever: "create a new Env from the other template and move the traffic over"
           description: >-
             Which SandboxTemplate every member Pool is rendered from. Pin a
             version to hold the Env still across Template edits; omit it to
-            follow the Template.
+            follow the Template. Fixed after create.
         mode:
           type: string
           enum: [WarmPool, OnDemandJob]
           default: WarmPool
+          x-immutable: true
+          x-immutable-lever: "create a new Env in the other mode"
           description: >-
             WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod
             per sandbox and tears it down after, trading start latency for
-            holding no capacity between runs.
+            holding no capacity between runs. Fixed after create.
         overrides:
           $ref: "#/components/schemas/EnvOverrides"
         labels:
-          type: object
-          additionalProperties:
-            type: string
+          allOf:
+            - $ref: "#/components/schemas/StringMap"
+          x-immutable: true
+          x-immutable-lever: "create a new Env with the labels you want"
+          description: "Metadata stamped onto the Env's objects. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix)."
         annotations:
-          type: object
-          additionalProperties:
-            type: string
+          allOf:
+            - $ref: "#/components/schemas/StringMap"
+          x-immutable: true
+          x-immutable-lever: "create a new Env with the annotations you want"
+          description: "Annotations stamped onto the Env's objects."
+
+    CreateSandboxEnvRequest:
+      allOf:
+        - $ref: "#/components/schemas/UpsertSandboxEnvRequest"
+        - type: object
+          required: [name]
+          example:
+            name: my-env
+            templateRef:
+              name: e2b-envd
+            mode: WarmPool
+            overrides:
+              gateway:
+                enabled: true
+            labels:
+              team: ai-infra
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 24
+              pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
+              description: "RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit."
 
     DeleteSandboxEnvResult:
       type: object
@@ -5029,4 +5107,3 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-

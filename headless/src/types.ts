@@ -68,6 +68,35 @@ export interface ColumnSpec {
 }
 
 /**
+ * One line of a detail view.
+ *
+ * A get and a list are two different projections of the same object, and the
+ * CLI used to render both with the list's columns — which is why `abx envs x`
+ * printed a row of dashes: `templateName`/`mode`/`memberCount` live under
+ * `spec`/`status` in the get response, not at its top level. Naming the fields
+ * a get actually has is what lets the detail view be right about the wire
+ * shape while the list view stays narrow.
+ *
+ * `path` is the wire location, `id` is the name a person reads — the same
+ * split ColumnSpec makes, for the same reason.
+ */
+export interface DetailFieldSpec {
+  id: string
+  /** Where the value lives in the response. Defaults to the id. */
+  path?: string
+  describe: string
+  /**
+   * Print the whole value rather than one line of it.
+   *
+   * For the fields that ARE the answer to a question — a template's rendered
+   * docs, a pool's pod-template YAML. Truncating them here would only move the
+   * truncation into whatever harness reads the output, with less information
+   * about what was cut.
+   */
+  text?: boolean
+}
+
+/**
  * A view that is not a collection — metrics, logs.
  *
  * Kept distinct from resources because neither surface may address these as if
@@ -79,6 +108,13 @@ export interface ViewSpec {
   describe: string
   /** Native API path, when the view has one. Metrics come from Prometheus instead. */
   api?: string
+  /**
+   * The response is not a row set, and the table renderer would make it look
+   * like a broken one: `GET /sandboxes/{id}/logs` answers with a snapshot —
+   * container list, source, and lines — and rendering that as "one sandbox"
+   * printed a table of dashes with the logs sitting unread inside it.
+   */
+  shape?: 'logs'
 }
 
 /** What a surface may do to a resource, beyond reading it. */
@@ -180,6 +216,14 @@ export interface ResourceSpec {
   /** Absent when the resource has no per-item page (a pure list). */
   detail?: boolean
   columns: readonly ColumnSpec[]
+  /**
+   * The shape a get renders, one line per field.
+   *
+   * Absent means the get has nothing of its own to show and the columns are
+   * the honest answer. Present means the two projections genuinely differ and
+   * the list's summary columns would answer with dashes.
+   */
+  detailFields?: readonly DetailFieldSpec[]
   filters?: readonly FilterSpec[]
   views?: readonly ViewSpec[]
   actions?: readonly ActionSpec[]
@@ -196,6 +240,33 @@ export interface ResourceSpec {
    * it is reachable, which is a deliberate state and not a gap.
    */
   consolePage?: boolean
+  /**
+   * True for a resource only an admin credential reaches.
+   *
+   * This is about what a caller is SHOWN, not about what the API enforces —
+   * the server still refuses an admin route to a tenant key. Advertising a
+   * command whose answer is always `admin api key required` costs an agent a
+   * round trip per attempt and teaches it that the help text lies.
+   */
+  admin?: boolean
+  /**
+  * Whether this child appears as a table on its parent's detail view.
+   *
+   * A pool list is worth reading next to the env that owns it; an env's events
+   * are a separate page. Marking it here rather than in the CLI keeps the
+   * decision with the resource, where the rest of its shape already lives.
+   */
+  inParentDetail?: boolean
+  /**
+   * One sentence for this resource's `--help`, when the registry knows
+   * something the columns and filters cannot say.
+   *
+   * Today that is the read/write split of templates: this entry is the catalog
+   * everyone may read, and the thing that writes templates is a different
+   * resource. Without the sentence, a tenant reads `templates --help` and
+   * concludes the platform's templates are immutable.
+   */
+  helpNote?: string
   /**
    * The feature gate this resource depends on, from GET /feature-gates. Absent
    * means always available. Both surfaces hide the resource when the gate is

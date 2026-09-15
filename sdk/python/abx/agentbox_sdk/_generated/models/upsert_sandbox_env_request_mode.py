@@ -14,7 +14,7 @@
 
 from enum import StrEnum
 
-class CreateSandboxEnvRequestMode(StrEnum):
+class UpsertSandboxEnvRequestMode(StrEnum):
     ONDEMANDJOB = "OnDemandJob"
     WARMPOOL = "WarmPool"
 

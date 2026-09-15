@@ -76,6 +76,7 @@ import {
   formValuesToCreateBody,
   formValuesToUpdateBody,
   type FormValues,
+  type UpsertEnvBody,
 } from "@/lib/utils/env-form"
 import { useTranslation } from "@/lib/i18n"
 
@@ -126,21 +127,31 @@ function UpsertEnvLoader({ envName, onClose }: { envName: string | null; onClose
     )
   }
 
-  return <UpsertEnvForm env={envName ? (data?.env ?? null) : null} onClose={onClose} />
+  return (
+    <UpsertEnvForm
+      env={envName ? (data?.env ?? null) : null}
+      // The write shape, straight from the same GET. The form edits the
+      // overrides; everything else it must send back lives here — including the
+      // annotations the read shape does not carry at all.
+      editable={envName ? (data?.editable ?? null) : null}
+      onClose={onClose}
+    />
+  )
 }
 
 interface InnerProps {
   env: AgentSandboxEnv | null
+  editable?: UpsertEnvBody | null
   onClose: () => void
 }
 
-function UpsertEnvForm({ env, onClose }: InnerProps) {
+function UpsertEnvForm({ env, editable, onClose }: InnerProps) {
   const { t } = useTranslation()
   const isEdit = !!env
 
   const { data: templates = [] } = useQuery(templatesQueryOptions())
 
-  const defaultValues = useMemo<FormValues>(() => envToFormValues(env), [env])
+  const defaultValues = useMemo<FormValues>(() => envToFormValues(env, editable), [env, editable])
 
   const {
     control,
@@ -206,7 +217,7 @@ function UpsertEnvForm({ env, onClose }: InnerProps) {
 
   const onSubmit = handleSubmit(async (values) => {
     if (isEdit) {
-      const body = formValuesToUpdateBody(values)
+      const body = formValuesToUpdateBody(values, env!, editable)
       await new Promise<void>((resolve, reject) => {
         updateMutation.mutate(
           { params: { path: { name: env!.name } }, body },

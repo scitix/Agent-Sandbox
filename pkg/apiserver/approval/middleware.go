@@ -155,7 +155,14 @@ func New(store *Store, identity IdentityFunc, consoleURL ConsoleURLFunc, pageURL
 		}
 
 		body := readBodyForFingerprint(c)
-		fp := Fingerprint(c.Request.Method, c.FullPath(), body)
+		// The CONCRETE path, not the route template. Unlike the `gated` table —
+		// which must be keyed on the template or it would grow without bound —
+		// a fingerprint has to name the object: with the template, every
+		// `DELETE /v1/envs/:name` from one key shared a single fingerprint, so a
+		// request to delete `other-env` was answered with, and would have been
+		// satisfied by, an approval for `abx-mvp`. `summarise` below already
+		// names the params; this makes the fingerprint the same granularity.
+		fp := Fingerprint(c.Request.Method, c.Request.URL.Path, body)
 		session := c.GetHeader(SessionHeader)
 
 		if store.Allow(id.Principal, id.KeyApprovals, session, op.ID, fp) {

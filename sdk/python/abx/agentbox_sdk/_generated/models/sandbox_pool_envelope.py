@@ -22,10 +22,12 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
   from ..models.sandbox_pool import SandboxPool
+  from ..models.upsert_sandbox_pool_request import UpsertSandboxPoolRequest
 
 
 
@@ -43,9 +45,44 @@ class SandboxPoolEnvelope:
                 'team': 'team', 'user': 'user', 'spec': {'replicas': 2}, 'status': {'phase': 'Ready', 'idleReplicas': 1,
                 'unavailableIdleReplicas': 0, 'runningReplicas': 1, 'startingReplicas': 0, 'stoppingReplicas': 0,
                 'failedReplicas': 0}}.
+            editable (UpsertSandboxPoolRequest | Unset): Add a member SandboxPool to an Env. The server derives:
+                  - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
+                  - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
+
+                where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and
+                `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
+                Members in the same `scalingGroup` share an autoscaling policy.
+
+                Sizing accepts three shapes:
+                  - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
+                    `instanceType × multiplier` envelope (default `multiplier` = 1).
+                  - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
+                    multiplier` is the reservation/billing envelope, while `inlineResources` is the
+                    actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
+                    must be ≤ the envelope (round down allowed, round up rejected with 400); the
+                    reservation still charges quota for the whole instance.
+                  - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
+                    per-Pool resource requests/limits.
+                `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
+                `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
+                real size and Pools downsized differently land in distinct scaling groups.
+
+                This is also what an update takes, and what `GET` returns as `editable`:
+                one body for create, update and export, so a client edits what the API
+                handed it rather than translating between two subsets that drift.
+
+                The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+                at create. An update must carry them back unchanged — omitting one or
+                changing one is a 400 that names the value in force, because a body that
+                loses the instance type is a caller bug, not a request for a smaller
+                machine.
+                 Example: {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0, 'maxReplicas': 4,
+                'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'}, 'limits': {'cpu': '100m', 'memory':
+                '500Mi'}}, 'labels': {'quota.scitix.ai/url': 'https://quota.example/q/1'}}.
      """
 
     template: SandboxPool
+    editable: UpsertSandboxPoolRequest | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -54,7 +91,12 @@ class SandboxPoolEnvelope:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.sandbox_pool import SandboxPool # noqa: PLC0415
+        from ..models.upsert_sandbox_pool_request import UpsertSandboxPoolRequest # noqa: PLC0415
         template = self.template.to_dict()
+
+        editable: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.editable, Unset):
+            editable = self.editable.to_dict()
 
 
         field_dict: dict[str, Any] = {}
@@ -62,6 +104,8 @@ class SandboxPoolEnvelope:
         field_dict.update({
             "template": template,
         })
+        if editable is not UNSET:
+            field_dict["editable"] = editable
 
         return field_dict
 
@@ -70,14 +114,26 @@ class SandboxPoolEnvelope:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.sandbox_pool import SandboxPool # noqa: PLC0415
+        from ..models.upsert_sandbox_pool_request import UpsertSandboxPoolRequest # noqa: PLC0415
         d = dict(src_dict)
         template = SandboxPool.from_dict(d.pop("template"))
 
 
 
 
+        _editable = d.pop("editable", UNSET)
+        editable: UpsertSandboxPoolRequest | Unset
+        if isinstance(_editable,  Unset):
+            editable = UNSET
+        else:
+            editable = UpsertSandboxPoolRequest.from_dict(_editable)
+
+
+
+
         sandbox_pool_envelope = cls(
             template=template,
+            editable=editable,
         )
 
 

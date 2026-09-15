@@ -46,6 +46,21 @@ POOL_FIXTURE: dict = {
 # The API wraps pool responses in {"template": {...}}
 POOL_ENVELOPE: dict = {"template": POOL_FIXTURE}
 
+# `scale` is a read-modify-write of the whole write body, so the pool it reads
+## first has to come back with the server's `editable` projection — the fields
+# the caller cannot change are fixed, and a body that dropped them is refused.
+POOL_EDITABLE: dict = {
+    "instanceType": "2c8Gi",
+    "multiplier": 1,
+    "replicas": 3,
+    "maxReplicas": 10,
+    "labels": {"quota.example.com/url": "https://quota"},
+}
+POOL_ENVELOPE_WITH_EDITABLE: dict = {
+    "template": POOL_FIXTURE,
+    "editable": POOL_EDITABLE,
+}
+
 
 def make_api(base_url: str = BASE_URL) -> PoolsAPI:
     client = AuthenticatedClient(
@@ -185,18 +200,33 @@ async def test_scale_pool():
     scaled_envelope = {"template": scaled_fixture}
 
     with respx.mock(base_url=BASE_URL) as mock:
-        mock.put(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
+        mock.get(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
+            return_value=httpx.Response(200, json=POOL_ENVELOPE_WITH_EDITABLE)
+        )
+        put = mock.put(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
             return_value=httpx.Response(200, json=scaled_envelope)
         )
         api = make_api()
         pool = await api.scale(ENV_NAME, POOL_NAME, 5)
 
     assert pool.replicas == 5
+    import json as _json
+
+    # The fixed half is carried back exactly as the server exported it, and only
+    # the replica count is overridden.
+    body = _json.loads(put.calls.last.request.content)
+    assert body["replicas"] == 5
+    assert body["instanceType"] == "2c8Gi"
+    assert body["maxReplicas"] == 10
+    assert body["labels"] == {"quota.example.com/url": "https://quota"}
 
 
 @pytest.mark.asyncio
 async def test_scale_pool_max_replicas_only():
     with respx.mock(base_url=BASE_URL) as mock:
+        mock.get(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
+            return_value=httpx.Response(200, json=POOL_ENVELOPE_WITH_EDITABLE)
+        )
         route = mock.put(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
             return_value=httpx.Response(200, json=POOL_ENVELOPE)
         )
@@ -207,7 +237,23 @@ async def test_scale_pool_max_replicas_only():
     import json as _json
 
     body = _json.loads(sent.content)
-    assert body == {"maxReplicas": 20}
+    assert body["maxReplicas"] == 20
+    assert body["replicas"] == 3
+    assert body["instanceType"] == "2c8Gi"
+
+
+@pytest.mark.asyncio
+async def test_scale_refuses_when_the_server_sends_no_editable_body():
+    # Without the projection there is no way to know the fields that must come
+    # back unchanged, and guessing would send a body the server refuses. Failing
+    # here says why; a PUT would only say "templateRef is fixed".
+    with respx.mock(base_url=BASE_URL) as mock:
+        mock.get(f"/envs/{ENV_NAME}/sandboxpools/{POOL_NAME}").mock(
+            return_value=httpx.Response(200, json=POOL_ENVELOPE)
+        )
+        api = make_api()
+        with pytest.raises(RuntimeError, match="editable"):
+            await api.scale(ENV_NAME, POOL_NAME, 5)
 
 
 # ---------------------------------------------------------------------------

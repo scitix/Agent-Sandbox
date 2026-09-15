@@ -134,15 +134,15 @@ class PoolsAPI:
         accepted as inputs.
         """
         from agentbox_sdk._generated.api.pools import create_env_sandbox_pool
-        from agentbox_sdk._generated.models.create_env_sandbox_pool_request import (
-            CreateEnvSandboxPoolRequest,
+        # One body for create and update: the API takes UpsertSandboxPoolRequest
+        # in both places, and the fields it does not accept on an existing pool
+        # (the resource shape) are refused by the server with a message naming
+        # what is in force, rather than by a narrower model here.
+        from agentbox_sdk._generated.models.string_map import StringMap
+        from agentbox_sdk._generated.models.upsert_sandbox_pool_request import (
+            UpsertSandboxPoolRequest,
         )
-        from agentbox_sdk._generated.models.create_env_sandbox_pool_request_annotations import (
-            CreateEnvSandboxPoolRequestAnnotations,
-        )
-        from agentbox_sdk._generated.models.create_env_sandbox_pool_request_labels import (
-            CreateEnvSandboxPoolRequestLabels,
-        )
+        from agentbox_sdk._generated.types import UNSET
         from agentbox_sdk._generated.models.resource_requirements import (
             ResourceRequirements,
         )
@@ -152,7 +152,6 @@ class PoolsAPI:
         from agentbox_sdk._generated.models.resource_requirements_requests import (
             ResourceRequirementsRequests,
         )
-        from agentbox_sdk._generated.types import UNSET
 
         merged_labels = dict(labels) if labels else {}
         if quota_url:
@@ -170,21 +169,17 @@ class PoolsAPI:
                 limits=ResourceRequirementsLimits.from_dict(qty),
             )
 
-        body = CreateEnvSandboxPoolRequest(
+        body = UpsertSandboxPoolRequest(
             instance_type=instance_type if instance_type is not None else UNSET,
             multiplier=multiplier if multiplier is not None else UNSET,
             inline_resources=inline,
             replicas=replicas if replicas is not None else UNSET,
             max_replicas=max_replicas if max_replicas is not None else UNSET,
             labels=(
-                CreateEnvSandboxPoolRequestLabels.from_dict(merged_labels)
-                if merged_labels
-                else UNSET
+                StringMap.from_dict(merged_labels) if merged_labels else UNSET
             ),
             annotations=(
-                CreateEnvSandboxPoolRequestAnnotations.from_dict(annotations)
-                if annotations is not None
-                else UNSET
+                StringMap.from_dict(annotations) if annotations is not None else UNSET
             ),
         )
 
@@ -243,16 +238,35 @@ class PoolsAPI:
         ``max_replicas`` is accepted — passing ``replicas`` returns 400 from
         the server.
         """
-        from agentbox_sdk._generated.api.pools import update_env_sandbox_pool
-        from agentbox_sdk._generated.models.update_env_sandbox_pool_request import (
-            UpdateEnvSandboxPoolRequest,
+        from agentbox_sdk._generated.api.pools import (
+            get_env_sandbox_pool,
+            update_env_sandbox_pool,
+        )
+        from agentbox_sdk._generated.models.upsert_sandbox_pool_request import (
+            UpsertSandboxPoolRequest,
         )
         from agentbox_sdk._generated.types import UNSET
 
-        body = UpdateEnvSandboxPoolRequest(
-            replicas=replicas if replicas is not None else UNSET,
-            max_replicas=max_replicas if max_replicas is not None else UNSET,
+        # `scale` is a read-modify-write of the whole body, not a patch: the
+        # fields it does not name (the resource shape) are fixed, and a body
+        # that dropped them would be refused. The authoritative current values
+        # are the ones the server projects as `editable` — the read shape is not
+        # a write body, which is the whole reason that field exists.
+        current = await get_env_sandbox_pool.asyncio_detailed(
+            env_name, name, client=self._client
         )
+        raise_for_status(current, context=f"read pool {name!r} in env {env_name!r}")
+        editable = getattr(current.parsed, "editable", None) if current.parsed else None
+        if editable is None or editable is UNSET:
+            raise RuntimeError(
+                f"the server did not return an editable body for pool {name!r}; "
+                "scaling it would have to guess the fields it cannot change"
+            )
+        body = UpsertSandboxPoolRequest.from_dict(editable.to_dict())
+        if replicas is not None:
+            body.replicas = replicas
+        if max_replicas is not None:
+            body.max_replicas = max_replicas
         resp = await update_env_sandbox_pool.asyncio_detailed(
             env_name, name, client=self._client, body=body
         )

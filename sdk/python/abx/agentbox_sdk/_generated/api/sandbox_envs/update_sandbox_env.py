@@ -24,7 +24,7 @@ from ... import errors
 
 from ...models.error_response import ErrorResponse
 from ...models.sandbox_env_envelope import SandboxEnvEnvelope
-from ...models.update_sandbox_env_request import UpdateSandboxEnvRequest
+from ...models.upsert_sandbox_env_request import UpsertSandboxEnvRequest
 from typing import cast
 
 
@@ -32,7 +32,7 @@ from typing import cast
 def _get_kwargs(
     name: str,
     *,
-    body: UpdateSandboxEnvRequest,
+    body: UpsertSandboxEnvRequest,
 
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -111,7 +111,7 @@ def sync_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxEnvRequest,
+    body: UpsertSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
     """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
@@ -119,26 +119,20 @@ def sync_detailed(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Desired state of the editable Env shell. Members are
-            managed through
-            `/envs/{name}/sandboxpools/*` and autoscaling through
-            `/envs/{name}/autoscaling/*`.
+        body (UpsertSandboxEnvRequest): What a client may set on an Env — the SAME body for create
+            and update,
+            and the body `GET /envs/{name}` returns as `editable`.
 
-            This is a PUT and it means it: `overrides` is REPLACED WHOLESALE, so a
-            field left out is one the caller wants removed. Sending `overrides: {}`
-            clears every override. Write-only credential values need not be echoed:
-            their references round-trip through GET, so re-sending what GET returned
-            preserves the stored material.
+            One shape rather than two subsets, because two subsets drift: while
+            create accepted `mode` and update did not, a person editing an Env had
+            no way to send back what the API had just handed them, and the file a
+            client exported from a read was not a file a write accepted.
 
-            A request carrying no `imagePullSecret` DELETES the backing Secret, not
-            just the reference to it. Previously there was no call that could,
-            so a registry password the user had cleared in the console went on
-            existing in the cluster while the form reported success.
-
-            It was a PATCH while the request carried a single wholesale-replaced
-            object, which meant the verb promised merge semantics the body never
-            had. One verb per meaning: every editable object on this API is a PUT
-            of its desired state.
+            Fields marked `x-immutable` are fixed at create. An update must carry
+            them UNCHANGED: leaving one out, or sending a different value, is a 400
+            that names the value in force rather than a silent ignore — a body that
+            drops the template is far more likely to be a bug in the caller than a
+            request to have no template.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,7 +159,7 @@ def sync(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxEnvRequest,
+    body: UpsertSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
     """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
@@ -173,26 +167,20 @@ def sync(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Desired state of the editable Env shell. Members are
-            managed through
-            `/envs/{name}/sandboxpools/*` and autoscaling through
-            `/envs/{name}/autoscaling/*`.
+        body (UpsertSandboxEnvRequest): What a client may set on an Env — the SAME body for create
+            and update,
+            and the body `GET /envs/{name}` returns as `editable`.
 
-            This is a PUT and it means it: `overrides` is REPLACED WHOLESALE, so a
-            field left out is one the caller wants removed. Sending `overrides: {}`
-            clears every override. Write-only credential values need not be echoed:
-            their references round-trip through GET, so re-sending what GET returned
-            preserves the stored material.
+            One shape rather than two subsets, because two subsets drift: while
+            create accepted `mode` and update did not, a person editing an Env had
+            no way to send back what the API had just handed them, and the file a
+            client exported from a read was not a file a write accepted.
 
-            A request carrying no `imagePullSecret` DELETES the backing Secret, not
-            just the reference to it. Previously there was no call that could,
-            so a registry password the user had cleared in the console went on
-            existing in the cluster while the form reported success.
-
-            It was a PATCH while the request carried a single wholesale-replaced
-            object, which meant the verb promised merge semantics the body never
-            had. One verb per meaning: every editable object on this API is a PUT
-            of its desired state.
+            Fields marked `x-immutable` are fixed at create. An update must carry
+            them UNCHANGED: leaving one out, or sending a different value, is a 400
+            that names the value in force rather than a silent ignore — a body that
+            drops the template is far more likely to be a bug in the caller than a
+            request to have no template.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,7 +202,7 @@ async def asyncio_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxEnvRequest,
+    body: UpsertSandboxEnvRequest,
 
 ) -> Response[ErrorResponse | SandboxEnvEnvelope]:
     """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
@@ -222,26 +210,20 @@ async def asyncio_detailed(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Desired state of the editable Env shell. Members are
-            managed through
-            `/envs/{name}/sandboxpools/*` and autoscaling through
-            `/envs/{name}/autoscaling/*`.
+        body (UpsertSandboxEnvRequest): What a client may set on an Env — the SAME body for create
+            and update,
+            and the body `GET /envs/{name}` returns as `editable`.
 
-            This is a PUT and it means it: `overrides` is REPLACED WHOLESALE, so a
-            field left out is one the caller wants removed. Sending `overrides: {}`
-            clears every override. Write-only credential values need not be echoed:
-            their references round-trip through GET, so re-sending what GET returned
-            preserves the stored material.
+            One shape rather than two subsets, because two subsets drift: while
+            create accepted `mode` and update did not, a person editing an Env had
+            no way to send back what the API had just handed them, and the file a
+            client exported from a read was not a file a write accepted.
 
-            A request carrying no `imagePullSecret` DELETES the backing Secret, not
-            just the reference to it. Previously there was no call that could,
-            so a registry password the user had cleared in the console went on
-            existing in the cluster while the form reported success.
-
-            It was a PATCH while the request carried a single wholesale-replaced
-            object, which meant the verb promised merge semantics the body never
-            had. One verb per meaning: every editable object on this API is a PUT
-            of its desired state.
+            Fields marked `x-immutable` are fixed at create. An update must carry
+            them UNCHANGED: leaving one out, or sending a different value, is a 400
+            that names the value in force rather than a silent ignore — a body that
+            drops the template is far more likely to be a bug in the caller than a
+            request to have no template.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -268,7 +250,7 @@ async def asyncio(
     name: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateSandboxEnvRequest,
+    body: UpsertSandboxEnvRequest,
 
 ) -> ErrorResponse | SandboxEnvEnvelope | None:
     """ Replace the editable Env shell fields (overrides only). Members and autoscaling groups have
@@ -276,26 +258,20 @@ async def asyncio(
 
     Args:
         name (str):
-        body (UpdateSandboxEnvRequest): Desired state of the editable Env shell. Members are
-            managed through
-            `/envs/{name}/sandboxpools/*` and autoscaling through
-            `/envs/{name}/autoscaling/*`.
+        body (UpsertSandboxEnvRequest): What a client may set on an Env — the SAME body for create
+            and update,
+            and the body `GET /envs/{name}` returns as `editable`.
 
-            This is a PUT and it means it: `overrides` is REPLACED WHOLESALE, so a
-            field left out is one the caller wants removed. Sending `overrides: {}`
-            clears every override. Write-only credential values need not be echoed:
-            their references round-trip through GET, so re-sending what GET returned
-            preserves the stored material.
+            One shape rather than two subsets, because two subsets drift: while
+            create accepted `mode` and update did not, a person editing an Env had
+            no way to send back what the API had just handed them, and the file a
+            client exported from a read was not a file a write accepted.
 
-            A request carrying no `imagePullSecret` DELETES the backing Secret, not
-            just the reference to it. Previously there was no call that could,
-            so a registry password the user had cleared in the console went on
-            existing in the cluster while the form reported success.
-
-            It was a PATCH while the request carried a single wholesale-replaced
-            object, which meant the verb promised merge semantics the body never
-            had. One verb per meaning: every editable object on this API is a PUT
-            of its desired state.
+            Fields marked `x-immutable` are fixed at create. An update must carry
+            them UNCHANGED: leaving one out, or sending a different value, is a 400
+            that names the value in force rather than a silent ignore — a body that
+            drops the template is far more likely to be a bug in the caller than a
+            request to have no template.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

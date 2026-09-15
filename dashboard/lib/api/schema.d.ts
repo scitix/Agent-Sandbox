@@ -784,6 +784,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Free-form string key/value metadata (labels or annotations). */
+        StringMap: {
+            [key: string]: string;
+        };
         SandboxStatusDetail: {
             /** @description Machine-readable reason code for the current status (mirrors Kubernetes condition reason). */
             reason?: string;
@@ -1256,6 +1260,11 @@ export interface components {
         };
         SandboxPoolEnvelope: {
             template: components["schemas"]["SandboxPool"];
+            /**
+             * @description The body a write to this member Pool takes, read off the live member.
+             *     Same schema as the PUT; see `SandboxEnvEnvelope.editable`.
+             */
+            editable?: components["schemas"]["UpsertSandboxPoolRequest"];
         };
         /** @description Lightweight shape returned by the pool List endpoint: the full SandboxPool minus the heavy specYaml (full pod-template YAML) and overrides, neither of which list consumers read. Fetch GET /envs/{name}/sandboxpools/{poolName} for the full body (incl. specYaml for the diff view). */
         SandboxPoolSummary: {
@@ -1286,6 +1295,12 @@ export interface components {
             owningEnv?: string;
         };
         /**
+         * @description Add a member SandboxPool to an Env. The Pool's name and scalingGroup are
+         *     derived from the effective resources — see `UpsertSandboxPoolRequest`,
+         *     which is the same body this takes.
+         */
+        CreateEnvSandboxPoolRequest: components["schemas"]["UpsertSandboxPoolRequest"];
+        /**
          * @description Add a member SandboxPool to an Env. The server derives:
          *       - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
          *       - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
@@ -1307,6 +1322,16 @@ export interface components {
          *     `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
          *     `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
          *     real size and Pools downsized differently land in distinct scaling groups.
+         *
+         *     This is also what an update takes, and what `GET` returns as `editable`:
+         *     one body for create, update and export, so a client edits what the API
+         *     handed it rather than translating between two subsets that drift.
+         *
+         *     The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+         *     at create. An update must carry them back unchanged — omitting one or
+         *     changing one is a 400 that names the value in force, because a body that
+         *     loses the instance type is a caller bug, not a request for a smaller
+         *     machine.
          * @example {
          *       "instanceType": "sci.c23-2",
          *       "multiplier": 1,
@@ -1328,7 +1353,7 @@ export interface components {
          *       }
          *     }
          */
-        CreateEnvSandboxPoolRequest: {
+        UpsertSandboxPoolRequest: {
             /** @description InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod. */
             instanceType?: string;
             /**
@@ -1354,13 +1379,9 @@ export interface components {
              */
             maxReplicas?: number;
             /** @description Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix). */
-            labels?: {
-                [key: string]: string;
-            };
+            labels?: components["schemas"]["StringMap"];
             /** @description Annotations stamped onto this member's SandboxPool. */
-            annotations?: {
-                [key: string]: string;
-            };
+            annotations?: components["schemas"]["StringMap"];
             /** @description Per-member rollout policy override. Unset inherits the Env overrides.updateStrategy, then autoUpdate=true / maxUnavailable=20%. */
             updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
         };
@@ -1376,31 +1397,15 @@ export interface components {
          *     an autoscaling group may own it outright, and omitting it leaves the
          *     pool the size it is — never scales it to zero.
          *
-         *     Update a member SandboxPool. Resource shape, instanceType, labels and
-         *     annotations are immutable post-create; this PUT accepts replica
-         *     adjustments and updateStrategy changes. When the scalingGroup has
-         *     autoscaling enabled (via env.spec.autoscaling.enabled + a matching group
-         *     entry), only `maxReplicas` is accepted — `replicas` is owned by the autoscaler.
+         *     Update a member SandboxPool. The body is the one create takes and the one
+         *     `GET` returns as `editable`; resource shape, instanceType, labels and
+         *     annotations are fixed at create and must be echoed back unchanged (see
+         *     `UpsertSandboxPoolRequest` for what each field means). When the
+         *     scalingGroup has autoscaling enabled (via env.spec.autoscaling.enabled +
+         *     a matching group entry), only `maxReplicas` is accepted — `replicas` is
+         *     owned by the autoscaler.
          */
-        UpdateEnvSandboxPoolRequest: {
-            /**
-             * Format: int32
-             * @description Initial / desired replica count. Rejected when this pool's scalingGroup has autoscaling enabled.
-             */
-            replicas?: number;
-            /**
-             * Format: int32
-             * @description Lower bound on this pool's replicas, enforced as a per-member scale-down floor by the Env autoscaler. Always accepted.
-             */
-            minReplicas?: number;
-            /**
-             * Format: int32
-             * @description Upper bound on this pool's replicas. Always accepted.
-             */
-            maxReplicas?: number;
-            /** @description Per-member rollout policy override. Mutable post-create — e.g. set autoUpdate=false to freeze this member during an incident. */
-            updateStrategy?: components["schemas"]["EnvUpdateStrategy"];
-        };
+        UpdateEnvSandboxPoolRequest: components["schemas"]["UpsertSandboxPoolRequest"];
         ImagePullSecretInput: {
             registries: components["schemas"]["RegistryCredential"][];
         };
@@ -1894,6 +1899,14 @@ export interface components {
         };
         SandboxEnvEnvelope: {
             env: components["schemas"]["SandboxEnv"];
+            /**
+             * @description The body a write to this Env takes, read off the live object — the
+             *     same schema as `UpdateSandboxEnvRequest`, so what this returns can be
+             *     edited and sent straight back with apply/PUT. It exists because the
+             *     alternative, reusing the read shape as a write body, silently clears
+             *     every field the caller did not copy over.
+             */
+            editable?: components["schemas"]["UpsertSandboxEnvRequest"];
         };
         /** @description Lightweight summary returned by the List endpoint — omits the full spec (autoscaling policies, per-member config) and detailed per-member status. Fetch GET /envs/{name} for the complete SandboxEnv. */
         SandboxEnvSummary: {
@@ -1951,7 +1964,7 @@ export interface components {
             items: components["schemas"]["SandboxEnvSummary"][];
         };
         /**
-         * @description Desired state of the editable Env shell. Members are managed through
+         * @description Desired state of the Env. Members are managed through
          *     `/envs/{name}/sandboxpools/*` and autoscaling through
          *     `/envs/{name}/autoscaling/*`.
          *
@@ -1960,6 +1973,12 @@ export interface components {
          *     clears every override. Write-only credential values need not be echoed:
          *     their references round-trip through GET, so re-sending what GET returned
          *     preserves the stored material.
+         *
+         *     The fields marked `x-immutable` in `UpsertSandboxEnvRequest` are the one
+         *     exception, and in the other direction: an update must carry them back
+         *     UNCHANGED. Omitting one, or sending a different value, is a 400 that
+         *     names what is currently in force — a body that loses the template is
+         *     almost always a caller bug, and accepting it silently would hide it.
          *
          *     A request carrying no `imagePullSecret` DELETES the backing Secret, not
          *     just the reference to it. Previously there was no call that could,
@@ -1971,9 +1990,7 @@ export interface components {
          *     had. One verb per meaning: every editable object on this API is a PUT
          *     of its desired state.
          */
-        UpdateSandboxEnvRequest: {
-            overrides?: components["schemas"]["EnvOverrides"];
-        };
+        UpdateSandboxEnvRequest: components["schemas"]["UpsertSandboxEnvRequest"];
         /**
          * @description Desired state of one autoscaling group. This is a PUT and it means it:
          *     a field left out is one the caller wants REMOVED. That is the only way
@@ -1997,6 +2014,8 @@ export interface components {
         };
         EnvAutoscalingGroupEnvelope: {
             group: components["schemas"]["EnvAutoscalingGroup"];
+            /** @description The body a write to this group takes, read off the live group. */
+            editable?: components["schemas"]["UpdateEnvAutoscalingGroupRequest"];
         };
         ListEnvAutoscalingGroupsResult: {
             items: components["schemas"]["EnvAutoscalingGroup"][];
@@ -2008,40 +2027,38 @@ export interface components {
             status: string;
         };
         /**
-         * @example {
-         *       "name": "my-env",
-         *       "templateRef": {
-         *         "name": "e2b-envd"
-         *       },
-         *       "mode": "WarmPool",
-         *       "overrides": {
-         *         "gateway": {
-         *           "enabled": true
-         *         }
-         *       },
-         *       "labels": {
-         *         "team": "ai-infra"
-         *       }
-         *     }
+         * @description What a client may set on an Env — the SAME body for create and update,
+         *     and the body `GET /envs/{name}` returns as `editable`.
+         *
+         *     One shape rather than two subsets, because two subsets drift: while
+         *     create accepted `mode` and update did not, a person editing an Env had
+         *     no way to send back what the API had just handed them, and the file a
+         *     client exported from a read was not a file a write accepted.
+         *
+         *     Fields marked `x-immutable` are fixed at create. An update must carry
+         *     them UNCHANGED: leaving one out, or sending a different value, is a 400
+         *     that names the value in force rather than a silent ignore — a body that
+         *     drops the template is far more likely to be a bug in the caller than a
+         *     request to have no template.
          */
-        CreateSandboxEnvRequest: {
-            /** @description RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit. */
-            name: string;
-            /** @description Which SandboxTemplate every member Pool is rendered from. Pin a version to hold the Env still across Template edits; omit it to follow the Template. */
+        UpsertSandboxEnvRequest: {
+            /** @description Which SandboxTemplate every member Pool is rendered from. Pin a version to hold the Env still across Template edits; omit it to follow the Template. Fixed after create. */
             templateRef: components["schemas"]["SandboxEnvTemplateRef"];
             /**
-             * @description WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod per sandbox and tears it down after, trading start latency for holding no capacity between runs.
+             * @description WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod per sandbox and tears it down after, trading start latency for holding no capacity between runs. Fixed after create.
              * @default WarmPool
              * @enum {string}
              */
             mode: "WarmPool" | "OnDemandJob";
             overrides?: components["schemas"]["EnvOverrides"];
-            labels?: {
-                [key: string]: string;
-            };
-            annotations?: {
-                [key: string]: string;
-            };
+            /** @description Metadata stamped onto the Env's objects. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix). */
+            labels?: components["schemas"]["StringMap"];
+            /** @description Annotations stamped onto the Env's objects. */
+            annotations?: components["schemas"]["StringMap"];
+        };
+        CreateSandboxEnvRequest: components["schemas"]["UpsertSandboxEnvRequest"] & {
+            /** @description RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit. */
+            name: string;
         };
         DeleteSandboxEnvResult: {
             name: string;

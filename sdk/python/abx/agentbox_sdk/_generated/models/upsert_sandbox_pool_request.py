@@ -26,21 +26,20 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations
-  from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels
   from ..models.env_update_strategy import EnvUpdateStrategy
   from ..models.resource_requirements import ResourceRequirements
+  from ..models.string_map import StringMap
 
 
 
 
 
-T = TypeVar("T", bound="CreateEnvSandboxPoolRequest")
+T = TypeVar("T", bound="UpsertSandboxPoolRequest")
 
 
 
 @_attrs_define
-class CreateEnvSandboxPoolRequest:
+class UpsertSandboxPoolRequest:
     """ Add a member SandboxPool to an Env. The server derives:
       - `name`         = "{envName}-{resourceKey}[-{quotaShort}]"
       - `scalingGroup` = `resourceKey` (e.g. "2c8Gi")
@@ -63,6 +62,16 @@ class CreateEnvSandboxPoolRequest:
     `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
     real size and Pools downsized differently land in distinct scaling groups.
 
+    This is also what an update takes, and what `GET` returns as `editable`:
+    one body for create, update and export, so a client edits what the API
+    handed it rather than translating between two subsets that drift.
+
+    The fields marked `x-immutable` describe the Pool's SHAPE and are fixed
+    at create. An update must carry them back unchanged — omitting one or
+    changing one is a 400 that names the value in force, because a body that
+    loses the instance type is a caller bug, not a request for a smaller
+    machine.
+
         Example:
             {'instanceType': 'sci.c23-2', 'multiplier': 1, 'replicas': 1, 'minReplicas': 0, 'maxReplicas': 4,
                 'inlineResources': {'requests': {'cpu': '100m', 'memory': '500Mi'}, 'limits': {'cpu': '100m', 'memory':
@@ -82,10 +91,8 @@ class CreateEnvSandboxPoolRequest:
                 the Env autoscaler.
             max_replicas (int | Unset): Upper bound on this pool's replicas, enforced when the Env autoscaler distributes
                 scale-up delta.
-            labels (CreateEnvSandboxPoolRequestLabels | Unset): Labels stamped onto this member's SandboxPool. Use for
-                plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix).
-            annotations (CreateEnvSandboxPoolRequestAnnotations | Unset): Annotations stamped onto this member's
-                SandboxPool.
+            labels (StringMap | Unset): Free-form string key/value metadata (labels or annotations).
+            annotations (StringMap | Unset): Free-form string key/value metadata (labels or annotations).
             update_strategy (EnvUpdateStrategy | Unset): Automatic rollout policy for member Pools when their rendered idle-
                 Pod identity (Template edit, image / gateway override) changes. Rollout mode is always Recreate: stale idle Pods
                 are rebuilt; claimed (Running/Starting) Pods are never disrupted and roll after returning to Idle.
@@ -97,20 +104,18 @@ class CreateEnvSandboxPoolRequest:
     replicas: int | Unset = UNSET
     min_replicas: int | Unset = UNSET
     max_replicas: int | Unset = UNSET
-    labels: CreateEnvSandboxPoolRequestLabels | Unset = UNSET
-    annotations: CreateEnvSandboxPoolRequestAnnotations | Unset = UNSET
+    labels: StringMap | Unset = UNSET
+    annotations: StringMap | Unset = UNSET
     update_strategy: EnvUpdateStrategy | Unset = UNSET
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
 
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations # noqa: PLC0415
-        from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels # noqa: PLC0415
         from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
         from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
+        from ..models.string_map import StringMap # noqa: PLC0415
         instance_type = self.instance_type
 
         multiplier = self.multiplier
@@ -139,7 +144,7 @@ class CreateEnvSandboxPoolRequest:
 
 
         field_dict: dict[str, Any] = {}
-        field_dict.update(self.additional_properties)
+
         field_dict.update({
         })
         if instance_type is not UNSET:
@@ -167,10 +172,9 @@ class CreateEnvSandboxPoolRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.create_env_sandbox_pool_request_annotations import CreateEnvSandboxPoolRequestAnnotations # noqa: PLC0415
-        from ..models.create_env_sandbox_pool_request_labels import CreateEnvSandboxPoolRequestLabels # noqa: PLC0415
         from ..models.env_update_strategy import EnvUpdateStrategy # noqa: PLC0415
         from ..models.resource_requirements import ResourceRequirements # noqa: PLC0415
+        from ..models.string_map import StringMap # noqa: PLC0415
         d = dict(src_dict)
         instance_type = d.pop("instanceType", UNSET)
 
@@ -193,21 +197,21 @@ class CreateEnvSandboxPoolRequest:
         max_replicas = d.pop("maxReplicas", UNSET)
 
         _labels = d.pop("labels", UNSET)
-        labels: CreateEnvSandboxPoolRequestLabels | Unset
+        labels: StringMap | Unset
         if isinstance(_labels,  Unset):
             labels = UNSET
         else:
-            labels = CreateEnvSandboxPoolRequestLabels.from_dict(_labels)
+            labels = StringMap.from_dict(_labels)
 
 
 
 
         _annotations = d.pop("annotations", UNSET)
-        annotations: CreateEnvSandboxPoolRequestAnnotations | Unset
+        annotations: StringMap | Unset
         if isinstance(_annotations,  Unset):
             annotations = UNSET
         else:
-            annotations = CreateEnvSandboxPoolRequestAnnotations.from_dict(_annotations)
+            annotations = StringMap.from_dict(_annotations)
 
 
 
@@ -222,7 +226,7 @@ class CreateEnvSandboxPoolRequest:
 
 
 
-        create_env_sandbox_pool_request = cls(
+        upsert_sandbox_pool_request = cls(
             instance_type=instance_type,
             multiplier=multiplier,
             inline_resources=inline_resources,
@@ -234,22 +238,5 @@ class CreateEnvSandboxPoolRequest:
             update_strategy=update_strategy,
         )
 
+        return upsert_sandbox_pool_request
 
-        create_env_sandbox_pool_request.additional_properties = d
-        return create_env_sandbox_pool_request
-
-    @property
-    def additional_keys(self) -> list[str]:
-        return list(self.additional_properties.keys())
-
-    def __getitem__(self, key: str) -> Any:
-        return self.additional_properties[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.additional_properties[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del self.additional_properties[key]
-
-    def __contains__(self, key: str) -> bool:
-        return key in self.additional_properties

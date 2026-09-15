@@ -327,7 +327,7 @@ function UpsertPoolInner({
 
   const onSubmit = handleSubmit(async (values) => {
     if (isEdit) {
-      const body = formValuesToUpdateBody(values)
+      const body = formValuesToUpdateBody(values, memberMetadata(env, pool!.name))
       await new Promise<void>((resolve, reject) => {
         updateMutation.mutate(
           {
@@ -1114,6 +1114,15 @@ function findMember(env: AgentSandboxEnv, name: string) {
   return null
 }
 
+/**
+ * The member's labels and annotations, for the halves of a pool's write body
+ * the form does not edit but the API will not accept an update without.
+ */
+function memberMetadata(env: AgentSandboxEnv, name: string) {
+  const cfg = findMember(env, name)?.config
+  return { labels: cfg?.labels, annotations: cfg?.annotations }
+}
+
 function findScalingGroupForPool(env: AgentSandboxEnv, name: string): string {
   return findMember(env, name)?.config?.scalingGroup ?? ""
 }
@@ -1153,13 +1162,34 @@ function formValuesToCreateBody(v: FormValues) {
   return body
 }
 
-function formValuesToUpdateBody(v: FormValues) {
-  const body: Record<string, unknown> = {}
-  if (v.replicas !== undefined) body.replicas = v.replicas
-  if (v.minReplicas !== undefined) body.minReplicas = v.minReplicas
-  if (v.maxReplicas !== undefined) body.maxReplicas = v.maxReplicas
-  const us = buildMemberUpdateStrategy(v)
-  if (us) body.updateStrategy = us
+/**
+ * The body a PUT takes: the same shape create takes, which is not the mutable
+ * subset it used to be.
+ *
+ * `instanceType`, `multiplier`, `inlineResources`, labels and annotations are
+ * fixed at create, and the API refuses an update that leaves one out while it
+ * holds a value — deliberately, because a body that lost the resource shape was
+ * built from the read shape rather than from the write shape. The form already
+ * carries them (`buildDefaultValues` reads them off the member config), so this
+ * emits the body create would, and only the values the form does not own are
+ * carried in from the live member.
+ */
+function formValuesToUpdateBody(
+  v: FormValues,
+  carried?: { labels?: Record<string, string>; annotations?: Record<string, string> },
+) {
+  const body = formValuesToCreateBody(v)
+  // Labels merge the other way round from the rest: the quota URL in the form is
+  // one label among possibly several, so the live set is the base and the form
+  // supplies the one field it owns.
+  const labels = { ...(carried?.labels ?? {}), ...((body.labels as Record<string, string>) ?? {}) }
+  if (Object.keys(labels).length > 0) body.labels = labels
+  else delete body.labels
+  // Annotations are fixed and the form has no field for them: they come back
+  // exactly as the live member holds them, or not at all.
+  if (carried?.annotations && Object.keys(carried.annotations).length > 0) {
+    body.annotations = carried.annotations
+  }
   return body
 }
 

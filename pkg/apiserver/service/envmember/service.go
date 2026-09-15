@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -83,6 +84,14 @@ type MemberPoolService interface {
 	// Get fetches one SandboxPool CR and verifies it is owned by envName
 	// before projecting it.
 	GetMember(ctx context.Context, namespace, envName, poolName string) (*gen.SandboxPool, *domain.AppError)
+	// MemberEditable returns the body a write to this member takes, read off the live
+	// member — the same shape UpdateMember accepts, so a client can export it,
+	// edit it and send it back without translating between two subset schemas.
+	//
+	// Named for the member rather than plain `Editable` because the composed
+	// SandboxEnvService embeds this interface AND the Env shell's, and two
+	// `Editable`s would not compose.
+	MemberEditable(ctx context.Context, namespace, envName, poolName, localClusterID string) (*gen.UpsertSandboxPoolRequest, *domain.AppError)
 }
 
 // MemberPoolPatch is the editable subset of EnvClusterMember exposed to
@@ -107,6 +116,16 @@ type MemberPoolPatch struct {
 	MinReplicas    *int32
 	MaxReplicas    *int32
 	UpdateStrategy *agentsv1alpha1.EnvUpdateStrategy
+
+	// The member's SHAPE, carried so the update can check it. A nil pointer
+	// means the request did not mention the field; for these fields that is a
+	// 400 when the member has one, because a body that loses the instance type
+	// is a caller bug rather than a request for a smaller machine.
+	InstanceType    *string
+	Multiplier      *int32
+	InlineResources *corev1.ResourceRequirements
+	Labels          *map[string]string
+	Annotations     *map[string]string
 }
 
 // validateMemberReplicaBounds rejects a member whose per-member MinReplicas
@@ -349,6 +368,9 @@ func (s *k8sService) UpdateMember(ctx context.Context, namespace, envName, poolN
 	if existing == nil {
 		return nil, domain.NewNotFound(fmt.Sprintf("member pool %q not found in env %q", poolName, envName))
 	}
+	if appErr := checkMemberFixedFields(existing, patch); appErr != nil {
+		return nil, appErr
+	}
 	// When the member belongs to an autoscaling-enabled group, replicas
 	// is owned by the autoscaler — but a no-op resend (the value the
 	// client read back from the API just now, unchanged) is allowed.
@@ -564,6 +586,153 @@ func (s *k8sService) GetMember(ctx context.Context, namespace, envName, poolName
 	}
 	result := envcommon.PoolToGen(ctx, pool)
 	return &result, nil
+}
+
+// checkMemberFixedFields refuses an update that drops or changes the member's
+// SHAPE.
+//
+// Same rule as the Env's fixed fields, and for the same reason: the body a
+// client sends is now the same one it can read back, so a body that loses the
+// instance type was almost certainly built from the wrong source. Naming the
+// value in force — rather than ignoring the omission — is what makes that a
+// one-retry mistake instead of a pool that quietly means something else.
+func checkMemberFixedFields(member *agentsv1alpha1.EnvClusterMember, patch MemberPoolPatch) *domain.AppError {
+	cfg := member.Config
+	recreate := "add a member with what you want and remove this one"
+
+	if patch.InstanceType == nil {
+		if cfg.InstanceType != "" {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"instanceType is fixed at create (this member is %q); an update must carry it unchanged — to change the size, %s",
+				cfg.InstanceType, recreate))
+		}
+	} else if *patch.InstanceType != cfg.InstanceType {
+		return domain.NewBadRequest(fmt.Sprintf(
+			"instanceType is fixed at create: this member is %q and the request says %q; to change the size, %s",
+			cfg.InstanceType, *patch.InstanceType, recreate))
+	}
+
+	if patch.Multiplier == nil {
+		if cfg.Multiplier != 0 {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"multiplier is fixed at create (this member is %d); an update must carry it unchanged",
+				cfg.Multiplier))
+		}
+	} else if *patch.Multiplier != cfg.Multiplier {
+		return domain.NewBadRequest(fmt.Sprintf(
+			"multiplier is fixed at create: this member is %d and the request says %d; to change it, %s",
+			cfg.Multiplier, *patch.Multiplier, recreate))
+	}
+
+	if patch.InlineResources == nil {
+		if cfg.InlineResources != nil {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"inlineResources are fixed at create (this member is %s); an update must carry them unchanged — to change the size, %s",
+				inlineResourcesSummary(cfg.InlineResources), recreate))
+		}
+	} else if !equality.Semantic.DeepEqual(cfg.InlineResources, patch.InlineResources) {
+		return domain.NewBadRequest(fmt.Sprintf(
+			"inlineResources are fixed at create: this member is %s and the request says %s; to change the size, %s",
+			inlineResourcesSummary(cfg.InlineResources), inlineResourcesSummary(patch.InlineResources), recreate))
+	}
+
+	if appErr := checkMemberFixedMap("labels", patch.Labels, cfg.Labels); appErr != nil {
+		return appErr
+	}
+	return checkMemberFixedMap("annotations", patch.Annotations, cfg.Annotations)
+}
+
+func checkMemberFixedMap(field string, want *map[string]string, live map[string]string) *domain.AppError {
+	if want == nil {
+		if len(live) == 0 {
+			return nil
+		}
+		return domain.NewBadRequest(fmt.Sprintf(
+			"%s are fixed at create and this member has %d of them; an update must carry them unchanged (read them back with `--json --editable`)",
+			field, len(live)))
+	}
+	if maps.Equal(live, *want) {
+		return nil
+	}
+	return domain.NewBadRequest(fmt.Sprintf(
+		"%s are fixed at create and cannot be changed here; this member has %s",
+		field, renderStringMap(live)))
+}
+
+// inlineResourcesSummary renders a resource spec for an error message.
+func inlineResourcesSummary(r *corev1.ResourceRequirements) string {
+	if r == nil {
+		return "(none)"
+	}
+	return fmt.Sprintf("requests=%v limits=%v", r.Requests, r.Limits)
+}
+
+func renderStringMap(m map[string]string) string {
+	if len(m) == 0 {
+		return "(none)"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, m[k]))
+	}
+	return strings.Join(parts, " ")
+}
+
+// memberEditableToGen is the write body for this member, read off the live
+// member's config — the user's intent, which is also what the create accepted.
+func memberEditableToGen(member *agentsv1alpha1.EnvClusterMember) *gen.UpsertSandboxPoolRequest {
+	cfg := member.Config
+	out := &gen.UpsertSandboxPoolRequest{}
+	if cfg.InstanceType != "" {
+		out.InstanceType = ptr.To(cfg.InstanceType)
+	}
+	if cfg.Multiplier != 0 {
+		out.Multiplier = ptr.To(cfg.Multiplier)
+	}
+	if cfg.InlineResources != nil {
+		out.InlineResources = envcommon.InlineResourcesToGen(cfg.InlineResources)
+	}
+	replicas := member.Spec.Replicas
+	out.Replicas = &replicas
+	if cfg.MinReplicas != nil {
+		out.MinReplicas = ptr.To(*cfg.MinReplicas)
+	}
+	if cfg.MaxReplicas != nil {
+		out.MaxReplicas = ptr.To(*cfg.MaxReplicas)
+	}
+	if len(cfg.Labels) > 0 {
+		labels := gen.StringMap(maps.Clone(cfg.Labels))
+		out.Labels = &labels
+	}
+	if len(cfg.Annotations) > 0 {
+		annotations := gen.StringMap(maps.Clone(cfg.Annotations))
+		out.Annotations = &annotations
+	}
+	if cfg.UpdateStrategy != nil {
+		out.UpdateStrategy = envcommon.UpdateStrategyToGen(cfg.UpdateStrategy)
+	}
+	return out
+}
+
+func (s *k8sService) MemberEditable(ctx context.Context, namespace, envName, poolName, localClusterID string) (*gen.UpsertSandboxPoolRequest, *domain.AppError) {
+	env := &agentsv1alpha1.SandboxEnv{}
+	if err := s.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: envName}, env); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", envName, namespace))
+		}
+		return nil, domain.NewInternal(err.Error(), err)
+	}
+	for _, m := range envcommon.LocalClusterMembers(&env.Spec, localClusterID) {
+		if m.Name == poolName {
+			return memberEditableToGen(&m), nil
+		}
+	}
+	return nil, domain.NewNotFound(fmt.Sprintf("member pool %q not found in env %q", poolName, envName))
 }
 
 // renderCandidate builds the SandboxPool that plugin admission will see

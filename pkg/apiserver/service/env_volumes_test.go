@@ -274,13 +274,11 @@ func TestUpdate_OverridesAreReplacedWholesale_NotMerged(t *testing.T) {
 	svc := newVolEnvService(t, VolumeConfig{Enabled: true},
 		env, volTemplate(false, "", nil), boundPVC("ds"), boundPVC("other"))
 
-	// PATCH carrying only volumes must wipe image and gateway.
-	if _, err := svc.Update(context.Background(), UpdateSandboxEnvInput{
-		Name:      envTestName,
-		Namespace: envTestNamespace,
-		Overrides: volOverrides(agentsv1alpha1.EnvVolumeMount{
-			ClaimName: "other", MountPath: "/volume/other"}),
-	}); err != nil {
+	// A PUT carrying only volumes must wipe image and gateway. The fixed fields
+	// come along because an update has to echo them; that is the contract, not
+	// an accident of this test.
+	if _, err := svc.Update(context.Background(), updateEnvInput(env, volOverrides(
+		agentsv1alpha1.EnvVolumeMount{ClaimName: "other", MountPath: "/volume/other"}))); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -315,11 +313,8 @@ func TestUpdate_EmptyVolumeListClearsMounts(t *testing.T) {
 	svc := newVolEnvService(t, VolumeConfig{Enabled: true},
 		env, volTemplate(false, "", nil), boundPVC("ds"))
 
-	if _, err := svc.Update(context.Background(), UpdateSandboxEnvInput{
-		Name:      envTestName,
-		Namespace: envTestNamespace,
-		Overrides: &agentsv1alpha1.EnvOverridesSpec{Volumes: []agentsv1alpha1.EnvVolumeMount{}},
-	}); err != nil {
+	if _, err := svc.Update(context.Background(), updateEnvInput(env,
+		&agentsv1alpha1.EnvOverridesSpec{Volumes: []agentsv1alpha1.EnvVolumeMount{}})); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
