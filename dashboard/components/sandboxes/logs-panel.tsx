@@ -53,6 +53,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { GrafanaTimePicker } from "@/components/prometheus/grafana-time-picker"
 import { LogViewer } from "@/components/logs/log-viewer"
 import type { LogEntry } from "@/components/logs/types"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -60,6 +61,7 @@ import { basePath, getToken } from "@/lib/api/client"
 import { store, impersonationAtom } from "@/lib/atoms"
 import { useTranslation } from "@/lib/i18n"
 import { sandboxLogsConfigQueryOptions, sandboxQueryOptions } from "@/lib/queries"
+import { type TimeRangeValue, resolveTimeRange } from "@/lib/types/prometheus"
 
 /**
  * The sandbox's own container, and the default everywhere. A Pod also runs the
@@ -95,18 +97,6 @@ function isMeta(l: NdjsonLine): l is NdjsonMeta {
 }
 function isEntry(l: NdjsonLine): l is NdjsonEntry {
   return "log" in l && typeof (l as NdjsonEntry).log === "string"
-}
-
-/** Local-time `YYYY-MM-DDTHH:mm` for a datetime-local input. */
-function toLocalInput(iso: string | undefined): string {
-  if (!iso) return ""
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ""
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  )
 }
 
 export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
@@ -152,8 +142,17 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
   // Defaulted to the run itself, and only once the record has loaded: seeding
   // from an undefined startedAt would pin an empty window that the user then
   // has to notice and fix.
-  const [from, setFrom] = useState("")
-  const [to, setTo] = useState("")
+  //
+  // Held as a TimeRangeValue, the same shape the metrics panels use, so the
+  // shared picker's presets ("last 15m") work here too. A preset is NOT a
+  // window until it is resolved: `resolveTimeRange` turns it into absolute
+  // bounds at query time, so "last 15m" means 15 minutes before the search
+  // rather than 15 minutes before the page was opened.
+  const [range, setRange] = useState<TimeRangeValue>(() => ({
+    type: "absolute",
+    start: 0,
+    end: 0,
+  }))
   const [keyword, setKeyword] = useState("")
   const seeded = useRef(false)
   // Seeding the form from data that arrives asynchronously: the record is not
@@ -165,13 +164,17 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
     const start = sandbox.startedAt ?? sandbox.claimedAt
     if (!start) return
     seeded.current = true
+    const startUnix = Math.floor(new Date(start).getTime() / 1000)
+    const endUnix = sandbox.terminatedAt
+      ? Math.floor(new Date(sandbox.terminatedAt).getTime() / 1000)
+      : Math.floor(Date.now() / 1000)
     // eslint-disable-next-line react-hooks/set-state-in-effect -- seeds the form from data that only arrives asynchronously; the ref makes it run once
-    setFrom(toLocalInput(start))
-    setTo(toLocalInput(sandbox.terminatedAt))
+    setRange({ type: "absolute", start: startUnix, end: endUnix })
   }, [sandbox])
 
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [lines, setLines] = useState(100)
+  const [wrap, setWrap] = useState(true)
 
   // ── Fetch ────────────────────────────────────────────────────────────────
   const [entries, setEntries] = useState<LogEntry[]>([])
@@ -218,6 +221,8 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
       headers["X-Impersonate-User"] = impersonation.user
     }
 
+    const bounds = resolveTimeRange(range)
+
     let url: string
     let init: RequestInit
     if (useCentral) {
@@ -229,8 +234,11 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
           sandbox,
           clusterID,
           container: container || undefined,
-          from: from ? new Date(from).toISOString() : undefined,
-          to: to ? new Date(to).toISOString() : undefined,
+          // Resolved HERE, not when the range was picked: a preset is relative
+          // to the moment the query runs. Seconds → ms → ISO, which is what the
+          // BFF parses.
+          from: bounds.start ? new Date(bounds.start * 1000).toISOString() : undefined,
+          to: bounds.end ? new Date(bounds.end * 1000).toISOString() : undefined,
           keyword: keyword || undefined,
           limit,
         }),
@@ -355,19 +363,7 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
     } finally {
       setIsLoading(false)
     }
-  }, [
-    ready,
-    queryBody,
-    clusterID,
-    sandboxId,
-    container,
-    useCentral,
-    from,
-    to,
-    keyword,
-    limit,
-    lines,
-  ])
+  }, [ready, queryBody, clusterID, sandboxId, container, useCentral, range, keyword, limit, lines])
 
   // Fetch on mount and whenever the query changes. fetchLogs clears the view
   // synchronously before awaiting the network — the documented "fetch in an
@@ -378,30 +374,42 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
     return () => abortRef.current?.abort()
   }, [fetchLogs])
 
-  const toolbar = (
-    <div className="border-border flex h-[33px] shrink-0 items-center gap-2 border-b px-3">
-      {containers.length > 1 && (
-        <Select
-          value={container || SANDBOX_CONTAINER}
-          onValueChange={(v) => {
-            if (v) setContainer(v === SANDBOX_CONTAINER ? "" : v)
-          }}
-        >
-          <SelectTrigger
-            size="sm"
-            className="h-6 gap-1 border-0 bg-transparent px-1.5 font-mono text-xs shadow-none focus-visible:ring-0"
-            aria-label={t("sandboxes.logs.container")}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="start">
-            {containers.map((n) => (
-              <SelectItem key={n} value={n} className="font-mono text-xs">
-                {n}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+  // The container picker. In history mode it belongs on the left sidebar with
+  // the rest of the query (it IS part of the query); while streaming there is no
+  // sidebar, so it rides in the viewer's toolbar instead.
+  const containerSelect = containers.length > 1 && (
+    <Select
+      value={container || SANDBOX_CONTAINER}
+      onValueChange={(v) => {
+        if (v) setContainer(v === SANDBOX_CONTAINER ? "" : v)
+      }}
+    >
+      <SelectTrigger
+        size="sm"
+        className="h-7 gap-1 font-mono text-xs"
+        aria-label={t("sandboxes.logs.container")}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="start">
+        {containers.map((n) => (
+          <SelectItem key={n} value={n} className="font-mono text-xs">
+            {n}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+
+  // Folded into the viewer's own toolbar rather than stacked above it: a second
+  // bar meant a second line count, and the reader had to work out that the two
+  // numbers were the same one.
+  const leading = (
+    <>
+      {!useCentral && containerSelect && (
+        <div className="shrink-0 [&>button]:h-6 [&>button]:border-0 [&>button]:bg-transparent [&>button]:px-1.5 [&>button]:shadow-none">
+          {containerSelect}
+        </div>
       )}
       {!useCentral && (
         <Select
@@ -412,7 +420,8 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
         >
           <SelectTrigger
             size="sm"
-            className="h-6 gap-1 border-0 bg-transparent px-1.5 font-mono text-xs uppercase shadow-none focus-visible:ring-0"
+            className="h-6 shrink-0 gap-1 border-0 bg-transparent px-1.5 font-mono text-xs uppercase shadow-none focus-visible:ring-0"
+            aria-label={t("sandboxes.logs.tail")}
           >
             <SelectValue />
           </SelectTrigger>
@@ -425,21 +434,28 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
           </SelectContent>
         </Select>
       )}
-      <span className="text-muted-foreground/60 ml-auto shrink-0 font-mono text-xs">
-        {entries.length} {t("componentLogs.lines")}
-      </span>
-      {error && <span className="text-destructive shrink-0 truncate text-xs">{error}</span>}
-    </div>
+      {error && (
+        <span className="text-destructive max-w-[40%] shrink-0 truncate text-xs">{error}</span>
+      )}
+      {(!useCentral || error) && <div className="bg-border mx-1 h-4 w-px shrink-0" />}
+    </>
   )
 
+  // `h-full`, not `flex-1`. A ResizablePanel wraps its children in a plain block
+  // box — the library sets maxHeight/flexGrow/overflow on it but never
+  // `display:flex` — so `flex-1` resolves against nothing, the column's height
+  // collapses to auto, and the rows region inside LogViewer (min-h-0 flex-1)
+  // computes to zero. The toolbar has a fixed height and survives, which is why
+  // the symptom is a line count above an empty panel rather than a blank page.
   const viewer = (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {toolbar}
+    <div className="flex h-full min-h-0 flex-col">
       <LogViewer
         entries={entries}
         isLoading={isLoading}
         showTimestamp
-        wrap
+        wrap={wrap}
+        onWrapChange={setWrap}
+        leading={leading}
         truncated={truncated}
         currentMatch={appliedKeyword || undefined}
       />
@@ -460,32 +476,30 @@ export function SandboxLogsPanel({ sandboxId }: { sandboxId: string }) {
           }}
         >
           <div className="space-y-1">
-            <Label htmlFor="log-from" className="text-xs">
-              {t("sandboxes.logs.from")}
-            </Label>
-            <Input
-              id="log-from"
-              type="datetime-local"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="h-7 font-mono text-xs"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="log-to" className="text-xs">
-              {t("sandboxes.logs.to")}
-            </Label>
-            <Input
-              id="log-to"
-              type="datetime-local"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="h-7 font-mono text-xs"
+            <Label className="text-xs">{t("sandboxes.logs.window")}</Label>
+            {/* The same control the metrics panels use, so one range widget is
+                learned once. No refresh section here: this form applies on
+                Search, and a refresh button that did nothing until then would
+                be lying about when the query runs. */}
+            <GrafanaTimePicker
+              value={range}
+              onValueChange={setRange}
+              refreshInterval={0}
+              onRefreshIntervalChange={() => {}}
+              onRefresh={() => void fetchLogs()}
+              hideRefresh
+              className="[&>button]:min-w-0 [&>button]:flex-1"
             />
           </div>
           <p className="text-muted-foreground text-[11px] leading-snug">
             {t("sandboxes.logs.windowHint")}
           </p>
+          {containers.length > 1 && (
+            <div className="space-y-1">
+              <Label className="text-xs">{t("sandboxes.logs.container")}</Label>
+              {containerSelect}
+            </div>
+          )}
           <div className="space-y-1">
             <Label htmlFor="log-keyword" className="text-xs">
               {t("sandboxes.logs.keyword")}

@@ -358,6 +358,29 @@ export function zoomOut(current: TimeRangeValue): TimeRangeValue {
   }
 }
 
+/**
+ * The inverse: halve the window, keeping its midpoint.
+ *
+ * Absolute ranges shrink around the centre rather than clamping to now, which
+ * is what makes zooming reversible — an out/in pair returns you to where you
+ * started. (zoomOut anchors on the end instead, because widening past "now"
+ * would add a stretch of future that can hold no samples.)
+ */
+export function zoomIn(current: TimeRangeValue): TimeRangeValue {
+  if (current.type === "preset") {
+    const idx = PRESET_ORDER.indexOf(current.preset)
+    const next = PRESET_ORDER[Math.max(idx - 1, 0)]
+    return { type: "preset", preset: next }
+  }
+  const quarter = (current.end - current.start) / 4
+  const mid = (current.start + current.end) / 2
+  return {
+    type: "absolute",
+    start: Math.round(mid - quarter),
+    end: Math.round(mid + quarter),
+  }
+}
+
 // ─── Auto Refresh Interval ────────────────────────────────────────────────
 
 /** Auto-refresh interval in milliseconds. 0 = Off. */

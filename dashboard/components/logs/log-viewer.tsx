@@ -30,7 +30,15 @@ import { useCopyToClipboardWithText } from "@/hooks/use-copy-to-clipboard"
 import { formatLocalTimestamp } from "@/lib/utils/format-time"
 import { useTranslation } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
-import { ChevronDown, ChevronUp, CopyIcon, DownloadIcon, SearchIcon, X } from "lucide-react"
+import {
+  ChevronDown,
+  ChevronUp,
+  CopyIcon,
+  DownloadIcon,
+  SearchIcon,
+  WrapTextIcon,
+  X,
+} from "lucide-react"
 import { parseAsString, useQueryState } from "nuqs"
 import { type ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
@@ -71,6 +79,8 @@ export function LogViewer({
   isLoading,
   showTimestamp,
   wrap,
+  onWrapChange,
+  leading,
   truncated,
   currentMatch,
   onRequery,
@@ -85,6 +95,20 @@ export function LogViewer({
    * whatever the setting says (see the note at the top of this file).
    */
   wrap: boolean
+  /**
+   * Makes `wrap` a control the reader can flip. Omit to keep it fixed at
+   * whatever the page passed.
+   */
+  onWrapChange?: (wrap: boolean) => void
+  /**
+   * Rendered at the head of this view's toolbar, before the search box.
+   *
+   * Exists so a page with its own controls (a container picker, a tail length)
+   * folds them into this row rather than stacking a second bar above it — two
+   * bars meant two line counts, and the reader had to work out that they were
+   * the same number.
+   */
+  leading?: ReactNode
   /** Whether the line limit clipped this result — explains a missing selection. */
   truncated?: boolean
   /** The server-side keyword currently in effect, offered back as "keep keyword". */
@@ -451,6 +475,7 @@ export function LogViewer({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border flex h-9 shrink-0 items-center gap-1 border-b px-2">
+        {leading}
         <SearchIcon className="text-muted-foreground/60 size-3.5 shrink-0" />
         <input
           value={query}
@@ -505,6 +530,26 @@ export function LogViewer({
           </>
         )}
         <div className="bg-border mx-1 h-4 w-px shrink-0" />
+        {onWrapChange && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn("size-7 shrink-0", wrapping && "text-foreground bg-muted")}
+            onClick={() => onWrapChange(!wrap)}
+            // Past WRAP_MAX_LINES this view renders unwrapped no matter what the
+            // setting says, so offering the toggle there would be a control that
+            // does nothing.
+            disabled={entries.length > WRAP_MAX_LINES}
+            title={
+              entries.length > WRAP_MAX_LINES
+                ? t("componentLogs.wrapUnavailable")
+                : t("componentLogs.wrap")
+            }
+            aria-pressed={wrapping}
+          >
+            <WrapTextIcon className="size-3.5" />
+          </Button>
+        )}
         <span className="text-muted-foreground/60 shrink-0 font-mono text-xs">
           {entries.length} {t("componentLogs.lines")}
         </span>

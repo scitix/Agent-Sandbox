@@ -198,6 +198,7 @@
   "sandboxes.logs.container": "容器",
   "sandboxes.logs.from": "起始",
   "sandboxes.logs.to": "结束",
+  "sandboxes.logs.window": "时间范围",
   "sandboxes.logs.keyword": "关键词",
   "sandboxes.logs.limit": "最大行数",
   "sandboxes.logs.search": "查询",
@@ -685,6 +686,8 @@
   "prometheus.quickRanges": "快捷范围",
   "prometheus.browserTime": "浏览器时间（{{timezoneName}}）",
   "prometheus.zoomOut": "缩小（扩展时间范围）",
+  "prometheus.zoomIn": "放大（缩短范围）",
+  "prometheus.narrowRange": "收窄范围",
   "prometheus.expandChart": "展开图表",
   "prometheus.copyPromql": "复制 PromQL 查询",
   "prometheus.copiedPromql": "已复制！",
@@ -1567,6 +1570,8 @@
   "componentLogs.empty": "没有日志",
   "componentLogs.copy": "复制全部",
   "componentLogs.download": "下载",
+  "componentLogs.wrap": "长行自动换行",
+  "componentLogs.wrapUnavailable": "超过 1000 行时无法自动换行",
   "componentLogs.highlightPlaceholder": "在这些行里高亮",
   "componentLogs.clearSearch": "清除",
   "componentLogs.prevMatch": "上一处匹配",
@@ -1589,5 +1594,6 @@
   "componentLogs.detail.requery": "查看上下文",
   "componentLogs.detail.missing": "当前结果里没有这一行。",
   "componentLogs.detail.missingTruncated": "当前结果里没有这一行 —— 它被行数上限截掉了。调大上限或收窄时间范围。",
-  "componentLogs.detail.dismiss": "知道了"
+  "componentLogs.detail.dismiss": "知道了",
+  "sandboxes.logs.tail": "行数"
 }

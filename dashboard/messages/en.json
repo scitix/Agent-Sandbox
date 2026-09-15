@@ -198,6 +198,7 @@
   "sandboxes.logs.container": "Container",
   "sandboxes.logs.from": "From",
   "sandboxes.logs.to": "To",
+  "sandboxes.logs.window": "Time range",
   "sandboxes.logs.keyword": "Keyword",
   "sandboxes.logs.limit": "Max lines",
   "sandboxes.logs.search": "Search",
@@ -703,6 +704,8 @@
   "prometheus.quickRanges": "Quick ranges",
   "prometheus.browserTime": "Browser Time ({{timezoneName}})",
   "prometheus.zoomOut": "Zoom out (expand time range)",
+  "prometheus.zoomIn": "Zoom in",
+  "prometheus.narrowRange": "Narrow range",
   "prometheus.expandChart": "Expand chart",
   "prometheus.copyPromql": "Copy PromQL query",
   "prometheus.copiedPromql": "Copied!",
@@ -1567,6 +1570,8 @@
   "componentLogs.empty": "No log lines",
   "componentLogs.copy": "Copy all",
   "componentLogs.download": "Download",
+  "componentLogs.wrap": "Wrap long lines",
+  "componentLogs.wrapUnavailable": "Wrapping is unavailable above 1000 lines",
   "componentLogs.highlightPlaceholder": "Highlight in these lines",
   "componentLogs.clearSearch": "Clear",
   "componentLogs.prevMatch": "Previous match",
@@ -1589,5 +1594,6 @@
   "componentLogs.detail.requery": "Show surrounding lines",
   "componentLogs.detail.missing": "That line is not in the current result.",
   "componentLogs.detail.missingTruncated": "That line is not in the current result — the line limit clipped it. Raise the limit or narrow the window.",
-  "componentLogs.detail.dismiss": "Dismiss"
+  "componentLogs.detail.dismiss": "Dismiss",
+  "sandboxes.logs.tail": "Tail"
 }

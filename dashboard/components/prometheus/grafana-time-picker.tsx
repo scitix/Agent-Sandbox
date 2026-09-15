@@ -33,10 +33,11 @@
 import { useState, useCallback } from "react"
 import { useTranslation } from "@/lib/i18n"
 import type { TranslationKey } from "@/lib/i18n"
-import { Clock, ChevronDown, RefreshCw, ZoomOut, Check, Globe } from "lucide-react"
+import { Clock, ChevronDown, RefreshCw, ZoomIn, ZoomOut, Check, Globe } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
+import { Slider } from "@/components/ui/slider"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -51,6 +52,7 @@ import {
   REFRESH_INTERVALS,
   REFRESH_INTERVAL_LABELS,
   formatUnixTimestamp,
+  zoomIn,
   zoomOut,
   computeTimeRange,
 } from "@/lib/types/prometheus"
@@ -89,6 +91,12 @@ export interface GrafanaTimePickerProps {
   disabled?: boolean
   /** When disabled=true, this label replaces the time range display */
   fixedLabel?: string
+  /**
+   * Hide the refresh + auto-refresh control. For a form whose selection only
+   * takes effect on an explicit Search: a refresh button there would claim the
+   * query runs at a moment it does not.
+   */
+  hideRefresh?: boolean
   className?: string
 }
 
@@ -129,6 +137,31 @@ function TimePickerPopoverContent({
     const tr = computeTimeRange(value.preset)
     return toDatetimeLocal(tr.end)
   })
+
+  // The slider's domain: the range that was in effect when the panel opened,
+  // frozen. It only narrows within that window — widening is the Zoom Out
+  // button's job, and a domain that tracked the inputs would let a drag walk
+  // the window somewhere the reader never asked to go.
+  const [[domainStart, domainEnd]] = useState<[number, number]>(() => {
+    if (value.type === "absolute") return [value.start, value.end]
+    const tr = computeTimeRange(value.preset)
+    return [tr.start, tr.end]
+  })
+  const sliderStep = Math.max(1, Math.floor((domainEnd - domainStart) / 1000))
+  const clampToDomain = (n: number) => Math.min(domainEnd, Math.max(domainStart, n))
+  const fromUnix = fromDatetimeLocal(absFrom)
+  const toUnix = fromDatetimeLocal(absTo)
+  const sliderValue: [number, number] = [
+    Number.isFinite(fromUnix) ? clampToDomain(fromUnix) : domainStart,
+    Number.isFinite(toUnix) ? clampToDomain(toUnix) : domainEnd,
+  ]
+
+  const handleSliderChange = useCallback((next: number | readonly number[]) => {
+    if (!Array.isArray(next)) return
+    const [start, end] = next as readonly number[]
+    setAbsFrom(toDatetimeLocal(start))
+    setAbsTo(toDatetimeLocal(end))
+  }, [])
 
   const handleApplyAbsolute = useCallback(() => {
     if (!absFrom || !absTo) return
@@ -193,6 +226,22 @@ function TimePickerPopoverContent({
           </div>
         </div>
 
+        {/* Narrow the window by dragging, within the range the panel opened on. */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-muted-foreground font-mono text-xs">
+            {t("prometheus.narrowRange")}
+          </label>
+          <Slider
+            value={sliderValue}
+            min={domainStart}
+            max={domainEnd}
+            step={sliderStep}
+            minStepsBetweenValues={1}
+            onValueChange={handleSliderChange}
+            className="px-1 py-1.5"
+          />
+        </div>
+
         <Button
           size="sm"
           className="w-full font-mono text-xs"
@@ -253,6 +302,7 @@ export function GrafanaTimePicker({
   isFetching = false,
   disabled = false,
   fixedLabel,
+  hideRefresh = false,
   className,
 }: GrafanaTimePickerProps) {
   const { t } = useTranslation()
@@ -273,11 +323,33 @@ export function GrafanaTimePicker({
     onValueChange(zoomOut(value))
   }, [disabled, value, onValueChange])
 
+  const handleZoomIn = useCallback(() => {
+    if (disabled) return
+    onValueChange(zoomIn(value))
+  }, [disabled, value, onValueChange])
+
   const isAtMaxZoom =
     value.type === "preset" && value.preset === PRESET_ORDER[PRESET_ORDER.length - 1]
+  const isAtMinZoom = value.type === "preset" && value.preset === PRESET_ORDER[0]
 
   return (
     <div className={cn("flex min-w-0 items-center gap-1", className)}>
+      {/* ── Zoom In ── Narrower window, on the left: the two zoom buttons read
+          as a pair around the range they act on. */}
+      <Button
+        variant="outline"
+        size="sm"
+        className={cn(
+          "h-8 w-8 shrink-0 p-0",
+          (disabled || isAtMinZoom) && "cursor-not-allowed opacity-50",
+        )}
+        onClick={handleZoomIn}
+        disabled={disabled || isAtMinZoom}
+        title={t("prometheus.zoomIn")}
+      >
+        <ZoomIn className="h-3.5 w-3.5" />
+      </Button>
+
       {/* ── Time range picker trigger ── */}
       <Popover open={pickerOpen} onOpenChange={disabled ? undefined : setPickerOpen}>
         <PopoverTrigger
@@ -318,7 +390,10 @@ export function GrafanaTimePicker({
       <Button
         variant="outline"
         size="sm"
-        className={cn("h-8 w-8 p-0", (disabled || isAtMaxZoom) && "cursor-not-allowed opacity-50")}
+        className={cn(
+          "h-8 w-8 shrink-0 p-0",
+          (disabled || isAtMaxZoom) && "cursor-not-allowed opacity-50",
+        )}
         onClick={handleZoomOut}
         disabled={disabled || isAtMaxZoom}
         title={t("prometheus.zoomOut")}
@@ -326,69 +401,73 @@ export function GrafanaTimePicker({
         <ZoomOut className="h-3.5 w-3.5" />
       </Button>
 
-      {/* ── Refresh button + interval picker ── */}
-      <div
-        className={cn(
-          "border-border flex h-8 items-stretch rounded-md border",
-          disabled && "opacity-50",
-        )}
-      >
-        {/* Main refresh button with countdown */}
-        <button
-          type="button"
-          onClick={disabled ? undefined : onRefresh}
-          disabled={disabled}
-          title={t("prometheus.refreshNow")}
-          className={cn(
-            "flex items-center gap-1.5 px-2.5 font-mono text-xs transition-colors",
-            disabled ? "cursor-not-allowed" : "hover:bg-muted cursor-pointer",
-            "rounded-l-md",
-          )}
-        >
-          <RefreshCw
+      {!hideRefresh && (
+        <>
+          {/* ── Refresh button + interval picker ── */}
+          <div
             className={cn(
-              "h-3.5 w-3.5",
-              !disabled && "group-hover:text-foreground",
-              isFetching && "animate-spin",
-            )}
-          />
-          {countdown !== null && countdown !== undefined && (
-            <span className="text-muted-foreground tabular-nums">{countdown}s</span>
-          )}
-        </button>
-
-        {/* Divider */}
-        <div className="border-border w-px self-stretch border-l" />
-
-        {/* Interval dropdown trigger */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            disabled={disabled}
-            className={cn(
-              "flex h-full items-center rounded-r-md px-1.5 transition-colors",
-              disabled ? "cursor-not-allowed" : "hover:bg-muted cursor-pointer",
+              "border-border flex h-8 items-stretch rounded-md border",
+              disabled && "opacity-50",
             )}
           >
-            <ChevronDown className="text-muted-foreground h-3 w-3" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
-            {REFRESH_INTERVALS.map((interval) => (
-              <DropdownMenuItem
-                key={interval}
-                onClick={() => onRefreshIntervalChange(interval)}
+            {/* Main refresh button with countdown */}
+            <button
+              type="button"
+              onClick={disabled ? undefined : onRefresh}
+              disabled={disabled}
+              title={t("prometheus.refreshNow")}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 font-mono text-xs transition-colors",
+                disabled ? "cursor-not-allowed" : "hover:bg-muted cursor-pointer",
+                "rounded-l-md",
+              )}
+            >
+              <RefreshCw
                 className={cn(
-                  "flex items-center gap-2 font-mono text-xs",
-                  refreshInterval === interval && "font-semibold",
+                  "h-3.5 w-3.5",
+                  !disabled && "group-hover:text-foreground",
+                  isFetching && "animate-spin",
+                )}
+              />
+              {countdown !== null && countdown !== undefined && (
+                <span className="text-muted-foreground tabular-nums">{countdown}s</span>
+              )}
+            </button>
+
+            {/* Divider */}
+            <div className="border-border w-px self-stretch border-l" />
+
+            {/* Interval dropdown trigger */}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={disabled}
+                className={cn(
+                  "flex h-full items-center rounded-r-md px-1.5 transition-colors",
+                  disabled ? "cursor-not-allowed" : "hover:bg-muted cursor-pointer",
                 )}
               >
-                {refreshInterval === interval && <Check className="h-3 w-3 shrink-0" />}
-                {refreshInterval !== interval && <span className="h-3 w-3 shrink-0" />}
-                {REFRESH_INTERVAL_LABELS[interval]}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+                <ChevronDown className="text-muted-foreground h-3 w-3" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+                {REFRESH_INTERVALS.map((interval) => (
+                  <DropdownMenuItem
+                    key={interval}
+                    onClick={() => onRefreshIntervalChange(interval)}
+                    className={cn(
+                      "flex items-center gap-2 font-mono text-xs",
+                      refreshInterval === interval && "font-semibold",
+                    )}
+                  >
+                    {refreshInterval === interval && <Check className="h-3 w-3 shrink-0" />}
+                    {refreshInterval !== interval && <span className="h-3 w-3 shrink-0" />}
+                    {REFRESH_INTERVAL_LABELS[interval]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </>
+      )}
     </div>
   )
 }
