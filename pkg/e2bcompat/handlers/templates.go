@@ -63,7 +63,7 @@ func templateFromEnv(env *agentsv1alpha1.SandboxEnv, memberPools []string) e2bge
 		Public:      false,
 		Aliases:     aliases,
 		Names:       []string{env.Name},
-		EnvdVersion: e2bgen.EnvdVersion(e2bdomain.EnvdVersion),
+		EnvdVersion: e2bdomain.EnvdVersionForEnv(env),
 		SpawnCount:  int64(runningReplicas(env)),
 		CreatedAt:   env.CreationTimestamp.Time,
 		UpdatedAt:   updated,
@@ -95,7 +95,11 @@ func templateFromForeignEnv(clusterID, envName string, pools []string) e2bgen.Te
 		Public:      false,
 		Aliases:     aliases,
 		Names:       []string{envName},
-		EnvdVersion: e2bgen.EnvdVersion(e2bdomain.EnvdVersion),
+		// Another cluster's Env: the federation registry carries its capacity,
+		// not its template, so there is nothing here to derive a version from.
+		// The floor is the honest answer for a template this process cannot see
+		// — and it is a *listing*, where the SDK only reads the field.
+		EnvdVersion: e2bgen.EnvdVersion(e2bdomain.DefaultEnvdVersion),
 	}
 }
 

@@ -20,9 +20,11 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
@@ -36,10 +38,140 @@ import (
 const e2bStateRunning = string(e2bgen.Running)
 
 const (
-	// EnvdVersion is the fixed envd version reported in E2B API responses.
-	// E2B SDK validates that this field is present and non-empty.
-	EnvdVersion = "0.1.0"
+	// DefaultEnvdVersion is what an E2B response reports when the version of
+	// the sandbox's own envd cannot be derived from its template.
+	//
+	// It is the version this platform builds and ships — see
+	// docs/e2b/envd-upgrade-runbook.md, whose "当前状态" table is the record and
+	// which this constant is checked against by hack/check-envd-version.sh
+	// before every develop push. That check is the whole reason the value is
+	// safe to hold: a fallback that drifts from the images is a claim the SDK
+	// acts on, and the SDK's version gates decide how it talks to envd (the
+	// `user` parameter, octet-stream uploads, file metadata, recursive watch)
+	// as well as whether `get_metrics()` is allowed at all.
+	//
+	// (The floor the SDK accepts at create time is 0.1.0, and 0.1.0 is what a
+	// response used to say. It is deliberately not the fallback: claiming the
+	// floor is what made `get_metrics()` answer "You need to update the
+	// template to use the new SDK" on images whose envd was 0.9.0.)
+	DefaultEnvdVersion = "0.9.0"
+
+	// EnvdVersionAnnotation overrides the derived version, for a template whose
+	// envd does not come from a tagged image.
+	EnvdVersionAnnotation = "agentbox.navix.sh/envd-version"
 )
+
+// EnvdVersionForPool reports the version of the envd the sandboxes from this
+// pool are running.
+//
+// The platform does not choose envd — the TEMPLATE does, by copying the binary
+// into the pod from an init container (`/mnt/agentbox/envd`), and that
+// container's image tag is where the version already lives. Reading it there
+// means a bump moves both things at once: the image the init container copies
+// from, and the version every E2B response reports. Nothing else has to be
+// remembered, which is the property that makes this stay true.
+//
+// The tag is a TAG, though, not a version (`0.9.0-2` names a build of 0.9.0),
+// so what is reported is the version part of it. The SDK parses this string
+// with PEP 440 and raises on what it cannot parse — in `connect()` and in the
+// list path, not just in the call that wanted it — so a tag that is not a
+// version at all falls back to the known-good floor instead of being passed
+// through.
+func EnvdVersionForPool(pool *agentsv1alpha1.SandboxPool) string {
+	if pool == nil {
+		return DefaultEnvdVersion
+	}
+	return envdVersionFor(pool.Annotations, &pool.Spec.Template)
+}
+
+// EnvdVersionForEnv reports the version for the Envs a template listing shows.
+// Members of one Env are all rendered from the same SandboxTemplate, so the
+// first member that carries a snapshot answers for the Env.
+func EnvdVersionForEnv(env *agentsv1alpha1.SandboxEnv) string {
+	if env == nil {
+		return DefaultEnvdVersion
+	}
+	for i := range env.Spec.Clusters {
+		members := env.Spec.Clusters[i].Members
+		for j := range members {
+			if v := envdVersionFor(members[j].Metadata.Annotations, &members[j].Spec.Template); v != DefaultEnvdVersion {
+				return v
+			}
+		}
+	}
+	return DefaultEnvdVersion
+}
+
+// envdVersionFor is the one derivation: an explicit annotation first, then the
+// init container that injects envd.
+func envdVersionFor(annotations map[string]string, template *corev1.PodTemplateSpec) string {
+	if v := versionFromTag(annotations[EnvdVersionAnnotation]); v != "" {
+		return v
+	}
+	if template == nil {
+		return DefaultEnvdVersion
+	}
+	for i := range template.Spec.InitContainers {
+		c := &template.Spec.InitContainers[i]
+		if !injectsEnvd(c) {
+			continue
+		}
+		if v := versionFromTag(imageTag(c.Image)); v != "" {
+			return v
+		}
+	}
+	return DefaultEnvdVersion
+}
+
+// injectsEnvd recognises the init container whose job is to put envd in place.
+//
+// By name or by repository, because both are conventions an operator can
+// reasonably follow and neither is declared anywhere: `envd-injector`, and
+// images published as `…/navix-agent-sandbox-envd:<tag>`.
+func injectsEnvd(c *corev1.Container) bool {
+	if strings.Contains(c.Name, "envd") {
+		return true
+	}
+	return strings.Contains(repository(c.Image), "envd")
+}
+
+// imageTag returns the tag of an image reference, empty when it is untagged.
+// The colon searched for is the one after the last slash: a registry port
+// (`registry:5000/img`) is not a tag.
+func imageTag(image string) string {
+	slash := strings.LastIndex(image, "/")
+	colon := strings.LastIndex(image, ":")
+	if colon <= slash {
+		return ""
+	}
+	return image[colon+1:]
+}
+
+func repository(image string) string {
+	if tag := imageTag(image); tag != "" {
+		return strings.TrimSuffix(image, ":"+tag)
+	}
+	return image
+}
+
+// versionFromTag keeps the version part of a tag and nothing else: `0.9.0-2`
+// and `0.9.0-1-test` are both builds of 0.9.0, and `latest` or a git sha is
+// not a version at all.
+func versionFromTag(tag string) string {
+	tag = strings.TrimPrefix(strings.TrimSpace(tag), "v")
+	end := 0
+	for end < len(tag) && (tag[end] == '.' || (tag[end] >= '0' && tag[end] <= '9')) {
+		end++
+	}
+	version := strings.Trim(tag[:end], ".")
+	if version == "" {
+		return ""
+	}
+	if slices.Contains(strings.Split(version, "."), "") {
+		return ""
+	}
+	return version
+}
 
 // ToE2BSandbox converts a native gen.Sandbox + SandboxPool directly to an e2bgen.Sandbox.
 // gatewayDomain is the gateway domain name used to build connection URLs.
@@ -59,7 +191,7 @@ func ToE2BSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool, gatewayDoma
 		ClientID:           sb.Namespace,
 		TrafficAccessToken: &emptyToken,
 		Domain:             domainPtr,
-		EnvdVersion:        e2bgen.EnvdVersion(EnvdVersion),
+		EnvdVersion:        EnvdVersionForPool(pool),
 	}
 }
 
@@ -104,7 +236,7 @@ func ToE2BSandboxDetail(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool, gatew
 		MemoryMB:    e2bgen.MemoryMB(memoryMB),
 		DiskSizeMB:  0,
 		Metadata:    metadata,
-		EnvdVersion: e2bgen.EnvdVersion(EnvdVersion),
+		EnvdVersion: EnvdVersionForPool(pool),
 		State:       state,
 		Domain:      domainPtr,
 	}
@@ -144,7 +276,7 @@ func ToE2BListedSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool) e2bge
 		MemoryMB:    e2bgen.MemoryMB(memoryMB),
 		DiskSizeMB:  0,
 		Metadata:    metadata,
-		EnvdVersion: e2bgen.EnvdVersion(EnvdVersion),
+		EnvdVersion: EnvdVersionForPool(pool),
 		State:       state,
 	}
 }
@@ -175,7 +307,7 @@ func ToE2BTemplate(pool *agentsv1alpha1.SandboxPool) e2bgen.Template {
 		SpawnCount:  int64(pool.Status.RunningReplicas),
 		Aliases:     []string{},
 		Names:       []string{pool.Name},
-		EnvdVersion: e2bgen.EnvdVersion(EnvdVersion),
+		EnvdVersion: EnvdVersionForPool(pool),
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 	}

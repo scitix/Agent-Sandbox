@@ -160,8 +160,8 @@ func TestToE2BSandbox_EnvdVersion(t *testing.T) {
 	}
 
 	result := ToE2BSandbox(sb, pool, "example.com")
-	if result.EnvdVersion != EnvdVersion {
-		t.Errorf("envdVersion = %q, want %q", result.EnvdVersion, EnvdVersion)
+	if result.EnvdVersion != DefaultEnvdVersion {
+		t.Errorf("envdVersion = %q, want %q", result.EnvdVersion, DefaultEnvdVersion)
 	}
 }
 
