@@ -136,7 +136,12 @@ def sync_detailed(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Sizing accepts three shapes:
+            WHICH OF THE SHAPES BELOW IS ACCEPTED IS THE ENV'S TO SAY, not the
+            caller's — read `poolSizing` off the Env this Pool joins (Template
+            detail and Env detail both carry it; `abx envs <name>` prints it).
+
+            Billed Env (`poolSizing: billed`) — the Template is billed, so the
+            Pool must name what it spends:
               - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
                 `instanceType × multiplier` envelope (default `multiplier` = 1).
               - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
@@ -144,8 +149,23 @@ def sync_detailed(
                 actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
                 must be ≤ the envelope (round down allowed, round up rejected with 400); the
                 reservation still charges quota for the whole instance.
-              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
-                per-Pool resource requests/limits.
+              - `labels` must carry `quota.scitix.ai/url`.
+
+            Free-form Env (`poolSizing: free-form`) — the Template is one the
+            deployment does not bill, so the Pool is sized directly:
+              - `inlineResources` alone → explicit per-Pool resource requests/limits.
+              - `instanceType`, `multiplier` and the quota label are REJECTED (400):
+                an instance type buys an instance nobody reserved, and a quota label
+                on a Pool that is never submitted for reservation is a claim the
+                server cannot honour.
+
+            Unmanaged Env (`poolSizing: either`) — this deployment states no rule,
+            so both shapes are accepted and the caller picks. Every deployment
+            behaved this way before the rule existed.
+
+            Under the two managed values there is no per-Pool choice: the shape
+            follows from the Env, so two Pools of one Env are always sized the same
+            way.
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
@@ -207,7 +227,12 @@ def sync(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Sizing accepts three shapes:
+            WHICH OF THE SHAPES BELOW IS ACCEPTED IS THE ENV'S TO SAY, not the
+            caller's — read `poolSizing` off the Env this Pool joins (Template
+            detail and Env detail both carry it; `abx envs <name>` prints it).
+
+            Billed Env (`poolSizing: billed`) — the Template is billed, so the
+            Pool must name what it spends:
               - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
                 `instanceType × multiplier` envelope (default `multiplier` = 1).
               - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
@@ -215,8 +240,23 @@ def sync(
                 actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
                 must be ≤ the envelope (round down allowed, round up rejected with 400); the
                 reservation still charges quota for the whole instance.
-              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
-                per-Pool resource requests/limits.
+              - `labels` must carry `quota.scitix.ai/url`.
+
+            Free-form Env (`poolSizing: free-form`) — the Template is one the
+            deployment does not bill, so the Pool is sized directly:
+              - `inlineResources` alone → explicit per-Pool resource requests/limits.
+              - `instanceType`, `multiplier` and the quota label are REJECTED (400):
+                an instance type buys an instance nobody reserved, and a quota label
+                on a Pool that is never submitted for reservation is a claim the
+                server cannot honour.
+
+            Unmanaged Env (`poolSizing: either`) — this deployment states no rule,
+            so both shapes are accepted and the caller picks. Every deployment
+            behaved this way before the rule existed.
+
+            Under the two managed values there is no per-Pool choice: the shape
+            follows from the Env, so two Pools of one Env are always sized the same
+            way.
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
@@ -273,7 +313,12 @@ async def asyncio_detailed(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Sizing accepts three shapes:
+            WHICH OF THE SHAPES BELOW IS ACCEPTED IS THE ENV'S TO SAY, not the
+            caller's — read `poolSizing` off the Env this Pool joins (Template
+            detail and Env detail both carry it; `abx envs <name>` prints it).
+
+            Billed Env (`poolSizing: billed`) — the Template is billed, so the
+            Pool must name what it spends:
               - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
                 `instanceType × multiplier` envelope (default `multiplier` = 1).
               - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
@@ -281,8 +326,23 @@ async def asyncio_detailed(
                 actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
                 must be ≤ the envelope (round down allowed, round up rejected with 400); the
                 reservation still charges quota for the whole instance.
-              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
-                per-Pool resource requests/limits.
+              - `labels` must carry `quota.scitix.ai/url`.
+
+            Free-form Env (`poolSizing: free-form`) — the Template is one the
+            deployment does not bill, so the Pool is sized directly:
+              - `inlineResources` alone → explicit per-Pool resource requests/limits.
+              - `instanceType`, `multiplier` and the quota label are REJECTED (400):
+                an instance type buys an instance nobody reserved, and a quota label
+                on a Pool that is never submitted for reservation is a claim the
+                server cannot honour.
+
+            Unmanaged Env (`poolSizing: either`) — this deployment states no rule,
+            so both shapes are accepted and the caller picks. Every deployment
+            behaved this way before the rule existed.
+
+            Under the two managed values there is no per-Pool choice: the shape
+            follows from the Env, so two Pools of one Env are always sized the same
+            way.
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.
@@ -344,7 +404,12 @@ async def asyncio(
             `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
             Members in the same `scalingGroup` share an autoscaling policy.
 
-            Sizing accepts three shapes:
+            WHICH OF THE SHAPES BELOW IS ACCEPTED IS THE ENV'S TO SAY, not the
+            caller's — read `poolSizing` off the Env this Pool joins (Template
+            detail and Env detail both carry it; `abx envs <name>` prints it).
+
+            Billed Env (`poolSizing: billed`) — the Template is billed, so the
+            Pool must name what it spends:
               - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
                 `instanceType × multiplier` envelope (default `multiplier` = 1).
               - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
@@ -352,8 +417,23 @@ async def asyncio(
                 actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
                 must be ≤ the envelope (round down allowed, round up rejected with 400); the
                 reservation still charges quota for the whole instance.
-              - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
-                per-Pool resource requests/limits.
+              - `labels` must carry `quota.scitix.ai/url`.
+
+            Free-form Env (`poolSizing: free-form`) — the Template is one the
+            deployment does not bill, so the Pool is sized directly:
+              - `inlineResources` alone → explicit per-Pool resource requests/limits.
+              - `instanceType`, `multiplier` and the quota label are REJECTED (400):
+                an instance type buys an instance nobody reserved, and a quota label
+                on a Pool that is never submitted for reservation is a claim the
+                server cannot honour.
+
+            Unmanaged Env (`poolSizing: either`) — this deployment states no rule,
+            so both shapes are accepted and the caller picks. Every deployment
+            behaved this way before the rule existed.
+
+            Under the two managed values there is no per-Pool choice: the shape
+            follows from the Env, so two Pools of one Env are always sized the same
+            way.
             `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
             `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
             real size and Pools downsized differently land in distinct scaling groups.

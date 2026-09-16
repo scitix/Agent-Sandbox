@@ -31,6 +31,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/envcommon"
+	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
@@ -107,6 +108,16 @@ func newEnvServiceWithClient(
 	t *testing.T, envs ...*agentsv1alpha1.SandboxEnv,
 ) (SandboxEnvService, client.Client) {
 	t.Helper()
+	return newEnvServiceWithQuota(t, nil, envs...)
+}
+
+// newEnvServiceWithQuota is the same service with a quota Provider wired in,
+// which is what makes gen.SandboxEnv.poolSizing mean anything. A nil Provider
+// is the open-source deployment.
+func newEnvServiceWithQuota(
+	t *testing.T, quotaProv quotaplugin.Provider, envs ...*agentsv1alpha1.SandboxEnv,
+) (SandboxEnvService, client.Client) {
+	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
 	if err != nil {
 		t.Fatalf("client builder: %v", err)
@@ -115,7 +126,7 @@ func newEnvServiceWithClient(
 		cb = cb.WithObjects(e)
 	}
 	c := cb.Build()
-	return NewSandboxEnvService(c, nil, nil, nil, nil, nil, VolumeConfig{Enabled: true}), c
+	return NewSandboxEnvService(c, nil, nil, quotaProv, nil, nil, VolumeConfig{Enabled: true}), c
 }
 
 func TestSandboxEnvService_List_FiltersByTeamAndUser(t *testing.T) {

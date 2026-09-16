@@ -170,6 +170,10 @@ type k8sSandboxEnvService struct {
 	// apiReader is an uncached reader. May be nil; see volumeReader.
 	apiReader client.Reader
 	volumeCfg VolumeConfig
+	// quotaProv answers whether a template's Pools are billed, so the Env's
+	// billing label can be stamped at create. Never nil in production; the
+	// helper is nil-safe.
+	quotaProv quotaplugin.Provider
 
 	// Embedded sub-services — their methods promote to satisfy the
 	// composed SandboxEnvService interface.
@@ -200,6 +204,7 @@ func NewSandboxEnvService(
 		client:            c,
 		apiReader:         apiReader,
 		volumeCfg:         volumeCfg,
+		quotaProv:         quotaProv,
 		MemberPoolService: envmember.New(c, pm, instProv, quotaProv, envmember.WithImageRegistry(imageRegistry)),
 		AutoscalerService: envautoscaler.New(c),
 	}
@@ -227,6 +232,26 @@ func (s *k8sSandboxEnvService) List(ctx context.Context, namespace, team, user s
 		return items[i].Name < items[j].Name
 	})
 	return items, nil
+}
+
+// stampEnvRequiresQuota writes the Env's billing label from the template it
+// binds, asking the quota Provider whether that template's Pools are billed.
+//
+// Best-effort by design: a template that cannot be read (or does not exist
+// yet) leaves the label untouched, and every client reads an unstamped Env as
+// free-form. The SandboxEnv reconciler stamps the same label on every pass, so
+// a missed stamp here self-heals — and the authority on whether a Pool may be
+// written is the member-Pool write path, which asks the template directly
+// rather than trusting this label.
+func (s *k8sSandboxEnvService) stampEnvRequiresQuota(ctx context.Context, env *agentsv1alpha1.SandboxEnv) {
+	if env.Spec.TemplateRef.Name == "" {
+		return
+	}
+	tmpl := &agentsv1alpha1.SandboxTemplate{}
+	if err := s.client.Get(ctx, client.ObjectKey{Name: env.Spec.TemplateRef.Name}, tmpl); err != nil {
+		return
+	}
+	agentsv1alpha1.SetEnvPoolSizing(env, string(quotaplugin.SizingFor(s.quotaProv, tmpl.Annotations)))
 }
 
 // Get fetches one Env by namespaced name.
@@ -333,6 +358,13 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 		Mode:        mode,
 		Overrides:   input.Overrides,
 	}
+
+	// Stamp whether this Env's Pools are billed, read off the template it binds.
+	// The Env reconciler re-stamps on every pass — that is what keeps the label
+	// honest when a template's annotations change, and what backfills the Envs
+	// that predate the label — but the reconciler runs asynchronously, and the
+	// caller is about to open the Pool form on the Env this call just returned.
+	s.stampEnvRequiresQuota(ctx, env)
 
 	if err := s.client.Create(ctx, env); err != nil {
 		if k8serrors.IsAlreadyExists(err) {
@@ -472,6 +504,14 @@ func envToGen(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnv {
 		Team:      ptr.To(env.Labels[agentsv1alpha1.LabelTeam]),
 		User:      ptr.To(env.Labels[agentsv1alpha1.LabelUser]),
 		CreatedAt: &createdAt,
+	}
+	// Omitted rather than defaulted when the Env carries no stamp: a client
+	// that receives no value must fall back to "either" (the behaviour that
+	// predates the field), and an explicit "" is not that — it is an enum value
+	// no client knows. See gen.PoolSizing.
+	if sizing := agentsv1alpha1.EnvPoolSizing(env); sizing != "" {
+		v := gen.PoolSizing(sizing)
+		result.PoolSizing = &v
 	}
 	if len(env.Labels) > 0 {
 		labels := make(map[string]string, len(env.Labels))
@@ -628,6 +668,10 @@ func envToSummary(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnvSummary {
 		Team:         ptr.To(env.Labels[agentsv1alpha1.LabelTeam]),
 		User:         ptr.To(env.Labels[agentsv1alpha1.LabelUser]),
 		CreatedAt:    &createdAt,
+	}
+	if sizing := agentsv1alpha1.EnvPoolSizing(env); sizing != "" {
+		v := gen.PoolSizing(sizing)
+		out.PoolSizing = &v
 	}
 
 	st := &env.Status

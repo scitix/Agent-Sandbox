@@ -28,6 +28,7 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxenv/poolrender"
+	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 )
 
 // templateRefNameIndexKey indexes SandboxEnvs by spec.templateRef.name so a
@@ -196,4 +197,64 @@ func mergeRefreshedSpec(old, candidate agentsv1alpha1.SandboxPoolSpec) agentsv1a
 	out.Template.Annotations = ann
 
 	return out
+}
+
+// syncRequiresQuota stamps the Env's billing label (LabelEnvPoolSizing) from
+// the template it binds, so a client can tell which sizing shape a Pool of this
+// Env takes without reading the template itself.
+//
+// It is a reconcile step rather than a one-time stamp at create because the
+// answer moves: a template that gains its billing annotations — or loses them —
+// changes what every Env bound to it may be asked for, and a stale label would
+// leave the console asking for a quota the server no longer requires (or worse,
+// not asking for one it does). SandboxTemplate changes already fan out to every
+// referencing Env through mapTemplateToEnvs, so convergence costs one pass.
+//
+// The same path backfills Envs that predate the label, which is why there is no
+// migration: absence and "false" mean the same thing to every reader
+// (see LabelEnvPoolSizing), and the first pass after an upgrade rewrites
+// absence into an explicit value.
+//
+// Returns changed=true when it patched, so the caller requeues instead of
+// continuing against a copy whose resourceVersion has moved.
+func (r *SandboxEnvReconciler) syncRequiresQuota(ctx context.Context, env *agentsv1alpha1.SandboxEnv) (bool, error) {
+	if env == nil || env.DeletionTimestamp != nil || env.Spec.TemplateRef.Name == "" {
+		return false, nil
+	}
+	tmpl := &agentsv1alpha1.SandboxTemplate{}
+	if err := r.Get(ctx, client.ObjectKey{Name: env.Spec.TemplateRef.Name}, tmpl); err != nil {
+		// A template that is gone (or not created yet) is nothing to converge
+		// towards — the same reading refreshAutoUpdateMembers takes. Any other
+		// error is the API's to report rather than a label to guess at.
+		return false, client.IgnoreNotFound(err)
+	}
+	want := string(quotaplugin.SizingFor(r.QuotaProvider, tmpl.Annotations))
+	if got, ok := env.Labels[agentsv1alpha1.LabelEnvPoolSizing]; ok && got == want {
+		return false, nil
+	}
+
+	key := types.NamespacedName{Namespace: env.Namespace, Name: env.Name}
+	changed := false
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cur := &agentsv1alpha1.SandboxEnv{}
+		if err := r.Get(ctx, key, cur); err != nil {
+			return err
+		}
+		// Re-read inside the retry: another writer (the API server stamping at
+		// create, or a concurrent pass) may have set it already, and a patch
+		// with no change is a write nobody asked for.
+		if got, ok := cur.Labels[agentsv1alpha1.LabelEnvPoolSizing]; ok && got == want {
+			return nil
+		}
+		base := cur.DeepCopy()
+		agentsv1alpha1.SetEnvPoolSizing(cur, want)
+		if err := r.Patch(ctx, cur, client.MergeFrom(base)); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	}); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return changed, nil
 }

@@ -35,6 +35,7 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
@@ -129,11 +130,22 @@ type SandboxTemplateService interface {
 
 type k8sSandboxTemplateService struct {
 	client client.Client
+	// quotaProv answers whether a template's Pools are billed (see
+	// quota.TemplatePolicy). Never nil in production — the apiserver
+	// normalises it to Noop — but the helper is nil-safe, so a zero-value
+	// service in a test reads as "nothing is billed".
+	quotaProv quotaplugin.Provider
 }
 
-// NewSandboxTemplateService creates a new SandboxTemplateService backed by the given K8s client.
-func NewSandboxTemplateService(c client.Client) SandboxTemplateService {
-	return &k8sSandboxTemplateService{client: c}
+// NewSandboxTemplateService creates a new SandboxTemplateService backed by the
+// given K8s client and quota Provider.
+//
+// The Provider is consulted on every read (List/Get/Create/Update) to project
+// gen.SandboxTemplate.RequiresQuota — whether a Pool of this template must
+// name a quota and an instance type. A nil Provider means "the open-source
+// answer": false for every template.
+func NewSandboxTemplateService(c client.Client, quotaProv quotaplugin.Provider) SandboxTemplateService {
+	return &k8sSandboxTemplateService{client: c, quotaProv: quotaProv}
 }
 
 func (s *k8sSandboxTemplateService) List(ctx context.Context, auth domain.AuthInfo, isAdmin bool) ([]gen.SandboxTemplate, *domain.AppError) {
@@ -144,7 +156,7 @@ func (s *k8sSandboxTemplateService) List(ctx context.Context, auth domain.AuthIn
 	items := make([]gen.SandboxTemplate, 0, len(list.Items))
 	for i := range list.Items {
 		if isAdmin || isVisible(list.Items[i].Spec.Visibility, auth) {
-			items = append(items, templateFromCRD(ctx, &list.Items[i]))
+			items = append(items, s.templateFromCRD(ctx, &list.Items[i]))
 		}
 	}
 	// Sort by name for consistent ordering
@@ -166,7 +178,7 @@ func (s *k8sSandboxTemplateService) Get(ctx context.Context, name string, auth d
 		// Return 404 to avoid leaking the existence of restricted templates.
 		return nil, domain.NewNotFound(fmt.Sprintf("sandbox template %q not found", name))
 	}
-	result := templateFromCRD(ctx, tmpl)
+	result := s.templateFromCRD(ctx, tmpl)
 	return &result, nil
 }
 
@@ -179,7 +191,7 @@ func (s *k8sSandboxTemplateService) Create(ctx context.Context, tmpl *agentsv1al
 		}
 		return nil, domain.NewInternal(err.Error(), err)
 	}
-	result := templateFromCRD(ctx, obj)
+	result := s.templateFromCRD(ctx, obj)
 	return &result, nil
 }
 
@@ -220,7 +232,7 @@ func (s *k8sSandboxTemplateService) Update(ctx context.Context, tmpl *agentsv1al
 			}
 			return nil, domain.NewInternal(err.Error(), err)
 		}
-		result := templateFromCRD(ctx, updated)
+		result := s.templateFromCRD(ctx, updated)
 		return &result, nil
 	}
 
@@ -247,7 +259,7 @@ func (s *k8sSandboxTemplateService) Update(ctx context.Context, tmpl *agentsv1al
 		if err := s.client.Patch(ctx, updated, patch); err != nil {
 			return err
 		}
-		result = templateFromCRD(ctx, updated)
+		result = s.templateFromCRD(ctx, updated)
 		return nil
 	})
 	if err != nil {
@@ -336,7 +348,7 @@ func (s *k8sSandboxTemplateService) StripStaleGlobalLabels(ctx context.Context, 
 // private helpers
 // ---------------------------------------------------------------------------
 
-func templateFromCRD(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) gen.SandboxTemplate {
+func (s *k8sSandboxTemplateService) templateFromCRD(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) gen.SandboxTemplate {
 	createdAt := tmpl.CreationTimestamp.Time
 	result := gen.SandboxTemplate{
 		Name:        tmpl.Name,
@@ -345,6 +357,11 @@ func templateFromCRD(ctx context.Context, tmpl *agentsv1alpha1.SandboxTemplate) 
 		SyncSource:  ptr.To(tmpl.Labels[agentsv1alpha1.LabelSyncSource]),
 		Docs:        ptr.To(tmpl.Annotations[agentsv1alpha1.SandboxTemplateDocsAnnotationKey]),
 		CreatedAt:   &createdAt,
+		// How a Pool of this template must be sized. The rule ("which
+		// annotations mean 'this template spends quota'") belongs to the quota
+		// Provider, because a deployment without a quota backend has no such
+		// rule at all; see quota.SizingFor.
+		PoolSizing: ptr.To(gen.PoolSizing(quotaplugin.SizingFor(s.quotaProv, tmpl.Annotations))),
 	}
 	if len(tmpl.Spec.Template.Spec.Containers) > 0 {
 		cpu, memory, err := utilresource.SumContainerResources(&tmpl.Spec.Template)

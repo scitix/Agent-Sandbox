@@ -140,6 +140,21 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 
 	log := ctrl.Log.WithName("api-server-init")
 
+	// Default providers to Noop when the caller left them nil so every
+	// downstream service can assume a non-nil Provider. Normalised here — ahead
+	// of the first consumer — because the template service reads the quota
+	// Provider to report whether a template's Pools are billed
+	// (gen.SandboxTemplate.requiresQuota), and it is built with the sync
+	// service below, well before the rest of the service set.
+	quotaProv := cfg.QuotaProvider
+	if quotaProv == nil {
+		quotaProv = quotaplugin.NewNoop()
+	}
+	instanceTypeProv := cfg.InstanceTypeProvider
+	if instanceTypeProv == nil {
+		instanceTypeProv = instancetypeplugin.NewNoop()
+	}
+
 	gin.SetMode(gin.ReleaseMode)
 	binding.EnableDecoderDisallowUnknownFields = true
 	r := gin.New()
@@ -154,7 +169,7 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 	// Build SyncService when a sync token is configured.
 	var syncSvc service.SyncService
 	if cfg.Secret != "" {
-		templateSvc := service.NewSandboxTemplateService(k8sClient)
+		templateSvc := service.NewSandboxTemplateService(k8sClient, quotaProv)
 		if cfg.ClusterConfigSink != nil {
 			syncSvc = service.NewSyncServiceFull(cfg.KeyStore, templateSvc, cfg.ClusterConfigSink)
 			log.Info("sync mode enabled: template, API key, and cluster config writes will be forwarded to ws-proxy")
@@ -195,17 +210,6 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 		log.Info("sync mode disabled: template and API key writes are local-only")
 	}
 
-	// Default providers to Noop when the caller left them nil so every
-	// downstream service can assume a non-nil Provider.
-	quotaProv := cfg.QuotaProvider
-	if quotaProv == nil {
-		quotaProv = quotaplugin.NewNoop()
-	}
-	instanceTypeProv := cfg.InstanceTypeProvider
-	if instanceTypeProv == nil {
-		instanceTypeProv = instancetypeplugin.NewNoop()
-	}
-
 	// PersistentVolumeClaim reads must not go through the cached client: the
 	// manager's delegating client starts an informer lazily per object kind on
 	// first access, so a single cached Get or List would begin mirroring every
@@ -224,7 +228,7 @@ func New(cfg Config, k8sClient client.Client, clientset kubernetes.Interface, sa
 	svcs := router.Services{
 		Sandbox:              sandboxSvc,
 		SandboxEnv:           service.NewSandboxEnvService(k8sClient, pluginManager, instanceTypeProv, quotaProv, cfg.ImageRegistry, cfg.APIReader, cfg.VolumeConfig),
-		SandboxTemplate:      service.NewSandboxTemplateService(k8sClient),
+		SandboxTemplate:      service.NewSandboxTemplateService(k8sClient, quotaProv),
 		APIKey:               service.NewAPIKeyServiceWithSync(cfg.KeyStore, syncSvc),
 		Quota:                service.NewQuotaServiceFromProvider(quotaProv),
 		Organization:         service.NewOrganizationService(k8sClient, cfg.KeyStore),

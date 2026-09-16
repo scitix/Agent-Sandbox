@@ -248,7 +248,9 @@ func newFakeTemplateService(t *testing.T, objs ...any) service.SandboxTemplateSe
 			cb = cb.WithObjects(v)
 		}
 	}
-	return service.NewSandboxTemplateService(cb.Build())
+	// nil quota Provider: sync tests are about forwarding template objects, and
+	// nothing in them depends on whether a template is billed.
+	return service.NewSandboxTemplateService(cb.Build(), nil)
 }
 
 func makeSyncTestTemplate(name string) *agentsv1alpha1.SandboxTemplate {

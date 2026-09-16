@@ -352,6 +352,27 @@ Flat dot-namespaced format, organized by module:
 - Custom business components should be placed in `components/<business-domain>/`, absolutely NEVER place them in the `components/ui/` directory.
 - For conditional class names, always use the `cn()` function in `lib/utils.ts`.
 
+## Which fields the pool form shows
+
+The Pool form's shape is not the caller's to choose — it follows from the Env's
+template, which the server reports as `env.poolSizing`:
+
+| `poolSizing` | Form |
+| ------------ | ---- |
+| `billed` | quota (required) + instance type + multiplier. No resource-mode toggle. |
+| `free-form` | CPU / memory only. No quota picker, no instance type. |
+| `either`, or absent | the resource-mode toggle, as before — this deployment states no rule (open source), so the caller still picks. |
+
+`lib/utils/pool-sizing.ts` is the only place that reads the rule, and
+`resolvePoolSizingLayout` is unit-tested against all three states plus edit mode
+and the unstamped case. Do not re-derive it inside a component: the console has
+to agree with what the API will accept, and that is the same three states.
+
+Two things that are easy to get wrong: an **edit** form mirrors the pool it
+opened (the shape is fixed at create, so a pool that predates its template being
+billed must keep opening as it is), and an **unstamped** Env falls back to
+`either` — never to `billed`, which would be an env nobody can add a pool to.
+
 ## Tall dialogs
 
 A dialog that lists something unbounded — every cluster, every template, a long form — must not grow past the viewport, or its footer buttons leave the screen. Use `components/custom/scroll-dialog.tsx` rather than capping heights by hand:

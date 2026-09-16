@@ -68,6 +68,7 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
+	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
 
@@ -148,6 +149,13 @@ type SandboxEnvReconciler struct {
 	// re-renders it on every pass; if the two disagree, the revision hash
 	// differs every time and idle Pods roll forever.
 	ImageRegistry *sandboxrender.RegistryRewrite
+
+	// QuotaProvider answers whether a template's Pools are billed (see
+	// quota.TemplatePolicy). StampEnvRequiresQuota mirrors that answer onto
+	// every Env, which is how a template gaining or losing its billing
+	// annotations reaches the console and the CLI. nil means "nothing is
+	// billed", the open-source answer.
+	QuotaProvider quotaplugin.Provider
 }
 
 // FederationReader is the read side of the cross-cluster capacity registry the
@@ -244,6 +252,16 @@ func (r *SandboxEnvReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// authoritative K8s state by more than one reconcile cycle even if
 		// the informer event was dropped.
 		r.EnvRouterSync.OnEnvUpsert(env)
+	}
+
+	// Stamp the Env's billing label from its template's. Last, because nothing
+	// above depends on it and the patch invalidates the in-memory copy every
+	// step above just read — and because a stamp that had to happen first (pool
+	// admission) asks the template itself rather than this derived label.
+	if changed, err := r.syncRequiresQuota(ctx, env); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		return ctrl.Result{Requeue: true}, nil
 	}
 	return res, nil
 }

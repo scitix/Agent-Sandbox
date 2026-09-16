@@ -69,6 +69,7 @@ import {
   volumesQueryOptions,
 } from "@/lib/queries"
 import { envClone } from "@/lib/utils/env-clone"
+import { templateIsBilled } from "@/lib/utils/pool-sizing"
 import { isFixedWriteField } from "@/lib/utils/write-rules"
 import {
   envFormDefaults,
@@ -692,6 +693,17 @@ function SelectedTemplateInfo({
       ) : (
         <p className="text-muted-foreground text-[11px] italic">
           {t("envs.form.templateNoDescription")}
+        </p>
+      )}
+      {/* What this template will ask of the pools added later. The env is where
+          the choice is made, so the consequence belongs here rather than only
+          on the pool form the user has not opened yet. */}
+      {templateIsBilled(tpl) && (
+        <p className="text-[11px] leading-snug">
+          <span className="border-brand/40 bg-brand/10 text-brand mr-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] tracking-wide uppercase">
+            {t("envs.form.templateBilledBadge")}
+          </span>
+          <span className="text-muted-foreground">{t("envs.form.templateBilledHint")}</span>
         </p>
       )}
     </div>

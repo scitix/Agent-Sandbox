@@ -681,6 +681,7 @@ func Run(opts Options) {
 		LocalClusterID: localClusterID,
 		PluginManager:  pluginManager,
 		ImageRegistry:  imageRegistry,
+		QuotaProvider:  quotaPluginProvider,
 	}
 	if envRouter != nil {
 		envReconciler.EnvRouterSync = envRouter

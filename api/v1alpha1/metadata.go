@@ -150,6 +150,28 @@ const (
 	// Absent when the member is excluded from autoscaling (empty ScalingGroup).
 	LabelScalingGroup = "agentbox.navix.sh/scaling-group"
 
+	// LabelEnvPoolSizing is stamped onto a SandboxEnv, carrying how its member
+	// Pools must be sized: "billed" (a quota and an instance type are
+	// required), "free-form" (inlineResources only) or "either" (this
+	// deployment has no billing rule, so the caller chooses).
+	//
+	// Written by: the API server when the Env is created, and the SandboxEnv
+	// reconciler on every pass — the latter is what re-stamps an Env whose
+	// Template gained or lost its billing annotations, and what backfills an
+	// Env that predates this label. It is therefore server-owned: a
+	// caller-supplied value for this key is overwritten, never honoured.
+	//
+	// Absent means "not stamped yet" — an Env whose reconciler has not run
+	// since the upgrade — which every reader must treat as "either", the
+	// behaviour that predates the label. Never guess a stricter state: an Env
+	// nobody can add a Pool to is a worse failure than one that is asked for a
+	// quota a moment later.
+	//
+	// The truth this mirrors is the Template's, asked of the quota Provider
+	// (quota.SizingFor); the label exists so the answer travels with the Env
+	// instead of costing a Template lookup on every read.
+	LabelEnvPoolSizing = "agentbox.navix.sh/pool-sizing"
+
 	// SandboxTemplateDocsAnnotationKey stores Markdown documentation for the template.
 	// Read by the dashboard to display a documentation sheet.
 	SandboxTemplateDocsAnnotationKey = "agentbox.navix.sh/docs"
@@ -263,6 +285,32 @@ const (
 // for this name into every member Pool's spec.template.spec.imagePullSecrets.
 func EnvImagePullSecretName(envName string) string {
 	return ImagePullSecretNamePrefix + envName
+}
+
+// EnvPoolSizing returns the Env's stamped sizing state (see
+// LabelEnvPoolSizing), or "" when the Env has not been stamped.
+//
+// "" is distinct from every stamped value on purpose: the controller has to be
+// able to tell "no opinion yet" from "either", or it would never rewrite an
+// unstamped Env and the label would stay missing forever.
+func EnvPoolSizing(env *SandboxEnv) string {
+	if env == nil {
+		return ""
+	}
+	return env.Labels[LabelEnvPoolSizing]
+}
+
+// SetEnvPoolSizing stamps the sizing label on env, creating the label map when
+// the Env has none. Server-owned: callers holding a caller-supplied value for
+// this key must call this rather than trust it.
+func SetEnvPoolSizing(env *SandboxEnv, sizing string) {
+	if env == nil || sizing == "" {
+		return
+	}
+	if env.Labels == nil {
+		env.Labels = map[string]string{}
+	}
+	env.Labels[LabelEnvPoolSizing] = sizing
 }
 
 // BoolAnnotation reads a boolean opt-in annotation off an object.

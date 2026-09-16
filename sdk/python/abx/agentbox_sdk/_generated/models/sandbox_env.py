@@ -22,6 +22,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.pool_sizing import PoolSizing
 from ..types import UNSET, Unset
 from typing import cast
 import datetime
@@ -73,6 +74,36 @@ class SandboxEnv:
 
                 A placeholder whose value this deployment does not know (no gateway configured, no host
                 alias, no registry) is left in the output verbatim rather than rendered empty.
+            pool_sizing (PoolSizing | Unset): How the member Pools of a template — and therefore of an Env bound to
+                it — must be sized. Reported by the quota provider that governs the
+                deployment, on the template itself and (stamped onto it) on the Env, so
+                that a console, a CLI or any other client reads the answer instead of
+                re-deriving the rule.
+
+                Three values, not two: "billed" and "free-form" are a deployment with a
+                billing rule deciding per template, while "either" is a deployment with
+                no rule at all — which must keep letting the caller choose, because an
+                InstanceType catalog with no quota backend is a supported way to size
+                Pools.
+
+                  - `billed` — the template's Pools spend quota. A Pool MUST carry the
+                    `quota.scitix.ai/url` label AND an `instanceType` (with an optional
+                    `multiplier`). It is refused without either: the quota is what the
+                    Pool is charged against, and the instance type is the unit it is
+                    charged in. This is the shape ordinary users' templates take.
+                  - `free-form` — the template is not billed, so a Pool MUST be sized
+                    by `inlineResources` alone. `instanceType`, `multiplier` and the
+                    quota label are refused with 400, because each one asserts
+                    something the server would not honour. Templates reserved for
+                    specific callers take this shape.
+                  - `either` — this deployment has no billing rule (no quota backend,
+                    or one that states no policy), so both shapes are accepted and the
+                    caller picks. This is the behaviour of every deployment before the
+                    rule existed, and of the open-source build.
+
+                Read-only. The value mirrors the template's and is maintained by the
+                API server at Env create and by the Env reconciler on every pass; it is
+                never part of a write body.
      """
 
     name: str
@@ -84,6 +115,7 @@ class SandboxEnv:
     user: str | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     env_docs: str | Unset = UNSET
+    pool_sizing: PoolSizing | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -118,6 +150,11 @@ class SandboxEnv:
 
         env_docs = self.env_docs
 
+        pool_sizing: str | Unset = UNSET
+        if not isinstance(self.pool_sizing, Unset):
+            pool_sizing = self.pool_sizing.value
+
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -138,6 +175,8 @@ class SandboxEnv:
             field_dict["createdAt"] = created_at
         if env_docs is not UNSET:
             field_dict["envDocs"] = env_docs
+        if pool_sizing is not UNSET:
+            field_dict["poolSizing"] = pool_sizing
 
         return field_dict
 
@@ -194,6 +233,16 @@ class SandboxEnv:
 
         env_docs = d.pop("envDocs", UNSET)
 
+        _pool_sizing = d.pop("poolSizing", UNSET)
+        pool_sizing: PoolSizing | Unset
+        if isinstance(_pool_sizing,  Unset):
+            pool_sizing = UNSET
+        else:
+            pool_sizing = PoolSizing(_pool_sizing)
+
+
+
+
         sandbox_env = cls(
             name=name,
             namespace=namespace,
@@ -204,6 +253,7 @@ class SandboxEnv:
             user=user,
             created_at=created_at,
             env_docs=env_docs,
+            pool_sizing=pool_sizing,
         )
 
 

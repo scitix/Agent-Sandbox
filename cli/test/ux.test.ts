@@ -74,10 +74,17 @@ let base = ''
 let workdir = ''
 const requests: string[] = []
 
+/**
+ * The env's sizing rule, as the stub reports it — and, when something is
+ * refused locally, whether the write even left the process.
+ */
+let poolSizing: string | undefined
+let poolWrites: Record<string, unknown>[] = []
+
 beforeAll(() => {
   server = Bun.serve({
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url)
       const p = url.pathname
       requests.push(`${req.method} ${p}`)
@@ -111,6 +118,9 @@ beforeAll(() => {
             user: 'alice',
             createdAt: '2026-08-04T06:37:18Z',
             envDocs: ENV_OVERRIDES.envDocs,
+            // Absent unless a test sets it: an unstamped env is exactly what
+            // the CLI has to keep working against.
+            ...(poolSizing ? { poolSizing } : {}),
             spec: {
               templateRef: { name: ENV_OVERRIDES.templateName },
               mode: ENV_OVERRIDES.mode,
@@ -127,7 +137,15 @@ beforeAll(() => {
         })
       }
       if (p.endsWith('/v1/envs/demo-env/sandboxpools')) {
+        if (req.method === 'POST') {
+          poolWrites.push((await req.json()) as Record<string, unknown>)
+          return json({ pool: POOL }, 201)
+        }
         return json({ items: [POOL] })
+      }
+      if (p.endsWith(`/v1/envs/demo-env/sandboxpools/${POOL.name}`)) {
+        if (req.method === 'PUT') poolWrites.push((await req.json()) as Record<string, unknown>)
+        return json({ pool: POOL })
       }
       if (p.endsWith('/v1/envs/demo-env/autoscaling/groups')) {
         return json({
@@ -540,5 +558,113 @@ describe('the write page is about the file, not the resource', () => {
     // Not "check the name" — the name is right, the verb assumed an upsert.
     expect(err).toContain('update changes an object that exists')
     expect(err).toContain('abx create envs -f FILE')
+  })
+})
+
+/**
+ * What a pool body has to contain is the env's to say, and an agent writing one
+ * has to be told before it sends it. The stub reports the env's `poolSizing`,
+ * so these run the real command against a real (stub) server.
+ */
+describe('a pool body is checked against the env that will receive it', () => {
+  const write = async (body: Record<string, unknown>, verb = 'create') => {
+    const file = join(workdir, `pool-${Math.random().toString(36).slice(2)}.json`)
+    await Bun.write(file, JSON.stringify(body))
+    // An update names the one pool it changes; a create writes the collection.
+    const address = verb === 'update' ? ['envs', 'demo-env', 'pools', POOL.name] : ['envs', 'demo-env', 'pools']
+    return await cli([verb, ...address, '-f', file, '--cluster', 'prod-foo'])
+  }
+
+  const inline = { inlineResources: { requests: { cpu: '1', memory: '2Gi' } } }
+  const quota = { labels: { 'quota.scitix.ai/url': 'alice.42.team-a.ondemand' } }
+
+  beforeEach(() => {
+    poolSizing = undefined
+    poolWrites = []
+    requests.length = 0
+  })
+
+  it('tells a reader what the pools here need, before they write one', async () => {
+    poolSizing = 'billed'
+    const { out } = await cli(['envs', 'demo-env', 'pools', '--cluster', 'prod-foo'])
+    expect(out).toContain('pools here are billed')
+    expect(out).toContain('quota.scitix.ai/url')
+  })
+
+  it('says nothing when the deployment states no rule', async () => {
+    poolSizing = 'either'
+    const { out } = await cli(['envs', 'demo-env', 'pools', '--cluster', 'prod-foo'])
+    expect(out).not.toContain('pools here are')
+  })
+
+  it('shows the rule on the env detail page, where the choice is made', async () => {
+    poolSizing = 'free-form'
+    const { out } = await cli(['envs', 'demo-env', '--cluster', 'prod-foo'])
+    expect(out).toMatch(/^poolSizing\s+free-form$/m)
+  })
+
+  it('refuses a billed env pool that names no quota, without sending it', async () => {
+    poolSizing = 'billed'
+    const { code, err } = await write({ instanceType: 'sci.c23-2' })
+    expect(code).toBe(1)
+    expect(err).toContain('bills its pools')
+    expect(err).toContain('quota.scitix.ai/url')
+    // Refused before the wire: a 400 would not name the field that is missing.
+    expect(requests.filter((r) => r.startsWith('POST'))).toHaveLength(0)
+    expect(poolWrites).toHaveLength(0)
+  })
+
+  it('refuses a billed env pool that names no instance type', async () => {
+    poolSizing = 'billed'
+    const { code, err } = await write({ ...quota, ...inline })
+    expect(code).toBe(1)
+    expect(err).toContain('per instance type')
+    expect(requests.filter((r) => r.startsWith('POST'))).toHaveLength(0)
+  })
+
+  it('sends the body a billed env does accept', async () => {
+    poolSizing = 'billed'
+    const { code } = await write({ instanceType: 'sci.c23-2', multiplier: 1, ...quota })
+    expect(code).toBe(0)
+    expect(poolWrites).toHaveLength(1)
+  })
+
+  it('refuses an instance type on an env that is not billed', async () => {
+    poolSizing = 'free-form'
+    const { code, err } = await write({ ...inline, instanceType: 'sci.c23-2' })
+    expect(code).toBe(1)
+    expect(err).toContain('take no instance type')
+    expect(requests.filter((r) => r.startsWith('POST'))).toHaveLength(0)
+  })
+
+  it('refuses a quota label on an env that is not billed', async () => {
+    poolSizing = 'free-form'
+    const { code, err } = await write({ ...inline, ...quota })
+    expect(code).toBe(1)
+    expect(err).toContain('declare no quota')
+  })
+
+  it('sends the free-form body an unbilled env accepts', async () => {
+    poolSizing = 'free-form'
+    const { code } = await write(inline)
+    expect(code).toBe(0)
+    expect(poolWrites).toHaveLength(1)
+  })
+
+  it('stays out of the way on a server too old to state a rule', async () => {
+    // No poolSizing at all: the server decides, and the CLI must not invent a
+    // rule of its own — this is the shape an unstamped deployment answers.
+    const { code } = await write({ ...inline, instanceType: 'sci.c23-2' })
+    expect(code).toBe(0)
+    expect(poolWrites).toHaveLength(1)
+  })
+
+  it('does not pre-check an update, where the shape cannot change', async () => {
+    // A pool created before its template was billed: re-checking on update
+    // would make it impossible to resize.
+    poolSizing = 'billed'
+    const { code, err } = await write({ ...inline, replicas: 3 }, 'update')
+    expect(code).toBe(0)
+    expect(err).toBe('')
   })
 })

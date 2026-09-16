@@ -196,14 +196,6 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
-	derived, appErr := derivePoolMember(ctx, s.instProv, s.quotaProv, envName, member)
-	if appErr != nil {
-		return nil, appErr
-	}
-	member = derived
-	if err := validateMemberReplicaBounds(member.Config.MinReplicas, member.Config.MaxReplicas); err != nil {
-		return nil, err
-	}
 	key := types.NamespacedName{Namespace: namespace, Name: envName}
 
 	env := &agentsv1alpha1.SandboxEnv{}
@@ -212,6 +204,24 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 			return nil, domain.NewNotFound(fmt.Sprintf("sandbox env %q not found in namespace %s", envName, namespace))
 		}
 		return nil, domain.NewInternal(err.Error(), err)
+	}
+	// The Env's sizing rule decides which shape is legal, and it is checked
+	// BEFORE derivePoolMember rather than after: deriving normalises the body —
+	// it clears InstanceType outright when the InstanceType catalog is
+	// disabled — so a check that ran afterwards would judge something the
+	// caller never sent, and an instance type on a free-form template would
+	// sail through as an inline-resources Pool.
+	if appErr := s.validateMemberSizing(ctx, env, &member); appErr != nil {
+		return nil, appErr
+	}
+
+	derived, appErr := derivePoolMember(ctx, s.instProv, s.quotaProv, envName, member)
+	if appErr != nil {
+		return nil, appErr
+	}
+	member = derived
+	if err := validateMemberReplicaBounds(member.Config.MinReplicas, member.Config.MaxReplicas); err != nil {
+		return nil, err
 	}
 	for _, m := range envcommon.LocalClusterMembers(&env.Spec, localClusterID) {
 		if m.Name == member.Name {
@@ -297,6 +307,93 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 	return s.projectMemberPool(ctx, namespace, envName, member), nil
+}
+
+// validateMemberSizing refuses a member whose sizing shape does not match how
+// the Env's template is paid for.
+//
+// There are two kinds of template, and they want opposite bodies:
+//
+//   - Billed (the quota Provider says so — see quota.TemplatePolicy): a Pool is
+//     charged per instance type against a named quota, so BOTH the
+//     quota.scitix.ai/url label and instanceType are required. Without them the
+//     Pool is either unbillable or unpriced, and the failure surfaces much later
+//     and much less clearly — at the scheduler, as a reservation that cannot be
+//     submitted.
+//   - Free-form: the Pool is sized by inlineResources alone. instanceType and
+//     the quota label are refused rather than ignored, because each one asserts
+//     something the server will not honour: an instance type would imply a
+//     reservation nobody made, and a quota label would name a quota that is
+//     never charged. Silently dropping them would let a caller believe they had
+//     bought something.
+//
+// The rule lives here rather than only in the console and the CLI because those
+// are two clients of three (the assistant drives the same API through `abx`,
+// and so does anything else holding a key). A shape the server does not check
+// is a shape one client eventually gets wrong.
+//
+// Only create is checked. Update cannot change the shape (see MemberPoolPatch),
+// so re-checking it there would only risk failing a Pool that already exists
+// because the template was re-annotated underneath it.
+func (s *k8sService) validateMemberSizing(
+	ctx context.Context,
+	env *agentsv1alpha1.SandboxEnv,
+	member *agentsv1alpha1.EnvClusterMember,
+) *domain.AppError {
+	tmpl := &agentsv1alpha1.SandboxTemplate{}
+	if env.Spec.TemplateRef.Name == "" {
+		return domain.NewBadRequest("env.spec.templateRef.name is empty")
+	}
+	if err := s.client.Get(ctx, client.ObjectKey{Name: env.Spec.TemplateRef.Name}, tmpl); err != nil {
+		if k8serrors.IsNotFound(err) {
+			// A missing template is reported by renderCandidate, which names it
+			// as the thing that was not found. Guessing "not billed" here would
+			// answer a question nobody can answer yet.
+			return nil
+		}
+		return domain.NewInternal(err.Error(), err)
+	}
+
+	instanceType := member.Config.InstanceType
+	quotaURL := member.Config.Labels[QuotaURLLabel]
+	switch quotaplugin.SizingFor(s.quotaProv, tmpl.Annotations) {
+	case quotaplugin.PoolSizingBilled:
+		if quotaURL == "" {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"template %q bills its pools against a quota, so labels[%q] is required: "+
+					"it names the quota this pool spends. List the quotas available to you with "+
+					"`GET /v1/quotas` and set the one you want as the label value.",
+				tmpl.Name, QuotaURLLabel))
+		}
+		if instanceType == "" {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"template %q bills its pools per instance type, so instanceType is required "+
+					"(the quota is charged per whole instance). Add \"instanceType\" — and "+
+					"optionally \"multiplier\" and an \"inlineResources\" request no larger "+
+					"than instanceType × multiplier.",
+				tmpl.Name))
+		}
+	case quotaplugin.PoolSizingFreeForm:
+		if instanceType != "" {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"template %q is not billed, so its pools are sized free-form: instanceType "+
+					"is not accepted (there is no instance this pool would reserve). Supply "+
+					"\"inlineResources\" with the cpu/memory requests instead.",
+				tmpl.Name))
+		}
+		if quotaURL != "" {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"template %q is not billed, so its pools declare no quota: labels[%q] is not "+
+					"accepted. Remove it and size the pool with \"inlineResources\".",
+				tmpl.Name, QuotaURLLabel))
+		}
+	case quotaplugin.PoolSizingEither:
+		// No sizing rule on this deployment: the caller decides which shape to
+		// send, exactly as before this check existed. InstanceType with a
+		// catalog and no quota backend is a supported combination, not a
+		// contradiction to be refused.
+	}
+	return nil
 }
 
 // applyMemberPoolPatch overlays a MemberPoolPatch onto member in place. Replicas

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AgentBox API
-  version: "0.1.6"
+  version: "0.1.7"
   description: |
     AgentBox provides Sandbox lifecycle management and tenant API key provisioning.
 
@@ -807,6 +807,41 @@ components:
           description: "Override the main container (containers[0]) image"
       additionalProperties: false
 
+    PoolSizing:
+      type: string
+      enum: [billed, free-form, either]
+      description: |
+        How the member Pools of a template — and therefore of an Env bound to
+        it — must be sized. Reported by the quota provider that governs the
+        deployment, on the template itself and (stamped onto it) on the Env, so
+        that a console, a CLI or any other client reads the answer instead of
+        re-deriving the rule.
+
+        Three values, not two: "billed" and "free-form" are a deployment with a
+        billing rule deciding per template, while "either" is a deployment with
+        no rule at all — which must keep letting the caller choose, because an
+        InstanceType catalog with no quota backend is a supported way to size
+        Pools.
+
+          - `billed` — the template's Pools spend quota. A Pool MUST carry the
+            `quota.scitix.ai/url` label AND an `instanceType` (with an optional
+            `multiplier`). It is refused without either: the quota is what the
+            Pool is charged against, and the instance type is the unit it is
+            charged in. This is the shape ordinary users' templates take.
+          - `free-form` — the template is not billed, so a Pool MUST be sized
+            by `inlineResources` alone. `instanceType`, `multiplier` and the
+            quota label are refused with 400, because each one asserts
+            something the server would not honour. Templates reserved for
+            specific callers take this shape.
+          - `either` — this deployment has no billing rule (no quota backend,
+            or one that states no policy), so both shapes are accepted and the
+            caller picks. This is the behaviour of every deployment before the
+            rule existed, and of the open-source build.
+
+        Read-only. The value mirrors the template's and is maintained by the
+        API server at Env create and by the Env reconciler on every pass; it is
+        never part of a write body.
+
     SandboxPool:
       type: object
       required: [name, namespace, spec, status]
@@ -942,7 +977,12 @@ components:
         `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`.
         Members in the same `scalingGroup` share an autoscaling policy.
 
-        Sizing accepts three shapes:
+        WHICH OF THE SHAPES BELOW IS ACCEPTED IS THE ENV'S TO SAY, not the
+        caller's — read `poolSizing` off the Env this Pool joins (Template
+        detail and Env detail both carry it; `abx envs <name>` prints it).
+
+        Billed Env (`poolSizing: billed`) — the Template is billed, so the
+        Pool must name what it spends:
           - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full
             `instanceType × multiplier` envelope (default `multiplier` = 1).
           - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType ×
@@ -950,8 +990,23 @@ components:
             actual (possibly rounded-down) Pod request. Every dimension of `inlineResources`
             must be ≤ the envelope (round down allowed, round up rejected with 400); the
             reservation still charges quota for the whole instance.
-          - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit
-            per-Pool resource requests/limits.
+          - `labels` must carry `quota.scitix.ai/url`.
+
+        Free-form Env (`poolSizing: free-form`) — the Template is one the
+        deployment does not bill, so the Pool is sized directly:
+          - `inlineResources` alone → explicit per-Pool resource requests/limits.
+          - `instanceType`, `multiplier` and the quota label are REJECTED (400):
+            an instance type buys an instance nobody reserved, and a quota label
+            on a Pool that is never submitted for reservation is a claim the
+            server cannot honour.
+
+        Unmanaged Env (`poolSizing: either`) — this deployment states no rule,
+        so both shapes are accepted and the caller picks. Every deployment
+        behaved this way before the rule existed.
+
+        Under the two managed values there is no per-Pool choice: the shape
+        follows from the Env, so two Pools of one Env are always sized the same
+        way.
         `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down
         `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's
         real size and Pools downsized differently land in distinct scaling groups.
@@ -985,7 +1040,7 @@ components:
           type: string
           x-immutable: true
           x-immutable-lever: "add a member in the size you want, then remove this one"
-          description: "InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod."
+          description: "InstanceType catalog entry. Required when the Pool's Env is billed (env.poolSizing=billed); rejected when its Env is free-form (env.poolSizing=free-form); the caller's choice when the Env is unmanaged (env.poolSizing=either). May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod."
         multiplier:
           type: integer
           format: int32
@@ -1006,7 +1061,7 @@ components:
             - $ref: "#/components/schemas/ResourceRequirements"
           x-immutable: true
           x-immutable-lever: "add a member with the resources you want, then remove this one"
-          description: "Explicit per-Pool resource requests/limits. Used alone when instanceType is not supplied, or combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits."
+          description: "Explicit per-Pool resource requests/limits. Required — and used alone — when the Pool's Env is free-form (env.poolSizing=free-form), where it is the whole of the Pod's sizing; on a billed Env it is optional and instead combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits."
         replicas:
           type: integer
           format: int32
@@ -1026,7 +1081,7 @@ components:
             - $ref: "#/components/schemas/StringMap"
           x-immutable: true
           x-immutable-lever: "add a member with the labels you want, then remove this one"
-          description: "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix)."
+          description: "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix). Required when the Pool's Env is billed (env.poolSizing=billed) — the Pool is rejected without it, because the scheduler it is submitted to has nothing to charge; rejected when the Env is free-form."
         annotations:
           allOf:
             - $ref: "#/components/schemas/StringMap"
@@ -1730,6 +1785,20 @@ components:
 
             A placeholder whose value this deployment does not know (no gateway configured, no host
             alias, no registry) is left in the output verbatim rather than rendered empty.
+        poolSizing:
+          allOf:
+            - $ref: "#/components/schemas/PoolSizing"
+          description: >-
+            How this Env's member Pools must be sized, derived from the bound
+            template's own poolSizing and carried on the Env (the
+            agentbox.navix.sh/pool-sizing label) by the API server on create
+            and by the Env reconciler on every pass. A template that gains or
+            loses its billing annotations therefore re-stamps the Envs that
+            reference it within a reconcile.
+
+            Omitted when the Env has not been stamped yet, which clients must
+            read as "either" — the behaviour that predates this field. See
+            PoolSizing for what each value asks of a Pool write.
 
     SandboxEnvEnvelope:
       type: object
@@ -1798,6 +1867,8 @@ components:
         ready:
           type: boolean
           description: "True when the Env's Ready condition is True (all members Active)."
+        poolSizing:
+          $ref: "#/components/schemas/PoolSizing"
 
     ListSandboxEnvsResult:
       type: object
@@ -2157,6 +2228,8 @@ components:
         hasDocs:
           type: boolean
           description: "True when the template has documentation in the agentbox.navix.sh/docs annotation."
+        poolSizing:
+          $ref: "#/components/schemas/PoolSizing"
 
     SandboxTemplate:
       type: object
@@ -2200,6 +2273,8 @@ components:
         crdYaml:
           type: string
           description: "Complete raw SandboxTemplate CRD YAML (without managedFields). Includes resourceVersion and uid for optimistic locking on PUT."
+        poolSizing:
+          $ref: "#/components/schemas/PoolSizing"
 
     SandboxTemplateEnvelope:
       type: object

@@ -366,7 +366,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "type": "string",
           "required": false,
           "fixed": true,
-          "describe": "InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod.",
+          "describe": "InstanceType catalog entry. Required when the Pool's Env is billed (env.poolSizing=billed); rejected when its Env is free-form (env.poolSizing=free-form); the caller's choice when the Env is unmanaged (env.poolSizing=either). May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod.",
           "lever": "add a member in the size you want, then remove this one"
         },
         {
@@ -382,7 +382,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "type": "object",
           "required": false,
           "fixed": true,
-          "describe": "Explicit per-Pool resource requests/limits. Used alone when instanceType is not supplied, or combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits.",
+          "describe": "Explicit per-Pool resource requests/limits. Required — and used alone — when the Pool's Env is free-form (env.poolSizing=free-form), where it is the whole of the Pod's sizing; on a billed Env it is optional and instead combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits.",
           "lever": "add a member with the resources you want, then remove this one",
           "fields": [
             {
@@ -427,7 +427,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "type": "object",
           "required": false,
           "fixed": true,
-          "describe": "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix).",
+          "describe": "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix). Required when the Pool's Env is billed (env.poolSizing=billed) — the Pool is rejected without it, because the scheduler it is submitted to has nothing to charge; rejected when the Env is free-form.",
           "lever": "add a member with the labels you want, then remove this one"
         },
         {
@@ -485,14 +485,14 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
     },
     "update": {
       "schema": "UpsertSandboxPoolRequest",
-      "describe": "Add a member SandboxPool to an Env. The server derives: - `name` = \"{envName}-{resourceKey}[-{quotaShort}]\" - `scalingGroup` = `resourceKey` (e.g. \"2c8Gi\") where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`. Members in the same `scalingGroup` share an autoscaling policy. Sizing accepts three shapes: - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full `instanceType × multiplier` envelope (default `multiplier` = 1). - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType × multiplier` is the reservation/billing envelope, while `inlineResources` is the actual (possibly rounded-down) Pod request. Every dimension of `inlineResources` must be ≤ the envelope (round down allowed, round up rejected with 400); the reservation still charges quota for the whole instance. - `inlineResources` alone (catalog disabled or no `instanceType`) → explicit per-Pool resource requests/limits. `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's real size and Pools downsized differently land in distinct scaling groups. This is also what an update takes, and what `GET` returns as `editable`: one body for create, update and export, so a client edits what the API handed it rather than translating between two subsets that drift. The fields marked `x-immutable` describe the Pool's SHAPE and are fixed at create. An update must carry them back unchanged — omitting one or changing one is a 400 that names the value in force, because a body that loses the instance type is a caller bug, not a request for a smaller machine.",
+      "describe": "Add a member SandboxPool to an Env. The server derives: - `name` = \"{envName}-{resourceKey}[-{quotaShort}]\" - `scalingGroup` = `resourceKey` (e.g. \"2c8Gi\") where `resourceKey` is `instancetype.DeriveResourceKey(effective resources)` and `quotaShort` (when a quota label is supplied) is `quotaProvider.DeriveShortName(quotaID)`. Members in the same `scalingGroup` share an autoscaling policy. WHICH OF THE SHAPES BELOW IS ACCEPTED IS THE ENV'S TO SAY, not the caller's — read `poolSizing` off the Env this Pool joins (Template detail and Env detail both carry it; `abx envs <name>` prints it). Billed Env (`poolSizing: billed`) — the Template is billed, so the Pool must name what it spends: - `instanceType` (+ optional `multiplier`) alone → the Pod is sized to the full `instanceType × multiplier` envelope (default `multiplier` = 1). - `instanceType` (+ `multiplier`) AND `inlineResources` together → `instanceType × multiplier` is the reservation/billing envelope, while `inlineResources` is the actual (possibly rounded-down) Pod request. Every dimension of `inlineResources` must be ≤ the envelope (round down allowed, round up rejected with 400); the reservation still charges quota for the whole instance. - `labels` must carry `quota.scitix.ai/url`. Free-form Env (`poolSizing: free-form`) — the Template is one the deployment does not bill, so the Pool is sized directly: - `inlineResources` alone → explicit per-Pool resource requests/limits. - `instanceType`, `multiplier` and the quota label are REJECTED (400): an instance type buys an instance nobody reserved, and a quota label on a Pool that is never submitted for reservation is a claim the server cannot honour. Unmanaged Env (`poolSizing: either`) — this deployment states no rule, so both shapes are accepted and the caller picks. Every deployment behaved this way before the rule existed. Under the two managed values there is no per-Pool choice: the shape follows from the Env, so two Pools of one Env are always sized the same way. `scalingGroup` / pool name are derived from the effective Pod request (the rounded-down `inlineResources` when supplied, else the full envelope), so the name reflects the Pod's real size and Pools downsized differently land in distinct scaling groups. This is also what an update takes, and what `GET` returns as `editable`: one body for create, update and export, so a client edits what the API handed it rather than translating between two subsets that drift. The fields marked `x-immutable` describe the Pool's SHAPE and are fixed at create. An update must carry them back unchanged — omitting one or changing one is a 400 that names the value in force, because a body that loses the instance type is a caller bug, not a request for a smaller machine.",
       "fields": [
         {
           "name": "instanceType",
           "type": "string",
           "required": false,
           "fixed": true,
-          "describe": "InstanceType catalog entry. Required when the catalog is enabled and inlineResources is not supplied. May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod.",
+          "describe": "InstanceType catalog entry. Required when the Pool's Env is billed (env.poolSizing=billed); rejected when its Env is free-form (env.poolSizing=free-form); the caller's choice when the Env is unmanaged (env.poolSizing=either). May be combined with inlineResources to reserve a whole instance while running a smaller (rounded-down) Pod.",
           "lever": "add a member in the size you want, then remove this one"
         },
         {
@@ -508,7 +508,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "type": "object",
           "required": false,
           "fixed": true,
-          "describe": "Explicit per-Pool resource requests/limits. Used alone when instanceType is not supplied, or combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits.",
+          "describe": "Explicit per-Pool resource requests/limits. Required — and used alone — when the Pool's Env is free-form (env.poolSizing=free-form), where it is the whole of the Pod's sizing; on a billed Env it is optional and instead combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits.",
           "lever": "add a member with the resources you want, then remove this one",
           "fields": [
             {
@@ -553,7 +553,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "type": "object",
           "required": false,
           "fixed": true,
-          "describe": "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix).",
+          "describe": "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix). Required when the Pool's Env is billed (env.poolSizing=billed) — the Pool is rejected without it, because the scheduler it is submitted to has nothing to charge; rejected when the Env is free-form.",
           "lever": "add a member with the labels you want, then remove this one"
         },
         {

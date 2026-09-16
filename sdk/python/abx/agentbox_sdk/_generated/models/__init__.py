@@ -86,6 +86,7 @@ from .pool_auto_scaling_status_last_scale_up_attempt_result import PoolAutoScali
 from .pool_scale_down_policy import PoolScaleDownPolicy
 from .pool_scale_up_policy import PoolScaleUpPolicy
 from .pool_scale_up_policy_mode import PoolScaleUpPolicyMode
+from .pool_sizing import PoolSizing
 from .pool_template_overrides import PoolTemplateOverrides
 from .promote_api_key_result import PromoteAPIKeyResult
 from .quota import Quota
@@ -236,6 +237,7 @@ __all__ = (
     "PoolScaleDownPolicy",
     "PoolScaleUpPolicy",
     "PoolScaleUpPolicyMode",
+    "PoolSizing",
     "PoolTemplateOverrides",
     "PromoteAPIKeyResult",
     "Quota",

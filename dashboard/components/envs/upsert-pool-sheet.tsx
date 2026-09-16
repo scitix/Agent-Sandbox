@@ -16,7 +16,7 @@
 
 "use client"
 
-import { Fragment, useMemo, useState, type ReactNode } from "react"
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react"
 import { Controller, useForm, useWatch, type Control, type FieldPath } from "react-hook-form"
 import { useQuery } from "@tanstack/react-query"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -77,6 +77,14 @@ import {
   useUpdateEnvPool,
 } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
+import {
+  impliedResourceMode,
+  requiresQuota,
+  resolvePoolSizingLayout,
+  showsQuotaPicker,
+  showsResourceModeToggle,
+  type PoolSizingLayout,
+} from "@/lib/utils/pool-sizing"
 import { isFixedWriteField } from "@/lib/utils/write-rules"
 import type { TranslationKey } from "@/messages/_schema"
 import {
@@ -172,51 +180,65 @@ function refineReplicaBounds(m: FormValues, ctx: z.RefinementCtx) {
   }
 }
 
-const createSchema = baseObject.superRefine((m, ctx) => {
-  refineReplicaBounds(m, ctx)
-  if (m.resourceMode === "instanceType") {
-    if (!m.instanceType) {
+// Which fields a create must carry depends on the layout the ENV implies, not
+// on a choice the caller makes (see lib/utils/pool-sizing): a billed env
+// requires the quota as well as the instance type, and the two managed layouts
+// never let `resourceMode` say otherwise.
+function createSchemaFor(layout: PoolSizingLayout) {
+  const quotaRequired = requiresQuota(layout)
+  return baseObject.superRefine((m, ctx) => {
+    refineReplicaBounds(m, ctx)
+    if (quotaRequired && !m.quotaUrl) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "envs.poolForm.errors.instanceTypeRequired",
-        path: ["instanceType"],
+        message: "envs.poolForm.errors.quotaRequired",
+        path: ["quotaUrl"],
       })
     }
-    if (m.multiplier === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "envs.poolForm.errors.multiplierRequired",
-        path: ["multiplier"],
-      })
+    if (m.resourceMode === "instanceType") {
+      if (!m.instanceType) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "envs.poolForm.errors.instanceTypeRequired",
+          path: ["instanceType"],
+        })
+      }
+      if (m.multiplier === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "envs.poolForm.errors.multiplierRequired",
+          path: ["multiplier"],
+        })
+      }
+      // Rounded-down override is all-or-nothing: a partial request would drop the
+      // unspecified dimension on the server (inlineResources is used verbatim).
+      const hasCpu = m.overrideCpuValue !== undefined
+      const hasMem = m.overrideMemoryValue !== undefined
+      if (hasCpu !== hasMem) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "envs.poolForm.errors.overrideBothRequired",
+          path: [hasCpu ? "overrideMemoryValue" : "overrideCpuValue"],
+        })
+      }
+    } else {
+      if (m.cpuValue === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "envs.poolForm.errors.cpuRequired",
+          path: ["cpuValue"],
+        })
+      }
+      if (m.memoryValue === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "envs.poolForm.errors.memoryRequired",
+          path: ["memoryValue"],
+        })
+      }
     }
-    // Rounded-down override is all-or-nothing: a partial request would drop the
-    // unspecified dimension on the server (inlineResources is used verbatim).
-    const hasCpu = m.overrideCpuValue !== undefined
-    const hasMem = m.overrideMemoryValue !== undefined
-    if (hasCpu !== hasMem) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "envs.poolForm.errors.overrideBothRequired",
-        path: [hasCpu ? "overrideMemoryValue" : "overrideCpuValue"],
-      })
-    }
-  } else {
-    if (m.cpuValue === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "envs.poolForm.errors.cpuRequired",
-        path: ["cpuValue"],
-      })
-    }
-    if (m.memoryValue === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "envs.poolForm.errors.memoryRequired",
-        path: ["memoryValue"],
-      })
-    }
-  }
-})
+  })
+}
 
 /**
  * The shape fields, which are fixed at create.
@@ -308,14 +330,30 @@ function UpsertPoolInner({
   const shapeLocked = isEdit && isFixedWriteField("pools", "instanceType")
   const gates = useFeatureGates()
 
-  const { data: quotas = [] } = useQuery(quotasQueryOptions())
+  // The env decides which form this is: a billed template's pools name a quota
+  // and an instance type, an unbilled one's are sized free-form, and an env on
+  // a deployment with no rule at all still lets the caller choose. Read here,
+  // once, so every branch below renders the same answer.
+  const layout: PoolSizingLayout = resolvePoolSizingLayout({
+    poolSizing: env.poolSizing,
+    quotaEnabled: gates.quota,
+    instanceTypeEnabled: gates.instanceType,
+    existingInstanceType: pool
+      ? (findMember(env, pool.name)?.config?.instanceType ?? "")
+      : undefined,
+  })
+  const layoutMode = impliedResourceMode(layout)
+
+  const { data: quotas = [] } = useQuery(
+    quotasQueryOptions({ enabled: showsQuotaPicker(layout, gates.quota) }),
+  )
   const { data: instanceTypes = [] } = useQuery(
     instanceTypesQueryOptions({ enabled: gates.instanceType }),
   )
 
   const defaultValues = useMemo<FormValues>(
-    () => buildDefaultValues(env, pool, gates.instanceType),
-    [env, pool, gates.instanceType],
+    () => buildDefaultValues(env, pool, layout),
+    [env, pool, layout],
   )
 
   const {
@@ -323,15 +361,23 @@ function UpsertPoolInner({
     register,
     handleSubmit,
     reset,
+    setValue,
     trigger,
     getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    resolver: zodResolver(isEdit ? updateSchemaFor(defaultValues) : createSchema),
+    resolver: zodResolver(isEdit ? updateSchemaFor(defaultValues) : createSchemaFor(layout)),
     defaultValues,
   })
 
-  const mode = useWatch({ control, name: "resourceMode" }) ?? "manual"
+  const formMode = useWatch({ control, name: "resourceMode" })
+  // The managed layouts own the mode; a reset (a clone import, an env that
+  // finished stamping) can otherwise put a stale one back, and a stale mode
+  // silently changes what the body means. "caller-choice" leaves it alone.
+  useEffect(() => {
+    if (layoutMode && layoutMode !== formMode) setValue("resourceMode", layoutMode)
+  }, [layoutMode, formMode, setValue])
+  const mode = layoutMode ?? formMode ?? "manual"
   const watchedInstance = useWatch({ control, name: "instanceType" })
   const watchedMultiplier = useWatch({ control, name: "multiplier" })
   const watchedOverrideCpu = useWatch({ control, name: "overrideCpuValue" })
@@ -425,28 +471,55 @@ function UpsertPoolInner({
 
       <form onSubmit={onSubmit} className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-          {/* Quota selector */}
-          <Field>
-            <FieldLabel>{t("envs.poolForm.quota")}</FieldLabel>
-            <Controller
-              control={control}
-              name="quotaUrl"
-              render={({ field }) => (
-                <QuotaCombobox
-                  items={quotas}
-                  value={field.value ?? null}
-                  onChange={field.onChange}
-                  disabled={shapeLocked}
-                />
+          {/* Quota selector.
+              Only where it means something: a billed env must name the quota
+              its pools spend, a "caller-choice" env may, and a free-form env
+              must not (the server refuses the label). */}
+          {showsQuotaPicker(layout, gates.quota) && (
+            <Field>
+              <FieldLabel>
+                {t("envs.poolForm.quota")}
+                {layout === "billed" && !isEdit ? (
+                  <span className="text-destructive ml-1">*</span>
+                ) : null}
+              </FieldLabel>
+              <Controller
+                control={control}
+                name="quotaUrl"
+                render={({ field }) => (
+                  <QuotaCombobox
+                    items={quotas}
+                    value={field.value ?? null}
+                    onChange={field.onChange}
+                    disabled={shapeLocked}
+                    invalid={!!errors.quotaUrl}
+                  />
+                )}
+              />
+              {errors.quotaUrl ? (
+                <FieldError>{t(errors.quotaUrl.message as never)}</FieldError>
+              ) : layout === "billed" && !gates.quota ? (
+                // A billed env on a deployment with no quota backend: there is
+                // nothing to pick, and the server will refuse the write. Say
+                // so, rather than showing an empty list and letting the user
+                // hunt for the reason.
+                <FieldError>{t("envs.poolForm.errors.quotaBackendMissing")}</FieldError>
+              ) : (
+                <FieldDescription>
+                  {isEdit
+                    ? t("envs.poolForm.quotaImmutable")
+                    : layout === "billed"
+                      ? t("envs.poolForm.quotaRequiredHint")
+                      : t("envs.poolForm.quotaHint")}
+                </FieldDescription>
               )}
-            />
-            <FieldDescription>
-              {isEdit ? t("envs.poolForm.quotaImmutable") : t("envs.poolForm.quotaHint")}
-            </FieldDescription>
-          </Field>
+            </Field>
+          )}
 
-          {/* Resource mode */}
-          {gates.instanceType && !isEdit && (
+          {/* Resource mode — only where the deployment leaves the choice open.
+              A billed or free-form env has already decided, and asking again is
+              what made two kinds of template look like one form. */}
+          {showsResourceModeToggle(layout) && gates.instanceType && !isEdit && (
             <div className="flex flex-col gap-1">
               <span className="text-muted-foreground font-mono text-[11px]">
                 {t("envs.poolForm.resourceMode")}
@@ -685,7 +758,12 @@ function UpsertPoolInner({
             defaults={defaultValues}
             canImport={!isEdit}
             onImport={(v) => {
-              reset(v)
+              // The two managed layouts own the mode, so an imported file's
+              // stale one is dropped rather than allowed to contradict the env
+              // (a v2 export from a free-form pool carries `manual`, and
+              // honouring it on a billed env would build a body the server
+              // refuses). "caller-choice" keeps whatever the file says.
+              reset({ ...v, resourceMode: layoutMode ?? v.resourceMode })
               void trigger()
             }}
           />
@@ -837,11 +915,13 @@ function QuotaCombobox({
   value,
   onChange,
   disabled,
+  invalid,
 }: {
   items: QuotaItem[]
   value: string | null
   onChange: (v: string | undefined) => void
   disabled?: boolean
+  invalid?: boolean
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -888,6 +968,7 @@ function QuotaCombobox({
             variant="outline"
             role="combobox"
             aria-expanded={open}
+            aria-invalid={invalid}
             className="h-9 w-full justify-between px-2.5 font-normal"
           />
         }
@@ -1090,9 +1171,13 @@ function formatActualRequest(
 function buildDefaultValues(
   env: AgentSandboxEnv,
   pool: AgentSandboxPool | null,
-  instanceTypeGate: boolean,
+  layout: PoolSizingLayout,
 ): FormValues {
-  const defaultMode: FormValues["resourceMode"] = instanceTypeGate ? "instanceType" : "manual"
+  // In the two managed layouts the mode is the env's to say, so the create
+  // form opens on it; in "caller-choice" the user still picks, and a fresh
+  // form starts on the instance-type tab when there is a catalog to pick from.
+  const defaultMode: FormValues["resourceMode"] =
+    impliedResourceMode(layout) ?? (layout === "caller-choice" ? "instanceType" : "manual")
   if (!pool) {
     return {
       resourceMode: defaultMode,

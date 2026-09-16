@@ -906,7 +906,18 @@ export async function run(argv: string[]): Promise<number> {
   if (flags.editable) return printEditable(payload, resolved, ctx)
 
   const rows = normalize(payload, resolved.listField)
-  if (resolved.collection) return printRows(resolved.spec, rows, ctx, address, flags, filters)
+  if (resolved.collection) {
+    // `abx envs <env> pools` is the last stop before someone writes a pool
+    // body, and which shape that body takes is a property of the env rather
+    // than of any row here. One extra request, only on this address and only
+    // for the table view — `--json`/`--csv` print no hints, so fetching one
+    // would be a request whose answer is thrown away.
+    const note =
+      ctx.format === 'table' && resolved.spec.plural === 'pools' && address.id
+        ? poolSizingNote(await envPoolSizing(ctx, address.id))
+        : undefined
+    return printRows(resolved.spec, rows, ctx, address, flags, filters, note)
+  }
 
   // A view that carries a document answers with an envelope, the same one a
   // `get` does — so it is unwrapped the same way before the renderer looks for
@@ -1215,6 +1226,111 @@ function printEditable(
   return 0
 }
 
+/**
+ * How the env's pools must be sized, as the env reports it.
+ *
+ * Read from the env rather than inferred from a flag, because it is a fact of
+ * the deployment and of the template the env binds — two envs on one cluster
+ * can differ, and the pool rows alone do not say which one you are looking at.
+ * `undefined` means this server says nothing about sizing (an older worker, or
+ * an env the reconciler has not stamped yet), in which case the CLI stays out
+ * of the way and lets the server decide.
+ */
+type PoolSizing = 'billed' | 'free-form' | 'either'
+
+async function envPoolSizing(ctx: Context, envName: string): Promise<PoolSizing | undefined> {
+  try {
+    const envelope = await request<Record<string, any>>(
+      ctx,
+      'GET',
+      `/envs/${encodeURIComponent(envName)}`,
+    )
+    const sizing = (envelope?.env ?? envelope)?.poolSizing
+    return sizing === 'billed' || sizing === 'free-form' || sizing === 'either'
+      ? sizing
+      : undefined
+  } catch {
+    // Diagnostic only: never let the hint be the thing that fails a command.
+    return undefined
+  }
+}
+
+/** The one line that tells a reader what a pool under this env has to declare. */
+function poolSizingNote(sizing: PoolSizing | undefined): string | undefined {
+  switch (sizing) {
+    case 'billed':
+      return (
+        'pools here are billed: the body needs instanceType AND ' +
+        'labels["quota.scitix.ai/url"] (env.poolSizing=billed)'
+      )
+    case 'free-form':
+      return (
+        'pools here are sized free-form: the body needs inlineResources, and ' +
+        'instanceType and the quota label are refused (env.poolSizing=free-form)'
+      )
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Refuse a pool body this env will not accept, before sending it.
+ *
+ * The server refuses it too — that is the authority, and this is not a second
+ * rule: it is the same rule applied one round trip earlier, so the answer names
+ * the missing field instead of arriving as a 400 the caller has to map back to
+ * their file. Only create is pre-checked, mirroring the server: an update
+ * cannot change the shape, and a pool that predates its template being billed
+ * has to stay editable.
+ */
+async function precheckPoolBody(
+  ctx: Context,
+  envName: string,
+  body: Record<string, unknown>,
+  verb: string,
+): Promise<void> {
+  if (verb !== 'create') return
+  const sizing = await envPoolSizing(ctx, envName)
+  if (sizing !== 'billed' && sizing !== 'free-form') return
+
+  const hasInstanceType = typeof body.instanceType === 'string' && body.instanceType !== ''
+  const labels = (body.labels ?? {}) as Record<string, unknown>
+  const quotaUrl =
+    typeof labels['quota.scitix.ai/url'] === 'string' ? labels['quota.scitix.ai/url'] : ''
+  const where = `abx envs ${envName}   # its poolSizing says what the body must carry`
+
+  if (sizing === 'billed') {
+    if (!quotaUrl) {
+      throw new CliError(
+        `env "${envName}" bills its pools, and this body names no quota`,
+        `add "labels": {"quota.scitix.ai/url": "<the quota to spend>"} — \`abx quotas\` lists ` +
+          `the ones you may use\n${where}`,
+      )
+    }
+    if (!hasInstanceType) {
+      throw new CliError(
+        `env "${envName}" bills its pools per instance type, and this body names none`,
+        `add "instanceType" (and optionally "multiplier") — the quota is charged per whole ` +
+          `instance\n${where}`,
+      )
+    }
+    return
+  }
+
+  if (hasInstanceType) {
+    throw new CliError(
+      `env "${envName}" is not billed, so its pools take no instance type`,
+      `drop "instanceType" and size the pool with "inlineResources" instead\n${where}`,
+    )
+  }
+  if (quotaUrl) {
+    throw new CliError(
+      `env "${envName}" is not billed, so its pools declare no quota`,
+      `drop labels["quota.scitix.ai/url"] and size the pool with "inlineResources"\n${where}`,
+    )
+  }
+}
+
 /** Print a result set in whichever format was asked for. */
 function printRows(
   spec: (typeof RESOURCES)[number],
@@ -1223,6 +1339,7 @@ function printRows(
   address: Address,
   flags: Record<string, string | boolean>,
   filters: [string, string][],
+  note?: string,
 ): number {
   const first = spec.columns[0].id
   let out = rows.map((r) => (r !== null && typeof r === 'object' ? r : { [first]: r }))
@@ -1238,7 +1355,7 @@ function printRows(
   const limit = typeof flags.limit === 'string' ? Number(flags.limit) : undefined
   console.log(renderTable(spec, out, ctx, { wide: Boolean(flags.wide), limit }))
   console.log('')
-  console.log(hints(spec, ctx, address))
+  console.log(hints(spec, ctx, address, note))
   return 0
 }
 
@@ -1566,6 +1683,14 @@ async function write(
     )
   }
   const body = JSON.parse(file === '-' ? await Bun.stdin.text() : await Bun.file(file).text())
+
+  // A pool's shape is the env's to decide, so the env is consulted rather than
+  // the file. Refused here (create only — see precheckPoolBody) with the field
+  // named, because a 400 about `inlineResources` is a poor way to learn that
+  // the env wanted an instance type.
+  if (spec.plural === 'pools' && a.id) {
+    await precheckPoolBody(ctx, a.id, body as Record<string, unknown>, verb)
+  }
 
   if (verb === 'create') {
     await request(ctx, 'POST', path, body)

@@ -38,6 +38,11 @@ const (
 	envLocalCluster  = "local"
 	testEnvName      = "env-x"
 	testTemplateName = "envd-runtime"
+
+	// memberName2c8Gi is the name derivePoolMember gives a 2c/8Gi member of
+	// testEnvName: env name + resource key. Half a dozen assertions depend on
+	// the derivation, so it is named once rather than spelled out in each.
+	memberName2c8Gi = testEnvName + "-2c8gi"
 )
 
 func newEnvForPoolOps() *agentsv1alpha1.SandboxEnv {
@@ -137,7 +142,7 @@ func TestAdd_DerivesNameAndScalingGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %+v", err)
 	}
-	if res.Name != "env-x-2c8gi" {
+	if res.Name != memberName2c8Gi {
 		t.Fatalf("derived name = %q, want env-x-2c8gi", res.Name)
 	}
 }
@@ -160,7 +165,7 @@ func TestAdd_NoLocalClusterID_503(t *testing.T) {
 
 func TestAdd_Duplicate_409(t *testing.T) {
 	env := newEnvForPoolOps()
-	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{Name: "env-x-2c8gi"}}
+	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{Name: memberName2c8Gi}}
 	svc := newService(t, env)
 
 	_, err := svc.AddMember(context.Background(), envTestNamespace, testEnvName, envLocalCluster, memberWithResources(1))

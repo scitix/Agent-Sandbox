@@ -200,6 +200,7 @@ func templateToSummary(t *gen.SandboxTemplate) gen.SandboxTemplateSummary {
 		Memory:      t.Memory,
 		SyncSource:  t.SyncSource,
 		CreatedAt:   t.CreatedAt,
+		PoolSizing:  t.PoolSizing,
 	}
 	hasDocs := t.Docs != nil && strings.TrimSpace(*t.Docs) != ""
 	summary.HasDocs = &hasDocs

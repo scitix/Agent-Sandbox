@@ -238,13 +238,17 @@ export function renderLogsCsv(payload: unknown): string {
  * around. An agent that is not told what it can do next guesses, and a guess
  * costs a whole round trip.
  */
-export function hints(spec: ResourceSpec, ctx: Context, a: Address): string {
+export function hints(spec: ResourceSpec, ctx: Context, a: Address, note?: string): string {
   const cl = ctx.cluster ? ` --cluster ${ctx.cluster}` : ''
   const prefix = cliArgs({ ...a, cluster: undefined }).join(' ')
   const lines: string[] = []
 
   const addressingItem = a.sub ? Boolean(a.subId) : Boolean(a.id)
   if (a.view) return viewHint(ctx, a)
+  // Something the caller cannot see from the rows they just read — today, only
+  // the env's pool sizing, which decides what a `create` under this address
+  // has to contain. First, because it changes what the lines below mean.
+  if (note) lines.push(`  # ${note}`)
   if (!addressingItem && spec.detail) {
     lines.push(`  abx ${prefix} <${spec.kind}>${cl}  # detail of one row`)
   }

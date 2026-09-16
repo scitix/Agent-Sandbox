@@ -98,7 +98,12 @@ func Run() {
 		})
 
 		adminKeyMgr := apikey.NewAdminKeyManager(cfg.AdminKey)
-		templateSvc := service.NewSandboxTemplateService(k8sClient)
+		// No quota Provider here: ws-proxy reads and forwards template objects
+		// to the Hub, it does not serve the projections clients size Pools
+		// against. The nil Provider makes gen.SandboxTemplate.RequiresQuota
+		// false on this relay's responses, which is the open-source answer and
+		// the only one this process can give without a quota backend wired in.
+		templateSvc := service.NewSandboxTemplateService(k8sClient, nil)
 
 		sm = syncmgr.New(store, cfg.Secret, cfg.Secret, syncmgr.Deps{
 			KeyStore:               ks,

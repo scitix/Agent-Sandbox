@@ -26,6 +26,9 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
+	"github.com/scitix/agent-sandbox/pkg/framework/providers/quota/quotatest"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
@@ -42,6 +45,14 @@ func derefStr(s *string) string {
 
 func newTestSandboxTemplateService(t *testing.T, objs ...any) SandboxTemplateService {
 	t.Helper()
+	return newTestSandboxTemplateServiceWithQuota(t, nil, objs...)
+}
+
+// newTestSandboxTemplateServiceWithQuota is the same service with a quota
+// Provider wired in — the only way to exercise the billed branch of
+// gen.SandboxTemplate.PoolSizing. A nil Provider is the open-source case.
+func newTestSandboxTemplateServiceWithQuota(t *testing.T, quotaProv quotaplugin.Provider, objs ...any) SandboxTemplateService {
+	t.Helper()
 	cb, err := indexer.GetFakeClientBuilderWithIndexers()
 	if err != nil {
 		t.Fatalf("get fake client builder: %v", err)
@@ -51,7 +62,7 @@ func newTestSandboxTemplateService(t *testing.T, objs ...any) SandboxTemplateSer
 			cb = cb.WithObjects(v)
 		}
 	}
-	return NewSandboxTemplateService(cb.Build())
+	return NewSandboxTemplateService(cb.Build(), quotaProv)
 }
 
 func makeSandboxTemplate(name, version string) *agentsv1alpha1.SandboxTemplate {
@@ -952,4 +963,87 @@ func TestGet_CrdYaml_ContainsResourceVersion(t *testing.T) {
 	if rv == "" {
 		t.Fatal("crdYaml should include a non-empty resourceVersion")
 	}
+}
+
+// TestPoolSizing_Projection pins the whole point of the field: the client reads
+// it off the resource instead of re-deriving the Provider's rule, so every path
+// that returns a template has to carry it.
+//
+// The four cases below are the three answers a deployment can give, plus the
+// control that separates two of them: billed, free-form (the Provider governs
+// and says no), "either" because no Provider is wired at all, and "either"
+// because the wired Provider states no policy. Those last two must agree —
+// a Provider that implements the optional interface and answers "no" is NOT
+// the same as no Provider, and treating them alike is what would take the
+// instance-type catalog away from an open-source deployment.
+func TestPoolSizing_Projection(t *testing.T) {
+	billedTemplate := func(name string) *agentsv1alpha1.SandboxTemplate {
+		tmpl := makeSandboxTemplate(name, "1.0.0")
+		tmpl.Annotations = map[string]string{quotatest.BillingKey: `{"sci.c23-2":"1"}`}
+		return tmpl
+	}
+	freeTemplate := func(name string) *agentsv1alpha1.SandboxTemplate {
+		tmpl := makeSandboxTemplate(name, "1.0.0")
+		tmpl.Annotations = map[string]string{"agentbox.navix.sh/docs": "docs"}
+		return tmpl
+	}
+
+	t.Run("billed annotation with a billing provider", func(t *testing.T) {
+		svc := newTestSandboxTemplateServiceWithQuota(t, quotatest.Billing(), billedTemplate("billed"))
+
+		got, appErr := svc.Get(context.Background(), "billed", adminAuth, true)
+		if appErr != nil {
+			t.Fatalf("get: %v", appErr)
+		}
+		if got.PoolSizing == nil || *got.PoolSizing != gen.Billed {
+			t.Errorf("Get.PoolSizing = %v, want billed", got.PoolSizing)
+		}
+
+		items, appErr := svc.List(context.Background(), adminAuth, true)
+		if appErr != nil {
+			t.Fatalf("list: %v", appErr)
+		}
+		if len(items) != 1 || items[0].PoolSizing == nil || *items[0].PoolSizing != gen.Billed {
+			t.Errorf("List[0].PoolSizing = %v, want billed", items)
+		}
+	})
+
+	t.Run("no billing annotation with a billing provider", func(t *testing.T) {
+		svc := newTestSandboxTemplateServiceWithQuota(t, quotatest.Billing(), freeTemplate("free"))
+
+		got, appErr := svc.Get(context.Background(), "free", adminAuth, true)
+		if appErr != nil {
+			t.Fatalf("get: %v", appErr)
+		}
+		if got.PoolSizing == nil || *got.PoolSizing != gen.FreeForm {
+			t.Errorf("Get.PoolSizing = %v, want free-form", got.PoolSizing)
+		}
+	})
+
+	t.Run("no quota provider at all", func(t *testing.T) {
+		// The open-source build: the annotation is present but means nothing,
+		// because nothing on this deployment spends quota.
+		svc := newTestSandboxTemplateService(t, billedTemplate("billed-oss"))
+
+		got, appErr := svc.Get(context.Background(), "billed-oss", adminAuth, true)
+		if appErr != nil {
+			t.Fatalf("get: %v", appErr)
+		}
+		if got.PoolSizing == nil || *got.PoolSizing != gen.Either {
+			t.Errorf("Get.PoolSizing = %v, want either", got.PoolSizing)
+		}
+	})
+
+	t.Run("provider implements the interface but bills nothing", func(t *testing.T) {
+		svc := newTestSandboxTemplateServiceWithQuota(t,
+			quotatest.Static{Billed: false}, billedTemplate("billed-static"))
+
+		got, appErr := svc.Get(context.Background(), "billed-static", adminAuth, true)
+		if appErr != nil {
+			t.Fatalf("get: %v", appErr)
+		}
+		if got.PoolSizing == nil || *got.PoolSizing != gen.FreeForm {
+			t.Errorf("Get.PoolSizing = %v, want free-form", got.PoolSizing)
+		}
+	})
 }

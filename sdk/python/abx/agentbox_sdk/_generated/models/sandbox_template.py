@@ -22,6 +22,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.pool_sizing import PoolSizing
 from ..types import UNSET, Unset
 from typing import cast
 import datetime
@@ -59,6 +60,36 @@ class SandboxTemplate:
                 rendered Pod, so they name no new template revision.
             crd_yaml (str | Unset): Complete raw SandboxTemplate CRD YAML (without managedFields). Includes resourceVersion
                 and uid for optimistic locking on PUT.
+            pool_sizing (PoolSizing | Unset): How the member Pools of a template — and therefore of an Env bound to
+                it — must be sized. Reported by the quota provider that governs the
+                deployment, on the template itself and (stamped onto it) on the Env, so
+                that a console, a CLI or any other client reads the answer instead of
+                re-deriving the rule.
+
+                Three values, not two: "billed" and "free-form" are a deployment with a
+                billing rule deciding per template, while "either" is a deployment with
+                no rule at all — which must keep letting the caller choose, because an
+                InstanceType catalog with no quota backend is a supported way to size
+                Pools.
+
+                  - `billed` — the template's Pools spend quota. A Pool MUST carry the
+                    `quota.scitix.ai/url` label AND an `instanceType` (with an optional
+                    `multiplier`). It is refused without either: the quota is what the
+                    Pool is charged against, and the instance type is the unit it is
+                    charged in. This is the shape ordinary users' templates take.
+                  - `free-form` — the template is not billed, so a Pool MUST be sized
+                    by `inlineResources` alone. `instanceType`, `multiplier` and the
+                    quota label are refused with 400, because each one asserts
+                    something the server would not honour. Templates reserved for
+                    specific callers take this shape.
+                  - `either` — this deployment has no billing rule (no quota backend,
+                    or one that states no policy), so both shapes are accepted and the
+                    caller picks. This is the behaviour of every deployment before the
+                    rule existed, and of the open-source build.
+
+                Read-only. The value mirrors the template's and is maintained by the
+                API server at Env create and by the Env reconciler on every pass; it is
+                never part of a write body.
      """
 
     name: str
@@ -70,6 +101,7 @@ class SandboxTemplate:
     sync_source: str | Unset = UNSET
     docs: str | Unset = UNSET
     crd_yaml: str | Unset = UNSET
+    pool_sizing: PoolSizing | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -97,6 +129,11 @@ class SandboxTemplate:
 
         crd_yaml = self.crd_yaml
 
+        pool_sizing: str | Unset = UNSET
+        if not isinstance(self.pool_sizing, Unset):
+            pool_sizing = self.pool_sizing.value
+
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -119,6 +156,8 @@ class SandboxTemplate:
             field_dict["docs"] = docs
         if crd_yaml is not UNSET:
             field_dict["crdYaml"] = crd_yaml
+        if pool_sizing is not UNSET:
+            field_dict["poolSizing"] = pool_sizing
 
         return field_dict
 
@@ -153,6 +192,16 @@ class SandboxTemplate:
 
         crd_yaml = d.pop("crdYaml", UNSET)
 
+        _pool_sizing = d.pop("poolSizing", UNSET)
+        pool_sizing: PoolSizing | Unset
+        if isinstance(_pool_sizing,  Unset):
+            pool_sizing = UNSET
+        else:
+            pool_sizing = PoolSizing(_pool_sizing)
+
+
+
+
         sandbox_template = cls(
             name=name,
             version=version,
@@ -163,6 +212,7 @@ class SandboxTemplate:
             sync_source=sync_source,
             docs=docs,
             crd_yaml=crd_yaml,
+            pool_sizing=pool_sizing,
         )
 
 

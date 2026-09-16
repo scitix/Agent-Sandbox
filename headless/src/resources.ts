@@ -62,6 +62,12 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { id: 'desiredReplicas', describe: 'Sum of spec.replicas across observed members.' },
       { id: 'idleReplicas', describe: 'Pods available to claim right now.' },
       { id: 'ready', describe: 'Whether every member pool is serving.', filter: 'ready' },
+      {
+        id: 'poolSizing',
+        describe: 'What a pool added here must declare: billed, free-form, or either.',
+        filter: 'poolSizing',
+        optional: true,
+      },
       { id: 'team', describe: 'Owning team.', filter: 'team', optional: true },
     ],
     // The get response is a different shape, not a wider one: the template, the
@@ -85,6 +91,13 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { id: 'team', describe: 'Owning team.' },
       { id: 'user', describe: 'Owning user.' },
       { id: 'createdAt', describe: 'When the Env was created.' },
+      {
+        id: 'poolSizing',
+        describe:
+          'What a pool added to this env must declare: billed (a quota and an instance type), ' +
+          'free-form (inlineResources only), or either (this deployment has no rule). Read it ' +
+          'before writing a pool body — the server refuses the wrong shape.',
+      },
       { id: 'memberCount', path: 'status.memberCount', describe: 'Member pools across every cluster segment.' },
       { id: 'desiredReplicas', path: 'status.desiredReplicas', describe: 'Sum of the members’ desired replicas.' },
       { id: 'runningReplicas', path: 'status.runningReplicas', describe: 'Pods currently claimed by a sandbox.' },
@@ -100,6 +113,11 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { key: 'templateName', describe: 'the bound template' },
       { key: 'mode', describe: 'provisioning mode', values: ['WarmPool', 'OnDemandJob'] },
       { key: 'ready', describe: 'readiness', values: ['true', 'false'] },
+      {
+        key: 'poolSizing',
+        describe: 'what a pool added to this env must declare',
+        values: ['billed', 'free-form', 'either'],
+      },
       { key: 'team', describe: 'owning team' },
     ],
     views: [
@@ -118,7 +136,10 @@ export const RESOURCES: readonly ResourceSpec[] = [
     kind: 'pool',
     plural: 'pools',
     parent: 'envs',
-    describe: 'A member warm pool. Always belongs to an env.',
+    describe:
+      'A member warm pool. Always belongs to an env, and takes its sizing shape from it: ' +
+      'a billed env’s pools name a quota and an instance type, an unbilled env’s are sized ' +
+      'with inlineResources. `abx envs <env>` prints which.',
     api: {
       list: '/envs/{name}/sandboxpools',
       item: '/envs/{name}/sandboxpools/{poolName}',
