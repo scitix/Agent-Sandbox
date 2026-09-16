@@ -69,10 +69,11 @@ import {
   volumesQueryOptions,
 } from "@/lib/queries"
 import { envClone } from "@/lib/utils/env-clone"
+import { isFixedWriteField } from "@/lib/utils/write-rules"
 import {
   envFormDefaults,
+  envFormSchemaFor,
   envToFormValues,
-  formSchema,
   formValuesToCreateBody,
   formValuesToUpdateBody,
   type FormValues,
@@ -148,6 +149,10 @@ interface InnerProps {
 function UpsertEnvForm({ env, editable, onClose }: InnerProps) {
   const { t } = useTranslation()
   const isEdit = !!env
+  // Whether the template may be changed, asked of the API schema rather than
+  // decided here: `templateRef` is fixed at create, and a console that let it
+  // be edited would be offering a write the server refuses.
+  const templateLocked = isEdit && isFixedWriteField("envs", "templateRef")
 
   const { data: templates = [] } = useQuery(templatesQueryOptions())
 
@@ -164,7 +169,10 @@ function UpsertEnvForm({ env, editable, onClose }: InnerProps) {
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    // Edit mode is checked against the env the form was opened on: a fixed
+    // field that comes back changed is the API's 400, said here where the
+    // person can still see which field it is.
+    resolver: zodResolver(envFormSchemaFor(isEdit ? defaultValues : null)),
     defaultValues,
   })
 
@@ -326,7 +334,7 @@ function UpsertEnvForm({ env, editable, onClose }: InnerProps) {
                       value={field.value}
                       onChange={field.onChange}
                       invalid={fieldState.invalid}
-                      disabled={isEdit}
+                      disabled={templateLocked}
                     />
                   )}
                 />

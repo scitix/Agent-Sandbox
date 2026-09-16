@@ -1595,5 +1595,7 @@
   "componentLogs.detail.missing": "当前结果里没有这一行。",
   "componentLogs.detail.missingTruncated": "当前结果里没有这一行 —— 它被行数上限截掉了。调大上限或收窄时间范围。",
   "componentLogs.detail.dismiss": "知道了",
-  "sandboxes.logs.tail": "行数"
+  "sandboxes.logs.tail": "行数",
+  "envs.form.errors.templateFixed": "模版在环境创建后不可更改。如需更换模板，请新建一个环境。",
+  "envs.poolForm.errors.shapeFixed": "池子的规格在创建后不可更改——名字由它派生。请按需要的规格新建一个池子，再删掉这个。"
 }

@@ -73,7 +73,7 @@ between runs rather than holding capacity idle:
 ```bash
 abx envs <env> scaling-groups <group> --json > g.json
 # set enabled: true, maxReplicas: 64, mode to taste
-abx envs <env> scaling-groups <group> apply -f g.json
+abx update envs <env> scaling-groups <group> -f g.json
 ```
 
 `apply` is a whole-object PUT — start from the `--json` you just read, never

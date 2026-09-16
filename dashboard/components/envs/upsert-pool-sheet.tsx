@@ -77,6 +77,7 @@ import {
   useUpdateEnvPool,
 } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
+import { isFixedWriteField } from "@/lib/utils/write-rules"
 import type { TranslationKey } from "@/messages/_schema"
 import {
   cpuQuantity,
@@ -217,7 +218,46 @@ const createSchema = baseObject.superRefine((m, ctx) => {
   }
 })
 
-const updateSchema = baseObject.superRefine(refineReplicaBounds)
+/**
+ * The shape fields, which are fixed at create.
+ *
+ * The API refuses an update that changes one — and it goes further than the
+ * other fixed fields, because the pool's NAME is derived from the shape:
+ * changing it is not an edit at all but a different pool. The sheet disables
+ * these inputs on edit; this is the rule behind that, so a value arriving from
+ * somewhere the disabled control does not cover (an import, a copy, a field
+ * added later) is refused rather than silently sent.
+ */
+const SHAPE_FIELDS = [
+  "resourceMode",
+  "instanceType",
+  "multiplier",
+  "cpuValue",
+  "cpuUnit",
+  "memoryValue",
+  "memoryUnit",
+  "overrideCpuValue",
+  "overrideCpuUnit",
+  "overrideMemoryValue",
+  "overrideMemoryUnit",
+  "quotaUrl",
+] as const satisfies readonly (keyof z.infer<typeof baseObject>)[]
+
+/** The edit schema, with the fixed shape checked against the pool it opened on. */
+function updateSchemaFor(original: z.infer<typeof baseObject>) {
+  return baseObject.superRefine((m, ctx) => {
+    refineReplicaBounds(m, ctx)
+    if (SHAPE_FIELDS.some((f) => m[f] !== original[f])) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "envs.poolForm.errors.shapeFixed",
+        // Anchored on instanceType: it is the field a person reads as "what
+        // this pool is", and the one an error can point at.
+        path: ["instanceType"],
+      })
+    }
+  })
+}
 
 type FormValues = z.infer<typeof baseObject>
 
@@ -260,6 +300,12 @@ function UpsertPoolInner({
 }) {
   const { t } = useTranslation()
   const isEdit = !!pool
+  // The shape is fixed by the API and the pool's name is derived from it, so
+  // every input that describes the shape is locked while editing. The rule
+  // comes from the schema (lib/utils/write-rules), so a shape field the API
+  // starts accepting is editable here the moment the types are regenerated
+  // rather than the moment somebody notices.
+  const shapeLocked = isEdit && isFixedWriteField("pools", "instanceType")
   const gates = useFeatureGates()
 
   const { data: quotas = [] } = useQuery(quotasQueryOptions())
@@ -281,7 +327,7 @@ function UpsertPoolInner({
     getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    resolver: zodResolver(isEdit ? updateSchema : createSchema),
+    resolver: zodResolver(isEdit ? updateSchemaFor(defaultValues) : createSchema),
     defaultValues,
   })
 
@@ -390,7 +436,7 @@ function UpsertPoolInner({
                   items={quotas}
                   value={field.value ?? null}
                   onChange={field.onChange}
-                  disabled={isEdit}
+                  disabled={shapeLocked}
                 />
               )}
             />
@@ -436,7 +482,7 @@ function UpsertPoolInner({
                         value={field.value ?? null}
                         onChange={field.onChange}
                         invalid={fieldState.invalid}
-                        disabled={isEdit}
+                        disabled={shapeLocked}
                       />
                     )}
                   />
@@ -451,7 +497,7 @@ function UpsertPoolInner({
                     min={1}
                     max={selectedInstanceType?.maxMultiplier || undefined}
                     placeholder="1"
-                    disabled={isEdit}
+                    disabled={shapeLocked}
                     {...register("multiplier")}
                   />
                   {errors.multiplier && (
@@ -494,7 +540,7 @@ function UpsertPoolInner({
                             valueName="overrideCpuValue"
                             unitName="overrideCpuUnit"
                             units={cpuUnitOptions(t)}
-                            disabled={isEdit}
+                            disabled={shapeLocked}
                             invalid={overrideCpuExceeds || !!errors.overrideCpuValue}
                             placeholder={envelopePlaceholder(
                               envelope?.cpuMilli,
@@ -520,7 +566,7 @@ function UpsertPoolInner({
                             valueName="overrideMemoryValue"
                             unitName="overrideMemoryUnit"
                             units={memoryUnitOptions(t)}
-                            disabled={isEdit}
+                            disabled={shapeLocked}
                             invalid={overrideMemExceeds || !!errors.overrideMemoryValue}
                             placeholder={envelopePlaceholder(
                               envelope?.memMiB,
@@ -566,7 +612,7 @@ function UpsertPoolInner({
                 valueName="cpuValue"
                 unitName="cpuUnit"
                 units={cpuUnitOptions(t)}
-                disabled={isEdit}
+                disabled={shapeLocked}
                 invalid={!!errors.cpuValue}
                 placeholder="2"
                 error={
@@ -579,7 +625,7 @@ function UpsertPoolInner({
                 valueName="memoryValue"
                 unitName="memoryUnit"
                 units={memoryUnitOptions(t)}
-                disabled={isEdit}
+                disabled={shapeLocked}
                 invalid={!!errors.memoryValue}
                 placeholder="8"
                 error={

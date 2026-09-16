@@ -628,13 +628,18 @@ func (s *Server) UpdateSandboxEnv(ctx context.Context, req gen.UpdateSandboxEnvR
 	}
 	// The fixed fields travel with the request so the service can refuse a body
 	// that drops or rewrites one, naming the value in force. `name` is not among
-	// them: it is the path.
+	// them: the path is the identity, and a file that disagrees was refused
+	// above.
 	templateRef := agentsv1alpha1.SandboxEnvTemplateRef{Name: req.Body.TemplateRef.Name}
 	if req.Body.TemplateRef.Version != nil {
 		templateRef.Version = *req.Body.TemplateRef.Version
 	}
 	input.TemplateRef = &templateRef
 	input.Mode = req.Body.Mode
+	// The file may carry the name a create wrote. It is not the identity — the
+	// path is — but the service refuses it when the two disagree, because a
+	// file about one Env sent to another is a mistake worth stopping.
+	input.NameInFile = req.Body.Name
 	// The body's maps are the generated `StringMap`; the service takes the plain
 	// map it writes into the CR. Same underlying type, so this is a view, not a
 	// copy — nothing here mutates it.

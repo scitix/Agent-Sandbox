@@ -118,7 +118,7 @@ export interface ViewSpec {
 }
 
 /** What a surface may do to a resource, beyond reading it. */
-export type Verb = 'create' | 'apply' | 'delete' | 'scale'
+export type Verb = 'create' | 'update' | 'delete' | 'scale'
 
 /**
  * Where a resource lives in the API.
@@ -157,9 +157,9 @@ export interface ApiSpec {
    */
   itemReadable?: boolean
   /**
-   * Verbs beyond reading. `create` is POST on `list`; `apply` and `delete` act
+   * Verbs beyond reading. `create` is POST on `list`; `update` and `delete` act
    * on `item`. `scale` adds no operation of its own — it is a narrow client of
-   * the same PUT as `apply`, which is why it is a verb here and not a path.
+   * the same PUT as `update`, which is why it is a verb here and not a path.
    */
   verbs?: readonly Verb[]
   /**

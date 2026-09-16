@@ -101,6 +101,29 @@ export const baseSchema = z.object({
 
 export const formSchema = baseSchema
 
+/**
+ * The same schema, with the update case checked rather than assumed.
+ *
+ * `templateRef` is fixed at create — the API refuses a body that drops or
+ * rewrites it — and the sheet disables the field on edit. Disabling is a
+ * courtesy to the person typing; it is not a rule, because the value still
+ * reaches the form state from the env it was loaded from and from the copy/
+ * import path. This turns the API's rule into the form's rule, from the same
+ * generated table the CLI quotes.
+ */
+export function envFormSchemaFor(original: FormValues | null) {
+  if (!original) return formSchema
+  return formSchema.superRefine((v, ctx) => {
+    if (v.templateName !== original.templateName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "envs.form.errors.templateFixed",
+        path: ["templateName"],
+      })
+    }
+  })
+}
+
 export type FormValues = z.infer<typeof formSchema>
 
 /**

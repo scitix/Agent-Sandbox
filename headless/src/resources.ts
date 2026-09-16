@@ -52,7 +52,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     plural: 'envs',
     describe:
       'A SandboxEnv binds one template and fans out to member warm pools. This is the object to create first; pools are added to it.',
-    api: { list: '/envs', item: '/envs/{name}', verbs: ['create', 'apply', 'delete'] },
+    api: { list: '/envs', item: '/envs/{name}', verbs: ['create', 'update', 'delete'] },
     detail: true,
     columns: [
       { id: 'name', describe: 'Env name.', filter: 'name' },
@@ -92,7 +92,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
       {
         id: 'overrides',
         path: 'spec.overrides',
-        describe: 'Written whole: `apply -f` replaces this object, it does not merge into it.',
+        describe: 'Written whole: `abx update` replaces this object, it does not merge into it.',
       },
     ],
     filters: [
@@ -112,7 +112,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     api: {
       list: '/envs/{name}/sandboxpools',
       item: '/envs/{name}/sandboxpools/{poolName}',
-      verbs: ['create', 'apply', 'delete', 'scale'],
+      verbs: ['create', 'update', 'delete', 'scale'],
     },
     detail: true,
     columns: [
@@ -180,7 +180,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
       // scalingGroup, and is collected when the last one stops. There is
       // nothing to POST, and offering one would suggest groups exist
       // independently of members.
-      verbs: ['apply', 'delete'],
+      verbs: ['update', 'delete'],
     },
     detail: true,
     inParentDetail: true,
@@ -644,7 +644,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
       list: '/admin/sandbox-templates',
       item: '/admin/sandbox-templates/{name}',
       itemReadable: false,
-      verbs: ['create', 'apply', 'delete'],
+      verbs: ['create', 'update', 'delete'],
     },
     admin: true,
     consolePage: false,
@@ -682,7 +682,7 @@ export function childrenOf(plural: Segment): readonly ResourceSpec[] {
  * The CLI's capability manifest is this list rather than a maintained copy of
  * it, so "the CLI grew a resource" and "the CLI reaches this operation" cannot
  * disagree. `scale` deliberately contributes nothing here: it reuses the PUT
- * that `apply` already declares.
+ * that `update` already declares.
  */
 export function operations(): readonly ApiOperation[] {
   const out: ApiOperation[] = []
@@ -696,7 +696,7 @@ export function operations(): readonly ApiOperation[] {
       if (r.api.itemReadable !== false) {
         out.push({ method: 'GET', path: r.api.item, resource: r.plural })
       }
-      if (verbs.has('apply')) out.push({ method: 'PUT', path: r.api.item, resource: r.plural })
+      if (verbs.has('update')) out.push({ method: 'PUT', path: r.api.item, resource: r.plural })
       if (verbs.has('delete')) out.push({ method: 'DELETE', path: r.api.item, resource: r.plural })
     }
     for (const v of r.views ?? []) {

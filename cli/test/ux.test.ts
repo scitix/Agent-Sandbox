@@ -281,7 +281,7 @@ describe('logs are logs', () => {
 
 describe('a held write says where to release it', () => {
   it('prints the console link, the approval id and the expiry', async () => {
-    const { err } = await cli(['envs', 'doesnotexist-xyz', 'delete', '--cluster', 'prod-foo'])
+    const { err } = await cli(['delete', 'envs', 'doesnotexist-xyz', '--cluster', 'prod-foo'])
     expect(err).toContain('this write is waiting for a person: Delete an environment (doesnotexist-xyz)')
     expect(err).toContain('https://console.example/agentbox/clusters/prod-foo/approvals?id=apr_32fa2771a9169143')
     expect(err).toContain('apr_32fa2771a9169143')
@@ -431,11 +431,12 @@ describe('-f takes JSON, and says which format it wanted', () => {
   it('refuses a YAML file by name, not with a parser error', async () => {
     const file = join(workdir, 'env.yaml')
     await Bun.write(file, 'name: demo-env\ntemplateRef:\n  name: tmpl\n')
-    const { code, err } = await cli(['envs', 'apply', '-f', file, '--cluster', 'prod-foo'])
+    const { code, err } = await cli(['create', 'envs', '-f', file, '--cluster', 'prod-foo'])
     expect(code).toBe(1)
     expect(err).toContain('takes JSON, not YAML')
-    // The message has to name the way out, not just the mistake.
-    expect(err).toContain('--json')
+    // The message has to name the way out, not just the mistake — and the way
+    // out is the file a write takes, which `--editable` prints.
+    expect(err).toContain('--editable')
   })
 })
 
@@ -471,6 +472,60 @@ describe('direct mode answers for one cluster and says so', () => {
     // clusters in the routing table the command succeeded, and answered with
     // THIS cluster's rows under the other one's name.
     expect(err).toContain('serves cluster')
-    expect(err).toContain('prod-foo')
+   expect(err).toContain('prod-foo')
+  })
+})
+
+describe('the write page is about the file, not the resource', () => {
+  it('a create page carries the address, the example and the fields', async () => {
+    const { out } = await cli(['create', 'envs', '--help'])
+    expect(out).toContain('abx create envs -f FILE')
+    expect(out).toContain('abx update envs <env> -f FILE')
+    // The example and the field table are generated from the API schema, so a
+    // field the API has cannot be missing from the page a caller writes from.
+    expect(out).toContain('"templateRef"')
+    expect(out).toContain('name  string  (required)')
+    expect(out).toContain('fixed at create')
+    // …and the trap this page exists to close, said out loud.
+    expect(out).toContain('is NOT a file a write takes')
+  })
+
+  it('a nested address documents the child, not the parent', async () => {
+    const { out } = await cli(['create', 'envs', 'demo', 'pools', '--help'])
+    expect(out).toContain('writes to pools')
+    expect(out).toContain('abx create envs <env> pools -f FILE')
+    expect(out).toContain('instanceType')
+    // The env's file is not the pool's file, and a page that answered with the
+    // env's fields would be the same failure it is meant to fix.
+    expect(out).not.toContain('WarmPool | OnDemandJob')
+  })
+
+  it('a missing -f answers with the file, before any question about clusters', async () => {
+    const { code, err } = await cli(['create', 'envs'])
+    expect(code).toBe(1)
+    expect(err).toContain('create needs -f FILE')
+    expect(err).toContain('fields: name, templateRef')
+    expect(err).not.toContain('cluster')
+  })
+
+  it('an update says how to get a file that will be accepted', async () => {
+    const { err } = await cli(['update', 'envs', 'demo'])
+    expect(err).toContain('update needs -f FILE')
+    // The three commands that produce one, because "send the whole object and
+    // a field you omit is deleted" is a rule nobody follows from prose alone.
+    expect(err).toContain('abx envs <env> --editable > FILE')
+    expect(err).toContain('abx update envs <env> -f FILE')
+  })
+
+  it('an update of something that is not there points at create', async () => {
+    await Bun.write(join(workdir, 'missing.json'), '{"templateRef":{"name":"t"}}')
+    const { code, err } = await cli([
+      'update', 'envs', 'does-not-exist', '-f', join(workdir, 'missing.json'), '--cluster', 'prod-foo',
+    ])
+    expect(code).toBe(1)
+    expect(err).toContain('does-not-exist')
+    // Not "check the name" — the name is right, the verb assumed an upsert.
+    expect(err).toContain('update changes an object that exists')
+    expect(err).toContain('abx create envs -f FILE')
   })
 })

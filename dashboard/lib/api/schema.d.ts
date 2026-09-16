@@ -2026,6 +2026,8 @@ export interface components {
             /** @description 'Deleted' on success. */
             status: string;
         };
+        /** @description The Env this file is about. `create` requires it; `update` takes the name from the address and refuses a file whose `name` says something else. It is part of the write body so that the file a create wrote is the file an update takes — one shape, sent to one address. RFC 1123 DNS label, capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit. */
+        SandboxEnvName: string;
         /**
          * @description What a client may set on an Env — the SAME body for create and update,
          *     and the body `GET /envs/{name}` returns as `editable`.
@@ -2042,6 +2044,7 @@ export interface components {
          *     request to have no template.
          */
         UpsertSandboxEnvRequest: {
+            name?: components["schemas"]["SandboxEnvName"];
             /** @description Which SandboxTemplate every member Pool is rendered from. Pin a version to hold the Env still across Template edits; omit it to follow the Template. Fixed after create. */
             templateRef: components["schemas"]["SandboxEnvTemplateRef"];
             /**
@@ -2056,9 +2059,13 @@ export interface components {
             /** @description Annotations stamped onto the Env's objects. */
             annotations?: components["schemas"]["StringMap"];
         };
+        /**
+         * @description What `POST /envs` takes: the same body an update does, plus the one
+         *     thing only a create can say — which name to make. `name` is required
+         *     here and the `pattern` it has to match is on the property itself.
+         */
         CreateSandboxEnvRequest: components["schemas"]["UpsertSandboxEnvRequest"] & {
-            /** @description RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit. */
-            name: string;
+            name: components["schemas"]["SandboxEnvName"];
         };
         DeleteSandboxEnvResult: {
             name: string;

@@ -350,6 +350,11 @@ gen-internal-proto: protoc-gen-go protoc-gen-go-grpc goimports ## Generate Go/gR
 
 .PHONY: gen-all-api
 gen-all-api: generate-api gen-internal-proto ## Regenerate all API clients from OpenAPI spec: Go server, TS dashboard, Python SDK.
+	@# The CLI's write-body docs come from the same spec, so `abx create <address>
+	@# --help` and the OpenAPI schema cannot describe different files.
+	@command -v bun >/dev/null 2>&1 \
+		|| { echo "bun not installed -- needed for scripts/gen-body-docs.ts (https://bun.sh)"; exit 1; }
+	bun scripts/gen-body-docs.ts
 	cd dashboard && pnpm run gen:types
 	cd dashboard && pnpm run gen:global-types
 	uvx openapi-python-client generate \
@@ -365,6 +370,7 @@ gen-all-api: generate-api gen-internal-proto ## Regenerate all API clients from 
 	@echo "  Go     → pkg/apiserver/gen/agentbox.gen.go"
 	@echo "  TS     → dashboard/lib/api/schema.d.ts"
 	@echo "  TS hub → dashboard/lib/api/global-schema.d.ts"
+	@echo "  TS abx → headless/src/write-docs.generated.ts"
 	@echo "  Python → sdk/python/abx/agent_sandbox_e2b/_generated/"
 
 .PHONY: add-license

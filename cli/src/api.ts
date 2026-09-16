@@ -114,7 +114,9 @@ export async function requestAt<T = unknown>(
     throw new CliError(msg, hintFor403(msg))
   }
   if (res.status === 404) {
-    throw new CliError(msg, 'check the name, or list what exists first')
+    const e = new CliError(msg, 'check the name, or list what exists first')
+    e.status = 404
+    throw e
   }
   throw new CliError(msg, typeof payload.detail === 'object' ? JSON.stringify(payload.detail) : undefined)
 }

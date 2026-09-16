@@ -125,6 +125,14 @@ type CreateSandboxEnvInput struct {
 type UpdateSandboxEnvInput struct {
 	Name      string
 	Namespace string
+	// NameInFile is the `name` the request body carried, when it carried one.
+	//
+	// An update's identity is the address, so this is not a field of the
+	// object. It is here because one document serves both verbs — the file a
+	// create wrote is the file an update takes — which makes "this file is
+	// about a different Env" a mistake a caller can really make, and the only
+	// safe reading of it is to refuse.
+	NameInFile *string
 
 	Overrides *agentsv1alpha1.EnvOverridesSpec
 	// ImagePullSecret, when non-nil, replaces the dockerconfigjson Secret
@@ -357,6 +365,15 @@ func (s *k8sSandboxEnvService) Update(ctx context.Context, input UpdateSandboxEn
 	if err := validateEnvOverrides(input.Overrides); err != nil {
 		return nil, err
 	}
+	// Before the read, because it needs nothing from the object: the file and
+	// the address have to be about the same Env, and a caller who pasted one
+	// env's file onto another's address has made a mistake that no later check
+	// would catch — every field in it is legal.
+	if input.NameInFile != nil && *input.NameInFile != input.Name {
+		return nil, domain.NewBadRequest(fmt.Sprintf(
+			"this file is for env %q and the address is %q; drop `name` from the file, or send it to the env it names",
+			*input.NameInFile, input.Name))
+	}
 	// One read, two jobs: the fixed fields to check against, and the Template
 	// name the volume checks need. Both are outside the retry loop below, which
 	// is where the actual write happens.
@@ -473,6 +490,10 @@ func envToGen(env *agentsv1alpha1.SandboxEnv) gen.SandboxEnv {
 // everything it does not happen to copy over.
 func envEditableToGen(env *agentsv1alpha1.SandboxEnv) *gen.UpsertSandboxEnvRequest {
 	out := &gen.UpsertSandboxEnvRequest{
+		// The name travels with the file so the file knows what it is about. It
+		// is also what makes one document serve both verbs: this is exactly the
+		// file a create would have been written from.
+		Name:        ptr.To(env.Name),
 		TemplateRef: gen.SandboxEnvTemplateRef{Name: env.Spec.TemplateRef.Name},
 	}
 	if env.Spec.TemplateRef.Version != "" {
@@ -514,6 +535,14 @@ func (s *k8sSandboxEnvService) Editable(ctx context.Context, namespace, name str
 // half of the mistake worth surfacing is that it probably meant to send
 // something else too. Naming the value in force is what makes the refusal
 // recoverable in one retry.
+// The fields an update has to send back unchanged — the ones the spec marks
+// `x-immutable`. Named here so the two cannot drift: `TestEnvFixedFieldsMatch
+// TheSpec` reads the embedded OpenAPI document and fails if this list and the
+// markers disagree in either direction. A field that gains the marker without
+// gaining a check is a body the server would accept and silently rewrite; a
+// field that loses it while the check stays is a 400 nobody can act on.
+var envFixedFields = []string{"templateRef", "mode", "labels", "annotations"}
+
 func checkEnvFixedFields(live *agentsv1alpha1.SandboxEnv, in UpdateSandboxEnvInput) *domain.AppError {
 	if in.TemplateRef == nil {
 		if live.Spec.TemplateRef.Name != "" {

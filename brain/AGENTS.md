@@ -117,7 +117,7 @@ abx <resource> <id> <sub>                   a child collection
 abx <resource> <id> <sub> <sub-id>          one child
 abx <resource> <id> [<sub> <sub-id>] <view> a view (logs)
 
-abx <path…> apply -f FILE                   write the desired state
+abx create <collection…> -f FILE                   write the desired state
 abx <path…> delete
 abx <path…> scale --replicas N              pools only
 ```
@@ -180,23 +180,29 @@ Rules that matter:
 
 ### Writing
 
-**`apply` is a PUT of the whole object. A field the file leaves out is a field
+Two words, and they are different: **`create`** makes one (it must not exist
+yet), **`update`** changes one (it must exist). They take the **same file**, so
+the file a create wrote is the file an update takes.
+
+**`update` is a PUT of the whole object. A field the file leaves out is a field
 you are asking to REMOVE.** So the shape of every edit is read, change, send:
 
 ```bash
-abx envs demo pools demo-1c2gi --json > pool.json
+abx envs demo pools demo-1c2gi --editable > pool.json
 # edit pool.json
-abx envs demo pools demo-1c2gi apply -f pool.json
+abx update envs demo pools demo-1c2gi -f pool.json
 ```
 
-Never hand-write that file from scratch unless you mean to clear what you
-omitted. Creating is the same verb against the collection:
-`abx envs apply -f env.json`.
+`--editable` prints exactly what a write takes — not the object `--json` prints,
+whose keys are nested under `spec.*`, and which clears every field the write
+does not find. Never hand-write that file from scratch unless you mean to clear
+what you omitted, and ask `abx create <address> --help` for the shape rather
+than recalling it.
 
 `scale --replicas N` is the exception — one field, and it re-sends the current
 bounds unchanged. Use it when size is all that changes. A pool whose scaling
-group has autoscaling enabled does not take a manual size; change the group's
-bounds instead.
+group has autoscaling enabled does not take a manual size — the API refuses it
+and names the group — so change the group's bounds instead.
 
 **If a write comes back saying it is held for approval, it is.** A person
 releases it in the console at the link given; re-run the command afterwards. Do
@@ -219,11 +225,16 @@ read steps yourself and report; **confirm before each write.**
    sandboxes will need outbound credential injection; it changes the Pod spec,
    so it is far cheaper to decide now than later.
 
+   **Ask the CLI for the file — do not write its shape from memory.** `abx
+   create envs --help` prints it in full: an example, every field, which are
+   required, and which are fixed at create. It is generated from the API schema
+   of the build you are actually talking to; any copy of that shape, including
+   one in a document you were given, is a copy and drifts.
+
    ```bash
-   cat > env.json <<'JSON'
-   {"name": "<n>", "mode": "WarmPool", "templateRef": {"name": "<t>"}}
-   JSON
-   abx envs apply -f env.json
+   abx create envs --help
+   $EDITOR env.json        # the page above is the shape; the choices are yours
+   abx create envs -f env.json
    ```
 4. **`abx quotas`** — what they may charge against. It lists the quotas of the
    credential in hand (`GET /quotas` takes no team/user parameters; acting as
@@ -235,10 +246,9 @@ read steps yourself and report; **confirm before each write.**
 6. **Add capacity.** Without a pool the Env hands out nothing.
 
    ```bash
-   cat > pool.json <<'JSON'
-   {"instanceType": "<it>", "multiplier": 1, "replicas": 1}
-   JSON
-   abx envs <n> pools apply -f pool.json
+   abx create envs <n> pools --help
+   $EDITOR pool.json       # the size from step 5, and how many to keep warm
+   abx create envs <n> pools -f pool.json
    ```
 
    The server names the pool after the resource shape, so read the name back

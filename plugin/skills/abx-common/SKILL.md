@@ -30,15 +30,20 @@ abx <resource>                        list
 abx <resource> <id>                   get
 abx <resource> <id> <sub>             sub-list
 abx <resource> <id> <sub> <sub-id>    sub-get
-abx <path…> apply -f FILE             write the desired state
-abx <path…> delete
-abx <path…> scale --replicas N
+
+abx create <collection…> -f FILE      make one; it must not exist yet
+abx update <item…> -f FILE            change one; it must exist
+abx delete <item…>
+abx scale <item…> --replicas N        pools only
 ```
 
-The address is the same for reading and writing — having just listed
-something, append a word to act on it. It also matches the console URL segment
-for segment, so `/clusters/c/envs/e/pools/p` and
-`abx envs e pools p --cluster c` are the same thing said twice.
+**A verb is read in the first position and nowhere else.** Everything after it
+is an address, which is why `abx envs apply` is the env *called* `apply` and
+why a name can never collide with a write. Reads have no verb at all.
+
+The address matches the console URL segment for segment, so
+`/clusters/c/envs/e/pools/p` and `abx envs e pools p --cluster c` are the same
+thing said twice.
 
 ## Authentication
 
@@ -122,36 +127,43 @@ substitutes them on the way out.
 
 ## Writes, and approval
 
-`apply` is a **PUT of the desired state** — a field the file leaves out is a
-field you are asking to **remove**. The file is NOT the object `--json` prints:
-it is only the editable part, and the editable part differs per address:
-
-| Address | The file holds |
-|---|---|
-| `abx envs <env>` | `{"overrides": {…}}` |
-| `abx envs <env> pools <pool>` | `{"replicas": n, "minReplicas": n, "maxReplicas": n, "updateStrategy": {…}}` |
-| `abx envs <env> scaling-groups <group>` | `{"enabled": bool, "minReplicas": n, "maxReplicas": n, "scaleUpPolicy": {…}, "scaleDownPolicy": {…}}` |
-| `abx admin-templates <t>` (admin key) | `{"crdJson": "<the whole SandboxTemplate as a JSON string>"}` |
-
-So the shape of an edit is:
+**Do not write the file from memory.** Ask the CLI for it:
 
 ```bash
-cat > pool.json <<'JSON'
-{"replicas": 2, "minReplicas": 1, "maxReplicas": 8}
-JSON
-abx envs demo pools demo-1c2gi apply -f pool.json
+abx create envs --help                  # create's file: address, example, fields
+abx update envs <env> --help            # the same file, plus how to get one
+abx create envs <env> pools --help      # …and the same for a member pool
 ```
 
-Creating is the same verb against the collection — `abx envs apply -f env.json`
-is the POST — so there is one word for "make it look like this" either way.
+That page is generated from the API schema, so it lists every field, which are
+required, and which are **fixed at create** — it cannot be out of date in the
+way a copy in a document can. `abx agent-context` carries the same data as
+JSON, if you want to read it once rather than per command.
 
-Piping `--json` into `apply` is not a valid body and is the fastest way to lose
-state: those keys are nested (`spec.replicas`), the PUT reads top-level ones, and
-the ones it does not find are the ones it clears. Read the current values with
-`--json`, then send back the fields named in the table.
+The two verbs are separate words now: `create` makes one (it must not exist
+yet), `update` changes one (it must exist). They take the **same file** — the
+file a create wrote is the file an update takes.
 
-`scale --replicas N` is the exception: one field, no clearing, and it re-sends
-the current bounds unchanged. Use it when size is all you are changing.
+`update` is a **PUT of the desired state**: a field the file leaves out is a
+field you are asking to **remove**. That is why the safe edit is to start from
+what is there rather than from a blank page:
+
+```bash
+abx envs demo pools --json                    # find the pool's name
+abx envs demo pools demo-1c2gi --editable > pool.json
+# edit pool.json
+abx update envs demo pools demo-1c2gi -f pool.json
+```
+
+The file is NOT the object `--json` prints: those keys are nested under
+`spec.*`/`status.*`, the write reads top-level ones, and the ones it does not
+find are the ones it clears. Piping `--json` straight into a write is the
+fastest way to lose state.
+
+`abx scale envs <env> pools <pool> --replicas N` is the exception: one field, no
+clearing, and it re-sends the current bounds unchanged. Use it when size is all
+you are changing — and not at all when the pool's scaling group has autoscaling
+enabled, where the autoscaler owns the number and the API says so.
 
 **An `agent` key's writes are held for a person to release.** The command comes
 back saying so, with a link. That is not an error to work around: re-run the

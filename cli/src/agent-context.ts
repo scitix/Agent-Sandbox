@@ -27,7 +27,7 @@
  * hand-maintained tool manifest.
  */
 
-import { RESOURCES, childrenOf, rootResources } from '@headless/index'
+import { RESOURCES, WRITE_DOCS, childrenOf, rootResources } from '@headless/index'
 import type { ResourceSpec } from '@headless/types'
 
 /**
@@ -83,12 +83,16 @@ export function agentContext(
         'abx <resource> <id> [<sub> <sub-id>] <view>',
       ],
       write: [
-        'abx <path…> apply -f FILE',
-        'abx <path…> delete',
-        'abx <path…> scale --replicas N',
+        'abx create <collection…> -f FILE',
+        'abx update <item…> -f FILE',
+        'abx delete <item…>',
+        'abx scale <item…> --replicas N',
       ],
       notes: [
-        'apply is a PUT of the whole object: a field the file leaves out is a field you are asking to remove.',
+        'A verb is read in the FIRST position and nowhere else: everything after it is an address, so `abx envs apply` is the env called apply.',
+        'create and update take the SAME file; what differs is the address (a collection vs one object) and whether the object exists yet.',
+        'The file is the request body, NOT the object `--json` prints. `abx <address> --editable` prints the current values in exactly that form — it is the starting point for a create and the safe one for an update.',
+        'update is a PUT of the whole object: a field the file leaves out is a field you are asking to remove.',
         'scale changes size and nothing else — it re-sends the current bounds unchanged.',
         'Filters are client-side and uniform: --filter key=value, where key is a column heading.',
         '--json prints the raw API shape; the table view is a projection of it.',
@@ -102,6 +106,7 @@ export function agentContext(
       '--filter': 'key=value, repeatable',
       '--limit': 'rows to print (default 200)',
       '--json': 'machine output',
+      '--editable': 'the file a write takes, as JSON — the same document create and update accept',
       '--csv': 'machine output, flat',
       '--wide': 'include the columns held back by default',
     },
@@ -121,6 +126,15 @@ export function agentContext(
       detail: r.detail ?? false,
       gate: r.gate,
       writes: r.api.verbs ?? [],
+      /**
+       * The file a write takes, field by field, generated from the API schema.
+       *
+       * This is the reason an agent never has to be told the shape in prose:
+       * the same data renders `abx create <address> --help` for a person, so
+       * the two cannot drift — and neither can a skill that says "read
+       * agent-context" instead of transcribing it.
+       */
+      body: WRITE_DOCS.find((d) => d.plural === r.plural),
       filters: (r.filters ?? []).map((f) => ({
         key: f.key,
         describe: f.describe,

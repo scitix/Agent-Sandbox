@@ -596,6 +596,12 @@ func (s *k8sService) GetMember(ctx context.Context, namespace, envName, poolName
 // instance type was almost certainly built from the wrong source. Naming the
 // value in force — rather than ignoring the omission — is what makes that a
 // one-retry mistake instead of a pool that quietly means something else.
+// The fields an update has to send back unchanged — the ones the spec marks
+// `x-immutable`. Named here so the two cannot drift: `TestMemberFixedFields
+// MatchTheSpec` reads the embedded OpenAPI document and fails if this list and
+// the markers disagree in either direction.
+var memberFixedFields = []string{"instanceType", "multiplier", "inlineResources", "labels", "annotations"}
+
 func checkMemberFixedFields(member *agentsv1alpha1.EnvClusterMember, patch MemberPoolPatch) *domain.AppError {
 	cfg := member.Config
 	recreate := "add a member with what you want and remove this one"

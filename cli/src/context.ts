@@ -130,6 +130,16 @@ export function headers(ctx: Context): Record<string, string> {
  * --help last, because the two are not consumed at the same rate.
  */
 export class CliError extends Error {
+  /**
+   * The HTTP status, when this came from a response.
+   *
+   * A caller further out sometimes knows something the layer that raised it
+   * does not: `update` sees a 404 and knows the answer is "use `create`",
+   * while the request layer only knows the address did not resolve. Matching
+   * on the message would make that knowledge depend on the server's wording.
+   */
+  status?: number
+
   constructor(
     message: string,
     readonly hint?: string,

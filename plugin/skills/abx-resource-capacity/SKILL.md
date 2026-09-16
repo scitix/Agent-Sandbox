@@ -38,7 +38,7 @@ refused — the lever is the group's bounds instead:
 ```bash
 abx envs demo scaling-groups 1c2gi --json > g.json
 # edit minReplicas / maxReplicas / the policies
-abx envs demo scaling-groups 1c2gi apply -f g.json
+abx update envs demo scaling-groups 1c2gi -f g.json
 ```
 
 Remember `apply` is the whole object: a bound you delete from the file is a

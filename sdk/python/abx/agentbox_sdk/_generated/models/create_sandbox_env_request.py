@@ -41,11 +41,17 @@ T = TypeVar("T", bound="CreateSandboxEnvRequest")
 
 @_attrs_define
 class CreateSandboxEnvRequest:
-    """ 
+    """ What `POST /envs` takes: the same body an update does, plus the one
+    thing only a create can say — which name to make. `name` is required
+    here and the `pattern` it has to match is on the property itself.
+
         Attributes:
             template_ref (SandboxEnvTemplateRef):
-            name (str): RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey +
-                QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit.
+            name (str): The Env this file is about. `create` requires it; `update` takes the name from the address and
+                refuses a file whose `name` says something else. It is part of the write body so that the file a create wrote is
+                the file an update takes — one shape, sent to one address. RFC 1123 DNS label, capped at 24 chars so derived
+                names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char
+                label/DNS limit.
             mode (UpsertSandboxEnvRequestMode | Unset): WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod
                 per sandbox and tears it down after, trading start latency for holding no capacity between runs. Fixed after
                 create. Default: UpsertSandboxEnvRequestMode.WARMPOOL.

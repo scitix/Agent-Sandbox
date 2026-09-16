@@ -86,6 +86,41 @@ func TestUpdate_AcceptsAnEmptyFixedMapOnlyWhenThereIsNothingToLose(t *testing.T)
 	}
 }
 
+// One document serves both verbs, so a file that names a different Env is a
+// mistake someone can really make — and every field in a copy-pasted file is
+// legal, so nothing further down would notice. The address is the identity;
+// the file's name is a cross-check.
+func TestUpdate_RefusesAFileThatNamesAnotherEnv(t *testing.T) {
+	env := newEnv(envTestName, "k8s", "ylli")
+	svc := newEnvService(t, env)
+
+	in := updateEnvInput(env, nil)
+	other := "some-other-env"
+	in.NameInFile = &other
+
+	_, appErr := svc.Update(context.Background(), in)
+	if appErr == nil || appErr.Code != domain.ErrCodeBadRequest {
+		t.Fatalf("want a bad request, got %+v", appErr)
+	}
+	// Both halves, so the caller can tell which one they meant.
+	if !strings.Contains(appErr.Message, other) || !strings.Contains(appErr.Message, envTestName) {
+		t.Fatalf("refusal should name the file's env and the address, got %q", appErr.Message)
+	}
+}
+
+// The same file, sent to the Env it names, is accepted — which is the whole
+// reason `name` is in the update body at all.
+func TestUpdate_AcceptsTheNameTheCreateWrote(t *testing.T) {
+	env := newEnv(envTestName, "k8s", "ylli")
+	svc := newEnvService(t, env)
+
+	in := updateEnvInput(env, nil)
+	in.NameInFile = &in.Name
+	if _, appErr := svc.Update(context.Background(), in); appErr != nil {
+		t.Fatalf("a file naming its own env is the round trip this exists for: %v", appErr)
+	}
+}
+
 // Editable is the other half: what a client exports must be a body the update
 // accepts, or the round trip the export exists for does not close.
 func TestEditable_IsABodyTheUpdateTakes(t *testing.T) {
@@ -106,12 +141,19 @@ func TestEditable_IsABodyTheUpdateTakes(t *testing.T) {
 	if body.Labels == nil || (*body.Labels)[agentsv1alpha1.LabelTeam] != "k8s" {
 		t.Fatalf("editable should carry the labels in force, got %v", body.Labels)
 	}
+	// The name travels with the file. Without it the export is anonymous: a
+	// caller who saves it and comes back tomorrow has nothing that says which
+	// Env it is about — and the address is exactly what they no longer have.
+	if body.Name == nil || *body.Name != envTestName {
+		t.Fatalf("editable should carry the env's name, got %v", body.Name)
+	}
 
 	// Send it straight back, changing nothing.
 	mode := gen.UpsertSandboxEnvRequestMode(env.Spec.Mode)
 	if _, appErr := svc.Update(context.Background(), UpdateSandboxEnvInput{
 		Name:        envTestName,
 		Namespace:   envTestNamespace,
+		NameInFile:  body.Name,
 		TemplateRef: &agentsv1alpha1.SandboxEnvTemplateRef{Name: body.TemplateRef.Name},
 		Mode:        &mode,
 		Labels:      (*map[string]string)(body.Labels),

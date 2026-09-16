@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AgentBox API
-  version: "0.1.4"
+  version: "0.1.5"
   description: |
     AgentBox provides Sandbox lifecycle management and tenant API key provisioning.
 
@@ -994,7 +994,16 @@ components:
           x-immutable-lever: "add a member with the multiplier you want, then remove this one"
           description: "Multiplier applied to the InstanceType base resources to form the reservation envelope. Defaults to 1."
         inlineResources:
-          $ref: "#/components/schemas/ResourceRequirements"
+          # `allOf` rather than a bare `$ref`, and not for style: OpenAPI 3.0
+          # drops every key sitting beside a `$ref`, so `x-immutable` written
+          # directly under one is invisible to anything that reads the document
+          # through an OpenAPI parser — which is every consumer that matters.
+          # The field was silently NOT fixed as far as Swagger, the generated
+          # SDKs and the console's rule table were concerned, while the service
+          # refused a change to it. `TestMemberFixedFieldsMatchTheSpec` is what
+          # caught it.
+          allOf:
+            - $ref: "#/components/schemas/ResourceRequirements"
           x-immutable: true
           x-immutable-lever: "add a member with the resources you want, then remove this one"
           description: "Explicit per-Pool resource requests/limits. Used alone when instanceType is not supplied, or combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits."
@@ -1895,6 +1904,20 @@ components:
           type: string
           description: "'Deleted' on success."
 
+    SandboxEnvName:
+      type: string
+      minLength: 1
+      maxLength: 24
+      pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
+      description: >-
+        The Env this file is about. `create` requires it; `update` takes the
+        name from the address and refuses a file whose `name` says something
+        else. It is part of the write body so that the file a create wrote is
+        the file an update takes — one shape, sent to one address. RFC 1123 DNS
+        label, capped at 24 chars so derived names (PoolName = EnvName +
+        ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the
+        63-char label/DNS limit.
+
     UpsertSandboxEnvRequest:
       type: object
       required: [templateRef]
@@ -1914,6 +1937,8 @@ components:
         drops the template is far more likely to be a bug in the caller than a
         request to have no template.
       properties:
+        name:
+          $ref: "#/components/schemas/SandboxEnvName"
         templateRef:
           allOf:
             - $ref: "#/components/schemas/SandboxEnvTemplateRef"
@@ -1952,7 +1977,19 @@ components:
       allOf:
         - $ref: "#/components/schemas/UpsertSandboxEnvRequest"
         - type: object
+          # `name` is the one field a create states and an update takes from the
+          # address, so it is required HERE and only here. The property itself
+          # is a `$ref` to the same component the update references: the shape
+          # is written once, the requirement is stated where it applies.
+          #
+          # Both halves matter. A bare `required` beside the `allOf` makes
+          # oapi-codegen collapse the whole request into a type alias, and an
+          # empty `{type: object}` member makes openapi-typescript intersect it
+          # with `Record<string, never>`.
           required: [name]
+          properties:
+            name:
+              $ref: "#/components/schemas/SandboxEnvName"
           example:
             name: my-env
             templateRef:
@@ -1963,13 +2000,10 @@ components:
                 enabled: true
             labels:
               team: ai-infra
-          properties:
-            name:
-              type: string
-              minLength: 1
-              maxLength: 24
-              pattern: "^[a-z]([a-z0-9-]*[a-z0-9])?$"
-              description: "RFC 1123 DNS label. Capped at 24 chars so derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char label/DNS limit."
+      description: |
+        What `POST /envs` takes: the same body an update does, plus the one
+        thing only a create can say — which name to make. `name` is required
+        here and the `pattern` it has to match is on the property itself.
 
     DeleteSandboxEnvResult:
       type: object

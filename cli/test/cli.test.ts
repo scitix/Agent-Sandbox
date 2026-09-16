@@ -35,6 +35,8 @@ import {
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { applyFilters, hints, renderDetail, renderTable, visibleColumns } from '../src/render'
+import { generate, generateForDashboard } from '../../scripts/gen-body-docs'
+import { WRITE_DOCS } from '@headless/index'
 import {
   AmbiguousContextError,
   UnknownContextError,
@@ -266,9 +268,9 @@ describe('agent-context describes this CLI and no other', () => {
     const verbs = doc.grammar.write.join(' ')
     for (const r of doc.resources) {
       for (const w of r.writes) {
-        // `create` is `apply -f` against the collection; the rest are literal.
-        const word = w === 'create' ? 'apply' : w
-        expect(verbs, `${r.plural} declares ${w}`).toContain(word)
+        // The verb of a write IS its own word now — `create` and `update` are
+        // not two spellings of one operation, they are the two operations.
+        expect(verbs, `${r.plural} declares ${w}`).toContain(`abx ${w} `)
       }
     }
   })
@@ -474,5 +476,116 @@ describe('a config written for the older endpoint form keeps working', () => {
   it('leaves an address that is already a console base alone', () => {
     expect(consoleBaseOf('https://c.test/agentbox')).toBe('https://c.test/agentbox')
     expect(consoleBaseOf('https://c.test/agentbox/')).toBe('https://c.test/agentbox')
+  })
+})
+
+describe('the write-body docs are generated, not transcribed', () => {
+  const root = join(import.meta.dir, '..', '..')
+
+  it('the committed module is exactly what the spec produces', () => {
+    // The assertion that makes the rest of the file worth trusting: if someone
+    // edits the generated module by hand, or changes the spec and forgets
+    // `make gen-all-api`, this fails here instead of in a caller's terminal.
+    const spec = readFileSync(join(root, 'pkg', 'openapi', 'native', 'openapi.yaml'), 'utf8')
+    const committed = readFileSync(join(root, 'headless', 'src', 'write-docs.generated.ts'), 'utf8')
+    expect(generate(spec)).toBe(committed)
+    // The console gets a second copy in its own tree (the bundler cannot reach
+    // `../headless`), and a copy is only safe while something proves it is a
+    // copy. This is that something.
+    const dash = readFileSync(join(root, 'dashboard', 'lib', 'utils', 'write-docs.generated.ts'), 'utf8')
+    expect(generateForDashboard(spec)).toBe(dash)
+  })
+
+  it('every resource that can be written to is documented', () => {
+    for (const r of RESOURCES) {
+      const writes = (r.api.verbs ?? []).filter((v) => v === 'create' || v === 'update')
+      if (!writes.length) continue
+      const doc = WRITE_DOCS.find((d) => d.plural === r.plural)
+      expect(doc, `${r.plural} declares a write but has no body docs`).toBeDefined()
+      for (const verb of writes) {
+        expect(doc?.[verb], `${r.plural} declares ${verb} but has no ${verb} body`).toBeDefined()
+      }
+    }
+  })
+
+  it('update takes the same file create does', () => {
+    // The whole point of one file for both verbs: everything a create can say,
+    // an update must be able to say back. `name` is the one field the address
+    // already carries — and it still has to be ACCEPTED, because the file a
+    // caller exports from a create is the file they edit and send back.
+    for (const doc of WRITE_DOCS) {
+      if (!doc.create || !doc.update) continue
+      const inUpdate = new Set(doc.update.fields.map((f) => f.name))
+      const missing = doc.create.fields.filter((f) => !inUpdate.has(f.name)).map((f) => f.name)
+      expect(missing, `${doc.plural}: update would refuse a field create wrote`).toEqual([])
+    }
+  })
+
+  it('a fixed field says how to change it instead', () => {
+    for (const doc of WRITE_DOCS) {
+      const bodies = [doc.create, doc.update].filter(Boolean)
+      for (const body of bodies) {
+        for (const f of body!.fields) {
+          if (!f.fixed) continue
+          // "Fixed" with no way out is a dead end; the lever is what makes it a
+          // rule rather than a wall.
+          expect(f.lever, `${doc.plural}.${f.name} is fixed but names no lever`).toBeTruthy()
+        }
+      }
+    }
+  })
+})
+
+describe('the file shape lives in the spec, and nowhere else', () => {
+  const root = join(import.meta.dir, '..', '..')
+
+  /**
+   * The field names that only exist in a write body.
+   *
+   * `name` is deliberately absent: it is a key in every JSON document this
+   * project prints, so a rule about it would fire on output examples that are
+   * nobody's business to change. The rest are specific enough that seeing one
+   * as a JSON key means somebody transcribed a file.
+   */
+  const distinctive = new Set(
+    WRITE_DOCS.flatMap((d) => [...(d.create?.fields ?? []), ...(d.update?.fields ?? [])])
+      .map((f) => f.name)
+      .filter((n) => n !== 'name'),
+  )
+
+  const offenders = (text: string): string[] =>
+    text
+      .split('\n')
+      .filter((l) => /"[A-Za-z][A-Za-z0-9]*"\s*:/.test(l))
+      .filter((l) => [...distinctive].some((f) => l.includes(`"${f}"`)))
+
+  it('the assistant prompt and every skill point at --help instead of quoting it', () => {
+    // These documents are the reason the generator exists: the same body was
+    // written out in four of them, and the one that was wrong was the one an
+    // agent read. A transcription here is not a documentation style problem —
+    // it is an agent that will write a file the API refuses.
+    const targets = [
+      join(root, 'brain', 'AGENTS.md'),
+      ...readdirSync(join(root, 'plugin', 'skills')).map((d) =>
+        join(root, 'plugin', 'skills', d, 'SKILL.md'),
+      ),
+    ]
+    const found: string[] = []
+    for (const path of targets) {
+      let text: string
+      try {
+        text = readFileSync(path, 'utf8')
+      } catch {
+        continue
+      }
+      for (const line of offenders(text)) found.push(`${path}: ${line.trim()}`)
+    }
+    expect(found).toEqual([])
+  })
+
+  it('and the skill that describes writing says where the shape comes from', () => {
+    const common = readFileSync(join(root, 'plugin', 'skills', 'abx-common', 'SKILL.md'), 'utf8')
+    expect(common).toContain('abx create envs --help')
+    expect(common).toContain('--editable')
   })
 })

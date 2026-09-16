@@ -1595,5 +1595,7 @@
   "componentLogs.detail.missing": "That line is not in the current result.",
   "componentLogs.detail.missingTruncated": "That line is not in the current result — the line limit clipped it. Raise the limit or narrow the window.",
   "componentLogs.detail.dismiss": "Dismiss",
-  "sandboxes.logs.tail": "Tail"
+  "sandboxes.logs.tail": "Tail",
+  "envs.form.errors.templateFixed": "The template is fixed once the environment exists. Create a new environment to change it.",
+  "envs.poolForm.errors.shapeFixed": "A pool's shape is fixed once it exists — its name is derived from it. Create a pool in the size you want, then delete this one."
 }

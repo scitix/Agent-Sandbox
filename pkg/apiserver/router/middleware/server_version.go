@@ -22,7 +22,18 @@ const ServerVersionHeader = "X-AgentBox-Server-Version"
 // with the running server version in the X-AgentBox-Server-Version header.
 // Clients can inspect this header (e.g. on /ping before auth) to detect
 // version mismatches before making write requests.
+//
+// An empty version is reported as "unknown" rather than passed through,
+// because gin's Context.Header() DELETES a header given an empty value. Passing
+// the empty string would therefore omit the header entirely, and a missing
+// header is indistinguishable from "this response never reached an AgentBox
+// backend" — a distinction callers rely on (wsproxy's dial probes for it, and
+// so does the gateway-routing playbook). An unset version is a broken build,
+// not a missing server, and the header should say so.
 func NewServerVersionMiddleware(version string) gin.HandlerFunc {
+	if version == "" {
+		version = "unknown"
+	}
 	return func(c *gin.Context) {
 		c.Header(ServerVersionHeader, version)
 		c.Next()

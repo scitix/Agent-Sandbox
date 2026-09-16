@@ -57,6 +57,11 @@ class UpsertSandboxEnvRequest:
 
         Attributes:
             template_ref (SandboxEnvTemplateRef):
+            name (str | Unset): The Env this file is about. `create` requires it; `update` takes the name from the address
+                and refuses a file whose `name` says something else. It is part of the write body so that the file a create
+                wrote is the file an update takes — one shape, sent to one address. RFC 1123 DNS label, capped at 24 chars so
+                derived names (PoolName = EnvName + ResourceKey + QuotaShort, PodName = PoolName + UUID) stay under the 63-char
+                label/DNS limit.
             mode (UpsertSandboxEnvRequestMode | Unset): WarmPool keeps idle Pods ready to claim. OnDemandJob creates a Pod
                 per sandbox and tears it down after, trading start latency for holding no capacity between runs. Fixed after
                 create. Default: UpsertSandboxEnvRequestMode.WARMPOOL.
@@ -68,6 +73,7 @@ class UpsertSandboxEnvRequest:
      """
 
     template_ref: SandboxEnvTemplateRef
+    name: str | Unset = UNSET
     mode: UpsertSandboxEnvRequestMode | Unset = UpsertSandboxEnvRequestMode.WARMPOOL
     overrides: EnvOverrides | Unset = UNSET
     labels: StringMap | Unset = UNSET
@@ -82,6 +88,8 @@ class UpsertSandboxEnvRequest:
         from ..models.sandbox_env_template_ref import SandboxEnvTemplateRef # noqa: PLC0415
         from ..models.string_map import StringMap # noqa: PLC0415
         template_ref = self.template_ref.to_dict()
+
+        name = self.name
 
         mode: str | Unset = UNSET
         if not isinstance(self.mode, Unset):
@@ -106,6 +114,8 @@ class UpsertSandboxEnvRequest:
         field_dict.update({
             "templateRef": template_ref,
         })
+        if name is not UNSET:
+            field_dict["name"] = name
         if mode is not UNSET:
             field_dict["mode"] = mode
         if overrides is not UNSET:
@@ -129,6 +139,8 @@ class UpsertSandboxEnvRequest:
 
 
 
+
+        name = d.pop("name", UNSET)
 
         _mode = d.pop("mode", UNSET)
         mode: UpsertSandboxEnvRequestMode | Unset
@@ -172,6 +184,7 @@ class UpsertSandboxEnvRequest:
 
         upsert_sandbox_env_request = cls(
             template_ref=template_ref,
+            name=name,
             mode=mode,
             overrides=overrides,
             labels=labels,

@@ -117,7 +117,10 @@ def sync_detailed(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):
+        body (CreateSandboxEnvRequest): What `POST /envs` takes: the same body an update does,
+            plus the one
+            thing only a create can say — which name to make. `name` is required
+            here and the `pattern` it has to match is on the property itself.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,7 +153,10 @@ def sync(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):
+        body (CreateSandboxEnvRequest): What `POST /envs` takes: the same body an update does,
+            plus the one
+            thing only a create can say — which name to make. `name` is required
+            here and the `pattern` it has to match is on the property itself.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,7 +184,10 @@ async def asyncio_detailed(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):
+        body (CreateSandboxEnvRequest): What `POST /envs` takes: the same body an update does,
+            plus the one
+            thing only a create can say — which name to make. `name` is required
+            here and the `pattern` it has to match is on the property itself.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -211,7 +220,10 @@ async def asyncio(
     /envs/{name}/autoscaling/groups/{groupName}`.
 
     Args:
-        body (CreateSandboxEnvRequest):
+        body (CreateSandboxEnvRequest): What `POST /envs` takes: the same body an update does,
+            plus the one
+            thing only a create can say — which name to make. `name` is required
+            here and the `pattern` it has to match is on the property itself.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

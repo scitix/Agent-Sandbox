@@ -23,9 +23,14 @@
  *   abx <resource> <id>                  get
  *   abx <resource> <id> <sub>            sub-list
  *   abx <resource> <id> <sub> <sub-id>   sub-get
- *   abx <path…> apply -f FILE            write the desired state
- *   abx <path…> delete
- *   abx <path…> scale --replicas N
+ *   abx create <collection…> -f FILE     create (the file carries the state)
+ *   abx update <item…> -f FILE           change (the file carries the state)
+ *   abx delete <item…>
+ *   abx scale <item…> --replicas N
+ *
+ * The verb is the FIRST word, and only there. That is what keeps a resource
+ * named `apply` addressable: everything after the verb is an address, and an
+ * address has no verbs in it.
  *
  * Adding a resource costs nothing here: it is a registry entry, not a new
  * command with a new description and a new schema. That is the whole advantage
@@ -36,6 +41,7 @@
 import {
   RESOURCES,
   ROOT_SEGMENTS,
+  WRITE_DOCS,
   actionNames,
   addressError,
   childrenOf,
@@ -48,6 +54,9 @@ import {
   supports,
   type Address,
   type Verb,
+  type WriteDoc,
+  type WriteDocBody,
+  type WriteDocField,
 } from '@headless/index'
 import {
   CliError,
@@ -302,6 +311,27 @@ function visibleRoots(role: string | null) {
   return role === 'admin' || role === null ? roots : roots.filter((r) => !r.admin)
 }
 
+/**
+ * The resource a help request is about, from the address it was given.
+ *
+ * The deepest segment, not the first: `abx create envs demo pools --help` is
+ * about pools, and that is the only resource on the line whose file the page
+ * can describe. Reading `positional[1]` printed the env page for a pool
+ * address — a help page that answers a question nobody asked.
+ */
+function helpSubject(tokens: string[]): (typeof RESOURCES)[number] | undefined {
+  if (!tokens.length) return undefined
+  let parsed: ReturnType<typeof parsePositional> = null
+  try {
+    parsed = parsePositional(tokens)
+  } catch {
+    parsed = null
+  }
+  if (!parsed) return resourceOf(tokens[0])
+  const child = parsed.sub ? resourceOf(parsed.sub) : undefined
+  return child && child.parent === parsed.resource ? child : resourceOf(parsed.resource)
+}
+
 function usage(role: string | null): string {
   const roots = visibleRoots(role)
   const width = Math.max(...roots.map((r) => r.plural.length))
@@ -313,9 +343,15 @@ function usage(role: string | null): string {
     '',
     'Usage:',
     '  abx <resource> [<id> [<sub> [<sub-id>]]]',
-    '  abx <path…> apply -f FILE      # write the desired state',
-    '  abx <path…> delete',
-    '  abx <path…> scale --replicas N',
+    '  abx create <collection…> -f FILE   # create; the file carries the state',
+    '  abx update <item…> -f FILE         # change; the same file',
+    '  abx delete <item…>',
+    '  abx scale <item…> --replicas N',
+    '',
+    'A write starts with its verb, and the verb is the only place a verb is',
+    'read: everything after it is an address. So `abx envs apply` is the env',
+    'named apply, and `abx create envs -f env.json` is how you make one.',
+    '`abx create <address> --help` is the authority on the file.',
     '',
     'Resources:',
     ...roots.map((r) => `  ${r.plural.padEnd(width)}  ${summary(r.describe)}`),
@@ -333,7 +369,7 @@ function usage(role: string | null): string {
     '  --api-key <key>      platform credential',
     '  --filter key=value   narrow a list; keys are the column headings',
     '  --limit <n>          rows to print (default 200)',
-    '  --editable           print the body a write takes, not the object',
+    '  --editable           the file create/update take, as JSON (not the object)',
     '  --json | --csv       machine output (drops headers and hints)',
     '  --wide               include the columns held back by default',
     '  --version            print the CLI version',
@@ -365,7 +401,7 @@ function resourceHelp(spec: (typeof RESOURCES)[number]): string {
       'Actions:',
       ...spec.actions.map(
         (x) =>
-          `  abx ${writeExample(spec)} ${x.name}  # ${x.describe}${
+          `  abx ${x.name} ${writeExample(spec)}  # ${x.describe}${
             x.agentForbidden ? ' (never from an agent key)' : ''
           }`,
       ),
@@ -385,71 +421,218 @@ function resourceHelp(spec: (typeof RESOURCES)[number]): string {
       out.push(`  ${f.id}${f.text ? ' (full text)' : ''} — ${f.describe}`)
     }
   }
-  if (supports(spec, 'apply') || supports(spec, 'delete') || supports(spec, 'create')) {
+  if (supports(spec, 'update') || supports(spec, 'delete') || supports(spec, 'create')) {
     out.push(
       '',
       'Writes:',
       ...(supports(spec, 'create')
-        ? [`  abx ${spec.parent ? `${spec.parent} <${resourceOf(spec.parent)?.kind}> ` : ''}${spec.plural} apply -f FILE   # create`]
+        ? [`  abx create ${collectionExample(spec)} -f FILE   # create; the file carries the state`]
         : []),
-      ...(supports(spec, 'apply')
-        ? [`  abx ${writeExample(spec)} apply -f FILE   # ${bodySummary(spec)}`]
+      ...(supports(spec, 'update')
+        ? [`  abx update ${writeExample(spec)} -f FILE   # ${bodySummary()}`]
         : []),
-      ...(supports(spec, 'delete') ? [`  abx ${writeExample(spec)} delete`] : []),
+      ...(supports(spec, 'delete') ? [`  abx delete ${writeExample(spec)}`] : []),
     )
     if (supports(spec, 'scale')) {
-      out.push(`  abx ${writeExample(spec)} scale --replicas N`)
+      out.push(`  abx scale ${writeExample(spec)} --replicas N`)
     }
+    // Where the file itself is documented. One line, because the detail is
+    // the write command's own help page and repeating it here is how the two
+    // drift apart.
+    out.push(
+      '',
+      `The file is the request body. \`abx create ${collectionExample(spec)} --help\` prints it`,
+      'in full — every field, which are required, and which are fixed at create.',
+    )
   }
   return out.join('\n')
 }
 
-/** Which registry verb a command is asking for, once the address is known. */
-function verbIntent(verb: string, collection: boolean): Verb {
-  if (verb === 'apply') return collection ? 'create' : 'apply'
-  return verb as Verb
+/**
+ * The generated write documentation for a resource, when the spec describes one.
+ *
+ * Everything below reads this. Before it, the same facts were written out as
+ * prose here — field names, which ones are fixed and what to do instead — and
+ * the same facts were written out again in the assistant's prompt and in two
+ * skills. One of the four was always going to be stale.
+ */
+function writeDocOf(spec: { plural: string }): WriteDoc | undefined {
+  return WRITE_DOCS.find((doc) => doc.plural === spec.plural)
+}
+
+/** The body a file holds. Create's when there is one: it is the superset. */
+function bodyOf(doc: WriteDoc): WriteDocBody | undefined {
+  return doc.create ?? doc.update
+}
+
+/** The file's own summary, in the API's words. */
+function bodyShape(spec: { plural: string }): string {
+  const doc = writeDocOf(spec)
+  const body = doc ? bodyOf(doc) : undefined
+  return body?.describe ?? `the file is the JSON request body for ${spec.plural}.`
+}
+
+/** The one-line summary the resource help has room for. */
+function bodySummary(): string {
+  return 'change it; the file is the whole state — read it with `--editable` first'
 }
 
 /**
- * What `apply -f` expects the file to contain.
+ * The top-level field names, with the ones only a create carries marked.
  *
- * The trap this closes: an update body is NOT the object `--json` prints. For
- * an env the PUT body is `overrides` alone, so copying the full object out of
- * `--json` and applying it clears every override the env had — a foot-gun that
- * cost nothing to describe here and would cost a caller their state to find out
- * about. Server-exported request bodies replace this when they land.
+ * A missing `-f` is answered with the fields the file needs rather than with a
+ * page of documentation: it is one line away from the command that works.
  */
-function bodyShape(spec: { plural: string; parent?: string }): string {
-  switch (spec.plural) {
-    case 'envs':
-      return 'the file is the body `abx envs <env> --json --editable` prints. Create and update take the SAME shape, and the fields fixed at create (`templateRef`, `mode`, `labels`, `annotations`) have to come back unchanged — an update that drops one is refused rather than quietly kept. The whole object `--json` prints is NOT that body.'
-    case 'pools':
-      return 'the file is the body `abx envs <env> pools <pool> --json --editable` prints: the size, its bounds, and the resource shape the pool was created with (`instanceType`/`multiplier`/`inlineResources`), which is fixed and must come back unchanged.'
-    case 'scaling-groups':
-      return 'the file is `{"enabled": bool, "minReplicas": n, "maxReplicas": n, "scaleUpPolicy": {…}, "scaleDownPolicy": {…}}`.'
-    case 'templates':
-    case 'admin-templates':
-      return 'the file is `{"crdJson": "…"}` — the whole SandboxTemplate object as a JSON string.'
-    default:
-      return `the file is the JSON request body for ${spec.plural}; \`abx ${spec.parent ?? spec.plural} --help\` names the fields.`
-  }
+function fieldNames(doc: WriteDoc): string {
+  const create = doc.create?.fields ?? []
+  const update = new Set((doc.update?.fields ?? []).map((f) => f.name))
+  return create
+    .map((f) => (doc.update && !update.has(f.name) ? `${f.name} (create only)` : f.name))
+    .join(', ')
 }
 
-/** The same thing in one line, for places that have one line to give. */
-function bodySummary(spec: { plural: string }): string {
-  switch (spec.plural) {
-    case 'envs':
-      return 'PUTs the whole writable shape — read it with `--json --editable` first'
-    case 'pools':
-      return 'PUTs the size, its bounds and the fixed resource shape — read it with `--json --editable`'
-    case 'scaling-groups':
-      return 'PUTs the group’s bounds and policies'
-    case 'templates':
-    case 'admin-templates':
-      return 'PUTs `{crdJson}` — the whole template as a JSON string'
-    default:
-      return 'PUT the whole object; an omitted field is cleared'
+/**
+ * Wrap to a width a terminal — or a chat window — actually has.
+ *
+ * The spec's descriptions are sentences, some of them three lines long, and a
+ * table wide enough for the longest one leaves no room for the field names.
+ */
+function wrap(text: string, indent: string, width = 78): string[] {
+  const out: string[] = []
+  let line = ''
+  for (const word of text.split(/\s+/)) {
+    if (line && `${indent}${line} ${word}`.length > width) {
+      out.push(indent + line)
+      line = word
+      continue
+    }
+    line = line ? `${line} ${word}` : word
   }
+  if (line) out.push(indent + line)
+  return out
+}
+
+/** The field table of the write page, one field to two or three lines. */
+function renderFields(fields: readonly WriteDocField[], indent = '  '): string[] {
+  const out: string[] = []
+  for (const f of fields) {
+    const marks: string[] = []
+    if (f.required) marks.push('required')
+    if (f.fixed) marks.push('fixed at create')
+    out.push(`${indent}${f.name}  ${f.type}${marks.length ? `  (${marks.join(', ')})` : ''}`)
+    if (f.describe) out.push(...wrap(f.describe, `${indent}  `))
+    if (f.fixed && f.lever) out.push(...wrap(`to change it: ${f.lever}`, `${indent}  `))
+    if (f.fields?.length) out.push(...renderFields(f.fields, `${indent}    `))
+  }
+  return out
+}
+
+/**
+ * What the file has to contain, and where a caller gets one.
+ *
+ * The second half is the part that was missing: `create` can be written from
+ * scratch because there is nothing to preserve, while `update` is a PUT and
+ * therefore has to be built from the current values. Naming the three commands
+ * that do it is cheaper than any prose about read-modify-write.
+ */
+function fileHint(spec: { plural: string; kind: string; parent?: string }, verb: string): string {
+  const doc = writeDocOf(spec)
+  const fields = doc ? fieldNames(doc) : ''
+  const shape = fields ? `${bodyShape(spec)}\nfields: ${fields}` : bodyShape(spec)
+  if (verb === 'update') {
+    return [
+      shape,
+      '',
+      'a field the file leaves out is a field you are asking to REMOVE — `overrides`',
+      'is replaced wholesale, so `{}` clears every override.',
+      '',
+      'the safe way to produce one:',
+      `  abx ${writeExample(spec)} --editable > FILE   # the current values, ready to edit`,
+      '  # edit FILE',
+      `  abx update ${writeExample(spec)} -f FILE`,
+      '',
+      `every field, and what is fixed at create, is in \`abx update ${writeExample(spec)} --help\`.`,
+    ].join('\n')
+  }
+  return [
+    shape,
+    '',
+    `every field, and which ones are required, is in \`abx create ${collectionExample(spec)} --help\`.`,
+  ].join('\n')
+}
+
+/** The collection address — where a create writes, so what its help is asked of. */
+function collectionExample(spec: { plural: string; parent?: string }): string {
+  return spec.parent
+    ? `${spec.parent} <${resourceOf(spec.parent)?.kind}> ${spec.plural}`
+    : spec.plural
+}
+
+/**
+ * The file a write takes — the page `abx create <address> --help` prints.
+ *
+ * This is what the resource help points at, and the page a caller reads while
+ * holding a file they are about to send. It answers, in order: what the file
+ * is, where a correct one comes from, and what separates the two verbs.
+ */
+function writeHelp(spec: (typeof RESOURCES)[number], verb: string): string {
+  const collection = collectionExample(spec)
+  const item = writeExample(spec)
+  const out = [`writes to ${spec.plural} — the file they take.`, '']
+
+  const usage: string[] = []
+  if (supports(spec, 'create')) usage.push(`  abx create ${collection} -f FILE`)
+  if (supports(spec, 'update')) usage.push(`  abx update ${item} -f FILE`)
+  if (supports(spec, 'delete')) usage.push(`  abx delete ${item}`)
+  if (supports(spec, 'scale')) usage.push(`  abx scale ${item} --replicas N`)
+  if (usage.length) out.push('Usage:', ...usage, '')
+
+  const doc = writeDocOf(spec)
+  const body = doc ? bodyOf(doc) : undefined
+  if (body) {
+    // A schema without a description is normal, and an empty paragraph in the
+    // middle of a page reads as a rendering bug.
+    if (body.describe) out.push(...wrap(body.describe, ''), '')
+    if (body.example !== undefined) {
+      out.push('Example, from the API schema:')
+      out.push(
+        ...JSON.stringify(body.example, null, 2)
+          .split('\n')
+          .map((l) => `  ${l}`),
+        '',
+      )
+    }
+    out.push(
+      'Fields (JSON). "fixed at create" is the API\'s `x-immutable`: an update has',
+      'to send it back unchanged, or the write is refused and names what is in force.',
+      '',
+      ...renderFields(body.fields),
+      '',
+    )
+  } else {
+    out.push(bodyShape(spec), '')
+  }
+  out.push('create and update take the SAME file. What differs is the address, and')
+  out.push('whether the object is there yet:')
+  if (supports(spec, 'create')) {
+    out.push(`  abx create ${collection} -f FILE   # it must NOT exist yet`)
+  }
+  if (supports(spec, 'update')) {
+    out.push(`  abx update ${item} -f FILE   # it MUST exist; otherwise 404`)
+  }
+  out.push('')
+  out.push('A PUT means it: a field the file leaves out is a field you are asking to')
+  out.push('REMOVE. `overrides` is replaced wholesale, so `{}` clears every override.')
+  out.push('')
+  out.push('Starting from the object that exists — the safe way to write an update:')
+  out.push(`  abx ${item} --editable > FILE   # the current values, ready to edit`)
+  out.push('  # edit FILE')
+  if (supports(spec, 'update')) out.push(`  abx update ${item} -f FILE`)
+  out.push('')
+  out.push('`-f -` reads the document from stdin instead of naming a file.')
+  out.push('Every field, and which ones are required, is listed in `abx agent-context`.')
+  out.push(`The object \`abx ${item} --json\` prints is NOT a file a write takes.`)
+  return out.join('\n')
 }
 
 function writeExample(spec: { plural: string; kind: string; parent?: string }): string {
@@ -464,27 +647,35 @@ function summary(describe: string): string {
   return `${first}.`
 }
 
-// The whole verb vocabulary: three that every writable resource shares, plus
+// The whole verb vocabulary: four that every writable resource shares, plus
 // whatever actions the registry declares. Built from the registry so a new
 // action is a registry entry rather than an edit here — and so a resource
 // cannot quietly grow a verb the help text has never heard of.
-const WRITE_VERBS = new Set(['apply', 'delete', 'scale', ...actionNames()])
+//
+// `create` and `update` are two words because they are two operations with two
+// approval ids (`env.create` / `env.update`), and because one word for both
+// makes "did I make something or change something" unanswerable from the
+// command. It is safe for them to be verbs at all only because a verb is read
+// in the first position and nowhere else.
+const WRITE_VERBS = new Set(['create', 'update', 'delete', 'scale', ...actionNames()])
 
 /**
- * Verbs this CLI used to have, and what to do instead.
+ * Spellings to answer by name, and what to say instead.
  *
- * Every one of these appears in a document somewhere in this repository, and
- * the failure they produce on their own is a 404 for an object named "create" —
- * which tells the caller nothing about the spelling that works. Only consulted
- * when the caller is clearly trying to write, so an env that really is called
- * `create` stays readable.
+ * `apply` is the one that matters. It was a single word for two operations —
+ * POST against a collection, PUT against an item — chosen by whether the
+ * address happened to carry an id, and it is also why a resource called
+ * `apply` could not be read: the parser ate the last positional token. Naming
+ * the operation fixes both, so the old spelling gets a sentence rather than a
+ * 404 for an object nobody asked for.
  */
 const REMOVED_VERBS: Record<string, string> = {
-  create: 'creating is `apply -f FILE` against the collection — the file IS the request body',
-  update: 'updating is `apply -f FILE` against the item',
+  apply:
+    'writing is two commands now, so that a resource may be called `apply`: ' +
+    '`abx create <address> -f FILE` makes one, `abx update <address> -f FILE` changes one',
   patch:
-    'there is no partial apply: `apply -f FILE` sends the whole object, and a field the file omits is cleared',
-  post: 'creating is `apply -f FILE` against the collection',
+    'there is no partial write: the file is the whole object, and a field it omits is cleared',
+  post: 'creating is `abx create <address> -f FILE`',
 }
 
 /** How long the help path will wait for a whoami before showing everything. */
@@ -508,9 +699,14 @@ export async function run(argv: string[]): Promise<number> {
     // beside the config. A help page must not fail because the network is slow,
     // so anything unknown falls back to showing everything.
     const role = await roleForHelp(fileConfig, flags)
-    const spec = positional.length ? resourceOf(positional[0]) : undefined
-    if (spec) {
-      console.log(resourceHelp(spec))
+    // `abx envs --help` and `abx create envs --help` are two different pages:
+    // the resource, and the file a write to it takes. The second is the one a
+    // caller who is about to write needs, and it is where the body is
+    // documented — the resource page only points at it.
+    const verb = WRITE_VERBS.has(positional[0]) ? positional[0] : undefined
+    const subject = helpSubject(verb ? positional.slice(1) : positional)
+    if (subject) {
+      console.log(verb ? writeHelp(subject, verb) : resourceHelp(subject))
       return 0
     }
     console.log(usage(role))
@@ -552,14 +748,36 @@ export async function run(argv: string[]): Promise<number> {
     return 0
   }
 
-  // Split the address from a trailing verb. The verb goes last so reading and
-  // writing share one address: an agent that just listed something appends a
-  // word rather than learning a second grammar.
-  const tail = positional[positional.length - 1]
-  if (REMOVED_VERBS[tail] && (flags.f !== undefined || flags.file !== undefined)) {
-    throw new CliError(`"${tail}" is not a verb any more`, REMOVED_VERBS[tail])
+  // The verb is read in the FIRST position, and only there. Everything after it
+  // is an address, and an address never contains a verb — which is the whole
+  // reason `abx envs apply` can mean "the env called apply".
+  const first = positional[0]
+  if (REMOVED_VERBS[first]) {
+    throw new CliError(`"${first}" is not a verb any more`, REMOVED_VERBS[first])
   }
-  const verb = WRITE_VERBS.has(tail) ? (positional.pop() as string) : undefined
+
+  // The spelling this CLI used to have put the verb last. Answering it by name
+  // beats "unknown sub-resource", which is true and teaches nothing.
+  //
+  // Only when there is no leading verb: with one, a trailing `delete` is a name
+  // — `abx update envs delete -f f.json` changes the env called `delete`.
+  const tail = positional[positional.length - 1]
+  const writing = flags.f !== undefined || flags.file !== undefined || flags.replicas !== undefined
+  if (!WRITE_VERBS.has(first) && positional.length > 1 && writing) {
+    if (REMOVED_VERBS[tail]) {
+      throw new CliError(`"${tail}" is not a verb any more`, REMOVED_VERBS[tail])
+    }
+    if (WRITE_VERBS.has(tail)) {
+      const address = positional.slice(0, -1).join(' ')
+      const flag = flags.replicas !== undefined ? '--replicas N' : '-f FILE'
+      throw new CliError(
+        `"${tail}" is a verb, and a verb goes first`,
+        `write it as \`abx ${tail} ${address} ${flag}\``,
+      )
+    }
+  }
+
+  const verb = WRITE_VERBS.has(first) ? (positional.shift() as string) : undefined
 
   const parsed = parsePositional(positional)
   if (!parsed) {
@@ -575,6 +793,55 @@ export async function run(argv: string[]): Promise<number> {
   // reach. Nothing below this line can run without a valid address.
   const bad = addressError(parsed)
   if (bad) throw new CliError(bad)
+
+  // A verb and the address it was given have to agree, and that is decidable
+  // from the address alone — so it is decided here, before a cluster is
+  // resolved and long before a request. A grammar mistake answered with
+  // "which cluster?" teaches the caller about the wrong thing.
+  if (verb) {
+    // The deepest resource the address names: `envs demo pools` is about
+    // pools, and that is the shape every hint below has to be spelled in.
+    const child = parsed.sub ? resourceOf(parsed.sub) : undefined
+    const spec =
+      child && child.parent === parsed.resource ? child : resourceOf(parsed.resource)
+    const item = Boolean(parsed.subId) || Boolean(parsed.id && !parsed.sub)
+    if (spec) {
+      if (verb === 'create' && item) {
+        throw new CliError(
+          'create takes the collection, not one object',
+          `abx create ${collectionExample(spec)} -f FILE — the file carries the state, ` +
+            'and the object does not exist yet for the address to name',
+        )
+      }
+      if (verb === 'update' && !item) {
+        throw new CliError(
+          'update takes one object, not a collection',
+          `abx update ${writeExample(spec)} -f FILE — name which one, so a mistake in ` +
+            'the file cannot land on the wrong object',
+        )
+      }
+      if (verb === 'create' && !supports(spec, 'create')) {
+        throw new CliError(`"${spec.plural}" cannot be created`)
+      }
+      if (verb === 'update' && !supports(spec, 'update')) {
+        throw new CliError(`"${spec.plural}" is read-only`)
+      }
+      // `-f` is the whole of a create/update, and whether it is there is
+      // knowable here. The file's shape is the answer, so it is the answer
+      // given — asking for a cluster first would be answering a question
+      // nobody asked.
+      if (
+        (verb === 'create' || verb === 'update') &&
+        flags.f === undefined &&
+        flags.file === undefined
+      ) {
+        throw new CliError(
+          `${verb} needs -f FILE`,
+          fileHint(spec, verb) + `\n\`-f -\` reads the document from stdin instead.`,
+        )
+      }
+    }
+  }
 
   const ctx = contextFrom(flags, fileConfig)
 
@@ -629,7 +896,8 @@ export async function run(argv: string[]): Promise<number> {
     // what the server happens to have.
     throw new CliError(
       '--editable prints what ONE object takes',
-      `the body belongs to one ${resolved.spec.kind}; name it, or use --json for the list`,
+      `the file belongs to one ${resolved.spec.kind}; name it, or use --json for the list.\n` +
+        'it is the same file `create` and `update` take, so it doubles as a starting point',
     )
   }
 
@@ -913,14 +1181,17 @@ function deeperHint(a: Address): string | undefined {
 }
 
 /**
- * `--editable` — the body a write takes, rather than the object it produces.
+ * `--editable` — the file a write takes, rather than the object it produces.
  *
  * These are two different documents and treating them as one is a trap that
  * bites silently: `abx envs X --json` returns the whole resource, and feeding
- * that back to `apply -f` asks the API to clear every field the file does not
+ * that back as a write asks the API to clear every field the file does not
  * carry — which for an env means every override. The projection printed here
  * comes from the server (the same schema the PUT accepts), so this output is
- * exactly what `apply -f` takes.
+ * exactly what a write takes: `update` it as it stands, change a field, or use
+ * it as the starting point for a `create`.
+ *
+ * JSON, always, and pretty-printed: what a caller does with this is edit it.
  */
 function printEditable(
   payload: unknown,
@@ -933,10 +1204,10 @@ function printEditable(
       'this deployment returns no editable body for that object',
       'the field arrives with the write contract that pairs create and update.\n' +
         'until this API has it, --json is the raw object — and the raw object is NOT\n' +
-        'the file `apply -f` takes: sending it clears what it leaves out',
+        'a file a write takes: sending it clears what it leaves out',
     )
   }
-  console.log(ctx.format === 'json' ? JSON.stringify(editable) : JSON.stringify(editable, null, 2))
+  console.log(JSON.stringify(editable, null, 2))
   return 0
 }
 
@@ -1224,11 +1495,11 @@ async function write(
     )
   }
 
-  const forbidden = spec.api.agentForbidden?.[verbIntent(verb, collection)]
+  const forbidden = spec.api.agentForbidden?.[verb as Verb]
   if (forbidden) await refuseIfAgent(ctx, forbidden, a)
 
   if (verb === 'delete') {
-    if (collection) throw new CliError('delete needs an id', `abx ${writeExample(spec)} delete`)
+    if (collection) throw new CliError('delete needs an id', `abx delete ${writeExample(spec)}`)
     if (!supports(spec, 'delete')) throw new CliError(`"${spec.plural}" cannot be deleted`)
     await request(ctx, 'DELETE', path)
     console.log(`deleted ${what}`)
@@ -1239,17 +1510,17 @@ async function write(
     if (!supports(spec, 'scale')) {
       throw new CliError(
         `"${spec.plural}" has no size to set`,
-        'scale applies to pools; a group is sized by its bounds, through `apply -f`',
+        'scale applies to pools; a group is sized by its bounds, through `abx update`',
       )
     }
     if (collection || !a.id || !a.subId) {
-      throw new CliError('scale needs a pool', `abx ${writeExample(spec)} scale --replicas N`)
+      throw new CliError('scale needs a pool', `abx scale ${writeExample(spec)} --replicas N`)
     }
     const n = Number(flags.replicas)
     if (!Number.isInteger(n) || n < 0) {
       throw new CliError(
         'scale needs --replicas <n>',
-        'scale changes size and nothing else; to change bounds use `apply -f`',
+        'scale changes size and nothing else; to change bounds use `abx update -f`',
       )
     }
     // Read-modify-write, deliberately, because the update is whole-object: a
@@ -1263,13 +1534,10 @@ async function write(
     return 0
   }
 
+  // Present by construction: run() refuses a create/update without `-f` before
+  // it resolves anything, because the file's shape is the useful answer and it
+  // is knowable from the address alone.
   const file = typeof flags.f === 'string' ? flags.f : typeof flags.file === 'string' ? flags.file : ''
-  if (!file) {
-    throw new CliError(
-      'apply needs -f FILE',
-      bodyShape(spec) + `\n\`-f -\` reads the document from stdin instead.`,
-    )
-  }
   // A bare `-` is stdin: the document a caller built in a pipeline never has to
   // be spilled to a file (and a file literally named `-` is not a thing anyone
   // means to name).
@@ -1281,21 +1549,39 @@ async function write(
     throw new CliError(
       `this CLI takes JSON, not YAML (${file})`,
       'the body is a JSON document — the same one the API takes. Convert it first ' +
-        '(for example `yq -o=json`, or write it out with --json) and apply that.',
+        '(for example `yq -o=json`, or write it out with --editable) and send that.',
     )
   }
   const body = JSON.parse(file === '-' ? await Bun.stdin.text() : await Bun.file(file).text())
 
-  if (collection) {
-    if (!supports(spec, 'create')) throw new CliError(`"${spec.plural}" cannot be created here`)
+  if (verb === 'create') {
     await request(ctx, 'POST', path, body)
-    console.log(`created from ${file}`)
+    // Name what was made where the file named it, and the address otherwise: a
+    // pool has no client-side name, so "created from pool.json" would leave a
+    // caller with nothing to act on.
+    const named = (body as { name?: unknown })?.name
+    console.log(`created ${typeof named === 'string' && named ? named : what} from ${file}`)
     return 0
   }
-  if (!supports(spec, 'apply')) throw new CliError(`"${spec.plural}" is read-only`)
-  // apply is a PUT and means it: the file is the desired state, and a field it
-  // leaves out is one the caller wants gone.
-  await request(ctx, 'PUT', path, body)
-  console.log(`applied ${file} to ${what}`)
+  // update is a PUT and means it: the file is the desired state, and a field it
+  // leaves out is one the caller wants gone. The object has to exist; a 404 is
+  // the server saying so, and it names the address that was not found.
+  try {
+    await request(ctx, 'PUT', path, body)
+  } catch (err) {
+    // The one thing a 404 can mean here is worth spelling out: `update` is not
+    // an upsert, and a caller who expected one has the wrong verb rather than
+    // the wrong address. The generic "check the name" hint sends them looking
+    // for a typo that is not there.
+    if (err instanceof CliError && err.status === 404) {
+      throw new CliError(
+        err.message,
+        `update changes an object that exists — nothing is created by it.\n` +
+          `to make one: \`abx create ${collectionExample(spec)} -f FILE\``,
+      )
+    }
+    throw err
+  }
+  console.log(`updated ${what} from ${file}`)
   return 0
 }
