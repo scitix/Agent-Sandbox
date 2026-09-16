@@ -77,6 +77,11 @@ describe('the setup guide carries this deployment and no other', () => {
       // agent, which is the one thing this document is for.
       expect(doc).toContain('${AGBX_API_KEY}')
       expect(doc).not.toMatch(/agbx_[a-z0-9]/)
+      // …and it is written only inside a code block. In prose the same token is
+      // a sentence a reader skims past; filled in, it is a credential in a
+      // paragraph somebody quotes. The check strips fenced blocks itself rather
+      // than leaning on `fillApiKey`, so the two cannot agree by construction.
+      expect(proseOf(doc)).not.toContain('${AGBX_API_KEY}')
       // The CLI's own docs sub-resource is how the reader — or their agent —
       // gets the endpoints this deployment actually answers on.
       expect(doc).toContain('docs')
@@ -92,3 +97,19 @@ describe('the setup guide carries this deployment and no other', () => {
     expect(doc).not.toMatch(/https:\/\/console\.[a-z]/)
   })
 })
+
+/** Everything in `doc` that is not inside a fenced code block. Deliberately a
+ *  second implementation: the point is to catch prose carrying the placeholder,
+ *  and reusing the renderer's own helper would make that unfalsifiable. */
+function proseOf(doc: string): string {
+  const out: string[] = []
+  let inFence = false
+  for (const line of doc.split('\n')) {
+    if (/^\s*(`{3,}|~{3,})/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (!inFence) out.push(line)
+  }
+  return out.join('\n')
+}

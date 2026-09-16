@@ -36,7 +36,8 @@ import { createPortal } from "react-dom"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useAtomValue } from "jotai"
-import { CheckIcon, CopyIcon, KeyIcon, SquareTerminal, X } from "lucide-react"
+import { MCP } from "@lobehub/icons"
+import { CheckIcon, CopyIcon, KeyIcon, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -162,10 +163,14 @@ export function CliGuideEntry() {
                 ballDragging ? "cursor-grabbing" : "cursor-grab"
               )}
             >
-              {/* A monochrome glyph in a disc, in the brand colour the fill
-                  cannot carry itself. */}
+              {/* The MCP mark, keep it: the platform's tools are MCP tools, and
+                  the badge is what makes the entry read as "here is the door
+                  into this platform" rather than as a terminal icon that could
+                  mean anything. The disc darkens with the text; the mark keeps
+                  the brand colour, which is the one thing that should still
+                  catch the eye. */}
               <span className="text-primary flex size-6 items-center justify-center rounded-full bg-white dark:bg-neutral-900">
-                <SquareTerminal size={14} />
+                <MCP size={14} />
               </span>
               {t("assistant.mcp.label")}
             </button>

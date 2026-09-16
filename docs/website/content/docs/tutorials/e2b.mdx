@@ -1,262 +1,267 @@
 ---
-title: Agent Sandbox CLI Guide
-description: How to drive Agent Sandbox from your own machine or from a coding agent — environments and pools with `abx`, sandboxes with the E2B SDK.
+title: E2B Python SDK
+description: Drive Agent Sandbox sandboxes from the E2B SDK — endpoints, access paths, pools, create parameters and cross-cluster routing.
 ---
 
-# Agent Sandbox CLI Guide
+# E2B Python SDK
 
-Agent Sandbox is a Kubernetes platform that hands out isolated sandboxes for
-agentic workloads: evaluations, rollouts, and agents that need somewhere to run
-code that is not your laptop. Two tools reach it, and the split between them is
-the product:
+Agent Sandbox is a sandbox service for agentic workloads — reasoning
+evaluation, training rollouts, managed agents — with secure isolation and
+flexible deployment. [E2B](https://e2b.dev/docs) is the sandbox provider behind
+Manus, and `envd` is the runtime E2B provides; Agent Sandbox serves the
+E2B-compatible API, so the official SDK reaches it unchanged.
 
-| Tool | Covers |
-|---|---|
-| `abx` | the platform — environments, warm pools, autoscaling, quotas, templates |
-| E2B SDK | the sandboxes themselves — create, exec, files, network |
+This page is the SDK side of the platform: how to point the SDK at a cluster,
+how to get a sandbox out of a warm pool, and what the create call takes. The
+platform side — environments, pools, autoscaling, quotas — is `abx`; see the
+[CLI guide](/docs/tutorials/cli).
 
-This guide is written for two readers at once: a person following it in a
-shell, and a coding agent the document is handed to. Copy it whole; the only
-values you have to supply are your console's address, your key, and the name of
-the environment you are using. Values written in `UPPER_CASE` are placeholders.
-
-## 1. Get an API key
-
-Create one in the console, under **API Keys**. The plaintext is shown once at
-creation; the platform keeps a copy you can retrieve from that page.
-
-If the key is going to an unattended agent, issue it in **agent** mode — see
-[section 6](#6-what-the-key-can-do).
-
-## 2. Install `abx`
-
-One binary, nothing behind it — no Node.js, no virtualenv.
-
-```bash
-curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
-```
-
-The script installs the binary to `~/.local/bin/abx` (and tells you if that
-directory is not on your PATH) and writes nine skills to `~/.agents/skills` —
-see [section 4](#4-connect-a-coding-agent).
-
-## 3. Point it at your deployment
-
-```bash
-abx context set YOUR_CONSOLE_NAME \
-  --endpoint 'https://YOUR_CONSOLE/agentbox' \
-  --api-key agbx_...
-
-abx envs
-```
-
-That is the entire configuration: the console's address and the key.
-
-- The **address** reaches the platform, not one cluster. `abx clusters` lists
-  every cluster it has, and any command takes `--cluster <id>`; a single-cluster
-  platform fills it in for you.
-- The **auth header** follows from the address, so there is nothing else to
-  configure.
-- To use several Agent Sandbox platforms, save each as its own context and
-  switch between them with `abx context use <name>`. The context is *which
-  platform*; `--cluster` is *which of its clusters*, per command.
-
-```bash
-abx agent-context     # the whole CLI as JSON — hand this to an agent
-abx envs YOUR_ENV pools
-```
-
-In CI or other unattended settings, `AGENTBOX_ENDPOINT` and `AGENTBOX_API_KEY`
-stand in for a context.
-
-## 4. Connect a coding agent
-
-**Claude Code** — the plugin stores your key in the OS keychain, where the agent
-never sees it:
-
-```
-/plugin marketplace add scitix/agent-sandbox
-/plugin install agentbox
-```
-
-Then set the endpoint and key in the plugin's settings; a hook writes them to
-`~/.config/abx/config.json` for the CLI to read.
-
-**Codex, or anything else that runs shell** — the install in step 2 already
-placed the binary on your PATH and nine skills in `~/.agents/skills`. Point your
-agent at that directory and it has the platform's vocabulary: rollouts,
-capacity, evaluations, Docker-in-sandbox, egress isolation, vault secrets. Give
-it an **agent**-mode key ([section 6](#6-what-the-key-can-do)), not an
-unrestricted one.
-
-## 5. Run code in a sandbox
-
-Every environment carries the documentation its template was written with,
-rendered for the cluster it lives on — the E2B API URL, the data-plane domain,
-and the scheme to use:
+Every deployment renders its own copy of this material with the real addresses
+filled in, and that copy is authoritative for the cluster you are using:
 
 ```bash
 abx envs YOUR_ENV docs
 ```
 
-Read it before driving an environment through E2B. It is the only place that
-knows which endpoints your cluster answers on, and the failure it prevents is
-the quiet one: an SDK pointed at the wrong host never connects and never says
-why. The console shows the same document on the environment's page, with your
-key filled in.
+On the console it is the **Env Docs** panel on the environment's page, key
+included. This page keeps placeholders where that one has values.
 
-Sandboxes are E2B's surface, so the official SDK works unchanged — one call
-before the import points it at Agent Sandbox instead of `e2b.dev`.
+## 1. Install
 
 ```bash
-uv venv && source .venv/bin/activate
-uv pip install e2b agent-sandbox-e2b
+uv pip install 'agent-sandbox-e2b[e2b]'
 ```
+
+The `[e2b]` extra pulls in the official `e2b` package. Two version notes worth
+knowing: **`agent-sandbox-e2b >= 0.0.6` is required for public access** (older
+builds do not assemble the gateway path, so sandbox ports do not connect), and
+the server rejects clients below its minimum supported version with `426
+Upgrade Required`.
+
+## 2. Quick start
+
+`patch_e2b()` must run **before** `from e2b import Sandbox`; otherwise the SDK
+connects to the official E2B service instead of Agent Sandbox.
 
 ```python
 import os
 
-os.environ["E2B_API_KEY"] = "agbx_..."        # your key
+os.environ["E2B_API_KEY"] = "agbx_..."                              # your API key
 os.environ["E2B_API_URL"] = "https://YOUR_GATEWAY/agent-sandbox/api/e2b"
-os.environ["E2B_DOMAIN"] = "YOUR_GATEWAY/agent-sandbox/api/data"
-os.environ["E2B_HTTPS"] = "true"              # "false" for a plain-http data plane
+os.environ["E2B_DOMAIN"]  = "YOUR_GATEWAY/agent-sandbox/api/data"   # no scheme
+os.environ["E2B_HTTPS"]   = "true"                                  # "false" for a plain-http data plane
 
-from agent_sandbox_e2b import patch_e2b       # must run BEFORE importing Sandbox
+from agent_sandbox_e2b import patch_e2b
 patch_e2b()
 
 from e2b import Sandbox
 
-sbx = Sandbox.create("YOUR_ENV", timeout=3600, secure=False)
-print(sbx.commands.run("python -V").stdout)
+sbx = Sandbox.create("YOUR_ENV", timeout=3000, secure=False)
+print(sbx.is_running())
 sbx.kill()
 ```
 
-`patch_e2b()` takes the same three values as arguments (`api_url=`, `domain=`,
-`https=`) if you would rather not use environment variables. Each falls back to
-its environment variable and then to the in-cluster defaults, which are what a
-sandbox inside the cluster should use.
-
-The first argument to `Sandbox.create()` is an **environment name**, not an
-image. Prefix it with a cluster id to reach another cluster:
-`Sandbox.create("other-cluster::YOUR_ENV")`.
-
-## 6. What the key can do
-
-An API key acts as **you** — your team, your namespace, your quota. It cannot
-list or reach another user's sandboxes. Delete it in the console and it stops
-working everywhere, including in any agent you handed it to.
-
-For unattended use, issue the key in **agent** mode:
-
-- the platform writes it makes (create an environment, scale a pool, delete
-  anything) wait for your approval in the console;
-- it cannot issue itself another key;
-- it cannot read key material — not from `abx api-keys`, and not from a rendered
-  setup document;
-- sandbox operations (create, exec, files) behave exactly as in unrestricted
-  mode.
-
-Rendered documentation never carries a live key, for anyone. That is what makes
-these documents safe to paste into a chat, a wiki, or an agent's context — which
-is precisely what they are for.
-
-## Sandbox parameters
-
-Two timeout controls, which combine freely.
-
-### Idle timeout
-
-`timeout` is the sandbox's **idle** lifespan in seconds: with no active
-gRPC/WebSocket/HTTP connection for that long after creation, the sandbox is
-reclaimed.
+The same three values can be passed as arguments instead, which take precedence
+over the environment:
 
 ```python
-sbx = Sandbox.create("YOUR_ENV", timeout=3600, secure=False)   # 1 hour idle
+patch_e2b(
+    api_url="https://YOUR_GATEWAY/agent-sandbox/api/e2b",
+    domain="YOUR_GATEWAY/agent-sandbox/api/data",
+    https=True,
+)
 ```
 
-| Value | Behaviour |
+`secure=False` skips E2B's signed handshake: Agent Sandbox authenticates with an
+API key, so it stays `False`.
+
+## 3. Access paths
+
+There are three ways in, and they differ only in how much of the network the
+request crosses. The environment's own documentation names the values for the
+cluster you are on.
+
+| Path | Who it is for | What changes |
+|---|---|---|
+| **Public** | your laptop, CI, anything outside the cluster | the full set of values above: `E2B_API_URL`, `E2B_DOMAIN`, `E2B_HTTPS` |
+| **Internal network** | a machine on the same private network as the cluster | point the gateway hostname at the cluster's internal IP — no code change |
+| **In-cluster** | code running inside the cluster | nothing: `patch_e2b()` falls back to the cluster's own services |
+
+**Public** is the default and the one to reach for unless you know you are
+inside. It is the longest path, but it depends on nothing about where the caller
+runs.
+
+**Internal** skips the public hop by resolving the gateway host to the cluster's
+internal IP. For a single machine, add the alias to `/etc/hosts`:
+
+```bash
+echo "YOUR_INNER_IP  YOUR_GATEWAY_HOST" | sudo tee -a /etc/hosts
+```
+
+For a workload that is itself a Pod, `hostAliases` does the same without
+touching a shared file:
+
+```yaml
+spec:
+  hostAliases:
+    - ip: "YOUR_INNER_IP"
+      hostnames:
+        - "YOUR_GATEWAY_HOST"
+```
+
+**In-cluster** is the shortest path: leave `E2B_API_URL`, `E2B_DOMAIN` and
+`E2B_HTTPS` unset — `patch_e2b()` falls back to
+`agentbox-e2b-api.agentbox-system.svc.cluster.local` and
+`agentbox-data-plane.agentbox-system.svc.cluster.local` — and keep only
+`E2B_API_KEY`.
+
+## 4. What a sandbox comes from: template, env, pool
+
+A sandbox is not built from scratch at create time. The platform keeps a set of
+**pre-warmed Pods**, and `Sandbox.create()` claims one and swaps in your image,
+which is why it takes seconds rather than minutes.
+
+| Object | What it is | Who makes it |
+|---|---|---|
+| `SandboxTemplate` | the Pod shape, the runtime, this documentation | platform administrators |
+| `SandboxEnv` | your entry name (`YOUR_ENV`), bound to one template | you |
+| `SandboxPool` | a group of pre-warmed Pods under an env, one per resource shape | you |
+
+Create them in the console: **Sandbox Envs → new environment** (name, template,
+optional overrides, autoscaling, image pull secrets, network policy), then
+**add pool** on the environment (quota, resource mode — instance type ×
+multiplier, or explicit CPU and memory — and replica count). Replicas are the
+concurrency ceiling: tasks beyond the number of idle Pods queue.
+
+The environment's page shows `idle` / `running` / `desired` per member pool.
+`idle > 0` is the point at which `Sandbox.create()` returns immediately.
+
+## 5. `Sandbox.create()` parameters
+
+The first argument (E2B calls it `template`) has four spellings here:
+
+| Form | Meaning |
 |---|---|
-| `0` or omitted | never times out |
-| positive integer (seconds) | idle timeout |
+| `"YOUR_ENV"` | **recommended** — the environment in the current cluster; the platform schedules across its member pools |
+| `"YOUR_ENV//IMAGE"` | the same, with the main container image replaced |
+| `"CLUSTER_ID::YOUR_ENV"` | a named cluster plus environment (cross-cluster — see section 6) |
+| `"CLUSTER_ID::POOL_NAME"` | a named cluster plus one specific pool, skipping env scheduling |
 
-Extend it during a session with `set_timeout` — before a long stretch with no
-traffic, not after it:
+The `//IMAGE` suffix composes with any of them, e.g.
+`"CLUSTER_ID::YOUR_ENV//docker.io/library/ubuntu:24.04"`.
+
+Other parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `timeout=3000` | **idle** timeout in seconds. A sandbox with no activity for that long is reclaimed; extend a live one with `sandbox.set_timeout(1800)` |
+| `secure=False` | keep it `False` — authentication is the API key |
+| `metadata={...}` | your own labels, readable from the sandbox object. Three keys are reserved by the platform (below) |
+
+Reserved metadata keys:
+
+| Key | Effect | Example |
+|---|---|---|
+| `agentbox.scitix.ai/image` | overrides the main container image (same as `//IMAGE`, and wins over it) | `"registry.example.com/my/img:v1"` |
+| `agentbox.scitix.ai/startup-timeout` | **startup** timeout in seconds — how long create waits for Ready; raise it for large images | `"900"` |
+| `agentbox.scitix.ai/scaling-group` | **routes by scaling group**: only member pools in that group are eligible | `"1c16gi"` |
 
 ```python
+sbx = Sandbox.create(
+    "YOUR_ENV",
+    timeout=3000,
+    secure=False,
+    metadata={
+        "agentbox.scitix.ai/scaling-group": "1c16gi",   # only 1c16gi pools
+        "agentbox.scitix.ai/startup-timeout": "900",    # large image, give it time
+        "run_id": "eval-2026-07-31",                    # ordinary label
+    },
+)
+```
+
+A scaling group the environment has no pool for **fails the create (503)**
+rather than falling back to another shape. That is deliberate: during an
+evaluation, a size that silently drifts is harder to find than a request that
+refuses.
+
+## 6. Cross-cluster
+
+An environment belongs to one cluster; same-named environments in different
+clusters federate, so the platform can route a create to whichever side has
+idle Pods.
+
+| Target | Spelling | Behaviour |
+|---|---|---|
+| a specific pool in a specific cluster | `"other-cluster::POOL_NAME"` | straight to that pool; cluster and size both pinned |
+| a specific cluster's environment | `"other-cluster::YOUR_ENV"` | forwarded to that cluster, which schedules across the environment's member pools (**the recommended cross-cluster form** — pool names can change) |
+| either side, whichever is free | `"YOUR_ENV"` | local first; when the local side has no idle Pods and cannot scale, the request is forwarded to a cluster that has them |
+
+The third form needs the environment to exist in every participating cluster:
+in the console, **new environment → extend another cluster's environment**,
+pick the existing one, and add member pools on the new side too.
+
+Two prerequisites for cross-cluster scheduling:
+
+1. **The image must exist in every region.** A sandbox lands where there is
+   capacity, and it has to be able to pull from there — see section 7.
+2. **Team-to-namespace mapping must match** across clusters, or federation
+   cannot pair `(namespace, env)` and a bare name will not spread. Spell the
+   target out (`"other-cluster::YOUR_ENV"`) when that is the case.
+
+## 7. Images and regions
+
+Each cluster declares its own region's image registry. When the image you name
+belongs to **another cluster's** private registry, the platform rewrites the
+registry host to this cluster's equivalent, so a sandbox pulls from its own
+region instead of across the world:
+
+```text
+you write:       registry-region-a.example.com/team/swebench:260328
+actually pulled: YOUR_REGISTRY_HOST/team/swebench:260328
+```
+
+The rules, in short:
+
+- only the **host** is rewritten — the path and tag survive, so the same image
+  has to exist under the same path in each region's registry;
+- the rewrite happens only between registries of the **same type** (the platform
+  configuration's `type`); public registries such as `docker.io` are never
+  rewritten;
+- when no registry of that type exists in this cluster, the image is pulled from
+  the address you wrote — possibly across regions, and possibly slowly.
+
+So before a cross-cluster evaluation, confirm the image has been synced to every
+region you expect to run in.
+
+## 8. Common operations
+
+```python
+sbx.is_running()
+
+# run commands — as the standard user, or as root
+sbx.commands.run("echo hello && python --version")
+sbx.commands.run("id", user="root")
+
+# files
+sbx.files.write("/tmp/script.py", b"print('hello from AgentBox')\n")
+content = sbx.files.read("/tmp/script.py")
+
+# extend the idle timeout
 sbx.set_timeout(1800)
+
+# always destroy it: a running sandbox holds a warm Pod
+sbx.kill()
 ```
 
-### Startup timeout
+## 9. Troubleshooting
 
-How long `Sandbox.create()` waits for a Pod to become ready, default 120s. Set
-it with the reserved metadata key `agentbox.scitix.ai/startup-timeout`; on
-timeout the call raises instead of hanging:
-
-```python
-sbx = Sandbox.create(
-    "YOUR_ENV",
-    timeout=3000,
-    secure=False,
-    metadata={"agentbox.scitix.ai/startup-timeout": "120"},
-)
-```
-
-### Custom images
-
-Override the pool's default image with the reserved key
-`agentbox.scitix.ai/image`, or the `ENV_NAME//image` shorthand:
-
-```python
-sbx = Sandbox.create(
-    "YOUR_ENV",
-    timeout=3000,
-    secure=False,
-    metadata={"agentbox.scitix.ai/image": "registry.example.com/my-env:v2"},
-)
-
-# Shorthand, with a cluster: CLUSTER_ID::ENV_NAME//IMAGE
-sbx = Sandbox.create(
-    "CLUSTER_ID::YOUR_ENV//registry.example.com/my-env:v2",
-    timeout=3000,
-    secure=False,
-)
-```
-
-### Scaling group
-
-When an environment fronts pools of several sizes, each tagged with a scaling
-group such as `1c2Gi`, pin a create to one group with
-`agentbox.scitix.ai/scaling-group`:
-
-```python
-sbx = Sandbox.create(
-    "YOUR_ENV",
-    secure=False,
-    metadata={"agentbox.scitix.ai/scaling-group": "1c2Gi"},
-)
-```
-
-This is a hard constraint: an environment with no pool in that group fails the
-create rather than falling back. When the group has no idle Pod, the create
-blocks until one arrives (up to the startup timeout), and drives autoscaling if
-that group has it enabled. Omit the key to let the scheduler choose.
-
-## FAQ
-
-**`Sandbox.create()` hangs.**
-
-It is waiting for a Pod to become ready — from the warm pool, or from a cold
-start. Set `agentbox.scitix.ai/startup-timeout` so it fails with a reason
-instead of waiting indefinitely.
-
-**A sandbox disappeared.**
-
-Check `timeout`. A task that goes quiet for longer than the idle timeout loses
-its sandbox; call `set_timeout()` before the quiet stretch begins.
-
-**The SDK never connects.**
-
-Check the values from `abx envs YOUR_ENV docs` against what the SDK was pointed
-at, and remember `patch_e2b()` has to run **before** `from e2b import Sandbox`. A
-wrong scheme (`http` against an `https` data plane) fails the same way, and
-never mentions the scheme in the error.
+| Symptom | Cause and fix |
+|---|---|
+| `400 sandbox env or pool "x" not found` | the name is wrong, or the environment is not in this cluster — for another cluster write `CLUSTER_ID::x` |
+| `503 ... has no eligible members` | the environment has no live member pool here: add one, and if you set `scaling-group`, check that the group exists |
+| a placeholder appears instead of an API key | the server never renders a key. The console fills it in from the key you select; a CLI or API caller replaces it with its own |
+| `426 Upgrade Required` | the client is below the server's minimum version: upgrade `agent-sandbox-e2b` |
+| the sandbox is created but its ports do not connect | usually `agent-sandbox-e2b < 0.0.6`, or `E2B_DOMAIN` missing the gateway path (it should be `YOUR_GATEWAY/agent-sandbox/api/data`) |
+| creates keep timing out | the image is large or being pulled for the first time: raise `agentbox.scitix.ai/startup-timeout`, and check the image is present in this region's registry |
+| `Sandbox.create()` hangs | it is waiting for a Pod to become Ready, from the warm pool or a cold start. Set the startup timeout so it fails with a reason instead of waiting |
+| a sandbox disappeared | the idle `timeout` elapsed during a quiet stretch; call `set_timeout()` before that stretch begins |

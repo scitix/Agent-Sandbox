@@ -1,0 +1,157 @@
+---
+title: Agent Sandbox CLI Guide
+description: How to drive Agent Sandbox from a shell or from a coding agent — environments and pools with `abx`, sandboxes with the E2B SDK.
+---
+
+# Agent Sandbox CLI Guide
+
+Agent Sandbox runs on the command line, which is what makes it usable by an
+agent as well as by a person: everything the console does, `abx` does, and
+everything a sandbox does, the E2B SDK does. Hand this page to an agent and it
+can create, use and reclaim its own sandboxes without a browser.
+
+Two tools, and the split between them is the product:
+
+| Tool | Covers |
+|---|---|
+| `abx` | the platform — environments, warm pools, autoscaling, quotas, templates |
+| E2B SDK | the sandboxes themselves — create, exec, files, network |
+
+Values written in `UPPER_CASE` are placeholders. The console's own copy of this
+guide — the floating **CLI** button on any page — arrives with the address, the
+cluster and the E2B endpoints already filled in for your deployment.
+
+## 1. Get an API key
+
+Create one in the console, under **API Keys**. The plaintext is shown once at
+creation, and the platform keeps a copy you can retrieve from that page at any
+time.
+
+If the key is going to an unattended agent, issue it in **agent** mode — see
+[section 6](#6-api-key-permissions).
+
+## 2. Install `abx`
+
+`abx` is a single binary with nothing behind it: no Node.js, no virtualenv.
+
+```bash
+curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
+```
+
+The script installs the binary to `~/.local/bin/abx` (and tells you if that
+directory is not on your PATH) and writes nine skills to `~/.agents/skills` —
+see [section 4](#4-using-it-from-an-agent).
+
+## 3. Initialise `abx`
+
+```bash
+abx context set YOUR_DEPLOYMENT \
+  --endpoint 'https://YOUR_CONSOLE/agentbox' \
+  --api-key agbx_...
+
+abx envs
+```
+
+That is the entire configuration: the console address and the key.
+
+- The **address** reaches the platform, not one cluster: `abx clusters` lists
+  every cluster it has, and any command takes `--cluster <id>`; a single-cluster
+  platform fills it in for you.
+- The **auth header** follows from the address, so there is nothing else to
+  configure.
+- To work with several Agent Sandbox platforms, save each as its own context and
+  switch with `abx context use <name>`. The context is which platform;
+  `--cluster` is which of its clusters, per command.
+
+```bash
+abx agent-context     # the whole CLI as JSON — hand this to an agent
+abx envs YOUR_ENV pools
+```
+
+In CI or other unattended settings, `AGENTBOX_ENDPOINT` and `AGENTBOX_API_KEY`
+stand in for a context.
+
+## 4. Using it from an agent
+
+**Claude Code** — the plugin stores your key in the OS keychain, where the agent
+never sees it:
+
+```bash
+/plugin marketplace add scitix/agent-sandbox
+/plugin install agentbox
+```
+
+Then set the endpoint and key in the plugin's settings; a hook writes them to
+`~/.config/abx/config.json` for the CLI to read.
+
+**Codex, or anything else that runs shell** — the install in step 2 already
+placed the binary on your PATH and nine skills in `~/.agents/skills`. Point your
+agent at that directory and it has the platform's vocabulary: rollouts,
+capacity, evaluations, Docker-in-sandbox, egress isolation, vault secrets. Give
+it an **agent**-mode key ([section 6](#6-api-key-permissions)), never an
+unrestricted one.
+
+Two habits make an agent reliable here: have it read `abx agent-context` once
+rather than guessing at commands, and have it read the environment's own
+documentation ([section 5](#5-run-code-in-a-sandbox)) rather than carrying
+endpoints in its prompt.
+
+## 5. Run code in a sandbox
+
+Every environment carries the documentation its template was written with,
+rendered for the cluster it belongs to — the E2B API URL, the data-plane domain,
+and the scheme to use:
+
+```bash
+abx envs YOUR_ENV docs
+```
+
+Read it before driving an environment through E2B: it is the only place that
+knows which endpoints your cluster answers on, and it covers what this page does
+not — the two access paths, pool and scaling-group selection, cross-cluster
+routing, and how images are rewritten between regions. The
+[E2B SDK guide](/docs/tutorials/e2b) goes through those in full.
+
+Sandboxes are E2B's surface, so the official SDK works unchanged — one call
+before the import points it at Agent Sandbox instead of `e2b.dev`.
+
+```bash
+uv venv && source .venv/bin/activate
+uv pip install e2b agent-sandbox-e2b
+```
+
+```python
+from agent_sandbox_e2b import patch_e2b
+
+patch_e2b(
+    api_url="https://YOUR_GATEWAY/agent-sandbox/api/e2b",
+    domain="YOUR_GATEWAY/agent-sandbox/api/data",
+)
+
+# patch_e2b() must run BEFORE this import, or the SDK talks to e2b.dev.
+from e2b import Sandbox
+
+sbx = Sandbox.create("YOUR_ENV", timeout=3600, secure=False)
+print(sbx.commands.run("python -V").stdout)
+sbx.kill()
+```
+
+## 6. API key permissions
+
+An API key acts as **you** — your team, your namespace, your quota. It cannot
+list or reach another user's sandboxes. Delete it in the console and it stops
+working everywhere, including in any agent you handed it to.
+
+A key is issued in one of two modes:
+
+| Mode | What it may do |
+|---|---|
+| **Unrestricted** | everything you can do, with no further confirmation. The right mode on your own machine. |
+| **Agent** | the same, except that the platform's writes — creating an environment, scaling or deleting anything — wait for your approval in the console. |
+
+Sandbox work is identical in both modes: an agent key starts sandboxes, runs
+commands and moves files exactly as an unrestricted one does. The gate is on the
+platform's write surface, which is the part that outlives the sandbox.
+
+An agent key also cannot issue itself another key, and cannot read key material —
+not from `abx api-keys`, and not from a rendered document such as this one.

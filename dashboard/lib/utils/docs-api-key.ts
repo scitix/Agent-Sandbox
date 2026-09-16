@@ -31,11 +31,41 @@ import type { GlobalApiKeyItem } from "@/lib/api/client"
 /** The placeholder, spelled exactly as `handlers/env_docs.go` leaves it. */
 export const API_KEY_PLACEHOLDER = "${AGBX_API_KEY}"
 
-/** Replace every `${AGBX_API_KEY}` with `apiKey`, or leave the document as it
- *  is when there is no key to fill in. */
+/**
+ * Replace `${AGBX_API_KEY}` with `apiKey` — **inside fenced code blocks only**.
+ *
+ * A document is read by people as well as executed, and prose that carried a
+ * live credential would put it in a screenshot, a quote in a chat, or the
+ * middle of a paragraph somebody forwards. So the substitution is confined to
+ * the one place a key is meant to be: a code block that gets copied and run.
+ * Everywhere else the placeholder stays spelled out, which reads as the
+ * instruction it is.
+ *
+ * Fences are tracked line by line rather than parsed: four backticks, tildes
+ * and info strings all have to survive untouched, and a real Markdown parser
+ * here would be a dependency to keep in step with the renderer's.
+ */
 export function fillApiKey(markdown: string, apiKey?: string): string {
   if (!apiKey || !markdown.includes(API_KEY_PLACEHOLDER)) return markdown
-  return markdown.split(API_KEY_PLACEHOLDER).join(apiKey)
+
+  let fence: "`" | "~" | null = null
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const marker = /^\s*(`{3,}|~{3,})/.exec(line)
+      if (marker) {
+        const char = marker[1][0] as "`" | "~"
+        // Opening a fence, closing the one that is open, or a longer run of the
+        // same character closing a shorter one — all three are the marker
+        // changing state, and none of them is code.
+        if (!fence) fence = char
+        else if (fence === char) fence = null
+        return line
+      }
+      if (!fence) return line
+      return line.split(API_KEY_PLACEHOLDER).join(apiKey)
+    })
+    .join("\n")
 }
 
 /** Newest first — the order a picker shows keys in. */
