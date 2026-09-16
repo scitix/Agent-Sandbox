@@ -1282,7 +1282,7 @@
   "sandboxes.form.secure": "Secure communication",
   "sandboxes.form.secureDesc": "Require authentication for all system communication with the sandbox.",
   "sandboxes.form.usingApiKey": "Creating with API key {{keyId}}",
-  "sandboxes.apiKeyRequiredDescription": "Creating a sandbox uses the E2B-compatible API, which authenticates with an API key rather than your console session. None of your keys has a usable token — create a new one on the API Keys page.",
+  "sandboxes.apiKeyRequiredDescription": "Creating a sandbox uses the E2B-compatible API, which authenticates with an API key rather than your console session. Create one on the API Keys page and it becomes usable here.",
   "envs.form.section.volumes": "Volumes",
   "envs.form.volumes.add": "Add volume",
   "envs.form.volumes.hint": "Mount an existing PersistentVolumeClaim from your namespace into the sandbox. The claim must already exist and be Bound — the platform never creates or deletes one. Mounts are fixed when a sandbox Pod is created, so editing this list rebuilds idle Pods; running sandboxes keep their current mounts until they are returned.",

@@ -166,9 +166,6 @@ function reusable(items: HubKeyItem[], id: EffectiveIdentity): string | undefine
       // unattended — the exact thing the gate exists to prevent.
       k.mode === "agent" &&
       k.description === SESSION_KEY_DESCRIPTION &&
-      // A key minted before plaintext storage has no rawToken and cannot be
-      // reused — skipping it mints a usable one alongside rather than failing.
-      !!k.rawToken &&
       (k.team ?? id.team) === id.team &&
       (k.user ?? id.user) === id.user &&
       (k.role ?? "tenant") === "tenant"

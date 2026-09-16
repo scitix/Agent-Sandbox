@@ -63,18 +63,18 @@ export function usePromoteApiKey() {
 
 /**
  * The key a browser-side caller should authenticate an E2B request with: the
- * newest one whose plaintext the platform still holds.
+ * newest one the caller has.
  *
  * The E2B surface takes API keys only — never the session JWT — so anything the
- * console drives through it has to pick a key on the user's behalf. Legacy keys
- * are stored as a hash alone and cannot be sent upstream, so they are not
- * candidates however recent they are.
+ * console drives through it has to pick a key on the user's behalf. Every key
+ * the platform issues now keeps its plaintext, so "newest" is the whole rule;
+ * an empty list means the caller has no key at all, which is a different page
+ * (create one) rather than a different selection.
  */
-export function pickUsableApiKey<T extends { rawToken?: string; issuedAt?: string }>(
+export function pickUsableApiKey<T extends { issuedAt?: string }>(
   keys: T[] | undefined,
 ): T | undefined {
   return (keys ?? [])
-    .filter((k) => !!k.rawToken)
     .sort((a, b) => (b.issuedAt ?? "").localeCompare(a.issuedAt ?? ""))
     .at(0)
 }

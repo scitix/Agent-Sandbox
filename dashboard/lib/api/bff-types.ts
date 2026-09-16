@@ -94,7 +94,7 @@ export interface GlobalApiKeyItem {
   /** What this key is for: `agent` holds platform writes for a person to
    *  approve, absent/`unrestricted` behaves exactly as the key's owner does. */
   mode?: "unrestricted" | "agent"
-  /** Full raw token for keys with stored plaintext; absent for legacy keys. */
+  /** The full key. The platform stores every issued key's plaintext. */
   rawToken?: string
 }
 

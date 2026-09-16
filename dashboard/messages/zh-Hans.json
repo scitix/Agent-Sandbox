@@ -1282,7 +1282,7 @@
   "sandboxes.form.secure": "安全通信",
   "sandboxes.form.secureDesc": "与沙箱之间的所有系统通信都要求鉴权。",
   "sandboxes.form.usingApiKey": "使用 API Key {{keyId}} 创建",
-  "sandboxes.apiKeyRequiredDescription": "创建沙箱走的是 E2B 兼容接口，它用 API Key 鉴权而不是控制台会话。你的 Key 里没有可用的 token —— 请在 API Keys 页面新建一把。",
+  "sandboxes.apiKeyRequiredDescription": "创建沙箱走的是 E2B 兼容接口，它用 API Key 鉴权而不是控制台会话。请先在 API Keys 页面创建一把，创建后即可在这里使用。",
   "envs.form.section.volumes": "存储卷",
   "envs.form.volumes.add": "添加卷",
   "envs.form.volumes.hint": "把你命名空间里已存在的 PersistentVolumeClaim 挂载到沙箱。卷必须已存在且处于 Bound 状态 —— 平台不会创建或删除卷。挂载在沙箱 Pod 创建时固定，所以修改这个列表会重建空闲 Pod；正在运行的沙箱会保持当前挂载直到归还。",
