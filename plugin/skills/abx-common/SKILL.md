@@ -45,6 +45,46 @@ The address matches the console URL segment for segment, so
 `/clusters/c/envs/e/pools/p` and `abx envs e pools p --cluster c` are the same
 thing said twice.
 
+## Finding a shape — never from memory, never from a document
+
+Anything a command takes is answerable *by that command*, and asking is the
+only way to get the answer for the build you are actually talking to. Prose —
+this file included — is a copy, and a copy of a schema goes stale the first
+time the schema moves:
+
+```bash
+abx create envs --help              # the file create takes: example + every field
+abx update envs <env> --help        # the same file, plus how to obtain one
+abx envs <env> pools --help         # …and for a member pool, addressed the same way
+abx <resource> --help               # columns, filters, sub-resources, writes
+abx envs <env> --editable           # the current values, in exactly that shape
+abx agent-context                   # all of it as one JSON document
+```
+
+`abx create|update <address> --help` is generated from the API schema at build
+time, so its field list cannot drift from the server you are writing to. When
+you are about to write a file, that page *is* the specification; when you are
+about to change one, `--editable` is the file to start from.
+
+The image carries the contracts themselves, read-only, for the shapes `abx`
+does not own — a sandbox's own create call, for instance:
+
+```
+/opt/agentbox/source/pkg/openapi/native/openapi.yaml  the platform API
+/opt/agentbox/source/pkg/openapi/e2b/openapi.yaml     the E2B surface a sandbox speaks
+/opt/agentbox/source/sdk/                             this platform's own SDKs
+/opt/agentbox/source/cli/src/                         this CLI's source
+```
+
+That is where to look for anything the CLI only *uses*: the exact fields a
+sandbox create call accepts are in the E2B spec there, not in a skill. The
+Python SDK is a third-party package installed in the sandbox, so ask it
+directly — its signature is the version-matched answer:
+
+```bash
+python -c "import inspect, e2b; print(inspect.signature(e2b.Sandbox.create))"
+```
+
 ## Authentication
 
 Two settings are required, resolved as flag → environment →

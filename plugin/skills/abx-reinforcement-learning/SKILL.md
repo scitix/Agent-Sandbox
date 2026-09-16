@@ -41,18 +41,24 @@ the pool has to be the right size before the trainer starts.
 ## Driving sandboxes
 
 Standard E2B — the platform serves the E2B-compatible API, so the SDK you would
-already reach for works unchanged:
+already reach for works unchanged. The call's fields belong to that SDK, not to
+this CLI: read them from the SDK source the image ships
+(`/opt/agentbox/source/sdk/`) or the E2B spec beside it, rather than from a
+sketch in a document.
 
 ```python
 from e2b import Sandbox
 
-sbx = Sandbox(template="<env-name>", timeout=600, metadata={"run": run_id})
+sbx = Sandbox.create("<env-name>", …)     # the env name; the rest is the SDK's
 result = sbx.commands.run("python solve.py")
 sbx.kill()
 ```
 
-`metadata` is worth using: it is what tells two sandboxes apart later, and
-`abx sandboxes --wide` shows it.
+Two things to carry over whatever the signature says: the `template` is the
+**env name** (`abx envs` lists them), and tagging each sandbox is worth the
+trouble — it is what tells two of them apart later, and `abx sandboxes --wide`
+shows it. Both are the SDK's fields, so take their names from the SDK and not
+from this line.
 
 > SWE ReX is **deprecated** — do not reach for it. E2B is the interface.
 
@@ -67,17 +73,19 @@ abx quotas                                      # your ceiling
 abx envs <env> pools <pool> scale --replicas 64
 ```
 
-Then leave autoscaling on with a `maxReplicas` at your peak, so the pool drains
+Then leave autoscaling on with a ceiling at your peak, so the pool drains
 between runs rather than holding capacity idle:
 
 ```bash
-abx envs <env> scaling-groups <group> --json > g.json
-# set enabled: true, maxReplicas: 64, mode to taste
+abx envs <env> scaling-groups <group> --editable > g.json
+# edit it — the fields, and what each one does, are in:
+#   abx update envs <env> scaling-groups <group> --help
 abx update envs <env> scaling-groups <group> -f g.json
 ```
 
-`apply` is a whole-object PUT — start from the `--json` you just read, never
-from a blank file, or you will clear the fields you left out.
+`update` is a whole-object PUT, and `--editable` is the file it takes — the
+object `--json` prints is a different document (nested under `spec.*`), and a
+file built from it clears whatever it does not carry.
 
 ## The three stalls, in the order they happen
 

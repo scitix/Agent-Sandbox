@@ -39,15 +39,18 @@ the user a template to install, which is an admin action.
 
 ## What it looks like from the SDK
 
-Nothing special. It is the same E2B create; the template is what differs:
+Nothing special. It is the same E2B create; the template is what differs. The
+call's fields are the SDK's, not this CLI's — read them off the E2B spec in the
+image or the installed SDK, the way `abx-common` describes. What matters here
+is one number:
 
 ```python
-sbx = Sandbox.create("<env-name>", timeout=1800)
+sbx = Sandbox.create("<env-name>", …)   # with a longer timeout than a plain sandbox
 print(sbx.commands.run("docker version").stdout)
 sbx.commands.run("docker compose up -d", cwd="/home/user/project")
 ```
 
-Give it a longer `timeout` than you would a plain sandbox: dockerd starts in the
+Give it a longer timeout than you would a plain sandbox: dockerd starts in the
 background while envd comes up in front, and the first `docker` call can arrive
 before the daemon is listening. A short retry around the first command is
 ordinary, not a symptom.

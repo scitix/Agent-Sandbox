@@ -8,13 +8,15 @@ description: Control what a sandbox can reach on the network — denying outboun
 Two separate decisions, and conflating them is the usual mistake:
 
 ```
-SandboxEnv    overrides.gateway.enabled   does this environment HAVE a gateway
-create call   network.allowOut/denyOut    what THIS sandbox may reach
+SandboxEnv     the env carries it      does this environment HAVE a gateway
+create call    the sandbox carries it  what THIS sandbox may reach
 ```
 
 The env carries a switch and no rules. Rules belong to the individual sandbox
 and arrive with the create call, in the E2B SDK's own vocabulary — there is no
-AgentBox dialect to learn.
+AgentBox dialect to learn. The env's side is `abx update envs <env> --help`
+(one field, and that page names it); the sandbox's side is the SDK, whose shape
+is in the image rather than in this file.
 
 ## Why the switch is on the env and the rules are not
 
@@ -35,18 +37,15 @@ outcome, because the run completes and the numbers are wrong.
 This is the common case: the agent under test must not fetch the answer, and
 must not install its way around a missing dependency.
 
-```python
-sbx = Sandbox.create(
-    "<env-name>",
-    network={
-        "denyOut": ["*"],                 # nothing by default
-        "allowOut": ["registry.internal"] # only what the task genuinely needs
-    },
-)
-```
+The create call takes a network policy; **ask for its shape rather than
+recalling it** — the fields are in the E2B spec the image ships
+(`/opt/agentbox/source/pkg/openapi/e2b/openapi.yaml`), and the installed SDK
+will tell you its own signature. `abx-common` has the whole recipe; the short
+version is `abx update envs <env> --help` for anything the env owns and the spec
+above for anything the sandbox owns.
 
-Deny-all-then-allow, not allow-all-then-deny. A denylist is a list of the
-routes you thought of.
+What matters, and does not change with the field names: **deny-all-then-allow**,
+never allow-all-then-deny. A denylist is a list of the routes you thought of.
 
 Three things worth checking before declaring a run isolated:
 
@@ -62,7 +61,7 @@ Three things worth checking before declaring a run isolated:
 ## Allowing one thing and nothing else
 
 An evaluation that needs a model API but nothing else is the same shape:
-`denyOut: ["*"]` plus that one host. If the credential for it must not be
+deny everything, then allow that one host. If the credential for it must not be
 readable inside the sandbox, that is `abx-sandbox-secrets` — the sidecar can
 inject it on the way out, so the sandbox reaches the API while holding no key.
 

@@ -37,17 +37,17 @@ is refused with 400** — deliberately, because accepting it would put the
 credential in the request body, the access log, and the caller's source, which
 is the exposure the whole feature exists to remove.
 
-```python
-sbx = Sandbox.create(
-    "<env-name>",
-    envs={"OPENAI_API_KEY": "decoy-value"},        # what the code reads
-    network={"rules": [{
-        "host": "api.openai.com",
-        "header": "Authorization",
-        "value": "Bearer ${e2b.secrets.OPENAI_KEY}",  # resolved on the way out
-    }]},
-)
-```
+The create call carries the sandbox's environment and the injection rules.
+**Look its shape up rather than recalling it**: it belongs to the E2B surface,
+so it is in `/opt/agentbox/source/pkg/openapi/e2b/openapi.yaml`, and the
+installed SDK will print its own signature. `abx-common` has the general recipe
+for finding any shape this way.
+
+Two things about it are not about the field names, and are the part to get
+right: the value the sandbox's code reads is a **decoy**, and the real one is
+referenced by *name* — the sidecar substitutes it on the way out. A literal
+credential in the request is a 400, because it would put the secret in the
+request body, the access log and the caller's source.
 
 The code inside runs unmodified: it reads `OPENAI_API_KEY`, sends it, and the
 sidecar replaces it. Library code that has never heard of AgentBox works.

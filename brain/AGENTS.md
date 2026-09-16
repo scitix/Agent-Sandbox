@@ -262,10 +262,17 @@ from agent_sandbox_e2b import patch_e2b
 patch_e2b()                    # must run BEFORE importing Sandbox
 from e2b import Sandbox
 
-sbx = Sandbox.create("<env-name>", timeout=600)
+sbx = Sandbox.create("<env-name>", …)    # the env name from step 3
 print(sbx.commands.run("python3 -c 'print(1+1)'").stdout)
 sbx.kill()                     # ALWAYS: a sandbox left running holds a pool replica
 ```
+
+The create call's fields are the **E2B SDK's**, not this CLI's. The wire
+contract is in the image at
+`/opt/agentbox/source/pkg/openapi/e2b/openapi.yaml`, and the installed package
+will print its own signature:
+`python -c "import inspect, e2b; print(inspect.signature(e2b.Sandbox.create))"`.
+A remembered field name is a field name that may no longer exist.
 
 **Call `patch_e2b()` with no arguments.** Every one of its settings — the API
 URL, the data-plane domain, and whether that data plane speaks HTTPS — is

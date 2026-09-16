@@ -36,12 +36,12 @@ If the group is **on**, `replicas` belongs to the autoscaler and setting it is
 refused — the lever is the group's bounds instead:
 
 ```bash
-abx envs demo scaling-groups 1c2gi --json > g.json
-# edit minReplicas / maxReplicas / the policies
+abx envs demo scaling-groups 1c2gi --editable > g.json
+# edit it — `abx update envs demo scaling-groups 1c2gi --help` lists the fields
 abx update envs demo scaling-groups 1c2gi -f g.json
 ```
 
-Remember `apply` is the whole object: a bound you delete from the file is a
+Remember `update` is the whole object: a bound you delete from the file is a
 bound you are removing. That is how you take a ceiling **off**, which is worth
 knowing because it is the one thing an "update just this field" API could never
 express.
