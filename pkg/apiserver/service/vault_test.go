@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -124,6 +125,83 @@ func TestVault_UpdateBumpsVersionAndKeepsCreatedAt(t *testing.T) {
 	}
 	if !updated.CreatedAt.Equal(created.CreatedAt) {
 		t.Fatalf("createdAt must survive a rotation: %s vs %s", updated.CreatedAt, created.CreatedAt)
+	}
+}
+
+// The Hub's vault index is in memory, so its version counter restarts with it.
+// Ordering replicated entries by VERSION therefore drops every update that
+// arrives with a smaller number — permanently, and silently, while the caller
+// is told 200. This is what froze the assistant's injected credential at the
+// first key ever stored for it.
+func TestVault_ApplyVaultEntry_SurvivesAHubThatRestarted(t *testing.T) {
+	v, c := newTestVault(t)
+	ctx := context.Background()
+
+	if _, appErr := v.Create(ctx, vNS, vUsr, VaultCreateInput{Name: "abx-key", Value: "first"}); appErr != nil {
+		t.Fatalf("create: %v", appErr)
+	}
+	// The Worker rotates it a few times on its own, so the local counter runs
+	// ahead of a Hub that has just come back with an empty in-memory index.
+	for i := range 11 {
+		if _, appErr := v.Update(ctx, vNS, vUsr, "abx-key", VaultUpdateInput{Value: "local"}); appErr != nil {
+			t.Fatalf("local rotation %d: %v", i, appErr)
+		}
+	}
+
+	sink, ok := v.(VaultSink)
+	if !ok {
+		t.Fatal("the vault service must expose the replication sink")
+	}
+	now := time.Now().UTC()
+	if err := sink.ApplyVaultEntry(ctx, VaultReplicatedEntry{
+		Namespace: vNS, User: vUsr, Name: "abx-key",
+		Value:     "from-the-hub",
+		Version:   1, // what a restarted Hub assigns
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	stored := &corev1.Secret{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: vNS, Name: VaultSecretName(vUsr)}, stored); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got := string(stored.Data["abx-key"]); got != "from-the-hub" {
+		t.Fatalf("a newer entry was dropped as 'older': value is %q", got)
+	}
+	// The number readers see must not travel backwards either.
+	item, appErr := v.Get(ctx, vNS, vUsr, "abx-key")
+	if appErr != nil {
+		t.Fatalf("get: %v", appErr)
+	}
+	if item.Version < 12 {
+		t.Fatalf("currentVersion went backwards: %d", item.Version)
+	}
+}
+
+// …and the guard it replaces still does its own job: a delivery older than what
+// we hold is a reordered broadcast, not a rotation.
+func TestVault_ApplyVaultEntry_DropsAReorderedDelivery(t *testing.T) {
+	v, c := newTestVault(t)
+	ctx := context.Background()
+	if _, appErr := v.Create(ctx, vNS, vUsr, VaultCreateInput{Name: "tok", Value: "current"}); appErr != nil {
+		t.Fatalf("create: %v", appErr)
+	}
+	sink := v.(VaultSink)
+	old := time.Now().UTC().Add(-time.Hour)
+	if err := sink.ApplyVaultEntry(ctx, VaultReplicatedEntry{
+		Namespace: vNS, User: vUsr, Name: "tok", Value: "stale",
+		Version: 1, CreatedAt: old, UpdatedAt: old,
+	}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	stored := &corev1.Secret{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: vNS, Name: VaultSecretName(vUsr)}, stored); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got := string(stored.Data["tok"]); got != "current" {
+		t.Fatalf("a reordered delivery overwrote the current value: %q", got)
 	}
 }
 

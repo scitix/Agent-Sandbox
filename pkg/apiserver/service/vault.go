@@ -659,16 +659,34 @@ func (s *k8sVaultService) ApplyVaultEntry(ctx context.Context, e VaultReplicated
 	if appErr != nil {
 		return fmt.Errorf("%s", appErr.Message)
 	}
+	// A replicated event that is older than what we hold is a reordered
+	// delivery, not a rotation; applying it would move the entry backwards.
+	//
+	// Ordered by the WRITER's clock, not by the version. The version counts puts
+	// on ONE store, and the Hub's store is in memory — so a Hub restart starts
+	// its counter over, and every later update arrives "older" than the local
+	// entry. Comparing versions dropped those updates silently and permanently:
+	// the entry stayed at whatever the Worker had last written itself, while
+	// every rotation through the Hub answered 200. That is how an assistant's
+	// injected credential froze at the first key ever stored for it.
+	if prev, ok := meta[e.Name]; ok {
+		if !e.UpdatedAt.After(prev.UpdatedAt) {
+			return nil
+		}
+		// Keep the number the API reports monotonic anyway: readers show it as
+		// `currentVersion`, and a value that goes backwards reads as a lost
+		// update even when the value is right.
+		if e.Version <= prev.Version {
+			e.Version = prev.Version + 1
+		}
+	}
+	// Built AFTER the guard: it carries the version this store will report, and
+	// that is the one the guard may have raised.
 	entry := vaultEntryMeta{
 		Version:   e.Version,
 		CreatedAt: e.CreatedAt,
 		UpdatedAt: e.UpdatedAt,
 		Metadata:  e.Metadata,
-	}
-	// A replicated event that is older than what we hold is a reordered
-	// delivery, not a rotation; applying it would move the entry backwards.
-	if prev, ok := meta[e.Name]; ok && prev.Version > e.Version {
-		return nil
 	}
 	if appErr := s.persist(ctx, e.Namespace, e.User,
 		func(m map[string]vaultEntryMeta) { m[e.Name] = entry },
