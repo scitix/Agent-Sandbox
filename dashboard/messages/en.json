@@ -1388,7 +1388,7 @@
   "assistant.mcp.apiKey": "Get an API key",
   "assistant.mcp.comingSoon": "An API key page is not configured for this deployment",
   "assistant.mcp.copyAll": "Copy all",
-  "assistant.mcp.label": "MCP",
+  "assistant.mcp.label": "CLI",
   "assistant.mcp.title": "Agent Sandbox CLI Guide",
   "assistant.menu.collapse": "Collapse the conversation menu",
   "assistant.menu.expand": "Expand the conversation menu",

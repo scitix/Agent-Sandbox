@@ -1388,7 +1388,7 @@
   "assistant.mcp.apiKey": "獲取 API Key",
   "assistant.mcp.comingSoon": "這個部署沒有配置 API Key 頁面",
   "assistant.mcp.copyAll": "複製全文",
-  "assistant.mcp.label": "MCP",
+  "assistant.mcp.label": "CLI",
   "assistant.mcp.title": "Agent Sandbox CLI 指南",
   "assistant.menu.collapse": "收起會話選單",
   "assistant.menu.expand": "展開會話選單",

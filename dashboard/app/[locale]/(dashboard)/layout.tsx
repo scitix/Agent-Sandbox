@@ -21,6 +21,7 @@ import { useRouter } from "next/navigation"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
+import { CliGuideEntry } from "@/components/cli-guide-entry"
 import {
   AssistantSidePanel,
   useAssistantPanelState,
@@ -188,6 +189,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </main>
       </SidebarInset>
       <CommandPalette open={open} onOpenChange={setOpen} />
+      {/* The CLI guide, on every page — the question it answers is asked from
+          an Env, a Template, a sandbox list and a failing pool alike. Mounted
+          here rather than in the assistant surface it used to live in: that
+          page's own column was the one place the answer was already on screen.
+          Inside the shell, so the button survives navigation and a drag. */}
+      <CliGuideEntry />
     </SidebarProvider>
   )
 }
