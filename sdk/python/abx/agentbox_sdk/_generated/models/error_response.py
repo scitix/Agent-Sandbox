@@ -41,10 +41,10 @@ class ErrorResponse:
         Attributes:
             error (str): Human-readable error message.
             error_code (str | Unset): Machine-readable business error code. Only present for specific business errors
-                that require special handling (e.g. `API_KEY_REQUIRED` prompts the client to
-                call `POST /api-keys` before retrying). Generic HTTP errors (400, 500, etc.) do
-                NOT carry this field.
-                 Example: API_KEY_REQUIRED.
+                that require special handling (e.g. `APPROVAL_REQUIRED` tells an agent its write
+                is held for a person to release, and `FORBIDDEN_FOR_AGENT` tells it no approval
+                will ever exist). Generic HTTP errors (400, 500, etc.) do NOT carry this field.
+                 Example: APPROVAL_REQUIRED.
             detail (Any | Unset): Structured context for the error. Shape depends on the failure mode. Common
                 variants:
                   * Plain string — simple context ("pool not found: my-pool")

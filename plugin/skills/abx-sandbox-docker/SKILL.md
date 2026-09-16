@@ -50,6 +50,11 @@ print(sbx.commands.run("docker version").stdout)
 sbx.commands.run("docker compose up -d", cwd="/home/user/project")
 ```
 
+The endpoint this factory talks to is the env's: `abx envs <env> docs` prints it
+for the cluster the env lives on — the E2B API URL, the data-plane domain and
+the scheme. Take the public entry from that document unless you are already
+inside the cluster.
+
 Give it a longer timeout than you would a plain sandbox: dockerd starts in the
 background while envd comes up in front, and the first `docker` call can arrive
 before the daemon is listening. A short retry around the first command is

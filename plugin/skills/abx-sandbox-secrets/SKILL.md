@@ -24,6 +24,10 @@ and it is why "just put it in envVars" is the wrong answer even when it works.
 The vault is the E2B `/secrets` surface, so the SDK you already have speaks it.
 Values are write-only: you can list names and overwrite, never read back.
 
+Both surfaces are reached through the same E2B API, whose address and data-plane
+domain are the env's: `abx envs <env> docs` prints them for the cluster the env
+lives on. Use the public entry it gives unless the caller is inside the cluster.
+
 ```python
 sbx_secrets.set("OPENAI_KEY", "sk-…")   # stored; not readable afterwards
 ```

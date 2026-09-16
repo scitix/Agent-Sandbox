@@ -83,9 +83,10 @@ import { useTranslation } from "@/lib/i18n"
 import { useLocale } from "@/hooks/use-locale"
 import { clusterPath } from "@/lib/cluster-path"
 import { authAtom, clustersAtom } from "@/lib/atoms"
-import { mcpGuide } from "@/components/assistant-ui/mcp-guide"
+import { cliGuide } from "@/components/assistant-ui/cli-guide"
 import { basePath } from "@/lib/base-path"
-import { MarkdownContent } from "@/components/assistant-ui/markdown-text"
+import { MarkdownRenderer } from "@/components/markdown-renderer"
+import { useDocsApiKey } from "@/hooks/use-docs-api-key"
 import { usePathname } from "next/navigation"
 import { clusterFromPath } from "@/lib/assistant/current-page"
 import { useElementWidth } from "@/hooks/use-element-width"
@@ -177,13 +178,21 @@ function McpEntry({ cluster }: { cluster: string }) {
     typeof window === "undefined"
       ? ""
       : `${window.location.origin}${basePath()}`
-  const guide = mcpGuide(
-    {
-      e2bURL: entry?.gateway?.e2bURL,
-      dataURL: entry?.gateway?.dataURL,
-      consoleBase,
-    },
-    locale
+  // The guide is handed to a coding agent, so it is filled in with an agent-mode
+  // key when the reader has one — the credential that matches what the document
+  // is for. The document itself never carries one: it arrives with
+  // `${AGBX_API_KEY}` standing, and the substitution happens here, in the
+  // browser, from the reader's own keys.
+  const { fill } = useDocsApiKey("agent")
+  const guide = fill(
+    cliGuide(
+      {
+        e2bURL: entry?.gateway?.e2bURL,
+        dataURL: entry?.gateway?.dataURL,
+        consoleBase,
+      },
+      locale
+    )
   )
 
   const copyAll = () => {
@@ -254,7 +263,11 @@ function McpEntry({ cluster }: { cluster: string }) {
         <PopoverContent
           side="top"
           align="end"
-          className="flex max-h-[70vh] w-[30rem] flex-col gap-0 p-0"
+          // Wider than a chat bubble and height-bounded like one: the guide is a
+          // document with a table, four code blocks and a numbered spine, and at
+          // 30rem it read as a column of fragments. The width stops short of the
+          // viewport on a small screen rather than overflowing it.
+          className="flex max-h-[80vh] w-[min(46rem,calc(100vw-3rem))] flex-col gap-0 p-0"
         >
           <div className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
             <PopoverTitle className="text-[13px]">
@@ -277,7 +290,10 @@ function McpEntry({ cluster }: { cluster: string }) {
               alone. The copy action lives in the footer instead, next to the
               other thing you can do from here. */}
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            <MarkdownContent content={guide} />
+            {/* The shared renderer, not the chat one: same Shiki highlighting
+                and the same per-block copy button the Env docs have, because
+                this is the same kind of thing — a document to copy out of. */}
+            <MarkdownRenderer content={guide} />
           </div>
 
           <div className="flex shrink-0 items-center gap-2 border-t p-3">

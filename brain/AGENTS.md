@@ -274,6 +274,14 @@ will print its own signature:
 `python -c "import inspect, e2b; print(inspect.signature(e2b.Sandbox.create))"`.
 A remembered field name is a field name that may no longer exist.
 
+`patch_e2b()` with no arguments reaches this cluster, which is right for code
+that runs in your sandbox. Code the person will run from their own machine needs
+the cluster's own addresses, and the Env already carries them:
+`abx envs <env> docs` prints the E2B API URL, the data-plane domain and the
+scheme. That document keeps the API key written as `${AGBX_API_KEY}` — hand it
+over as it is and say the key goes where the placeholder is; never fill in a
+key of your own, and never look for one to print.
+
 **Call `patch_e2b()` with no arguments.** Every one of its settings — the API
 URL, the data-plane domain, and whether that data plane speaks HTTPS — is
 already correct in your environment, and each argument OVERRIDES the

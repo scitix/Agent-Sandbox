@@ -73,7 +73,14 @@ abx envs
 abx envs <env> pools
 abx envs <env> pools <pool> scale --replicas 10
 abx whoami          # which identity, and whether this key's writes need approval
+abx envs <env> docs # where the SDK points: E2B API URL, data domain, scheme
 ```
+
+That last one is not optional reading before wiring a binding up. The agent's
+tools reach the sandbox through the E2B API, and which URL that is depends on
+the cluster the env lives on — `abx envs <env> docs` is where the platform has
+already worked it out. Prefer the public entry it prints unless the agent
+process itself runs inside the cluster.
 
 ## Identity: the decision to make deliberately
 

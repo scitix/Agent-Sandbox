@@ -1715,7 +1715,6 @@ components:
             * `${AGBX_POOL_NAME}` — the first member Pool that exists in the local cluster, or
               `<envName>-pool-name` when the env has none yet.
             * `${AGBX_CLUSTER_ID}` — the local cluster ID.
-            * `${AGBX_API_KEY}` — the caller's first API key with a recoverable plaintext token.
             * `${AGBX_NATIVE_URL}`, `${AGBX_E2B_URL}`, `${AGBX_DATA_URL}` — the local cluster's
               gateway URLs from the cluster config.
             * `${AGBX_DATA_DOMAIN}` — the data URL without its scheme (what the E2B SDK's
@@ -1725,10 +1724,12 @@ components:
             * `${AGBX_HTTPS}` — "true"/"false" for the data URL's scheme.
             * `${AGBX_REGISTRY_HOST}` — the local cluster's first configured image registry.
 
+            `${AGBX_API_KEY}` is the exception: it is never substituted, so the response carries no
+            credential and can be cached, logged, echoed or relayed. A client that holds one of the
+            caller's keys — the console — replaces it before showing the snippet.
+
             A placeholder whose value this deployment does not know (no gateway configured, no host
-            alias, no registry) is left in the output verbatim rather than rendered empty. When the
-            docs reference ${AGBX_API_KEY} but the caller has no key with a recoverable plaintext
-            token, GetSandboxEnv returns 422 with errorCode API_KEY_REQUIRED.
+            alias, no registry) is left in the output verbatim rather than rendered empty.
 
     SandboxEnvEnvelope:
       type: object
@@ -2188,10 +2189,11 @@ components:
           description: |
             Markdown documentation for the template, stored in the agentbox.navix.sh/docs annotation.
             Supports the placeholders listed under SandboxEnv.envDocs. On Template Get the env-scoped
-            ones become readable hints (YOUR_ENV_NAME, YOUR_POOL_NAME, YOUR_API_KEY) because there is
-            no env context, while everything derived from the serving cluster's config
+            ones become readable hints (YOUR_ENV_NAME, YOUR_POOL_NAME) because there is no env
+            context, while everything derived from the serving cluster's config
             (${AGBX_CLUSTER_ID}, the gateway URLs, ${AGBX_HOST}, ${AGBX_INNER_IP}, ${AGBX_HTTPS},
-            ${AGBX_REGISTRY_HOST}) is substituted for real; GetSandboxEnv substitutes everything.
+            ${AGBX_REGISTRY_HOST}) is substituted for real; GetSandboxEnv substitutes everything
+            except ${AGBX_API_KEY}, which neither renderer touches.
 
             Editing only the docs does not require bumping spec.version — docs never reach the
             rendered Pod, so they name no new template revision.
@@ -2900,10 +2902,10 @@ components:
           type: string
           description: |
             Machine-readable business error code. Only present for specific business errors
-            that require special handling (e.g. `API_KEY_REQUIRED` prompts the client to
-            call `POST /api-keys` before retrying). Generic HTTP errors (400, 500, etc.) do
-            NOT carry this field.
-          example: "API_KEY_REQUIRED"
+            that require special handling (e.g. `APPROVAL_REQUIRED` tells an agent its write
+            is held for a person to release, and `FORBIDDEN_FOR_AGENT` tells it no approval
+            will ever exist). Generic HTTP errors (400, 500, etc.) do NOT carry this field.
+          example: "APPROVAL_REQUIRED"
         detail:
           description: |
             Structured context for the error. Shape depends on the failure mode. Common
@@ -3516,12 +3518,6 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable Entity (e.g. docs reference ${AGBX_API_KEY} but caller has no key with a recoverable plaintext token; errorCode = API_KEY_REQUIRED)
           content:
             application/json:
               schema:

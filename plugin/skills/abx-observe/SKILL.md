@@ -25,6 +25,9 @@ The platform serves the **E2B-compatible** metrics endpoints, so the way to
 read resource usage is the E2B SDK you already have in the sandbox — not a
 separate `abx` command, and not a Prometheus query you have to construct:
 
+Which API that is depends on the env's cluster: `abx envs <env> docs` prints the
+E2B API URL and data-plane domain the SDK should be pointed at.
+
 ```python
 from e2b import Sandbox
 

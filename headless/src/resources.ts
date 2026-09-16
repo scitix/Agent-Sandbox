@@ -69,9 +69,9 @@ export const RESOURCES: readonly ResourceSpec[] = [
     // columns for it printed a row of dashes with the data sitting right there
     // in the same response.
     //
-    // `envDocs` is deliberately absent, and stays absent under --json: the
-    // server renders the caller's own plaintext key into that Markdown for
-    // agent credentials, so printing it would put a credential in a chat log.
+    // `envDocs` is not a field here because it is a view (`abx envs <env>
+    // docs`): it is a document, and a document belongs on its own page rather
+    // than in the middle of a list of scalars.
     detailFields: [
       { id: 'name', describe: 'Env name.' },
       { id: 'namespace', describe: 'Namespace the Env lives in.' },
@@ -102,7 +102,17 @@ export const RESOURCES: readonly ResourceSpec[] = [
       { key: 'ready', describe: 'readiness', values: ['true', 'false'] },
       { key: 'team', describe: 'owning team' },
     ],
-    views: [{ segment: 'metrics', describe: 'Time-series for this env.' }],
+    views: [
+      { segment: 'metrics', describe: 'Time-series for this env.' },
+      {
+        segment: 'docs',
+        describe:
+          'Rendered Markdown documentation for this env: the E2B endpoints of its cluster, and how to reach its sandboxes.',
+        api: '/envs/{name}',
+        shape: 'docs',
+        field: 'envDocs',
+      },
+    ],
   },
   {
     kind: 'pool',
@@ -344,15 +354,14 @@ export const RESOURCES: readonly ResourceSpec[] = [
     helpNote:
       'This is the catalog everyone reads. Writing a template is `abx admin-templates`, which an admin key is required for.',
     // The console's template page renders `docs`, and so does this: the whole
-    // point of a template's documentation is to be read. Unlike an env's
-    // `envDocs`, this one substitutes a placeholder for the API key rather than
-    // the caller's own token, so it is safe to print.
+    // point of a template's documentation is to be read, and it is safe to
+    // print for the same reason an env's is now: neither carries a credential.
+    // `${AGBX_API_KEY}` arrives as a placeholder, which is what the console
+    // fills in and what a reader is told to replace.
     detailFields: [
       { id: 'name', describe: 'Template name.' },
       { id: 'version', describe: 'spec.version — names a template revision.' },
       { id: 'description', describe: 'What this template is for.' },
-      { id: 'cpu', describe: 'CPU per pod, derived from the pod spec.' },
-      { id: 'memory', describe: 'Memory per pod, derived from the pod spec.' },
       { id: 'syncSource', describe: 'global (synced from the hub) or local.' },
       { id: 'createdAt', describe: 'When the template was created.' },
       { id: 'docs', describe: 'Rendered Markdown documentation, full text.', text: true },

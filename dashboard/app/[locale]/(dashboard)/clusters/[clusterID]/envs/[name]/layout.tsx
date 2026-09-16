@@ -37,7 +37,6 @@ import { DetailTabsNav } from "@/components/custom/detail-tabs-nav"
 import { UpsertEnvSheet } from "@/components/envs/upsert-env-sheet"
 import { DeleteEnvDialog } from "@/components/envs/delete-env-dialog"
 import { ExtendEnvDialog } from "@/components/envs/extend-env-dialog"
-import { ApiKeyRequiredNotice } from "@/components/custom/api-key-required-notice"
 import { envQueryOptions } from "@/lib/queries"
 import { useTranslation } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -62,11 +61,8 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
   const locale = useLocale()
   const pathname = usePathname()
 
-  const { data, isLoading, isError, error } = useQuery(envQueryOptions(name))
+  const { data, isLoading, isError } = useQuery(envQueryOptions(name))
   const env = data?.env
-
-  const isApiKeyRequired =
-    (error as { errorCode?: string } | null)?.errorCode === "API_KEY_REQUIRED"
 
   const [editOpen, setEditOpen] = useState(false)
   const [extendOpen, setExtendOpen] = useState(false)
@@ -133,14 +129,16 @@ export default function EnvDetailLayout({ children, params }: LayoutProps) {
 
       <DetailTabsNav basePath={basePath} tabs={tabs} />
 
-      {/* Body — sub-page content, gated on load/error/api-key state */}
+      {/* Body — sub-page content, gated on load/error state.
+          The Env's docs used to be able to fail this whole shell with
+          API_KEY_REQUIRED, which took the pools, the autoscaling and the
+          metrics down with a documentation panel. The docs no longer carry a
+          credential, so there is nothing left here to fail on. */}
       <div className="flex min-h-0 flex-1 flex-col">
         {isLoading ? (
           <div className="flex flex-1 items-center justify-center">
             <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
           </div>
-        ) : isApiKeyRequired ? (
-          <ApiKeyRequiredNotice description={t("envs.apiKeyRequired.envDocsDescription")} />
         ) : isError || !env ? (
           <div className="flex flex-1 items-center justify-center">
             <p className="text-muted-foreground text-sm">{t("envs.empty")}</p>

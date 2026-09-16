@@ -37,13 +37,6 @@ const (
 // BusinessErrorCodes depending on the scenario.
 type BusinessErrorCode string
 
-const (
-	// BizErrAPIKeyRequired indicates the current user has no API Key and must
-	// create one before performing this operation. The frontend should navigate
-	// the user to the API Key management page rather than showing a generic error.
-	BizErrAPIKeyRequired BusinessErrorCode = "API_KEY_REQUIRED"
-)
-
 // AppError is a domain-level error that carries an HTTP-status-mapped code, a
 // user-visible message, an optional wrapped cause for logging, and optional
 // structured detail for the API response.
@@ -104,17 +97,6 @@ func NewGatewayTimeout(msg string, cause error) *AppError {
 // NewUnauthorized constructs a 401 AppError.
 func NewUnauthorized(msg string) *AppError {
 	return &AppError{Code: ErrCodeUnauthorized, Message: msg}
-}
-
-// NewAPIKeyRequired constructs a 422 AppError carrying BizErrAPIKeyRequired.
-// Use this when the current user has no API Key and must create one before
-// the requested operation can proceed.
-func NewAPIKeyRequired(msg string) *AppError {
-	return &AppError{
-		Code:    ErrCodeUnprocessableEntity,
-		BizCode: BizErrAPIKeyRequired,
-		Message: msg,
-	}
 }
 
 // PoolStatusDetail is attached to 409 Conflict when creating sandboxes and

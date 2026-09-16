@@ -1,191 +1,262 @@
 ---
-title: E2B Python SDK
-description: Welcome to the ScitiX Agent Sandbox documentation.
+title: Agent Sandbox CLI Guide
+description: How to drive Agent Sandbox from your own machine or from a coding agent — environments and pools with `abx`, sandboxes with the E2B SDK.
 ---
 
-Scitix AgentBox is a sandbox service designed for Agentic scenarios, offering secure isolation and flexible deployment to support various use cases such as reasoning evaluation and training rollouts.[E2B](https://e2b.dev/docs) is the sandbox provider behind Manus, and `envd` is the runtime environment provided by E2B. Scitix AgentBox provides compatibility and enhancements for the E2B SDK. This document guides you on how to access Scitix AgentBox resources using the E2B SDK.
+# Agent Sandbox CLI Guide
 
-By reading this document, we assume you have already completed the sandbox pool pre-warming and API Key application process. To use resources from the sandbox env `${AGBX_ENV_NAME}`, first install the E2B SDK and the AgentBox patch package:
+Agent Sandbox is a Kubernetes platform that hands out isolated sandboxes for
+agentic workloads: evaluations, rollouts, and agents that need somewhere to run
+code that is not your laptop. Two tools reach it, and the split between them is
+the product:
+
+| Tool | Covers |
+|---|---|
+| `abx` | the platform — environments, warm pools, autoscaling, quotas, templates |
+| E2B SDK | the sandboxes themselves — create, exec, files, network |
+
+This guide is written for two readers at once: a person following it in a
+shell, and a coding agent the document is handed to. Copy it whole; the only
+values you have to supply are your console's address, your key, and the name of
+the environment you are using. Values written in `UPPER_CASE` are placeholders.
+
+## 1. Get an API key
+
+Create one in the console, under **API Keys**. The plaintext is shown once at
+creation; the platform keeps a copy you can retrieve from that page.
+
+If the key is going to an unattended agent, issue it in **agent** mode — see
+[section 6](#6-what-the-key-can-do).
+
+## 2. Install `abx`
+
+One binary, nothing behind it — no Node.js, no virtualenv.
 
 ```bash
-uv pip install e2b agent-sandbox-e2b
+curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
 ```
 
-## Quick Start
+The script installs the binary to `~/.local/bin/abx` (and tells you if that
+directory is not on your PATH) and writes nine skills to `~/.agents/skills` —
+see [section 4](#4-connect-a-coding-agent).
 
-You must apply the patch **before** importing `Sandbox`; otherwise, the SDK will connect to the official E2B service instead of AgentBox:
+## 3. Point it at your deployment
+
+```bash
+abx context set YOUR_CONSOLE_NAME \
+  --endpoint 'https://YOUR_CONSOLE/agentbox' \
+  --api-key agbx_...
+
+abx envs
+```
+
+That is the entire configuration: the console's address and the key.
+
+- The **address** reaches the platform, not one cluster. `abx clusters` lists
+  every cluster it has, and any command takes `--cluster <id>`; a single-cluster
+  platform fills it in for you.
+- The **auth header** follows from the address, so there is nothing else to
+  configure.
+- To use several Agent Sandbox platforms, save each as its own context and
+  switch between them with `abx context use <name>`. The context is *which
+  platform*; `--cluster` is *which of its clusters*, per command.
+
+```bash
+abx agent-context     # the whole CLI as JSON — hand this to an agent
+abx envs YOUR_ENV pools
+```
+
+In CI or other unattended settings, `AGENTBOX_ENDPOINT` and `AGENTBOX_API_KEY`
+stand in for a context.
+
+## 4. Connect a coding agent
+
+**Claude Code** — the plugin stores your key in the OS keychain, where the agent
+never sees it:
+
+```
+/plugin marketplace add scitix/agent-sandbox
+/plugin install agentbox
+```
+
+Then set the endpoint and key in the plugin's settings; a hook writes them to
+`~/.config/abx/config.json` for the CLI to read.
+
+**Codex, or anything else that runs shell** — the install in step 2 already
+placed the binary on your PATH and nine skills in `~/.agents/skills`. Point your
+agent at that directory and it has the platform's vocabulary: rollouts,
+capacity, evaluations, Docker-in-sandbox, egress isolation, vault secrets. Give
+it an **agent**-mode key ([section 6](#6-what-the-key-can-do)), not an
+unrestricted one.
+
+## 5. Run code in a sandbox
+
+Every environment carries the documentation its template was written with,
+rendered for the cluster it lives on — the E2B API URL, the data-plane domain,
+and the scheme to use:
+
+```bash
+abx envs YOUR_ENV docs
+```
+
+Read it before driving an environment through E2B. It is the only place that
+knows which endpoints your cluster answers on, and the failure it prevents is
+the quiet one: an SDK pointed at the wrong host never connects and never says
+why. The console shows the same document on the environment's page, with your
+key filled in.
+
+Sandboxes are E2B's surface, so the official SDK works unchanged — one call
+before the import points it at Agent Sandbox instead of `e2b.dev`.
+
+```bash
+uv venv && source .venv/bin/activate
+uv pip install e2b agent-sandbox-e2b
+```
 
 ```python
 import os
 
-# Replace with your actual AgentBox API Key
-os.environ["E2B_API_KEY"] = "YOUR_API_KEY"
+os.environ["E2B_API_KEY"] = "agbx_..."        # your key
+os.environ["E2B_API_URL"] = "https://YOUR_GATEWAY/agent-sandbox/api/e2b"
+os.environ["E2B_DOMAIN"] = "YOUR_GATEWAY/agent-sandbox/api/data"
+os.environ["E2B_HTTPS"] = "true"              # "false" for a plain-http data plane
 
-from agent_sandbox_e2b import patch_e2b  # Must be called before importing Sandbox
+from agent_sandbox_e2b import patch_e2b       # must run BEFORE importing Sandbox
 patch_e2b()
 
 from e2b import Sandbox
 
-# Create a sandbox from an env (ENV_NAME may also be a concrete pool name)
-sandbox = Sandbox.create("CLUSTER_ID::ENV_NAME//docker.io/library/ubuntu:22.04", timeout=3000, secure=False)
-print(sandbox.is_running())
-sandbox.kill()
+sbx = Sandbox.create("YOUR_ENV", timeout=3600, secure=False)
+print(sbx.commands.run("python -V").stdout)
+sbx.kill()
 ```
 
-## Cross-Cluster Usage
+`patch_e2b()` takes the same three values as arguments (`api_url=`, `domain=`,
+`https=`) if you would rather not use environment variables. Each falls back to
+its environment variable and then to the in-cluster defaults, which are what a
+sandbox inside the cluster should use.
 
-To access sandbox resources from a different cluster, prefix the `templateID` with the cluster ID in the format `clusterId::name`. The name is resolved env-first on the target cluster, so an env name gets you its member-pool selection; a concrete pool name pins one pool:
+The first argument to `Sandbox.create()` is an **environment name**, not an
+image. Prefix it with a cluster id to reach another cluster:
+`Sandbox.create("other-cluster::YOUR_ENV")`.
+
+## 6. What the key can do
+
+An API key acts as **you** — your team, your namespace, your quota. It cannot
+list or reach another user's sandboxes. Delete it in the console and it stops
+working everywhere, including in any agent you handed it to.
+
+For unattended use, issue the key in **agent** mode:
+
+- the platform writes it makes (create an environment, scale a pool, delete
+  anything) wait for your approval in the console;
+- it cannot issue itself another key;
+- it cannot read key material — not from `abx api-keys`, and not from a rendered
+  setup document;
+- sandbox operations (create, exec, files) behave exactly as in unrestricted
+  mode.
+
+Rendered documentation never carries a live key, for anyone. That is what makes
+these documents safe to paste into a chat, a wiki, or an agent's context — which
+is precisely what they are for.
+
+## Sandbox parameters
+
+Two timeout controls, which combine freely.
+
+### Idle timeout
+
+`timeout` is the sandbox's **idle** lifespan in seconds: with no active
+gRPC/WebSocket/HTTP connection for that long after creation, the sandbox is
+reclaimed.
 
 ```python
-# Standard mode: use an env in the current cluster
-sandbox = Sandbox.create("ENV_NAME", timeout=3000, secure=False)
-
-# Cross-cluster mode: same lookup, pinned to one cluster
-sandbox = Sandbox.create("CLUSTER_ID::ENV_NAME", timeout=3000, secure=False)
-
-# Cross-cluster mode: pin one specific member pool
-sandbox = Sandbox.create("CLUSTER_ID::POOL_NAME", timeout=3000, secure=False)
+sbx = Sandbox.create("YOUR_ENV", timeout=3600, secure=False)   # 1 hour idle
 ```
 
-> Cross-cluster requests are automatically routed by AgentBox, requiring no extra configuration. If you encounter authentication errors, please re-apply for your API Key via the platform.
-
-## Sandbox Operations
-
-Once the sandbox is successfully created, you can use the standard E2B SDK operations:
-
-```python
-# Check if the sandbox is running (poll until True after creation)
-sandbox.is_running()
-
-# Execute commands (as standard user)
-sandbox.commands.run("echo 'hello' && python --version")
-
-# Execute commands (as root user)
-sandbox.commands.run('id', user='root')
-
-# File I/O
-sandbox.files.write("/tmp/script.py", b"print('hello from AgentBox')\n")
-content = sandbox.files.read("/tmp/script.py")
-
-# Dynamically extend idle timeout (in seconds)
-sandbox.set_timeout(1800)
-
-# Destroy the sandbox (always call this when finished)
-sandbox.kill()
-```
-
-For more detailed command documentation, refer to the [official E2B documentation](https://e2b.dev/docs/sdk-reference/python-sdk/v2.15.2/sandbox_sync).
-
-If you need session features similar to `tmux`, please refer to the [official PTY configuration guide](https://e2b.dev/docs/sandbox/pty).
-
-The default user for command execution in E2B is a standard user (UID=1001). To switch to `root`, use the `user` parameter in `sandbox.commands.run("id", user='root')` or configure it via PTY session startup parameters.
-
-## Parameter Reference
-
-Scitix AgentBox supports two types of timeout controls that can be combined as needed.
-
-### Idle Timeout
-
-The `timeout` parameter controls the **idle lifespan** of the sandbox (in seconds). If there are no active gRPC/WebSocket/HTTP connections within this period after the sandbox is created, it will be automatically reclaimed.
-
-```python
-# Sandbox will be destroyed after 1 hour of inactivity
-sandbox = Sandbox.create("POOL_NAME", timeout=3600, secure=False)
-```
-
-| Value | Behavior |
+| Value | Behaviour |
 |---|---|
-| `0` or omitted | Never times out |
-| Positive Integer (seconds) | Sets idle timeout duration |
+| `0` or omitted | never times out |
+| positive integer (seconds) | idle timeout |
 
-During the sandbox session, you can dynamically extend the lifespan using `set_timeout`:
+Extend it during a session with `set_timeout` — before a long stretch with no
+traffic, not after it:
 
 ```python
-# Reset remaining timeout to 1800 seconds
-sandbox.set_timeout(1800)
+sbx.set_timeout(1800)
 ```
 
-### Startup Timeout
+### Startup timeout
 
-The Startup Timeout controls the maximum wait time for sandbox creation (in seconds), defaulting to 120s. If creation fails within this time (e.g., due to resource insufficiency), `Sandbox.create()` will raise an exception.
-
-Set this via the `metadata` dictionary using the reserved key `agentbox.scitix.ai/startup-timeout`:
+How long `Sandbox.create()` waits for a Pod to become ready, default 120s. Set
+it with the reserved metadata key `agentbox.scitix.ai/startup-timeout`; on
+timeout the call raises instead of hanging:
 
 ```python
-sandbox = Sandbox.create(
-    "POOL_NAME",
+sbx = Sandbox.create(
+    "YOUR_ENV",
     timeout=3000,
     secure=False,
-    metadata={"agentbox.scitix.ai/startup-timeout": "120"},  # Max 120 seconds to start
+    metadata={"agentbox.scitix.ai/startup-timeout": "120"},
 )
 ```
 
-### Custom Images
+### Custom images
 
-You can override the pool's default image at creation time using the `agentbox.scitix.ai/image` reserved key in `metadata`:
+Override the pool's default image with the reserved key
+`agentbox.scitix.ai/image`, or the `ENV_NAME//image` shorthand:
 
 ```python
-sandbox = Sandbox.create(
-    "POOL_NAME",
+sbx = Sandbox.create(
+    "YOUR_ENV",
     timeout=3000,
     secure=False,
     metadata={"agentbox.scitix.ai/image": "registry.example.com/my-env:v2"},
 )
-```
 
-Alternatively, use the shorthand `poolName//image` syntax:
-
-```python
-sandbox = Sandbox.create(
-    "CLUSTER_ID::POOL_NAME//registry.example.com/my-env:v2",
+# Shorthand, with a cluster: CLUSTER_ID::ENV_NAME//IMAGE
+sbx = Sandbox.create(
+    "CLUSTER_ID::YOUR_ENV//registry.example.com/my-env:v2",
     timeout=3000,
     secure=False,
 )
 ```
 
-### Scaling Group
+### Scaling group
 
-When the target `SandboxEnv` fronts pools of several sizes (each tagged with a
-scaling group such as `1c2Gi` or `2c4Gi`), you can pin a create to one group
-using the `agentbox.scitix.ai/scaling-group` reserved key in `metadata`. The
-sandbox is then only placed on member pools in that group:
+When an environment fronts pools of several sizes, each tagged with a scaling
+group such as `1c2Gi`, pin a create to one group with
+`agentbox.scitix.ai/scaling-group`:
 
 ```python
-sandbox = Sandbox.create(
-    "ENV_NAME",
+sbx = Sandbox.create(
+    "YOUR_ENV",
     secure=False,
-    metadata={"agentbox.scitix.ai/scaling-group": "1c2Gi"},  # only 1c2Gi pools
+    metadata={"agentbox.scitix.ai/scaling-group": "1c2Gi"},
 )
 ```
 
-This is a hard constraint: if the env has no pool in the requested group the
-create fails (HTTP 503) rather than falling back to another group. When the
-group has no idle pod, the create blocks until one becomes available (up to the
-startup timeout) — and if that group has autoscaling enabled, the request also
-drives it to scale up. Omit the key to let the scheduler pick any member pool
-(the default).
-
-### Complete Example
-
-```python
-sandbox = Sandbox.create(
-    "CLUSTER_ID::POOL_NAME//registry.example.com/my-env:v2",
-    timeout=3600,           # Idle timeout: 1 hour
-    secure=False,
-    metadata={
-        "agentbox.scitix.ai/startup-timeout": "120",          # Startup timeout: 2 mins
-        "agentbox.scitix.ai/scaling-group": "1c2Gi",          # Pin to the 1c2Gi group (optional)
-        "my-custom-key": "my-value",                          # Custom user metadata (optional)
-    },
-)
-```
+This is a hard constraint: an environment with no pool in that group fails the
+create rather than falling back. When the group has no idle Pod, the create
+blocks until one arrives (up to the startup timeout), and drives autoscaling if
+that group has it enabled. Omit the key to let the scheduler choose.
 
 ## FAQ
 
-**Q: `Sandbox.create()` hangs for a long time without returning?**
+**`Sandbox.create()` hangs.**
 
-The sandbox is waiting for the Pod to become ready (either from the pre-warmed pool or a cold start). It is recommended to set a reasonable startup timeout using `agentbox.scitix.ai/startup-timeout` (default 120s) to prevent the program from waiting indefinitely.
+It is waiting for a Pod to become ready — from the warm pool, or from a cold
+start. Set `agentbox.scitix.ai/startup-timeout` so it fails with a reason
+instead of waiting indefinitely.
 
-**Q: Sandbox is destroyed unexpectedly?**
+**A sandbox disappeared.**
 
-Check if the `timeout` is set too short. If there are long intervals without active connections during tasks like training, be sure to call `sandbox.set_timeout()` before the interval begins to extend the session.
+Check `timeout`. A task that goes quiet for longer than the idle timeout loses
+its sandbox; call `set_timeout()` before the quiet stretch begins.
+
+**The SDK never connects.**
+
+Check the values from `abx envs YOUR_ENV docs` against what the SDK was pointed
+at, and remember `patch_e2b()` has to run **before** `from e2b import Sandbox`. A
+wrong scheme (`http` against an `https` data plane) fails the same way, and
+never mentions the scheme in the error.

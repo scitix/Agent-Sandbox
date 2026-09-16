@@ -45,6 +45,34 @@ The address matches the console URL segment for segment, so
 `/clusters/c/envs/e/pools/p` and `abx envs e pools p --cluster c` are the same
 thing said twice.
 
+## Driving an Env over E2B, and the one read that comes first
+
+Sandboxes belong to the E2B SDK, and what that SDK needs and you cannot guess is
+**where the endpoints are**: the E2B-compatible API URL, the data-plane domain,
+and whether the data plane is http or https. Every Env carries its template's
+documentation, already rendered for the cluster that Env lives on:
+
+```bash
+abx envs <env> docs
+```
+
+**Read it before creating a sandbox against an Env you have not used.** It is
+the only place that knows the endpoints of the cluster you are actually talking
+to, and the failure it prevents is the quiet one: the SDK pointed at the wrong
+host, or at e2b.dev, never connects and never says why.
+
+When the document offers more than one way in — the same cluster, another
+cluster, the public one — **take the public one unless you are told otherwise**
+or you can see you are already inside that cluster's network. It is the only
+path that does not depend on where the caller happens to be running.
+
+The key in that document stays written as `${AGBX_API_KEY}`. That is not a
+missing value: it is your own credential, the one `abx` is already
+authenticating with, and the SDK reads the same key from `E2B_API_KEY`. No
+rendered document ever carries a live token — for a person's key or an agent's —
+which is what makes these pages safe to read, print and relay. The console fills
+the placeholder in for a person reading it there; nothing else should.
+
 ## Finding a shape — never from memory, never from a document
 
 Anything a command takes is answerable *by that command*, and asking is the
@@ -217,9 +245,11 @@ the person to act on themselves. Do not queue, retry, or look for a flag.
 
 For the same reason, an agent key gets key **metadata** without key
 **material**: `abx api-keys` lists what exists and which keys are gated, and
-the token field is absent. An env's rendered docs come back with
-`${AGBX_API_KEY}` intact rather than a live token. Relay the template and tell
-the person where to get their key; there is nothing missing to hunt for.
+the token field is absent. A rendered document — an Env's docs, a Template's
+docs, the setup guide in the console — comes back with `${AGBX_API_KEY}` intact
+rather than a live token, for every caller and not only for you. Relay the
+document and say where the person's own key goes; there is nothing missing to
+hunt for.
 
 The refusal and the wait are different answers and the error codes say which:
 `APPROVAL_REQUIRED` means a person is about to decide, so re-run it shortly.

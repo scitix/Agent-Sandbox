@@ -46,6 +46,13 @@ this CLI: read them from the SDK source the image ships
 (`/opt/agentbox/source/sdk/`) or the E2B spec beside it, rather than from a
 sketch in a document.
 
+Before the first sandbox, read where to point it. `abx envs <env> docs` prints
+the env's documentation, rendered for its cluster: the E2B API URL, the
+data-plane domain, and the scheme — the three things the SDK cannot guess and
+will not complain about. Where more than one way in is offered, use the public
+one unless the trainer runs inside the cluster. The key stays `${AGBX_API_KEY}`
+in that document; the SDK reads the same one from `E2B_API_KEY`.
+
 ```python
 from e2b import Sandbox
 

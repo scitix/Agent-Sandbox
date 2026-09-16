@@ -23,8 +23,6 @@ import {
   Pencil,
   Trash2,
   Download,
-  Cpu,
-  MemoryStick,
   Loader2,
   Copy,
   Check,
@@ -32,11 +30,13 @@ import {
 import { useState } from "react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { MarkdownRenderer } from "@/components/markdown-renderer"
+import { ApiKeyPicker } from "@/components/custom/api-key-picker"
 import type { AgentSandboxTemplate, AgentSandboxTemplateSummary } from "@/lib/api/client"
 import { clusterTemplateQueryOptions, templateQueryOptions } from "@/lib/queries/template"
 import { useTranslation } from "@/lib/i18n"
-import { parseCpuToCore, parseMemoryToMiB, formatCores, formatMiB } from "@/lib/resources"
+import { useDocsApiKey } from "@/hooks/use-docs-api-key"
 
 // ─── nuqs URL param name ───────────────────────────────────────────────────────
 
@@ -109,6 +109,12 @@ export function TemplateDetailContent({
   const clusterOnly = !hub.data && !!local.data
   const isLoading = hub.isLoading || local.isLoading
 
+  // The docs are rendered with the reader's own key — the template's copy of
+  // them leaves `${AGBX_API_KEY}` standing, exactly as the Env page does, and
+  // the picker beside the copy button decides what goes in its place. Called
+  // before the early returns below, because a hook cannot sit behind one.
+  const { keys, selected, select, fill, loading } = useDocsApiKey()
+
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -126,8 +132,7 @@ export function TemplateDetailContent({
   }
 
   const tmpl = envelope.template
-  const cpuCores = parseCpuToCore(tmpl.cpu)
-  const memoryMiB = parseMemoryToMiB(tmpl.memory)
+  const docs = tmpl.docs ? fill(tmpl.docs) : ""
 
   const handleExportYaml = () => {
     if (!tmpl.crdYaml) return
@@ -144,7 +149,29 @@ export function TemplateDetailContent({
     <div className="flex-1 overflow-y-auto px-5 py-4">
       {/* Action buttons at top of content */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        {tmpl.docs && <CopyButton content={tmpl.docs} label={t("common.copyPage")} />}
+        {/* The version badge leads the row: it is the one fact about a template
+            that changes what the page below means, and the row is where the
+            eye already is. CPU and memory used to sit in cards of their own —
+            a template no longer pins a resource shape, so they said nothing
+            about what a sandbox from this template would get. */}
+        {tmpl.version && (
+          <Badge variant="outline" className="h-9 gap-1 px-3 font-mono text-xs">
+            <Layers className="h-3.5 w-3.5" />
+            {tmpl.version}
+          </Badge>
+        )}
+        {tmpl.docs && (
+          <>
+            <ApiKeyPicker
+              keys={keys}
+              value={selected?.keyId}
+              onChange={select}
+              loading={loading}
+              className="ms-auto"
+            />
+            <CopyButton content={docs} label={t("common.copyPage")} />
+          </>
+        )}
         {isAdmin && tmpl.crdYaml && (
           <Button
             variant="outline"
@@ -180,46 +207,9 @@ export function TemplateDetailContent({
         )}
       </div>
 
-      {/* Resource cards */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {cpuCores != null && (
-          <div className="border-border bg-secondary/30 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
-            <Cpu className="text-muted-foreground h-4 w-4 shrink-0" />
-            <div>
-              <p className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
-                CPU
-              </p>
-              <p className="font-mono text-sm font-semibold">{formatCores(cpuCores)} cores</p>
-            </div>
-          </div>
-        )}
-        {memoryMiB != null && (
-          <div className="border-border bg-secondary/30 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
-            <MemoryStick className="text-muted-foreground h-4 w-4 shrink-0" />
-            <div>
-              <p className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
-                Memory
-              </p>
-              <p className="font-mono text-sm font-semibold">{formatMiB(memoryMiB)} MiB</p>
-            </div>
-          </div>
-        )}
-        {tmpl.version && (
-          <div className="border-border bg-secondary/30 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
-            <Layers className="text-muted-foreground h-4 w-4 shrink-0" />
-            <div>
-              <p className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
-                {t("templates.col.version")}
-              </p>
-              <p className="font-mono text-sm font-semibold">{tmpl.version}</p>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Documentation (main content area) */}
-      {tmpl.docs ? (
-        <MarkdownRenderer content={tmpl.docs} />
+      {docs ? (
+        <MarkdownRenderer content={docs} />
       ) : (
         <p className="text-muted-foreground text-sm">{t("templates.detail.noDocs")}</p>
       )}

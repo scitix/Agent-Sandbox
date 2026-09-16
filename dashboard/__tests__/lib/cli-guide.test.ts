@@ -24,7 +24,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mcpGuide } from '@/components/assistant-ui/mcp-guide'
+import { cliGuide } from '@/components/assistant-ui/cli-guide'
 
 const LIVE = {
   e2bURL: 'https://gw.example.test/agent-sandbox/api/e2b',
@@ -38,12 +38,12 @@ describe('the setup guide carries this deployment and no other', () => {
     // every deployment installs the same binary from it. Anything else naming
     // a host would be one deployment's address shipped to all of them.
     const src = readFileSync(
-      join(__dirname, '..', '..', 'components', 'assistant-ui', 'mcp-guide.ts'),
+      join(__dirname, '..', '..', 'components', 'assistant-ui', 'cli-guide.ts'),
       'utf8',
     )
     const hosts = [...src.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)].map(m => m[1])
     for (const h of hosts) {
-      expect(h, `mcp-guide.ts names the host ${h}`).toMatch(
+      expect(h, `cli-guide.ts names the host ${h}`).toMatch(
         /^(www\.apache\.org|oss-ap-southeast\.scitix\.ai|e2b\.dev)$/,
       )
     }
@@ -51,7 +51,7 @@ describe('the setup guide carries this deployment and no other', () => {
 
   for (const locale of ['en', 'zh-Hans'] as const) {
     it(`builds the abx context line from the live console (${locale})`, () => {
-      const doc = mcpGuide(LIVE, locale)
+      const doc = cliGuide(LIVE, locale)
       // Named after the deployment, not after the front-door word.
       expect(doc).toContain('abx context set acme')
       // The console's own address, exactly as it appears in the browser — one
@@ -71,11 +71,23 @@ describe('the setup guide carries this deployment and no other', () => {
       // abx leads; the E2B SDK is still there for the sandboxes themselves.
       expect(doc.indexOf('abx context set')).toBeLessThan(doc.indexOf('patch_e2b'))
       expect(doc).toContain(LIVE.e2bURL)
+      // The key is a placeholder for the console to fill in, never a value the
+      // server or this module could have known. A document that arrives with a
+      // live credential in it cannot be copied into a chat or handed to an
+      // agent, which is the one thing this document is for.
+      expect(doc).toContain('${AGBX_API_KEY}')
+      expect(doc).not.toMatch(/agbx_[a-z0-9]/)
+      // The CLI's own docs sub-resource is how the reader — or their agent —
+      // gets the endpoints this deployment actually answers on.
+      expect(doc).toContain('docs')
+      // A document meant to be read by an agent says so, and names the tool
+      // that hands it the whole CLI shape.
+      expect(doc).toContain('abx agent-context')
     })
   }
 
   it('degrades to placeholders rather than to somebody else’s address', () => {
-    const doc = mcpGuide({}, 'en')
+    const doc = cliGuide({}, 'en')
     expect(doc).toContain('https://<console>/agentbox')
     expect(doc).not.toMatch(/https:\/\/console\.[a-z]/)
   })

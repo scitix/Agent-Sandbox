@@ -109,6 +109,10 @@ You need `N` claimable Pods at peak, not `N` over the run:
 4. Leave the group enabled with a `maxReplicas` at your peak, so the pool
    drains between runs instead of holding capacity nobody is using.
 
+Once the Pods are there, the caller has to reach them: `abx envs <env> docs`
+prints the E2B endpoints of that env's cluster, which is what the SDK is
+pointed at before the first create.
+
 ## Related
 
 - `abx-observe` — the metrics and logs behind "it is slow" or "it failed"

@@ -60,7 +60,7 @@ The docs annotation supports these placeholders, substituted server-side:
 |---|---|---|
 | `${AGBX_ENV_NAME}` | the Env's name | `YOUR_ENV_NAME` |
 | `${AGBX_POOL_NAME}` | first member Pool that exists in the local cluster, else `<envName>-pool-name` | `YOUR_POOL_NAME` |
-| `${AGBX_API_KEY}` | caller's first key with a recoverable token (else 422 `API_KEY_REQUIRED`) | `YOUR_API_KEY` |
+| `${AGBX_API_KEY}` | **never substituted** — the client replaces it | **never substituted** — the client replaces it |
 | `${AGBX_CLUSTER_ID}` | local cluster ID | same |
 | `${AGBX_NATIVE_URL}` / `${AGBX_E2B_URL}` / `${AGBX_DATA_URL}` | the local cluster's `gateway.{nativeURL,e2bURL,dataURL}` | same |
 | `${AGBX_DATA_DOMAIN}` | data URL minus scheme — the E2B SDK's `E2B_DOMAIN` form | same |
@@ -73,6 +73,14 @@ Everything from `${AGBX_CLUSTER_ID}` down is a fact about the *serving* cluster
 (read from the cluster-config ConfigMap via `ClusterService.Endpoints`), so both
 renderers substitute the real value; only the env-scoped ones degrade to hints on
 the Template page.
+
+**The API key is the one placeholder neither renderer fills in.** It was once
+substituted server-side with the caller's first key, which put a live credential
+into a response that is cached, logged, printed by `abx` and pasted into agent
+transcripts — and meant a caller with no plaintext key got a 422 instead of the
+documentation. Now the placeholder survives, and the console substitutes the
+reader's own key in the browser. A client that cannot do that still gets the
+whole document, minus the secret.
 
 **A placeholder whose value is unknown is left in the output verbatim** — an
 unconfigured gateway, a host with no alias, or a cluster with no registry must

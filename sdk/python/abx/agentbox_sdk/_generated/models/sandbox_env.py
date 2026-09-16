@@ -58,7 +58,6 @@ class SandboxEnv:
                 * `${AGBX_POOL_NAME}` — the first member Pool that exists in the local cluster, or
                   `<envName>-pool-name` when the env has none yet.
                 * `${AGBX_CLUSTER_ID}` — the local cluster ID.
-                * `${AGBX_API_KEY}` — the caller's first API key with a recoverable plaintext token.
                 * `${AGBX_NATIVE_URL}`, `${AGBX_E2B_URL}`, `${AGBX_DATA_URL}` — the local cluster's
                   gateway URLs from the cluster config.
                 * `${AGBX_DATA_DOMAIN}` — the data URL without its scheme (what the E2B SDK's
@@ -68,10 +67,12 @@ class SandboxEnv:
                 * `${AGBX_HTTPS}` — "true"/"false" for the data URL's scheme.
                 * `${AGBX_REGISTRY_HOST}` — the local cluster's first configured image registry.
 
+                `${AGBX_API_KEY}` is the exception: it is never substituted, so the response carries no
+                credential and can be cached, logged, echoed or relayed. A client that holds one of the
+                caller's keys — the console — replaces it before showing the snippet.
+
                 A placeholder whose value this deployment does not know (no gateway configured, no host
-                alias, no registry) is left in the output verbatim rather than rendered empty. When the
-                docs reference ${AGBX_API_KEY} but the caller has no key with a recoverable plaintext
-                token, GetSandboxEnv returns 422 with errorCode API_KEY_REQUIRED.
+                alias, no registry) is left in the output verbatim rather than rendered empty.
      """
 
     name: str

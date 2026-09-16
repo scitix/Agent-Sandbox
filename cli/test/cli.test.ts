@@ -196,10 +196,14 @@ describe('a detail view is the get, not the list', () => {
     }
   })
 
-  it('an env detail carries no envDocs field at all', () => {
-    // Not a rendering choice: the server substitutes the caller's own plaintext
-    // key into that Markdown, so a field that would print it must not exist.
+  it('an env detail carries no envDocs field: the document is a view of its own', () => {
+    // A document between two scalars reads as a third scalar with its newlines
+    // eaten; `abx envs <env> docs` prints it as what it is.
     expect(envs.detailFields!.some(f => f.id === 'envDocs' || f.path === 'envDocs')).toBe(false)
+    const docs = envs.views!.find(v => v.segment === 'docs')
+    expect(docs, 'envs has no docs view').toBeDefined()
+    expect(docs!.api).toBe('/envs/{name}')
+    expect(docs!.field).toBe('envDocs')
   })
 
   it('a field the response does not carry reads as absent, not as its own name', () => {

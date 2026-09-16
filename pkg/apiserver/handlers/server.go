@@ -517,11 +517,12 @@ func (s *Server) GetSandboxEnv(ctx context.Context, req gen.GetSandboxEnvRequest
 		return gen.GetSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
 	}
 
-	// Render env docs template on the server so the client gets a
-	// ready-to-copy snippet. When the raw docs reference ${AGBX_API_KEY} and
-	// the user has no key with a recoverable plaintext token, return
-	// API_KEY_REQUIRED (422) so the frontend can guide them to the API Keys
-	// page.
+	// Render env docs on the server so the client gets a ready-to-copy snippet:
+	// the env, the pool and the cluster's gateway addresses are things the
+	// reader cannot guess. ${AGBX_API_KEY} is the one placeholder that survives
+	// — the console fills it in from the reader's own keys, which is the only
+	// place a credential can be substituted without the document itself
+	// becoming something that must not be cached, logged or relayed.
 	raw := ""
 	if result.EnvDocs != nil {
 		raw = *result.EnvDocs
@@ -529,15 +530,7 @@ func (s *Server) GetSandboxEnv(ctx context.Context, req gen.GetSandboxEnvRequest
 	vars := s.clusterDocsVars()
 	vars.envName = result.Name
 	vars.poolName = docsPoolName(result, vars.clusterID)
-	rendered, renderErr := s.renderEnvDocs(ctx, raw, vars, auth)
-	if renderErr != nil {
-		switch renderErr.Code {
-		case domain.ErrCodeUnprocessableEntity:
-			return gen.GetSandboxEnv422JSONResponse(errResp(ctx, renderErr)), nil
-		default:
-			return gen.GetSandboxEnv500JSONResponse(errResp(ctx, renderErr)), nil
-		}
-	}
+	rendered := renderEnvDocs(raw, vars)
 	if rendered != "" {
 		result.EnvDocs = ptr.To(rendered)
 	} else {

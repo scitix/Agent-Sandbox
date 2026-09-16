@@ -113,8 +113,18 @@ export interface ViewSpec {
    * like a broken one: `GET /sandboxes/{id}/logs` answers with a snapshot —
    * container list, source, and lines — and rendering that as "one sandbox"
    * printed a table of dashes with the logs sitting unread inside it.
+   *
+   * `docs` is the other shape. The field printed is Markdown, and a document
+   * handed to a person or an agent has to arrive as the document — not as one
+   * cell of a table with its newlines eaten.
    */
-  shape?: 'logs'
+  shape?: 'logs' | 'docs'
+  /**
+   * Which field of the response a `docs` view prints. Named on the view rather
+   * than guessed from the segment, because "the document lives here" is a fact
+   * about the resource and not about the renderer.
+   */
+  field?: string
 }
 
 /** What a surface may do to a resource, beyond reading it. */

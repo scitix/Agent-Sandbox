@@ -122,10 +122,11 @@ export const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ""
  */
 export const SUPPRESSED_ERROR_CODES: string[] = [
   "SANDBOX_CREATE_TIMEOUT",
-  // API_KEY_REQUIRED is handled in-page: create-pool-sheet.tsx and
-  // env-docs-sheet.tsx show a dialog guiding the user to the API Keys page.
-  // Suppress the global toast to avoid showing two messages at once.
-  "API_KEY_REQUIRED",
+  // API_KEY_REQUIRED used to live here, for the Env docs and the E2B-backed
+  // create flows. The docs no longer render a credential server-side, so they
+  // cannot fail on one; what remains of the condition is "this account has no
+  // key at all", which those pages check before the request goes out
+  // (see api-key-required-notice.tsx) rather than by catching a 422.
 ]
 
 // ─── Auth helpers ──────────────────────────────────────────────────────────────

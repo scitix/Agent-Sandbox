@@ -15,134 +15,46 @@
 package handlers
 
 import (
-	"context"
 	"strings"
 	"testing"
 
 	"k8s.io/utils/ptr"
 
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 )
 
-// stubAPIKeyService implements just the ListByTeamAndUser method used by
-// renderEnvDocs. Other methods panic so any unexpected call is caught.
-type stubAPIKeyService struct {
-	items   []service.APIKeyItem
-	listErr *domain.AppError
-}
-
-var _ service.APIKeyService = (*stubAPIKeyService)(nil)
-
-func (s *stubAPIKeyService) ListByTeamAndUser(context.Context, string, string) ([]service.APIKeyItem, *domain.AppError) {
-	if s.listErr != nil {
-		return nil, s.listErr
-	}
-	return s.items, nil
-}
-
-func (s *stubAPIKeyService) Create(context.Context, service.CreateAPIKeyInput) (*service.APIKeyResult, *domain.AppError) {
-	panic("not implemented")
-}
-func (s *stubAPIKeyService) List(context.Context) ([]service.APIKeyItem, *domain.AppError) {
-	panic("not implemented")
-}
-func (s *stubAPIKeyService) Get(context.Context, string) (*service.APIKeyItem, *domain.AppError) {
-	panic("not implemented")
-}
-func (s *stubAPIKeyService) Delete(context.Context, string) *domain.AppError {
-	panic("not implemented")
-}
-func (s *stubAPIKeyService) Promote(context.Context, string) *domain.AppError {
-	panic("not implemented")
-}
-
-func newTestServer(stub *stubAPIKeyService) *Server {
-	return &Server{apikey: stub}
-}
-
 func TestRenderEnvDocs_EmptyRaw(t *testing.T) {
-	s := newTestServer(&stubAPIKeyService{})
-	got, err := s.renderEnvDocs(context.Background(), "", docsVars{envName: "e", poolName: "e-pool", clusterID: "c"}, domain.AuthInfo{Team: "t", User: "u"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	got := renderEnvDocs("", docsVars{envName: "e", poolName: "e-pool", clusterID: "c"})
 	if got != "" {
 		t.Fatalf("want empty, got %q", got)
 	}
 }
 
 func TestRenderEnvDocs_SubstitutesAllVariables(t *testing.T) {
-	stub := &stubAPIKeyService{
-		items: []service.APIKeyItem{
-			{KeyMetadata: service.KeyMetadata{RawToken: "agbx_newkey"}},
-		},
-	}
-	s := newTestServer(stub)
 	raw := "env=${AGBX_ENV_NAME} pool=${AGBX_POOL_NAME} cluster=${AGBX_CLUSTER_ID} key=${AGBX_API_KEY}"
-	got, err := s.renderEnvDocs(context.Background(), raw,
-		docsVars{envName: "myenv", poolName: "myenv-1c2gi-ondemand", clusterID: "cluster3"},
-		domain.AuthInfo{Team: "t", User: "alice"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	want := "env=myenv pool=myenv-1c2gi-ondemand cluster=cluster3 key=agbx_newkey"
+	got := renderEnvDocs(raw,
+		docsVars{envName: "myenv", poolName: "myenv-1c2gi-ondemand", clusterID: "cluster3"})
+	want := "env=myenv pool=myenv-1c2gi-ondemand cluster=cluster3 key=${AGBX_API_KEY}"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}
 }
 
-func TestRenderEnvDocs_PicksFirstKeyWithRawToken(t *testing.T) {
-	stub := &stubAPIKeyService{
-		items: []service.APIKeyItem{
-			{KeyMetadata: service.KeyMetadata{RawToken: ""}},              // legacy, skipped
-			{KeyMetadata: service.KeyMetadata{RawToken: "agbx_winner"}},   // picked
-			{KeyMetadata: service.KeyMetadata{RawToken: "agbx_runnerup"}}, // ignored
-		},
+// The API key is the one placeholder the server never fills in, whoever is
+// asking. A rendered document carrying a live credential could not be cached,
+// logged, echoed by `abx`, or relayed by an agent without leaking it, and the
+// console — which already holds the reader's keys — is the only client that can
+// substitute one safely.
+func TestRenderEnvDocs_KeepsTheAPIKeyPlaceholder(t *testing.T) {
+	raw := "export AGENTBOX_API_KEY=${AGBX_API_KEY}\nenv=${AGBX_ENV_NAME}"
+	got := renderEnvDocs(raw, docsVars{envName: "demo"})
+	if !strings.Contains(got, "${AGBX_API_KEY}") {
+		t.Fatalf("the placeholder should survive verbatim, got:\n%s", got)
 	}
-	s := newTestServer(stub)
-	got, err := s.renderEnvDocs(context.Background(), "k=${AGBX_API_KEY}", docsVars{envName: "e"}, domain.AuthInfo{Team: "t", User: "u"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "k=agbx_winner" {
-		t.Fatalf("want k=agbx_winner, got %q", got)
-	}
-}
-
-func TestRenderEnvDocs_NoUsableKeyReturnsAPIKeyRequired(t *testing.T) {
-	stub := &stubAPIKeyService{
-		items: []service.APIKeyItem{
-			{KeyMetadata: service.KeyMetadata{RawToken: ""}}, // legacy only
-		},
-	}
-	s := newTestServer(stub)
-	got, err := s.renderEnvDocs(context.Background(), "k=${AGBX_API_KEY}", docsVars{envName: "e"}, domain.AuthInfo{Team: "t", User: "u"})
-	if err == nil {
-		t.Fatalf("want error, got nil (rendered=%q)", got)
-	}
-	if err.BizCode != domain.BizErrAPIKeyRequired {
-		t.Fatalf("want BizCode=%q, got %q", domain.BizErrAPIKeyRequired, err.BizCode)
-	}
-	if err.Code != domain.ErrCodeUnprocessableEntity {
-		t.Fatalf("want 422, got %d", err.Code)
-	}
-}
-
-func TestRenderEnvDocs_NoApiKeyPlaceholderSkipsLookup(t *testing.T) {
-	// Stub that would fail if asked to list keys — proves the helper does not
-	// query the key store when ${AGBX_API_KEY} is absent.
-	stub := &stubAPIKeyService{
-		listErr: domain.NewInternal("should not be called", nil),
-	}
-	s := newTestServer(stub)
-	got, err := s.renderEnvDocs(context.Background(), "env=${AGBX_ENV_NAME}", docsVars{envName: "myenv"}, domain.AuthInfo{Team: "t", User: "u"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "env=myenv" {
-		t.Fatalf("want env=myenv, got %q", got)
+	// Everything else still renders — only the credential is withheld.
+	if !strings.Contains(got, "env=demo") {
+		t.Fatalf("non-secret variables should be substituted, got:\n%s", got)
 	}
 }
 
@@ -215,10 +127,10 @@ func TestRenderTemplateDocs_EmptyRaw(t *testing.T) {
 	}
 }
 
-func TestRenderTemplateDocs_SubstitutesEnvNameAndApiKey(t *testing.T) {
+func TestRenderTemplateDocs_SubstitutesEnvNameAndKeepsApiKey(t *testing.T) {
 	raw := "env=${AGBX_ENV_NAME} key=${AGBX_API_KEY}"
 	got := renderTemplateDocs(raw, docsVars{clusterID: "cluster3"})
-	want := "env=YOUR_ENV_NAME key=YOUR_API_KEY"
+	want := "env=YOUR_ENV_NAME key=${AGBX_API_KEY}"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}
@@ -235,7 +147,7 @@ func TestRenderTemplateDocs_SubstitutesRealClusterID(t *testing.T) {
 func TestRenderTemplateDocs_SubstitutesAllVariables(t *testing.T) {
 	raw := "env=${AGBX_ENV_NAME} pool=${AGBX_POOL_NAME} cluster=${AGBX_CLUSTER_ID} key=${AGBX_API_KEY}"
 	got := renderTemplateDocs(raw, docsVars{clusterID: "cluster3"})
-	want := "env=YOUR_ENV_NAME pool=YOUR_POOL_NAME cluster=cluster3 key=YOUR_API_KEY"
+	want := "env=YOUR_ENV_NAME pool=YOUR_POOL_NAME cluster=cluster3 key=${AGBX_API_KEY}"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}
@@ -293,17 +205,12 @@ func TestClusterDocsVars_UnknownValuesKeepPlaceholders(t *testing.T) {
 }
 
 func TestRenderEnvDocs_SubstitutesClusterEndpoints(t *testing.T) {
-	s := newTestServer(&stubAPIKeyService{})
 	vars := clusterDocsVars("demo", demoEndpoints())
 	vars.envName = "slime"
 	vars.poolName = "slime-1c16gi-10-ondemand"
 
-	got, err := s.renderEnvDocs(context.Background(),
-		"E2B_DOMAIN=${AGBX_DATA_DOMAIN} E2B_API_URL=${AGBX_E2B_URL} pool=${AGBX_POOL_NAME}",
-		vars, domain.AuthInfo{Team: "t", User: "u"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	got := renderEnvDocs(
+		"E2B_DOMAIN=${AGBX_DATA_DOMAIN} E2B_API_URL=${AGBX_E2B_URL} pool=${AGBX_POOL_NAME}", vars)
 	want := "E2B_DOMAIN=gw.example.com/agent-sandbox/api/data " +
 		"E2B_API_URL=https://gw.example.com/agent-sandbox/api/e2b pool=slime-1c16gi-10-ondemand"
 	if got != want {
@@ -319,49 +226,5 @@ func TestRenderTemplateDocs_KeepsRealClusterEndpoints(t *testing.T) {
 	want := "env=YOUR_ENV_NAME data=https://gw.example.com/agent-sandbox/api/data ip=10.0.0.1"
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
-	}
-}
-
-// An agent credential gets the template back, placeholder intact.
-//
-// The key that would have been substituted is the first usable one belonging to
-// that team and user — which, for an agent-restricted credential, can be the
-// unrestricted key it was deliberately not given. Rendering it would hand the
-// thing whose writes are gated the way around the gate, and put a live secret
-// in a transcript on the way.
-func TestRenderEnvDocs_AgentCredentialKeepsThePlaceholder(t *testing.T) {
-	stub := &stubAPIKeyService{items: []service.APIKeyItem{{KeyMetadata: service.KeyMetadata{RawToken: "agbx_should_not_appear"}}}}
-	s := newTestServer(stub)
-
-	raw := "export AGENTBOX_API_KEY=${AGBX_API_KEY}\nenv=${AGBX_ENV_NAME}"
-	got, err := s.renderEnvDocs(context.Background(), raw,
-		docsVars{envName: "demo"},
-		domain.AuthInfo{Team: "t", User: "u", Unattended: true})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if strings.Contains(got, "agbx_should_not_appear") {
-		t.Fatalf("an agent credential was handed a plaintext key:\n%s", got)
-	}
-	if !strings.Contains(got, "${AGBX_API_KEY}") {
-		t.Fatalf("the placeholder should survive verbatim, got:\n%s", got)
-	}
-	// Everything else still renders — only the secret is withheld.
-	if !strings.Contains(got, "env=demo") {
-		t.Fatalf("non-secret variables should still be substituted, got:\n%s", got)
-	}
-}
-
-// And the missing-key error is not raised for an agent either: there is nothing
-// it needed to look up, so "no usable key" is not its problem to report.
-func TestRenderEnvDocs_AgentCredentialNeedsNoKey(t *testing.T) {
-	s := newTestServer(&stubAPIKeyService{})
-	got, err := s.renderEnvDocs(context.Background(), "k=${AGBX_API_KEY}", docsVars{envName: "e"},
-		domain.AuthInfo{Team: "t", User: "u", Unattended: true})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "k=${AGBX_API_KEY}" {
-		t.Fatalf("expected the raw template, got %q", got)
 	}
 }

@@ -35,6 +35,12 @@ harbor run \
   --env-file agentbox.env
 ```
 
+The two endpoint lines are the env's, not a sketch: `abx envs <env> docs` prints
+them for the cluster you are actually reaching, including whether the data plane
+is http or https, and `E2B_API_KEY` is the key you authenticate `abx` with (what
+that document writes as `${AGBX_API_KEY}`). Where it offers several ways in, use
+the public one unless you are already inside the cluster.
+
 `-n 16` is concurrency, and it is the number that has to exist as **idle Pods**
 before the run starts moving. Size the pool for it first:
 

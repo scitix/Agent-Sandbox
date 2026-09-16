@@ -49,10 +49,11 @@ class SandboxTemplate:
                 worker). Empty for legacy resources.
             docs (str | Unset): Markdown documentation for the template, stored in the agentbox.navix.sh/docs annotation.
                 Supports the placeholders listed under SandboxEnv.envDocs. On Template Get the env-scoped
-                ones become readable hints (YOUR_ENV_NAME, YOUR_POOL_NAME, YOUR_API_KEY) because there is
-                no env context, while everything derived from the serving cluster's config
+                ones become readable hints (YOUR_ENV_NAME, YOUR_POOL_NAME) because there is no env
+                context, while everything derived from the serving cluster's config
                 (${AGBX_CLUSTER_ID}, the gateway URLs, ${AGBX_HOST}, ${AGBX_INNER_IP}, ${AGBX_HTTPS},
-                ${AGBX_REGISTRY_HOST}) is substituted for real; GetSandboxEnv substitutes everything.
+                ${AGBX_REGISTRY_HOST}) is substituted for real; GetSandboxEnv substitutes everything
+                except ${AGBX_API_KEY}, which neither renderer touches.
 
                 Editing only the docs does not require bumping spec.version — docs never reach the
                 rendered Pod, so they name no new template revision.

@@ -23,8 +23,10 @@ import { Check, Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { MarkdownRenderer } from "@/components/markdown-renderer"
+import { ApiKeyPicker } from "@/components/custom/api-key-picker"
 import { ResourceLink } from "@/components/custom/resource-link"
 import { envQueryOptions } from "@/lib/queries"
+import { useDocsApiKey } from "@/hooks/use-docs-api-key"
 import type { AgentSandboxEnv } from "@/lib/api/client"
 import { useTranslation, type TranslationKey } from "@/lib/i18n"
 import { useClusterID } from "@/hooks/use-cluster-id"
@@ -76,6 +78,41 @@ function DocsCopyButton({ content }: { content: string }) {
         {copied ? t("common.copied") : t("common.copyPage")}
       </span>
     </Button>
+  )
+}
+
+/**
+ * The Env's documentation, with the reader's own key filled in.
+ *
+ * The server leaves `${AGBX_API_KEY}` standing — a response that carried a
+ * credential could not be cached, logged or relayed — so the substitution
+ * happens here, from the key chosen beside the copy button. Copying takes the
+ * rendered text, not the API's: what lands on the clipboard is what the page
+ * shows, key included, which is the whole point of the panel.
+ */
+function EnvDocs({ docs }: { docs: string }) {
+  const { t } = useTranslation()
+  const { keys, selected, select, fill, loading } = useDocsApiKey()
+  const filled = fill(docs)
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
+          {t("envs.envDocsSheet.title")}
+        </h3>
+        <div className="flex items-center gap-2">
+          <ApiKeyPicker
+            keys={keys}
+            value={selected?.keyId}
+            onChange={select}
+            loading={loading}
+          />
+          <DocsCopyButton content={filled} />
+        </div>
+      </div>
+      <MarkdownRenderer content={filled} />
+    </section>
   )
 }
 
@@ -134,7 +171,6 @@ function EnvOverview({
   ]
 
   const padCount = (4 - (cells.length % 4)) % 4
-  const hasDocs = !!env.envDocs
 
   return (
     <div className="space-y-6 p-6">
@@ -154,19 +190,16 @@ function EnvOverview({
       </div>
 
       {/* Inline docs */}
-      <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-muted-foreground font-mono text-xs font-bold tracking-[0.12em] uppercase">
+      {env.envDocs ? (
+        <EnvDocs docs={env.envDocs} />
+      ) : (
+        <section>
+          <h3 className="text-muted-foreground mb-3 font-mono text-xs font-bold tracking-[0.12em] uppercase">
             {t("envs.envDocsSheet.title")}
           </h3>
-          {hasDocs && <DocsCopyButton content={env.envDocs!} />}
-        </div>
-        {hasDocs ? (
-          <MarkdownRenderer content={env.envDocs!} />
-        ) : (
           <p className="text-muted-foreground text-sm">{t("envs.noEnvDocs")}</p>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   )
 }

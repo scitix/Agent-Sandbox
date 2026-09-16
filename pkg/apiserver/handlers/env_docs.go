@@ -15,11 +15,9 @@
 package handlers
 
 import (
-	"context"
 	"strconv"
 	"strings"
 
-	"github.com/scitix/agent-sandbox/pkg/apiserver/domain"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 )
@@ -27,10 +25,19 @@ import (
 // Placeholders a template's docs markdown may use. Env-scoped rendering
 // (GetSandboxEnv) substitutes real values; the Template detail page has no env
 // context and substitutes readable hints for the env-dependent ones.
+//
+// ${AGBX_API_KEY} is in this list but is deliberately never substituted, by
+// either renderer. It is a credential, and the docs are a document: a response
+// carrying a secret cannot be cached, logged, echoed by a CLI, or relayed by an
+// agent without leaking it, and the only client that can fill the placeholder in
+// safely is the one that already holds the key — the console, which does it in
+// the browser from the reader's own keys. Everyone else gets the placeholder,
+// which says exactly what it is and what to do with it.
 const (
-	docsVarEnvName      = "${AGBX_ENV_NAME}"
-	docsVarPoolName     = "${AGBX_POOL_NAME}"
-	docsVarClusterID    = "${AGBX_CLUSTER_ID}"
+	docsVarEnvName   = "${AGBX_ENV_NAME}"
+	docsVarPoolName  = "${AGBX_POOL_NAME}"
+	docsVarClusterID = "${AGBX_CLUSTER_ID}"
+	// Never substituted — see the note above.
 	docsVarAPIKey       = "${AGBX_API_KEY}"
 	docsVarNativeURL    = "${AGBX_NATIVE_URL}"
 	docsVarE2BURL       = "${AGBX_E2B_URL}"
@@ -59,7 +66,6 @@ type docsVars struct {
 	envName   string
 	poolName  string
 	clusterID string
-	apiKey    string
 
 	nativeURL    string
 	e2bURL       string
@@ -112,7 +118,6 @@ func (v docsVars) apply(raw string) string {
 		{docsVarEnvName, v.envName},
 		{docsVarPoolName, v.poolName},
 		{docsVarClusterID, v.clusterID},
-		{docsVarAPIKey, v.apiKey},
 		{docsVarNativeURL, v.nativeURL},
 		{docsVarE2BURL, v.e2bURL},
 		{docsVarDataURL, v.dataURL},
@@ -131,49 +136,20 @@ func (v docsVars) apply(raw string) string {
 }
 
 // renderEnvDocs substitutes the docs placeholders in the raw env docs markdown
-// with real values. The caller supplies the env/pool/cluster context in vars;
-// the API key is resolved here from the acting user's API keys: the first entry
-// whose RawToken is non-empty wins (legacy keys with only a hash stored are
-// skipped because users cannot run the rendered snippets without the plaintext
-// token).
+// with real values. The caller supplies the env/pool/cluster context in vars.
 //
-// An agent credential is the exception and gets the placeholder back verbatim.
-// The rendered docs are a copy-paste snippet for a PERSON, and the plaintext
-// token in them is not even necessarily the caller's own — it is the first
-// usable key of that team and user, which for an agent-restricted credential
-// can be the unrestricted one it was deliberately not given. Handing that to
-// something whose writes are gated hands it the way out of the gate, and it
-// lands in a transcript besides. The placeholder is also the better answer on
-// its own terms: an agent relaying instructions to a person should relay the
-// template, not a secret it had no reason to see.
+// It is a pure function of the template and the deployment — no credential is
+// looked up, and ${AGBX_API_KEY} survives into the output for the client to
+// fill in. Everything a caller cannot guess (which env, which pool, which
+// cluster, and that cluster's gateway addresses) is rendered here, because a
+// reader — or an agent — that has to go and find those gives up.
 //
-// When raw is empty, returns ("", nil) — nothing to render.
-// When raw contains ${AGBX_API_KEY} but no usable key is found, returns
-// ("", APIKeyRequired AppError) so the caller can surface it to the user.
-func (s *Server) renderEnvDocs(ctx context.Context, raw string, vars docsVars, auth domain.AuthInfo) (string, *domain.AppError) {
+// When raw is empty, returns "" — nothing to render.
+func renderEnvDocs(raw string, vars docsVars) string {
 	if raw == "" {
-		return "", nil
+		return ""
 	}
-
-	if strings.Contains(raw, docsVarAPIKey) && !auth.Unattended {
-		keys, appErr := s.apikey.ListByTeamAndUser(ctx, auth.Team, auth.User)
-		if appErr != nil {
-			return "", appErr
-		}
-		for _, k := range keys {
-			if k.RawToken != "" {
-				vars.apiKey = k.RawToken
-				break
-			}
-		}
-		if vars.apiKey == "" {
-			return "", domain.NewAPIKeyRequired(
-				"no API key with a recoverable token found for this user; please create a new API key on the API Keys page to view the env docs",
-			)
-		}
-	}
-
-	return vars.apply(raw), nil
+	return vars.apply(raw)
 }
 
 // docsPoolName resolves the value ${AGBX_POOL_NAME} renders to for an Env: the
@@ -212,15 +188,19 @@ func docsPoolName(env *gen.SandboxEnv, localClusterID string) string {
 
 // renderTemplateDocs substitutes the docs placeholders with a preview of what
 // the rendered snippets will look like. The Template detail page is not scoped
-// to an env, so the env-dependent placeholders (env name, pool name, API key)
-// become readable stand-ins; everything derived from the serving cluster's
-// gateway config is substituted for real, since it does not depend on the env.
+// to an env, so the env-dependent placeholders (env name, pool name) become
+// readable stand-ins; everything derived from the serving cluster's gateway
+// config is substituted for real, since it does not depend on the env.
+//
+// ${AGBX_API_KEY} keeps its name rather than becoming a "YOUR_API_KEY" hint:
+// it is the placeholder the console fills in, and one spelling of it everywhere
+// is what lets the same snippet work on the Template page, the Env page and the
+// raw API.
 func renderTemplateDocs(raw string, vars docsVars) string {
 	if raw == "" {
 		return ""
 	}
 	vars.envName = "YOUR_ENV_NAME"
 	vars.poolName = "YOUR_POOL_NAME"
-	vars.apiKey = "YOUR_API_KEY"
 	return vars.apply(raw)
 }

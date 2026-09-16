@@ -36,9 +36,13 @@ const ENV_OVERRIDES = {
   envName: 'demo-env',
   templateName: 'demo-e2b-typescript',
   mode: 'WarmPool',
-  // The server renders this with the caller's own API key in it, which is why
-  // the CLI must never print it.
-  envDocs: '# demo-env\n\nAGENTBOX_API_KEY=sk-live-do-not-print\n',
+  // What the server actually renders: every fact about the cluster filled in,
+  // and the API key left as the placeholder for the client to fill. A document
+  // with a live credential in it could not be printed, echoed or handed to an
+  // agent, which is exactly what this view is for.
+  envDocs:
+    '# demo-env\n\nE2B_API_URL=https://gw.example.test/agent-sandbox/api/e2b\n' +
+    'AGENTBOX_API_KEY=${AGBX_API_KEY}\n',
 }
 
 const POOL = {
@@ -57,9 +61,8 @@ const TEMPLATE = {
   name: 'demo-e2b-typescript',
   version: '2026.08.04',
   description: 'TypeScript sandbox',
-  // The template's own docs carry a placeholder, not the caller's key, which is
-  // what makes them safe to print — unlike an env's envDocs.
-  docs: '# docs\n\nuse YOUR_API_KEY\n',
+  // The same contract as the env's docs: endpoints rendered, key a placeholder.
+  docs: '# docs\n\nuse ${AGBX_API_KEY}\n',
   crdYaml: 'apiVersion: agents.navix.sh/v1alpha1\nkind: SandboxTemplate\n',
   cpu: '500m',
   memory: '1Gi',
@@ -243,26 +246,36 @@ describe('a get is the object, not a row of the list', () => {
     expect(out).toContain('hint:')
   })
 
-  it('never prints envDocs, because the server renders the caller own key into it', async () => {
+  it('keeps envDocs out of the detail page, where it would read as a scalar', async () => {
     const { out } = await cli(['envs', 'demo-env', '--cluster', 'prod-foo'])
-    expect(out).not.toContain('sk-live-do-not-print')
+    expect(out).not.toContain('E2B_API_URL')
     expect(out).not.toContain('envDocs')
   })
 
-  it('drops envDocs from --json too, and says why on stderr', async () => {
-    const { out, err } = await cli(['envs', 'demo-env', '--cluster', 'prod-foo', '--json'])
+  it('hands envDocs back under --json, whole, because there is no secret in it', async () => {
+    const { out } = await cli(['envs', 'demo-env', '--cluster', 'prod-foo', '--json'])
     const parsed = JSON.parse(out) as Record<string, unknown>
     expect(parsed.name).toBe('demo-env')
-    expect('envDocs' in parsed).toBe(false)
-    expect(err).toContain('envDocs is omitted')
-    // And the rest of the object survives: this is a redaction, not a rewrite.
+    expect(parsed.envDocs).toContain('E2B_API_URL=')
+    // The key is a placeholder here for the same reason it is on the server:
+    // this output ends up in transcripts and CI logs.
+    expect(parsed.envDocs).toContain('${AGBX_API_KEY}')
     expect((parsed.spec as Record<string, unknown>).mode).toBe('WarmPool')
+  })
+
+  it('prints the document, not a table, for `abx envs <env> docs`', async () => {
+    const { out } = await cli(['envs', 'demo-env', 'docs', '--cluster', 'prod-foo'])
+    // The endpoints an agent cannot guess are the whole point of the view.
+    expect(out).toContain('E2B_API_URL=https://gw.example.test/agent-sandbox/api/e2b')
+    expect(out).toContain('${AGBX_API_KEY}')
+    // The heading survives as a heading rather than being folded into a row.
+    expect(out.split('\n')[0]).toBe('# demo-env')
   })
 
   it('renders a template full text, docs included', async () => {
     const { out } = await cli(['templates', 'demo-e2b-typescript', '--cluster', 'prod-foo'])
     expect(out).toContain('docs (')
-    expect(out).toContain('use YOUR_API_KEY')
+    expect(out).toContain('use ${AGBX_API_KEY}')
     expect(out).toContain('crdYaml (')
   })
 })

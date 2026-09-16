@@ -908,11 +908,15 @@ export async function run(argv: string[]): Promise<number> {
   const rows = normalize(payload, resolved.listField)
   if (resolved.collection) return printRows(resolved.spec, rows, ctx, address, flags, filters)
 
-  if (resolved.view) return printView(resolved.view, payload, ctx, address)
+  // A view that carries a document answers with an envelope, the same one a
+  // `get` does — so it is unwrapped the same way before the renderer looks for
+  // the field. Logs answer with their own shape, which `normalize` hands back
+  // unchanged.
+  if (resolved.view) return printView(resolved.view, rows[0] ?? payload, ctx, address)
 
   if (ctx.format === 'json') {
     // A `get` answers with the object, not a one-element list.
-    console.log(JSON.stringify(stripEnvDocs(resolved.spec, rows[0] ?? null)))
+    console.log(JSON.stringify(rows[0] ?? null))
     return 0
   }
   // A one-row CSV is what `--csv` asks for, and the detail view is not that:
@@ -1265,9 +1269,9 @@ async function printDetail(
   return 0
 }
 
-/** A view — logs today — which is a snapshot rather than a row set. */
+/** A view — logs, docs — which is a snapshot rather than a row set. */
 function printView(
-  view: { segment: string; shape?: 'logs' },
+  view: { segment: string; shape?: 'logs' | 'docs'; field?: string },
   payload: unknown,
   ctx: Context,
   address: Address,
@@ -1276,6 +1280,7 @@ function printView(
     console.log(JSON.stringify(payload))
     return 0
   }
+  if (view.shape === 'docs') return printDocs(view, payload)
   if (ctx.format === 'csv') {
     console.log(renderLogsCsv(payload))
     return 0
@@ -1285,24 +1290,32 @@ function printView(
 }
 
 /**
- * Drop the one field that is not safe to hand back, even as JSON.
+ * Print a document, whole.
  *
- * `envDocs` is Markdown rendered with the caller's own plaintext API key
- * substituted in, so printing it puts a credential into whatever reads the
- * output. The template's own docs are the same text with a placeholder instead,
- * which is why they are safe to print — and why the note points there.
+ * The point of `abx envs <env> docs` is that an agent about to drive an env
+ * through the E2B SDK can read the endpoints of the cluster it is talking to —
+ * which are facts it cannot guess and which the server has already rendered
+ * into this text. So the document goes out as it is: a table renderer would eat
+ * the newlines out of the code blocks, and a JSON dump is not something a
+ * reader can paste.
+ *
+ * There is no credential in it to strip. `${AGBX_API_KEY}` survives the
+ * server's rendering by design — the key an agent uses is the one it already
+ * authenticates with, and printing a live one here would put a secret into
+ * every transcript and CI log that ever ran the command.
  */
-function stripEnvDocs(spec: { plural: string }, obj: unknown): unknown {
-  if (spec.plural !== 'envs' || !obj || typeof obj !== 'object') return obj
-  const row = obj as Record<string, unknown>
-  if (!('envDocs' in row)) return obj
-  const { envDocs: _omitted, ...rest } = row
-  console.error(
-    'note: envDocs is omitted, even from --json — the server renders it with your own\n' +
-      '      plaintext API key substituted in. `abx templates <name>` prints the same\n' +
-      '      documentation with a placeholder where the key goes.',
-  )
-  return rest
+function printDocs(view: { field?: string }, payload: unknown): number {
+  const field = view.field
+  const value =
+    field && payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>)[field]
+      : undefined
+  if (typeof value !== 'string' || !value.trim()) {
+    console.log('no documentation for this resource.')
+    return 0
+  }
+  console.log(value.trimEnd())
+  return 0
 }
 
 /**

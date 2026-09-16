@@ -44,6 +44,11 @@ will tell you its own signature. `abx-common` has the whole recipe; the short
 version is `abx update envs <env> --help` for anything the env owns and the spec
 above for anything the sandbox owns.
 
+The call itself needs somewhere to go first: `abx envs <env> docs` prints the
+E2B API URL and data-plane domain for the env's cluster, which is what the
+create is sent to. Take the public entry it offers unless the caller runs inside
+the cluster.
+
 What matters, and does not change with the field names: **deny-all-then-allow**,
 never allow-all-then-deny. A denylist is a list of the routes you thought of.
 
