@@ -32,7 +32,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .sandbox_manager import (
-    NoSessionIdentity,
     alias_session,
     bind_session,
     manager,
@@ -195,10 +194,6 @@ class BindRequest(BaseModel):
 # refusal can surface from any of them. The agent relays what it is told, and
 # "503: no platform credential is bound to this session" is actionable where
 # "500 Internal Server Error" gets reported to a user as a broken platform.
-@app.exception_handler(NoSessionIdentity)
-def _no_identity(_request: Request, exc: NoSessionIdentity) -> JSONResponse:
-    return JSONResponse(status_code=503, content={"detail": str(exc)})
-
 
 @app.post("/sessions/{sid}/bind")
 def bind(sid: str, req: BindRequest) -> dict:

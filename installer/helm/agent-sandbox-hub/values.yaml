@@ -308,25 +308,23 @@ assistant:
       tag: latest
     readyTimeoutSeconds: 300
     timeoutSeconds: 3600
-    # Whose credential a conversation's sandbox is created with.
+    # Whose sandbox a conversation gets, and whose credential its calls carry.
     #
-    #   session — the credential the console bound for the person talking. Their
-    #             namespace, their quota, their vault, and everything `abx`
-    #             lists is theirs. An administrator acting as a user gets that
-    #             USER's sandbox, with a tenant key, never an admin one. A
-    #             conversation with no bound credential gets no sandbox.
-    #   static  — this pod's own key below. For a deployment with no
-    #             authenticating front door, and for smoke-testing with curl.
+    # The sandbox belongs to THIS deployment (the key below): it lands in the
+    # platform's namespace, counts against the platform's quota, claims from the
+    # platform's pool, and the front end never has to see or manage it. The
+    # credential the sandbox's outbound calls carry belongs to the PERSON
+    # talking — the console mints it per conversation and the daemon arms the
+    # vault with it — so their writes wait in their own approval queue.
     #
-    # `static` in a real deployment is the silent failure worth naming: every
-    # conversation gets a sandbox with this pod's privileges, the quota endpoint
-    # refuses an admin identity outright, and nothing in the transcript explains
-    # either.
-    identity:
-      mode: session
-
-    # This pod's own sandbox API key. Used to create sandboxes only in
-    # `identity.mode: static`; in `session` mode it is unused.
+    # Both facts at once, because they are genuinely separate. A switch that
+    # made them one answer is how a deployment ended up running every
+    # conversation's writes with an administrator's key and no gate.
+    #
+    # ⚠️ The key below must be a TENANT key, and it should be an `agent` one:
+    # an admin key here means every conversation's sandbox management runs with
+    # admin rights, and an `unrestricted` one means the platform's own writes
+    # are never held for approval.
     credentials:
       existingSecret: ""
       key: E2B_API_KEY

@@ -72,6 +72,7 @@ import {
   type FileConfig,
 } from './contexts'
 import { request, requestAt } from './api'
+import { readFileSync } from 'node:fs'
 import {
   applyFilters,
   hints,
@@ -86,6 +87,26 @@ import { agentContext } from './agent-context'
 
 declare const AGBX_CLI_VERSION: string
 const VERSION = typeof AGBX_CLI_VERSION === 'string' ? AGBX_CLI_VERSION : 'dev'
+
+/**
+ * The version, and — inside a sandbox image — which build of the image it is.
+ *
+ * The number alone answers "which abx", which is not the question anyone is
+ * actually asking when a sandbox behaves like an older release: the binary and
+ * the image it ships in are built separately, and a deployment that upgraded one
+ * and not the other looks identical from `abx version`. The image writes
+ * `repository:tag` to /opt/abx/IMAGE when it is built, so the answer is one line
+ * instead of a kubectl session.
+ */
+function versionLine(): string {
+  try {
+    const image = readFileSync('/opt/abx/IMAGE', 'utf8').trim()
+    return image ? `${VERSION} (image ${image})` : VERSION
+  } catch {
+    // Not in an image: a laptop install, a locally built binary. Nothing to add.
+    return VERSION
+  }
+}
 
 interface Parsed {
   positional: string[]
@@ -476,7 +497,7 @@ export async function run(argv: string[]): Promise<number> {
   // a usage page: a version is what a bug report needs, and a caller who asked
   // for one and got a wall of prose has to guess whether the answer was in it.
   if (flags.version || (positional.length === 1 && positional[0] === 'version')) {
-    console.log(VERSION)
+    console.log(versionLine())
     return 0
   }
 

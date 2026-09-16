@@ -141,52 +141,41 @@ def _sandbox_network_from_environ() -> Optional[Dict[str, Any]]:
 SANDBOX_NETWORK = _sandbox_network_from_environ()
 
 
-# Whether a sandbox is created with the CALLER's platform credential or with this
-# process's own.
+# Whose sandbox a conversation gets, and whose credential its calls carry.
 #
-#   session (default) — every sandbox is created with the credential the gateway
-#                       bound for that session, so it lands in that person's
-#                       namespace, counts against their quota, and the egress
-#                       injection resolves THEIR vault (the platform resolves a
-#                       ${e2b.secrets.*} reference against the identity that
-#                       created the sandbox). A session with no credential gets
-#                       no sandbox.
-#   static          — every sandbox is created with this process's E2B_API_KEY,
-#                       EVEN when the front door bound a credential for the
-#                       session. That is the whole of the mode: a deployment
-#                       that wants every conversation's sandbox to belong to one
-#                       identity — the env's owner — so the pool it claims from
-#                       is that identity's own. Who the conversation is actually
-#                       for is recorded in `hands.user` metadata instead.
+# Two separate facts, and keeping them separate is the whole design:
 #
-# `session` is the default because the failure mode of the other direction is
-# invisible: an administrator's conversation would silently get a sandbox with
-# the deployment's own privileges, and nothing in the transcript would say so.
-SANDBOX_IDENTITY_MODE = (
-    os.environ.get("SBX_IDENTITY_MODE", "session").strip().lower() or "session"
-)
+#   * The SANDBOX belongs to this deployment. It is created with the platform's
+#     own credential (E2B_API_KEY), so it lands in the platform's namespace,
+#     counts against the platform's quota, and claims from the platform's warm
+#     pool. A front end is a client of the platform like any other — the same
+#     shape a database product would use to hand its users a sandbox — and it
+#     does not want its sandboxes to appear in, or be charged to, whoever
+#     happens to be talking.
+#
+#   * The CREDENTIAL the sandbox's outbound calls carry is the PERSON's: the
+#     front door binds the caller's own agent key for the session, and the vault
+#     is armed with that, so `abx` inside the sandbox acts as the person and
+#     their writes wait in the person's approval queue. Which person a sandbox
+#     was built for is also recorded in `hands.user` metadata.
+#
+# There used to be a `static`/`session` switch here, and it was the bug: it made
+# "whose sandbox" and "who approves" the same answer. A deployment that picked
+# `static` — to keep the sandboxes on the platform's own pool — also handed
+# every conversation the platform's key, and when that key was an admin one,
+# every conversation's writes ran as an administrator with no gate at all.
+# Removing the switch removes the way to get that wrong.
 
 
-def acting_api_key(sid: str) -> Optional[str]:
-    """The credential a sandbox for `sid` is created and armed with.
+def owner_api_key() -> Optional[str]:
+    """The credential this deployment creates sandboxes with.
 
-    In `static` mode this is the process's own key and nothing else. Reading
-    the session's key here anyway — which is what happened while this returned
-    `session_api_key(sid)` unconditionally — made the mode half-work: it
-    stopped the "no credential" refusal, but a front door that DID bind one
-    still had its key used, so sandboxes went on being created as the person
-    talking. The symptom was remote from the cause: creates refused with
-    "pool belongs to <someone else>", because the pool belongs to the identity
-    the mode was supposed to be acting as.
-
-    Returning None is not a failure mode here: the E2B SDK falls back to
-    E2B_API_KEY from the environment, which in `static` mode is the answer.
-    It is returned explicitly so the vault is armed under the same identity the
-    create will resolve `${e2b.secrets.*}` against.
+    Returned explicitly rather than left to the SDK's environment fallback, so
+    it can be handed to the vault arming as well: the platform resolves a
+    `${e2b.secrets.*}` reference against the identity that CREATED the sandbox,
+    so the value has to be written into that identity's vault.
     """
-    if SANDBOX_IDENTITY_MODE == "static":
-        return os.environ.get("E2B_API_KEY") or None
-    return session_api_key(sid)
+    return os.environ.get("E2B_API_KEY") or None
 
 
 # Vault entry names the egress injection references, e.g. "abx-key,e2b-key".
@@ -202,15 +191,6 @@ def _session_secret_names() -> List[str]:
 
 
 SESSION_SECRET_NAMES = _session_secret_names()
-
-
-class NoSessionIdentity(RuntimeError):
-    """A session asked for a sandbox without a platform credential bound to it.
-
-    Its own class because the daemon has to answer with the REASON: the message
-    names the one thing an operator can act on, and a generic 500 would reach the
-    agent as "something broke" and be reported as a platform fault.
-    """
 
 
 def _e2b_api_base() -> str:
@@ -231,15 +211,19 @@ def _e2b_api_base() -> str:
     return f"{scheme}://{domain}".rstrip("/")
 
 
-def _arm_vault(api_key: str, sid: str) -> None:
-    """Store `api_key` in ITS OWN owner's vault, under every injected name.
+def _arm_vault(owner_key: str, sid: str, value: str) -> None:
+    """Store `value` in the SANDBOX OWNER's vault, under every injected name.
 
-    This is what makes the egress injection resolve to the right person. The
-    platform resolves a `${e2b.secrets.<name>}` reference against the identity
-    that CREATED the sandbox, and the vault is keyed by (namespace, user) — so
-    writing with this key puts the value exactly where the create with the same
-    key will look for it. The names stay constant across identities precisely
-    because the vault is per-identity.
+    This is where the two facts meet. The platform resolves a
+    `${e2b.secrets.<name>}` reference against the identity that CREATED the
+    sandbox, and the vault is keyed by (namespace, user) — so the write has to
+    be made with the owner's credential (the same one the create uses) even
+    though the value it stores belongs to the person talking. Writing it with
+    the person's own key would put it in THEIR vault, where this sandbox's
+    injection never looks, and the sandbox would come up unauthenticated.
+
+    The value is the caller's own agent key, so the sandbox's outbound platform
+    calls act as them.
 
     Best effort with a loud log line. A failure here is not fatal on its own:
     the create still succeeds and the sandbox still runs, it just cannot
@@ -267,7 +251,7 @@ def _arm_vault(api_key: str, sid: str) -> None:
             url,
             data=json.dumps(body).encode("utf-8"),
             method="POST",
-            headers={"content-type": "application/json", "X-API-Key": api_key},
+            headers={"content-type": "application/json", "X-API-Key": owner_key},
         )
         try:
             with urllib.request.urlopen(req, timeout=10):
@@ -276,12 +260,12 @@ def _arm_vault(api_key: str, sid: str) -> None:
             return getattr(err, "code", None) or -1
 
     for name in SESSION_SECRET_NAMES:
-        status = put(f"{base}/secrets", {"name": name, "value": api_key})
+        status = put(f"{base}/secrets", {"name": name, "value": value})
         if status == 409:
             # Already present, which is the normal case for anyone's second
             # conversation. The update path is also what re-arms an identity
             # whose key was rotated.
-            status = put(f"{base}/secrets/{name}", {"value": api_key})
+            status = put(f"{base}/secrets/{name}", {"value": value})
         if status is not None:
             print(
                 f"[sbxmgr] vault write of {name!r} for sid={sid} failed "
@@ -946,19 +930,24 @@ class SandboxManager:
         # Resolve FIRST: every id below (the lock, the cache key, the staging dir
         # ensure_attachments reads) has to be the same one the browser uses.
         sid = resolve_sid(sid)
-        api_key = acting_api_key(sid)
-        identity = session_identity(sid)
-        if SANDBOX_IDENTITY_MODE == "session" and not api_key:
-            # No credential means no sandbox. The alternative is creating one
-            # with this process's own key, which works — and quietly gives the
-            # conversation the deployment's privileges instead of the caller's,
-            # with nothing in the transcript to say so.
-            raise NoSessionIdentity(
-                "no platform credential is bound to this session, so a sandbox "
-                "cannot be created for it. The front door supplies one on every "
-                "run; if you are driving this daemon directly, set "
-                "SBX_IDENTITY_MODE=static to use the deployment's own key."
+        # The sandbox is the platform's; the credential the sandbox's calls
+        # carry is the person's. See `owner_api_key` for why these are two
+        # separate facts and not a mode.
+        owner_key = owner_api_key()
+        person_key = session_api_key(sid)
+        if not person_key:
+            # The platform can still build the sandbox — it is the platform's
+            # own, after all — but nothing will be injected for a person, so the
+            # sandbox's calls will act as the platform. That is right for the
+            # unattended flows (a digest, a triage run) and wrong for a
+            # conversation, and the difference is invisible from inside, so it
+            # gets a log line rather than a guess.
+            print(
+                f"[sbxmgr] sid={sid} has no per-session credential bound; its "
+                "injected calls will act as this deployment's own key",
+                flush=True,
             )
+        identity = session_identity(sid)
         slock = self._get_session_lock(sid)
         with slock:
             with self._lock:
@@ -996,7 +985,7 @@ class SandboxManager:
                 # Nothing in memory for this session. Before building, check whether
                 # the sandbox it already had is still running — this process may
                 # simply have restarted underneath a live conversation.
-                adopted = self._reattach(sid, api_key, identity)
+                adopted = self._reattach(sid, owner_key, identity)
                 if adopted is not None:
                     with self._lock:
                         self._sessions[sid] = adopted
@@ -1019,8 +1008,11 @@ class SandboxManager:
             # Armed BEFORE the create, because the platform resolves the
             # injection's ${e2b.secrets.*} references while serving it — a vault
             # written afterwards would arrive too late for this sandbox.
-            if api_key:
-                _arm_vault(api_key, sid)
+            # Armed with the OWNER's credential but the PERSON's value: the
+            # injection resolves against the identity that created the sandbox,
+            # while what it hands out is whose calls these are.
+            if owner_key:
+                _arm_vault(owner_key, sid, person_key or owner_key)
             sbx = Sandbox.create(
                 template=self._template(),
                 envs=envs,
@@ -1031,7 +1023,7 @@ class SandboxManager:
                 # it lands in, the quota it counts against, and whose vault the
                 # egress injection resolves — so this one argument is what makes
                 # the sandbox the CALLER's rather than this deployment's.
-                **({"api_key": api_key} if api_key else {}),
+                **({"api_key": owner_key} if owner_key else {}),
                 # Omitted entirely when unset rather than passed as None: with
                 # no egress config at all the platform leaves private networks
                 # reachable, which is what a deployment without injection

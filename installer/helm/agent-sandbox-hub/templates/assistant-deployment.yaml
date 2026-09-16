@@ -202,15 +202,6 @@ spec:
             - name: SBX_SESSION_SECRET_NAMES
               value: {{ $sbxSecrets | quote }}
             {{- end }}
-            # Whose credential a conversation's sandbox is created with. `session`
-            # (the default) uses the one the console bound for the person talking,
-            # so the sandbox lands in THEIR namespace, counts against THEIR quota,
-            # and its injection resolves THEIR vault. `static` uses this pod's own
-            # key — for a deployment with no authenticating front door, and for
-            # smoke tests. Leaving it on `static` in a real deployment hands every
-            # conversation this pod's privileges without saying so anywhere.
-            - name: SBX_IDENTITY_MODE
-              value: {{ ($s.identity).mode | default "session" | quote }}
             - name: AGENTBOX_STATE_DIR
               value: {{ $stateDir | quote }}
             - name: OPENCODE_DB

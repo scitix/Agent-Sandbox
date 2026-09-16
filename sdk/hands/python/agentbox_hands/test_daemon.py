@@ -354,36 +354,17 @@ class SessionIdentityTests(unittest.TestCase):
     def tearDown(self):
         sandbox_manager.unbind_session(self.SID)
 
-    def test_session_mode_refuses_a_session_with_no_credential(self):
-        # Creating one with this process's own key would work, and would quietly
-        # hand the conversation the deployment's privileges instead of the
-        # caller's -- so it is refused loudly instead.
+    def test_a_session_with_no_credential_still_gets_its_platform_sandbox(self):
+        # The sandbox is the platform's whatever the front door did: it is built
+        # with the platform's own key, so a session that bound nothing still
+        # works (the unattended flows are exactly this). What it loses is the
+        # person's credential, which is worth a log line rather than a refusal.
         sandbox_manager.bind_session(self.SID, "/home/agents/u/alice")
-        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"):
-            with self.assertRaises(sandbox_manager.NoSessionIdentity) as caught:
-                self._mgr.get_or_create(self.SID)
-        self.assertIn("no platform credential", str(caught.exception))
-
-    def test_static_mode_still_serves_a_session_with_no_credential(self):
-        # The escape hatch for a deployment with no authenticating front door.
-        # It must get past the gate above -- it fails later, on the SDK call,
-        # which is what proves the gate let it through.
-        sandbox_manager.bind_session(self.SID, "/home/agents/u/alice")
-        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "static"):
+        with mock.patch.dict(os.environ, {"AGBX_ENV_NAME": "abx-mvp"}), \
+             mock.patch.object(sandbox_manager, "Sandbox", _RefusingSandbox):
             with self.assertRaises(Exception) as caught:
                 self._mgr.get_or_create(self.SID)
-        self.assertNotIn("no platform credential", str(caught.exception))
-
-    def test_the_refusal_reaches_the_caller_as_503_with_its_reason(self):
-        # A bare RuntimeError would be a generic 500, and the agent relays what
-        # it is told -- so the one actionable sentence has to survive the HTTP
-        # layer or a misconfiguration gets reported as "the platform is broken".
-        sandbox_manager.bind_session(self.SID, "/home/agents/u/alice")
-        client = TestClient(daemon.app, raise_server_exceptions=False)
-        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"):
-            res = client.post(f"/sessions/{self.SID}/info")
-        self.assertEqual(res.status_code, 503)
-        self.assertIn("no platform credential", res.text)
+        self.assertIn("reached the create call", str(caught.exception))
 
     def test_a_changed_identity_discards_the_cached_sandbox(self):
         # The one that matters: an administrator moves the impersonation selector
@@ -396,8 +377,7 @@ class SessionIdentityTests(unittest.TestCase):
         sandbox_manager.bind_session(
             self.SID, "/home/agents/u/team1.carol", "agbx_carol", "team1/carol"
         )
-        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"), \
-             mock.patch.object(
+        with mock.patch.object(
                  self._mgr, "_evict", lambda sid, e: evicted.append(e)
              ), \
              mock.patch.object(self._mgr, "_reattach", lambda *a, **k: None), \
@@ -418,8 +398,7 @@ class SessionIdentityTests(unittest.TestCase):
         sandbox_manager.bind_session(
             self.SID, "/home/agents/u/team1.bob", "agbx_bob", "team1/bob"
         )
-        with mock.patch.object(sandbox_manager, "SANDBOX_IDENTITY_MODE", "session"), \
-             mock.patch.object(self._mgr, "_alive", lambda e: True), \
+        with mock.patch.object(self._mgr, "_alive", lambda e: True), \
              mock.patch.object(self._mgr, "ensure_workspace", lambda *a: None), \
              mock.patch.object(self._mgr, "ensure_attachments", lambda *a: None):
             self.assertIs(self._mgr.get_or_create(self.SID), cached)
@@ -569,16 +548,15 @@ class ActingIdentityTest(unittest.TestCase):
     """`static` mode has to ignore the session's credential, not merely survive
     its absence.
 
-    While it read the session key whenever one was bound, the mode worked only
-    on a deployment with no front door — exactly the case nobody runs. With a
-    console in front, every sandbox went on being created as the person talking,
-    and the failure surfaced far from the cause: creates refused with "pool
-    belongs to <someone else>", because the pool belongs to the identity the
-    mode was supposed to act as.
+    Two facts, and they must stay apart: the sandbox belongs to the platform
+    (built with its key — its namespace, its quota, its pool) while the
+    credential its calls carry belongs to the person talking (so their writes
+    wait in their own approval queue). The mode that used to live here made
+    them one answer, and a deployment that chose "the platform's pool" also got
+    the platform's key injected for everyone.
     """
 
     def setUp(self):
-        self._mode = sandbox_manager.SANDBOX_IDENTITY_MODE
         self._env = os.environ.get("E2B_API_KEY")
         os.environ["E2B_API_KEY"] = "agbx_deployment_own_key"
         sandbox_manager._BOUND["ses_x"] = {
@@ -588,18 +566,48 @@ class ActingIdentityTest(unittest.TestCase):
 
     def tearDown(self):
         sandbox_manager._BOUND.pop("ses_x", None)
-        sandbox_manager.SANDBOX_IDENTITY_MODE = self._mode
         if self._env is None:
             os.environ.pop("E2B_API_KEY", None)
         else:
             os.environ["E2B_API_KEY"] = self._env
 
-    def test_static_uses_the_deployments_key_even_when_a_session_is_bound(self):
-        sandbox_manager.SANDBOX_IDENTITY_MODE = "static"
-        self.assertEqual(
-            sandbox_manager.acting_api_key("ses_x"), "agbx_deployment_own_key"
-        )
+    def test_the_owner_builds_the_sandbox_and_the_person_gets_the_credential(self):
+        # The assertion that replaces two modes: ONE call, with both facts in
+        # it. The create carries the platform's key; the vault carries the
+        # person's — and the vault is written with the owner's credential,
+        # because that is whose vault this sandbox's injection resolves.
+        armed = {}
 
-    def test_session_uses_the_persons_key(self):
-        sandbox_manager.SANDBOX_IDENTITY_MODE = "session"
-        self.assertEqual(sandbox_manager.acting_api_key("ses_x"), "agbx_the_person")
+        def fake_arm(owner_key, sid, value):
+            armed.update(owner=owner_key, sid=sid, value=value)
+
+        created = {}
+
+        class _CapturingSandbox:
+            @staticmethod
+            def create(**kwargs):
+                created.update(kwargs)
+                raise RuntimeError("reached the create call")
+
+        with mock.patch.dict(os.environ, {"AGBX_ENV_NAME": "abx-mvp"}), \
+             mock.patch.object(sandbox_manager, "_arm_vault", fake_arm), \
+             mock.patch.object(sandbox_manager, "Sandbox", _CapturingSandbox):
+            with self.assertRaises(RuntimeError):
+                sandbox_manager.SandboxManager().get_or_create("ses_x")
+
+        self.assertEqual(created.get("api_key"), "agbx_deployment_own_key")
+        self.assertEqual(armed.get("owner"), "agbx_deployment_own_key")
+        self.assertEqual(armed.get("value"), "agbx_the_person")
+
+    def test_with_nothing_bound_the_platform_acts_as_itself(self):
+        sandbox_manager._BOUND.pop("ses_x", None)
+        armed = {}
+        with mock.patch.object(
+            sandbox_manager, "_arm_vault",
+            lambda owner_key, sid, value: armed.update(owner=owner_key, value=value),
+        ), mock.patch.dict(os.environ, {"AGBX_ENV_NAME": "abx-mvp"}), \
+           mock.patch.object(sandbox_manager, "Sandbox", _RefusingSandbox):
+            with self.assertRaises(RuntimeError):
+                sandbox_manager.SandboxManager().get_or_create("ses_x")
+        self.assertEqual(armed.get("owner"), "agbx_deployment_own_key")
+        self.assertEqual(armed.get("value"), "agbx_deployment_own_key")

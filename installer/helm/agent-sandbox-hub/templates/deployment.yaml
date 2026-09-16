@@ -79,19 +79,6 @@ spec:
             - name: DEX_OIDC_ADMINS
               value: {{ .Values.dex.oidcAdmins | quote }}
             {{- end }}
-            # Whether every conversation's sandbox gets ONE identity (the
-            # assistant's own) or the caller's. Rendered from the same value
-            # that sets SBX_IDENTITY_MODE on the assistant, because the BFF and
-            # the daemon are two halves of one decision: with `static` the BFF
-            # must not mint a per-person key, or it accumulates a credential per
-            # person that nothing consumes and that `abx whoami` inside a
-            # sandbox then contradicts.
-            #
-            # Outside the globalApiKey guard: it describes the assistant, not
-            # key management, and a deployment that turns global keys off must
-            # not silently fall back to minting one per person.
-            - name: ASSISTANT_SANDBOX_IDENTITY_MODE
-              value: {{ (((.Values.assistant | default dict).sandbox | default dict).identity | default dict).mode | default "session" | quote }}
             {{- if .Values.globalApiKey.enabled }}
             - name: WSPROXY_INTERNAL_URL
               value: "http://{{ include "agent-sandbox-hub.proxyFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:9004"

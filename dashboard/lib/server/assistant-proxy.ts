@@ -48,18 +48,6 @@ import {
  * survive, or a tenant could name someone else and be handed their credential.
  * They are stripped on the way in and set from the verified session below.
  */
-/**
- * Does this deployment give every conversation's sandbox the same identity?
- *
- * Rendered from the same chart value that sets SBX_IDENTITY_MODE on the
- * assistant, so the two cannot disagree. Read per call rather than at module
- * load: the tests set it, and a value captured at import would make the first
- * test to run decide for the rest.
- */
-function staticSandboxIdentity(): boolean {
-  return (process.env.ASSISTANT_SANDBOX_IDENTITY_MODE ?? "session").trim().toLowerCase() === "static"
-}
-
 const STRIP = new Set([
   "host",
   "connection",
@@ -165,14 +153,15 @@ export async function proxyToAssistant(
   // sandbox at all — or, worse, by falling back to the deployment's own key and
   // silently handing an admin-scoped sandbox to whoever asked.
   //
-  // Unless the deployment has said every sandbox belongs to ONE identity. Then
-  // minting a key per person is work with no consumer: the daemon ignores it,
-  // and the only trace it leaves is a credential per person accumulating in a
-  // key list, hitting the per-user cap, and making `abx whoami` inside a
-  // sandbox answer with a tenant nobody configured. One switch decides it in
-  // both places, because two halves of one decision is how this got confusing.
+  // The key is minted for every conversation, without exception: the sandbox is
+  // built with the deployment's own credential (it belongs to the platform's
+  // namespace, quota and pool) while THIS key is what the sandbox's platform
+  // calls carry, so the person's writes wait in the person's approval queue.
+  // There is no switch any more — a deployment that could turn this off could
+  // turn "who approves" into "whoever owns the sandbox", which is how an admin
+  // key once ended up running every conversation.
   let sessionKey: string | undefined
-  if (needsSandboxKey && !staticSandboxIdentity()) {
+  if (needsSandboxKey) {
     try {
       sessionKey = await getOrCreateSessionKey(jwt, identity)
     } catch (e) {
