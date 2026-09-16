@@ -544,28 +544,95 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class ActingIdentityTest(unittest.TestCase):
-    """`static` mode has to ignore the session's credential, not merely survive
-    its absence.
+class SecretNamingTest(unittest.TestCase):
+    """Whose credential lands in which vault entry.
 
-    Two facts, and they must stay apart: the sandbox belongs to the platform
+    The vault is keyed by (namespace, user) of whoever WRITES it, and every
+    conversation writes into the platform's own vault — so the entry NAME is the
+    only thing separating one person's credential from another's, and two people
+    sharing one entry means the injection hands whoever wrote last to whoever is
+    talking.
+    """
+
+    def setUp(self):
+        self._names = sandbox_manager.SESSION_SECRET_NAMES
+        sandbox_manager.SESSION_SECRET_NAMES = ["demo-entry", "demo-other"]
+
+    def tearDown(self):
+        sandbox_manager.SESSION_SECRET_NAMES = self._names
+
+    def test_each_person_gets_their_own_entry(self):
+        self.assertEqual(
+            sandbox_manager.session_secret_names("team-a/alice"),
+            ["demo-entry-team-a-alice", "demo-other-team-a-alice"],
+        )
+        self.assertEqual(
+            sandbox_manager.session_secret_names("team-b/bob.smith"),
+            ["demo-entry-team-b-bob-smith", "demo-other-team-b-bob-smith"],
+        )
+        # Two people, two entries — the property the whole change is about.
+        self.assertNotEqual(
+            sandbox_manager.session_secret_names("team-a/alice"),
+            sandbox_manager.session_secret_names("team-a/carol"),
+        )
+
+    def test_nobody_bound_keeps_the_platform_s_own_entry(self):
+        self.assertEqual(sandbox_manager.session_secret_names(None), ["demo-entry", "demo-other"])
+
+    def test_the_rules_name_the_entry_this_conversation_writes(self):
+        base = {
+            "allowOut": ["gw.test"],
+            "rules": {"gw.test": [{"transform": {"headers": {
+                "AGENTBOX-API-KEY": "${e2b.secrets.demo-entry}",
+                "X-API-Key": "${e2b.secrets.demo-other}",
+            }}}]},
+        }
+        scoped = sandbox_manager.scoped_network_for("team-a/alice", base)
+        headers = scoped["rules"]["gw.test"][0]["transform"]["headers"]
+        self.assertEqual(headers["AGENTBOX-API-KEY"], "${e2b.secrets.demo-entry-team-a-alice}")
+        self.assertEqual(headers["X-API-Key"], "${e2b.secrets.demo-other-team-a-alice}")
+        # The chart's own copy is untouched: the next conversation rewrites its own.
+        self.assertEqual(
+            base["rules"]["gw.test"][0]["transform"]["headers"]["AGENTBOX-API-KEY"],
+            "${e2b.secrets.demo-entry}",
+        )
+
+
+class ActingIdentityTest(unittest.TestCase):
+    """The two facts that must stay apart.
+
+    The sandbox belongs to the platform
     (built with its key — its namespace, its quota, its pool) while the
     credential its calls carry belongs to the person talking (so their writes
-    wait in their own approval queue). The mode that used to live here made
-    them one answer, and a deployment that chose "the platform's pool" also got
-    the platform's key injected for everyone.
+    wait in their own approval queue and the owner's vault shows one entry per
+    person). A mode that made them one answer used to live here, and a
+    deployment that chose "the platform's pool" also got the platform's key
+    injected for everyone.
     """
 
     def setUp(self):
         self._env = os.environ.get("E2B_API_KEY")
+        self._names = sandbox_manager.SESSION_SECRET_NAMES
+        sandbox_manager.SESSION_SECRET_NAMES = ["demo-entry"]
         os.environ["E2B_API_KEY"] = "agbx_deployment_own_key"
         sandbox_manager._BOUND["ses_x"] = {
             "api_key": "agbx_the_person",
             "identity": "team1/person",
         }
+        self._net = sandbox_manager.SANDBOX_NETWORK
+        sandbox_manager.SANDBOX_NETWORK = {
+            "allowOut": ["gateway.test"],
+            "rules": {
+                "gateway.test": [
+                    {"transform": {"headers": {"AGENTBOX-API-KEY": "${e2b.secrets.demo-entry}"}}}
+                ]
+            },
+        }
 
     def tearDown(self):
         sandbox_manager._BOUND.pop("ses_x", None)
+        sandbox_manager.SANDBOX_NETWORK = self._net
+        sandbox_manager.SESSION_SECRET_NAMES = self._names
         if self._env is None:
             os.environ.pop("E2B_API_KEY", None)
         else:
@@ -576,10 +643,11 @@ class ActingIdentityTest(unittest.TestCase):
         # it. The create carries the platform's key; the vault carries the
         # person's — and the vault is written with the owner's credential,
         # because that is whose vault this sandbox's injection resolves.
+
         armed = {}
 
-        def fake_arm(owner_key, sid, value):
-            armed.update(owner=owner_key, sid=sid, value=value)
+        def fake_arm(owner_key, sid, value, names):
+            armed.update(owner=owner_key, sid=sid, value=value, names=list(names))
 
         created = {}
 
@@ -598,16 +666,25 @@ class ActingIdentityTest(unittest.TestCase):
         self.assertEqual(created.get("api_key"), "agbx_deployment_own_key")
         self.assertEqual(armed.get("owner"), "agbx_deployment_own_key")
         self.assertEqual(armed.get("value"), "agbx_the_person")
+        # One entry per person, in the owner's vault — never a shared name.
+        self.assertEqual(armed.get("names"), ["demo-entry-team1-person"])
+        # …and the rules the sandbox gets name that same entry.
+        headers = created["network"]["rules"]["gateway.test"][0]["transform"]["headers"]
+        self.assertEqual(headers["AGENTBOX-API-KEY"], "${e2b.secrets.demo-entry-team1-person}")
 
     def test_with_nothing_bound_the_platform_acts_as_itself(self):
         sandbox_manager._BOUND.pop("ses_x", None)
         armed = {}
         with mock.patch.object(
             sandbox_manager, "_arm_vault",
-            lambda owner_key, sid, value: armed.update(owner=owner_key, value=value),
+            lambda owner_key, sid, value, names: armed.update(
+                owner=owner_key, value=value, names=list(names)
+            ),
         ), mock.patch.dict(os.environ, {"AGBX_ENV_NAME": "abx-mvp"}), \
            mock.patch.object(sandbox_manager, "Sandbox", _RefusingSandbox):
             with self.assertRaises(RuntimeError):
                 sandbox_manager.SandboxManager().get_or_create("ses_x")
         self.assertEqual(armed.get("owner"), "agbx_deployment_own_key")
         self.assertEqual(armed.get("value"), "agbx_deployment_own_key")
+        # Nobody bound: the entry is the platform's own, under the base name.
+        self.assertEqual(armed.get("names"), ["demo-entry"])

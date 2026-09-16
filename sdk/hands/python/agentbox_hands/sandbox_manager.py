@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import json
 import os
+import copy
+import re
 import shlex
 import threading
 import time
@@ -185,12 +187,78 @@ def owner_api_key() -> Optional[str]:
 # the daemon writes those names under. Two hand-maintained lists drift, and the
 # symptom is a sandbox whose injected requests are unauthenticated — visible only
 # as `substituted=0` in a sidecar log nobody is reading.
+#
+# These are BASE names. What a conversation actually writes is one entry per
+# person, suffixed with their identity — see `session_secret_names`.
 def _session_secret_names() -> List[str]:
     raw = os.environ.get("SBX_SESSION_SECRET_NAMES", "").strip()
     return [n.strip() for n in raw.split(",") if n.strip()]
 
 
 SESSION_SECRET_NAMES = _session_secret_names()
+
+
+def _identity_suffix(identity: Optional[str]) -> str:
+    """A vault-name-safe suffix for `<team>/<user>`, or "" for nobody.
+
+    The vault is keyed by (namespace, user) of whoever WRITES it, and every
+    conversation writes into the same owner's vault — so the NAME is the only
+    thing that tells one conversation's credential from another's. Two people
+    must never share an entry: the injection resolves a name once, at sandbox
+    creation, and a shared entry means whoever wrote last decides whose
+    credential the other person's sandbox carries.
+    """
+    if not identity:
+        return ""
+    cleaned = re.sub(r"[^a-z0-9_-]+", "-", identity.strip().lower()).strip("-")
+    return cleaned
+
+
+def session_secret_names(identity: Optional[str], base: Optional[List[str]] = None) -> List[str]:
+    """The vault entries THIS conversation's credentials live under.
+
+    One per base name per identity: `abx-key` for `k8s/ylli` becomes
+    `abx-key-k8s-ylli`. Which also means the owner of the vault — the platform —
+    can look at their own vault and see whose credentials are stored and when
+    each was last rotated, instead of one opaque entry that everybody shares.
+
+    With no identity bound (the unattended flows) the base name is kept: those
+    run as the platform itself, and their entry is the platform's own.
+    """
+    names = SESSION_SECRET_NAMES if base is None else base
+    suffix = _identity_suffix(identity)
+    if not suffix:
+        return list(names)
+    return [f"{n}-{suffix}" for n in names]
+
+
+def scoped_network_for(identity: Optional[str], network: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """The egress rules with every vault reference pointed at this identity.
+
+    The rules arrive from the chart naming the BASE entry (`${e2b.secrets.abx-key}`),
+    because the chart cannot know who will be talking. Rewriting them per sandbox
+    is what makes the per-identity entries reachable: the placeholder and the
+    entry it resolves to have to be the same string at creation time, and this is
+    the only place that knows both.
+    """
+    rules = SANDBOX_NETWORK if network is None else network
+    if not rules:
+        return rules
+    scoped = session_secret_names(identity)
+    base = SESSION_SECRET_NAMES
+    if scoped == base:
+        return rules
+    rewritten = copy.deepcopy(rules)
+    for host_rules in (rewritten.get("rules") or {}).values():
+        for rule in host_rules or []:
+            headers = ((rule.get("transform") or {}).get("headers")) or {}
+            for header, value in list(headers.items()):
+                if not isinstance(value, str):
+                    continue
+                for b, s in zip(base, scoped):
+                    value = value.replace(f"${{e2b.secrets.{b}}}", f"${{e2b.secrets.{s}}}")
+                headers[header] = value
+    return rewritten
 
 
 def _e2b_api_base() -> str:
@@ -211,7 +279,7 @@ def _e2b_api_base() -> str:
     return f"{scheme}://{domain}".rstrip("/")
 
 
-def _arm_vault(owner_key: str, sid: str, value: str) -> None:
+def _arm_vault(owner_key: str, sid: str, value: str, names: List[str]) -> None:
     """Store `value` in the SANDBOX OWNER's vault, under every injected name.
 
     This is where the two facts meet. The platform resolves a
@@ -233,13 +301,13 @@ def _arm_vault(owner_key: str, sid: str, value: str) -> None:
 
     The value is never logged. Only the names are.
     """
-    if not SESSION_SECRET_NAMES:
+    if not names:
         return
     base = _e2b_api_base()
     if not base:
         print(
             "[sbxmgr] cannot arm the vault: neither E2B_API_URL nor E2B_DOMAIN "
-            f"is set, so {SESSION_SECRET_NAMES} were not written; injected "
+            f"is set, so {names} were not written; injected "
             "requests from this sandbox will be unauthenticated",
             flush=True,
         )
@@ -259,7 +327,7 @@ def _arm_vault(owner_key: str, sid: str, value: str) -> None:
         except Exception as err:  # noqa: BLE001 - reported, never fatal
             return getattr(err, "code", None) or -1
 
-    for name in SESSION_SECRET_NAMES:
+    for name in names:
         status = put(f"{base}/secrets", {"name": name, "value": value})
         if status == 409:
             # Already present, which is the normal case for anyone's second
@@ -948,6 +1016,12 @@ class SandboxManager:
                 flush=True,
             )
         identity = session_identity(sid)
+        # One vault entry per PERSON, not one shared by everybody: the injection
+        # resolves a name once, at create time, so a shared entry hands whoever
+        # wrote last to whoever is talking. The rules are rewritten to match, and
+        # the owner ends up with a list of whose credentials they hold.
+        secret_names = session_secret_names(identity)
+        sandbox_network = scoped_network_for(identity)
         slock = self._get_session_lock(sid)
         with slock:
             with self._lock:
@@ -1012,7 +1086,7 @@ class SandboxManager:
             # injection resolves against the identity that created the sandbox,
             # while what it hands out is whose calls these are.
             if owner_key:
-                _arm_vault(owner_key, sid, person_key or owner_key)
+                _arm_vault(owner_key, sid, person_key or owner_key, secret_names)
             sbx = Sandbox.create(
                 template=self._template(),
                 envs=envs,
@@ -1029,7 +1103,7 @@ class SandboxManager:
                 # reachable, which is what a deployment without injection
                 # expects. Passing an empty policy would instead be read as
                 # "filter, and allow nothing".
-                **({"network": SANDBOX_NETWORK} if SANDBOX_NETWORK else {}),
+                **({"network": sandbox_network} if sandbox_network else {}),
             )
             print(f"[sbxmgr]   sandbox_id={sbx.sandbox_id}", flush=True)
             # Readiness gate: poll is_running() until the pool reports the
