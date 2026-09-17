@@ -147,6 +147,7 @@ const FLAGS: Record<string, boolean> = {
   replicas: true,
   json: false,
   editable: false,
+  schema: false,
   csv: false,
   wide: false,
   version: false,
@@ -332,6 +333,64 @@ function helpSubject(tokens: string[]): (typeof RESOURCES)[number] | undefined {
   return child && child.parent === parsed.resource ? child : resourceOf(parsed.resource)
 }
 
+/**
+ * `abx context --help` — the one command that is not a resource.
+ *
+ * Its verbs live here rather than in the resource registry, so `helpSubject`
+ * cannot find them and the page has to be written by hand. It is worth
+ * writing: `context` is the only command that changes state on this machine,
+ * and before this page existed `abx context --help` fell through to the root
+ * usage, which named the command and then stopped — leaving `use`, the one
+ * verb someone with two contexts is looking for, nowhere to be found.
+ */
+function contextHelp(cfg: FileConfig): string {
+  const names = contextNames(cfg)
+  const out = [
+    'abx context — name a deployment once, then switch between them.',
+    '',
+    "A context is one platform: the console's address and the credential for",
+    'it. It is not a cluster — one console reaches every cluster that platform',
+    'has, and --cluster chooses among them per command.',
+    '',
+    'Usage:',
+    '  abx context                     list contexts, current one marked *',
+    '  abx context use <name>          make <name> the default',
+    '  abx context set <name> [flags]  add a context, or change one',
+    '  abx context remove <name>       delete one',
+    '',
+    '  abx --context <name> <command>  use <name> for this command only',
+    '',
+    'Flags `set` understands (it changes only the ones it is given):',
+    "  --endpoint <url>       the console's address; reaches every cluster",
+    '  --api-key <key>        the credential issued for this deployment',
+    "  --cluster-api <url>    one cluster's own API, for a caller with no route",
+    '                         to the console; that context then serves only it',
+    '  --auth-scheme <scheme> api-key | bearer, for an address that takes neither',
+    '',
+    `Stored in ${configPath()}, mode 0600.`,
+    'In CI, AGENTBOX_ENDPOINT and AGENTBOX_API_KEY stand in for a context.',
+  ]
+  if (!names.length) {
+    out.push(
+      '',
+      'No contexts are configured yet:',
+      '  abx context set <name> --endpoint <url> --api-key <key>',
+    )
+  } else {
+    const width = Math.max(...names.map((n) => n.length))
+    out.push('', 'Configured:')
+    for (const n of names) {
+      const e = cfg.contexts![n]
+      const addr = e.clusterApi ? `${e.clusterApi}  [direct]` : (e.endpoint ?? '—')
+      out.push(`  ${n === cfg.currentContext ? '*' : ' '} ${n.padEnd(width)}  ${addr}`)
+    }
+    const current = cfg.currentContext ?? (names.length === 1 ? names[0] : undefined)
+    const other = names.find((n) => n !== current)
+    if (other) out.push('', `hint: switch the default with \`abx context use ${other}\`.`)
+  }
+  return out.join('\n')
+}
+
 function usage(role: string | null): string {
   const roots = visibleRoots(role)
   const width = Math.max(...roots.map((r) => r.plural.length))
@@ -512,8 +571,14 @@ function wrap(text: string, indent: string, width = 78): string[] {
   return out
 }
 
-/** The field table of the write page, one field to two or three lines. */
-function renderFields(fields: readonly WriteDocField[], indent = '  '): string[] {
+/**
+ * The field table of the write page, one field to two or three lines.
+ *
+ * One level of nesting, deliberately: the page is read while holding a file,
+ * and the generated body now goes deeper than a page should. The two are the
+ * same data — `--schema` is where the rest of it is, and the footer says so.
+ */
+function renderFields(fields: readonly WriteDocField[], indent = '  ', level = 0): string[] {
   const out: string[] = []
   for (const f of fields) {
     const marks: string[] = []
@@ -522,7 +587,7 @@ function renderFields(fields: readonly WriteDocField[], indent = '  '): string[]
     out.push(`${indent}${f.name}  ${f.type}${marks.length ? `  (${marks.join(', ')})` : ''}`)
     if (f.describe) out.push(...wrap(f.describe, `${indent}  `))
     if (f.fixed && f.lever) out.push(...wrap(`to change it: ${f.lever}`, `${indent}  `))
-    if (f.fields?.length) out.push(...renderFields(f.fields, `${indent}    `))
+    if (level < 1 && f.fields?.length) out.push(...renderFields(f.fields, `${indent}    `, level + 1))
   }
   return out
 }
@@ -552,12 +617,14 @@ function fileHint(spec: { plural: string; kind: string; parent?: string }, verb:
       `  abx update ${writeExample(spec)} -f FILE`,
       '',
       `every field, and what is fixed at create, is in \`abx update ${writeExample(spec)} --help\`.`,
+      `the same body as JSON: \`abx update ${writeExample(spec)} --schema\`.`,
     ].join('\n')
   }
   return [
     shape,
     '',
     `every field, and which ones are required, is in \`abx create ${collectionExample(spec)} --help\`.`,
+    `the same body as JSON: \`abx create ${collectionExample(spec)} --schema\`.`,
   ].join('\n')
 }
 
@@ -630,9 +697,81 @@ function writeHelp(spec: (typeof RESOURCES)[number], verb: string): string {
   if (supports(spec, 'update')) out.push(`  abx update ${item} -f FILE`)
   out.push('')
   out.push('`-f -` reads the document from stdin instead of naming a file.')
-  out.push('Every field, and which ones are required, is listed in `abx agent-context`.')
+  // The machine register, named here because this is the page someone reads
+  // while holding a file. `agent-context` carries every resource's body at
+  // once; `--schema` is the one address, which is what a caller about to write
+  // actually asked for.
+  if (supports(spec, 'create')) {
+    out.push(`the whole body, field by field, as JSON: \`abx create ${collection} --schema\``)
+  }
+  if (supports(spec, 'update')) {
+    out.push(`the whole body, field by field, as JSON: \`abx update ${item} --schema\``)
+  }
+  out.push("`abx agent-context` carries every resource's body in one document.")
   out.push(`The object \`abx ${item} --json\` prints is NOT a file a write takes.`)
   return out.join('\n')
+}
+
+/**
+ * The addresses whose verbs take a file, for the error a misuse of `--schema`
+ * deserves. Built from the registry, so it cannot name an address that does
+ * not exist — which is the failure a hand-written list would eventually be.
+ */
+function schemaAddresses(): string[] {
+  const out: string[] = []
+  for (const doc of WRITE_DOCS) {
+    const spec = RESOURCES.find((r) => r.plural === doc.plural)
+    if (!spec) continue
+    if (doc.create && supports(spec, 'create')) {
+      out.push(`abx create ${collectionExample(spec)} --schema`)
+    }
+    if (doc.update && supports(spec, 'update')) {
+      out.push(`abx update ${writeExample(spec)} --schema`)
+    }
+  }
+  return out
+}
+
+/**
+ * `--schema` — the file a write takes, as JSON.
+ *
+ * The same generated body `abx create <address> --help` renders for a person
+ * and `abx agent-context` carries for every resource at once, printed as the
+ * one document a caller about to write a file actually needs: every field, its
+ * type, which are required, what is fixed at create, and the named components
+ * its `ref`s point at.
+ *
+ * Only the two verbs that take a file answer. A read prints data, and `delete`
+ * and `scale` take an address or a number; answering any of them with "here is
+ * your schema" would teach a shape that command does not have, which is worse
+ * than saying no. The refusal names every address that does take one.
+ */
+function writeSchema(positional: string[]): string {
+  const asked = positional[0]
+  const verb: Verb | undefined = asked === 'create' || asked === 'update' ? asked : undefined
+  const subject = verb ? helpSubject(positional.slice(1)) : undefined
+  if (!verb || !subject || !supports(subject, verb)) {
+    const called = positional.length ? `abx ${positional.join(' ')}` : 'abx'
+    const what = !verb
+      ? `\`${called}\` takes no file`
+      : !subject
+        ? `there is no ${verb} address called \`${positional.slice(1).join(' ') || '—'}\``
+        : `\`${verb}\` is not a write \`${subject.plural}\` takes`
+    throw new CliError(
+      '`--schema` prints the file a create or update takes',
+      [what, '', 'only create and update do:', ...schemaAddresses().map((a) => `  ${a}`)].join('\n'),
+    )
+  }
+  const doc = writeDocOf(subject)
+  const body = verb === 'create' ? doc?.create : doc?.update
+  if (!body) {
+    const has = [doc?.create ? 'create' : '', doc?.update ? 'update' : ''].filter(Boolean)
+    throw new CliError(
+      `\`${subject.plural}\` has no ${verb} body`,
+      `the bodies it has: ${has.join(', ') || 'neither'}`,
+    )
+  }
+  return JSON.stringify(body, null, 2)
 }
 
 function writeExample(spec: { plural: string; kind: string; parent?: string }): string {
@@ -692,9 +831,26 @@ export async function run(argv: string[]): Promise<number> {
     return 0
   }
 
+  // `--schema` answers a question about the write, not about a deployment: it
+  // needs no config, no key and no network. Handled before anything is read,
+  // so a caller can learn what a file must contain before it has a key to
+  // write with — which is exactly when the question gets asked.
+  if (flags.schema) {
+    console.log(writeSchema(positional))
+    return 0
+  }
+
   const fileConfig: FileConfig = await readConfig()
 
   if (!positional.length || flags.help || flags.h) {
+    // `context` is a command, not a resource, so the registry lookup below
+    // cannot answer for it. Its own page has to come first: without it the
+    // request fell through to the root usage, which listed the command and
+    // said nothing about how to use it.
+    if (positional[0] === 'context' || positional[0] === 'contexts') {
+      console.log(contextHelp(fileConfig))
+      return 0
+    }
     // What to advertise depends on who is asking, and the answer is cached
     // beside the config. A help page must not fail because the network is slow,
     // so anything unknown falls back to showing everything.
@@ -989,6 +1145,16 @@ async function contextCommand(
       const addr = e.clusterApi ? `${e.clusterApi}  [direct]` : (e.endpoint ?? '—')
       console.log(`${mark} ${n.padEnd(width)}  ${addr}${e.cluster ? `  (${e.cluster})` : ''}`)
     }
+    // The switch is the reason most people type `abx context`, and it was the
+    // one thing the listing never said. Naming the other context makes the
+    // next command a copy-paste instead of a lookup.
+    const current = cfg.currentContext ?? (names.length === 1 ? names[0] : undefined)
+    const other = names.find((n) => n !== current)
+    console.log(
+      other
+        ? `hint: switch the default with \`abx context use ${other}\`; \`abx context --help\` for the rest.`
+        : 'hint: `abx context --help` lists set, use and remove.',
+    )
     return 0
   }
 

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AgentBox API
-  version: "0.1.7"
+  version: "0.1.8"
   description: |
     AgentBox provides Sandbox lifecycle management and tenant API key provisioning.
 

@@ -7,11 +7,13 @@
  * generator). The console's forms and the CLI therefore lock the same fields.
  */
 
-/** One field of a write body. `fields` is the one level of nesting worth showing. */
+/** One field of a write body. `fields` expands the value; `ref` names the component it is. */
 export interface WriteDocField {
   name: string
-  /** How the value is spelled in JSON: `string`, `int`, `bool`, or an enum's values. */
+  /** How the value is spelled in JSON: `string`, `int`, `map[string]string`, `EnvVolumeMount[]`, or an enum's values. */
   type: string
+  /** The named component the value — or its elements, for a list or map — is. Resolved in `schemas`. */
+  ref?: string
   /** Required by the schema — for a create that is the whole of "you must say". */
   required: boolean
   /** Fixed after create: an update has to carry it back unchanged. */
@@ -20,6 +22,8 @@ export interface WriteDocField {
   lever?: string
   /** The accepted values, when the field is an enum. */
   values?: string[]
+  /** The schema's own default, when it states one. */
+  default?: unknown
   describe: string
   fields?: WriteDocField[]
 }
@@ -29,6 +33,8 @@ export interface WriteDocBody {
   describe: string
   example?: unknown
   fields: WriteDocField[]
+  /** Every named component the body reaches, expanded once. */
+  schemas?: Record<string, WriteDocField[]>
 }
 
 export interface WriteDoc {
@@ -55,11 +61,12 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "templateRef",
-          "type": "object",
+          "type": "SandboxEnvTemplateRef",
           "required": true,
           "fixed": true,
           "describe": "Which SandboxTemplate every member Pool is rendered from. Pin a version to hold the Env still across Template edits; omit it to follow the Template. Fixed after create.",
           "lever": "create a new Env from the other template and move the traffic over",
+          "ref": "SandboxEnvTemplateRef",
           "fields": [
             {
               "name": "name",
@@ -87,14 +94,16 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "values": [
             "WarmPool",
             "OnDemandJob"
-          ]
+          ],
+          "default": "WarmPool"
         },
         {
           "name": "overrides",
-          "type": "object",
+          "type": "EnvOverrides",
           "required": false,
           "fixed": false,
           "describe": "SandboxTemplate fields this Env replaces uniformly for every member Pool. The Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.",
+          "ref": "EnvOverrides",
           "fields": [
             {
               "name": "image",
@@ -130,10 +139,44 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
             },
             {
               "name": "imagePullSecret",
-              "type": "object",
+              "type": "ImagePullSecretInput",
               "required": false,
               "fixed": false,
-              "describe": "Write-only image-pull credentials. On create / update the server materialises a dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render time the Env Reconciler appends that Secret's reference to every member Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private images uniformly across the Env. Not returned on GET — check imagePullSecretConfigured for read-state."
+              "describe": "Write-only image-pull credentials. On create / update the server materialises a dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render time the Env Reconciler appends that Secret's reference to every member Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private images uniformly across the Env. Not returned on GET — check imagePullSecretConfigured for read-state.",
+              "ref": "ImagePullSecretInput",
+              "fields": [
+                {
+                  "name": "registries",
+                  "type": "RegistryCredential[]",
+                  "required": true,
+                  "fixed": false,
+                  "describe": "",
+                  "ref": "RegistryCredential",
+                  "fields": [
+                    {
+                      "name": "registry",
+                      "type": "string",
+                      "required": true,
+                      "fixed": false,
+                      "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+                    },
+                    {
+                      "name": "username",
+                      "type": "string",
+                      "required": true,
+                      "fixed": false,
+                      "describe": ""
+                    },
+                    {
+                      "name": "password",
+                      "type": "string",
+                      "required": true,
+                      "fixed": false,
+                      "describe": ""
+                    }
+                  ]
+                }
+              ]
             },
             {
               "name": "imagePullSecretConfigured",
@@ -144,37 +187,106 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
             },
             {
               "name": "gateway",
-              "type": "object",
+              "type": "GatewaySpec",
               "required": false,
               "fixed": false,
-              "describe": "Egress gateway for every member Pool's sandbox Pods. Enabling it injects a transparent proxy sidecar, which is what makes per-sandbox egress filtering (network.allowOut / denyOut) and credential injection (network.rules with Secret.fill) possible on the create call. It carries no rules of its own: what a sandbox may reach, and what gets injected into which request, belong to that one sandbox and arrive with it. Changing this switch changes the Pod spec and therefore rolls the Env's pools."
+              "describe": "Egress gateway for every member Pool's sandbox Pods. Enabling it injects a transparent proxy sidecar, which is what makes per-sandbox egress filtering (network.allowOut / denyOut) and credential injection (network.rules with Secret.fill) possible on the create call. It carries no rules of its own: what a sandbox may reach, and what gets injected into which request, belong to that one sandbox and arrive with it. Changing this switch changes the Pod spec and therefore rolls the Env's pools.",
+              "ref": "GatewaySpec",
+              "fields": [
+                {
+                  "name": "enabled",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Inject the egress proxy sidecar. A create request carrying network rules against an environment without it is refused rather than silently unenforced."
+                }
+              ]
             },
             {
               "name": "envd",
-              "type": "object",
+              "type": "EnvdSpec",
               "required": false,
               "fixed": false,
-              "describe": "Tunes the sandbox agent (envd) every member Pool's Pods run. These are process flags fixed when a Pod starts, so changing them re-renders the pod template and rolls the Env's idle pools — the same way an image or gateway change does."
+              "describe": "Tunes the sandbox agent (envd) every member Pool's Pods run. These are process flags fixed when a Pod starts, so changing them re-renders the pod template and rolls the Env's idle pools — the same way an image or gateway change does.",
+              "ref": "EnvdSpec",
+              "fields": [
+                {
+                  "name": "verbose",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Write one structured line per API call envd serves to the container's stdout — for a command, the command itself, its arguments, working directory and environment. It is how a deployment gets a record of what agents actually ran inside a sandbox, since a command's output otherwise only travels back to its caller. Defaults to on; a GET always reports the value in force. Two costs. A PTY session sends one API call per keystroke and each is logged with its whole request, so an interactive terminal produces a lot of lines and pays a serialization cost on a hot path. And environment variable VALUES appear in the log — anything secret belongs in a Secret the sandbox reads, or in the egress credential injection path, not in a plain environment variable."
+                }
+              ]
             },
             {
               "name": "updateStrategy",
-              "type": "object",
+              "type": "EnvUpdateStrategy",
               "required": false,
               "fixed": false,
-              "describe": "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy."
+              "describe": "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy.",
+              "ref": "EnvUpdateStrategy",
+              "fields": [
+                {
+                  "name": "autoUpdate",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+                },
+                {
+                  "name": "maxUnavailable",
+                  "type": "string",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+                }
+              ]
             },
             {
               "name": "volumes",
-              "type": "object[]",
+              "type": "EnvVolumeMount[]",
               "required": false,
               "fixed": false,
-              "describe": "Mount existing PersistentVolumeClaims from this Env's namespace into the sandbox container. The claim must already exist and be Bound; the server never creates or deletes a PVC. Discover mountable claims with GET /volumes. Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes on a live Pod — so editing this list rolls the member Pools' idle Pods. Sandboxes already running keep their previous mounts until they are returned. In-place image upgrades never touch volumes."
+              "describe": "Mount existing PersistentVolumeClaims from this Env's namespace into the sandbox container. The claim must already exist and be Bound; the server never creates or deletes a PVC. Discover mountable claims with GET /volumes. Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes on a live Pod — so editing this list rolls the member Pools' idle Pods. Sandboxes already running keep their previous mounts until they are returned. In-place image upgrades never touch volumes.",
+              "ref": "EnvVolumeMount",
+              "fields": [
+                {
+                  "name": "claimName",
+                  "type": "string",
+                  "required": true,
+                  "fixed": false,
+                  "describe": "Name of an existing, Bound PersistentVolumeClaim in this Env's namespace. Cross-namespace mounts are not possible in Kubernetes, which is the authorisation boundary: a caller only ever reaches claims in the namespace their identity resolved to."
+                },
+                {
+                  "name": "mountPath",
+                  "type": "string",
+                  "required": true,
+                  "fixed": false,
+                  "describe": "Absolute path inside the sandbox container. Must not be '/' or '/mnt', must not sit inside a reserved path (/proc, /sys, /dev, /etc, /var/run, /var/lib/kubelet), and must not collide with or nest against a path the Template already mounts."
+                },
+                {
+                  "name": "subPath",
+                  "type": "string",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Mount a subtree of the volume instead of its root. Relative, no '..' segments. Recommended when the backing PersistentVolume is exposed at its filesystem root. Note kubelet creates a missing subPath directory, so a mistyped value mounts an empty directory rather than failing."
+                },
+                {
+                  "name": "readOnly",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out.",
+                  "default": true
+                }
+              ]
             }
           ]
         },
         {
           "name": "labels",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Metadata stamped onto the Env's objects. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix).",
@@ -182,7 +294,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "annotations",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Annotations stamped onto the Env's objects.",
@@ -203,6 +315,324 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         "labels": {
           "team": "ai-infra"
         }
+      },
+      "schemas": {
+        "SandboxEnvTemplateRef": [
+          {
+            "name": "name",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Name of the cluster-scoped SandboxTemplate the Env binds to."
+          },
+          {
+            "name": "version",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Optional Template version pin. When empty, the Env tracks the Template's current spec.version."
+          }
+        ],
+        "EnvOverrides": [
+          {
+            "name": "image",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Override the main container (containers[0]) image of the rendered Template. Applied before any per-Member overrides."
+          },
+          {
+            "name": "podCreationImagePolicy",
+            "type": "PoolDefaultImage | IdleImage",
+            "required": false,
+            "fixed": false,
+            "describe": "Mirrored onto every member Pool's spec.podCreationImagePolicy.",
+            "values": [
+              "PoolDefaultImage",
+              "IdleImage"
+            ]
+          },
+          {
+            "name": "defaultStartupTimeout",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Mirrored onto every member Pool's spec.defaultStartupTimeout. Duration string, e.g. '5m'."
+          },
+          {
+            "name": "defaultIdleTimeout",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Mirrored onto every member Pool's spec.defaultIdleTimeout. Duration string, e.g. '30m'."
+          },
+          {
+            "name": "imagePullSecret",
+            "type": "ImagePullSecretInput",
+            "required": false,
+            "fixed": false,
+            "describe": "Write-only image-pull credentials. On create / update the server materialises a dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render time the Env Reconciler appends that Secret's reference to every member Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private images uniformly across the Env. Not returned on GET — check imagePullSecretConfigured for read-state.",
+            "ref": "ImagePullSecretInput",
+            "fields": [
+              {
+                "name": "registries",
+                "type": "RegistryCredential[]",
+                "required": true,
+                "fixed": false,
+                "describe": "",
+                "ref": "RegistryCredential",
+                "fields": [
+                  {
+                    "name": "registry",
+                    "type": "string",
+                    "required": true,
+                    "fixed": false,
+                    "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+                  },
+                  {
+                    "name": "username",
+                    "type": "string",
+                    "required": true,
+                    "fixed": false,
+                    "describe": ""
+                  },
+                  {
+                    "name": "password",
+                    "type": "string",
+                    "required": true,
+                    "fixed": false,
+                    "describe": ""
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "imagePullSecretConfigured",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Server-set on GET: true when the `ips-{envName}` Secret exists in the Env's namespace. On PUT it is the KEEP signal, and the only way to say it. The request is desired state, and the credentials cannot be read back to be echoed — so a PUT carrying neither `imagePullSecret` nor this flag is asking for the Secret to be DELETED. Sending back what GET returned therefore preserves the stored material, exactly as it does for every other field; a client that strips this flag while editing an unrelated setting revokes the registry credentials as a side effect. `imagePullSecret` present wins: new credentials replace the old ones whatever this says."
+          },
+          {
+            "name": "gateway",
+            "type": "GatewaySpec",
+            "required": false,
+            "fixed": false,
+            "describe": "Egress gateway for every member Pool's sandbox Pods. Enabling it injects a transparent proxy sidecar, which is what makes per-sandbox egress filtering (network.allowOut / denyOut) and credential injection (network.rules with Secret.fill) possible on the create call. It carries no rules of its own: what a sandbox may reach, and what gets injected into which request, belong to that one sandbox and arrive with it. Changing this switch changes the Pod spec and therefore rolls the Env's pools.",
+            "ref": "GatewaySpec",
+            "fields": [
+              {
+                "name": "enabled",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Inject the egress proxy sidecar. A create request carrying network rules against an environment without it is refused rather than silently unenforced."
+              }
+            ]
+          },
+          {
+            "name": "envd",
+            "type": "EnvdSpec",
+            "required": false,
+            "fixed": false,
+            "describe": "Tunes the sandbox agent (envd) every member Pool's Pods run. These are process flags fixed when a Pod starts, so changing them re-renders the pod template and rolls the Env's idle pools — the same way an image or gateway change does.",
+            "ref": "EnvdSpec",
+            "fields": [
+              {
+                "name": "verbose",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Write one structured line per API call envd serves to the container's stdout — for a command, the command itself, its arguments, working directory and environment. It is how a deployment gets a record of what agents actually ran inside a sandbox, since a command's output otherwise only travels back to its caller. Defaults to on; a GET always reports the value in force. Two costs. A PTY session sends one API call per keystroke and each is logged with its whole request, so an interactive terminal produces a lot of lines and pays a serialization cost on a hot path. And environment variable VALUES appear in the log — anything secret belongs in a Secret the sandbox reads, or in the egress credential injection path, not in a plain environment variable."
+              }
+            ]
+          },
+          {
+            "name": "updateStrategy",
+            "type": "EnvUpdateStrategy",
+            "required": false,
+            "fixed": false,
+            "describe": "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy.",
+            "ref": "EnvUpdateStrategy",
+            "fields": [
+              {
+                "name": "autoUpdate",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+              },
+              {
+                "name": "maxUnavailable",
+                "type": "string",
+                "required": false,
+                "fixed": false,
+                "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+              }
+            ]
+          },
+          {
+            "name": "volumes",
+            "type": "EnvVolumeMount[]",
+            "required": false,
+            "fixed": false,
+            "describe": "Mount existing PersistentVolumeClaims from this Env's namespace into the sandbox container. The claim must already exist and be Bound; the server never creates or deletes a PVC. Discover mountable claims with GET /volumes. Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes on a live Pod — so editing this list rolls the member Pools' idle Pods. Sandboxes already running keep their previous mounts until they are returned. In-place image upgrades never touch volumes.",
+            "ref": "EnvVolumeMount",
+            "fields": [
+              {
+                "name": "claimName",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": "Name of an existing, Bound PersistentVolumeClaim in this Env's namespace. Cross-namespace mounts are not possible in Kubernetes, which is the authorisation boundary: a caller only ever reaches claims in the namespace their identity resolved to."
+              },
+              {
+                "name": "mountPath",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": "Absolute path inside the sandbox container. Must not be '/' or '/mnt', must not sit inside a reserved path (/proc, /sys, /dev, /etc, /var/run, /var/lib/kubelet), and must not collide with or nest against a path the Template already mounts."
+              },
+              {
+                "name": "subPath",
+                "type": "string",
+                "required": false,
+                "fixed": false,
+                "describe": "Mount a subtree of the volume instead of its root. Relative, no '..' segments. Recommended when the backing PersistentVolume is exposed at its filesystem root. Note kubelet creates a missing subPath directory, so a mistyped value mounts an empty directory rather than failing."
+              },
+              {
+                "name": "readOnly",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out.",
+                "default": true
+              }
+            ]
+          }
+        ],
+        "ImagePullSecretInput": [
+          {
+            "name": "registries",
+            "type": "RegistryCredential[]",
+            "required": true,
+            "fixed": false,
+            "describe": "",
+            "ref": "RegistryCredential",
+            "fields": [
+              {
+                "name": "registry",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+              },
+              {
+                "name": "username",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": ""
+              },
+              {
+                "name": "password",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": ""
+              }
+            ]
+          }
+        ],
+        "RegistryCredential": [
+          {
+            "name": "registry",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+          },
+          {
+            "name": "username",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": ""
+          },
+          {
+            "name": "password",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": ""
+          }
+        ],
+        "GatewaySpec": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Inject the egress proxy sidecar. A create request carrying network rules against an environment without it is refused rather than silently unenforced."
+          }
+        ],
+        "EnvdSpec": [
+          {
+            "name": "verbose",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Write one structured line per API call envd serves to the container's stdout — for a command, the command itself, its arguments, working directory and environment. It is how a deployment gets a record of what agents actually ran inside a sandbox, since a command's output otherwise only travels back to its caller. Defaults to on; a GET always reports the value in force. Two costs. A PTY session sends one API call per keystroke and each is logged with its whole request, so an interactive terminal produces a lot of lines and pays a serialization cost on a hot path. And environment variable VALUES appear in the log — anything secret belongs in a Secret the sandbox reads, or in the egress credential injection path, not in a plain environment variable."
+          }
+        ],
+        "EnvUpdateStrategy": [
+          {
+            "name": "autoUpdate",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+          },
+          {
+            "name": "maxUnavailable",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+          }
+        ],
+        "EnvVolumeMount": [
+          {
+            "name": "claimName",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Name of an existing, Bound PersistentVolumeClaim in this Env's namespace. Cross-namespace mounts are not possible in Kubernetes, which is the authorisation boundary: a caller only ever reaches claims in the namespace their identity resolved to."
+          },
+          {
+            "name": "mountPath",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Absolute path inside the sandbox container. Must not be '/' or '/mnt', must not sit inside a reserved path (/proc, /sys, /dev, /etc, /var/run, /var/lib/kubelet), and must not collide with or nest against a path the Template already mounts."
+          },
+          {
+            "name": "subPath",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Mount a subtree of the volume instead of its root. Relative, no '..' segments. Recommended when the backing PersistentVolume is exposed at its filesystem root. Note kubelet creates a missing subPath directory, so a mistyped value mounts an empty directory rather than failing."
+          },
+          {
+            "name": "readOnly",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out.",
+            "default": true
+          }
+        ]
       }
     },
     "update": {
@@ -218,11 +648,12 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "templateRef",
-          "type": "object",
+          "type": "SandboxEnvTemplateRef",
           "required": true,
           "fixed": true,
           "describe": "Which SandboxTemplate every member Pool is rendered from. Pin a version to hold the Env still across Template edits; omit it to follow the Template. Fixed after create.",
           "lever": "create a new Env from the other template and move the traffic over",
+          "ref": "SandboxEnvTemplateRef",
           "fields": [
             {
               "name": "name",
@@ -250,14 +681,16 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "values": [
             "WarmPool",
             "OnDemandJob"
-          ]
+          ],
+          "default": "WarmPool"
         },
         {
           "name": "overrides",
-          "type": "object",
+          "type": "EnvOverrides",
           "required": false,
           "fixed": false,
           "describe": "SandboxTemplate fields this Env replaces uniformly for every member Pool. The Env represents a single class of sandbox runtime, so image, image policy, default timeouts and image-pull credentials are expected to be shared; per-Pool variation lives on each EnvClusterMember.",
+          "ref": "EnvOverrides",
           "fields": [
             {
               "name": "image",
@@ -293,10 +726,44 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
             },
             {
               "name": "imagePullSecret",
-              "type": "object",
+              "type": "ImagePullSecretInput",
               "required": false,
               "fixed": false,
-              "describe": "Write-only image-pull credentials. On create / update the server materialises a dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render time the Env Reconciler appends that Secret's reference to every member Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private images uniformly across the Env. Not returned on GET — check imagePullSecretConfigured for read-state."
+              "describe": "Write-only image-pull credentials. On create / update the server materialises a dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render time the Env Reconciler appends that Secret's reference to every member Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private images uniformly across the Env. Not returned on GET — check imagePullSecretConfigured for read-state.",
+              "ref": "ImagePullSecretInput",
+              "fields": [
+                {
+                  "name": "registries",
+                  "type": "RegistryCredential[]",
+                  "required": true,
+                  "fixed": false,
+                  "describe": "",
+                  "ref": "RegistryCredential",
+                  "fields": [
+                    {
+                      "name": "registry",
+                      "type": "string",
+                      "required": true,
+                      "fixed": false,
+                      "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+                    },
+                    {
+                      "name": "username",
+                      "type": "string",
+                      "required": true,
+                      "fixed": false,
+                      "describe": ""
+                    },
+                    {
+                      "name": "password",
+                      "type": "string",
+                      "required": true,
+                      "fixed": false,
+                      "describe": ""
+                    }
+                  ]
+                }
+              ]
             },
             {
               "name": "imagePullSecretConfigured",
@@ -307,37 +774,106 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
             },
             {
               "name": "gateway",
-              "type": "object",
+              "type": "GatewaySpec",
               "required": false,
               "fixed": false,
-              "describe": "Egress gateway for every member Pool's sandbox Pods. Enabling it injects a transparent proxy sidecar, which is what makes per-sandbox egress filtering (network.allowOut / denyOut) and credential injection (network.rules with Secret.fill) possible on the create call. It carries no rules of its own: what a sandbox may reach, and what gets injected into which request, belong to that one sandbox and arrive with it. Changing this switch changes the Pod spec and therefore rolls the Env's pools."
+              "describe": "Egress gateway for every member Pool's sandbox Pods. Enabling it injects a transparent proxy sidecar, which is what makes per-sandbox egress filtering (network.allowOut / denyOut) and credential injection (network.rules with Secret.fill) possible on the create call. It carries no rules of its own: what a sandbox may reach, and what gets injected into which request, belong to that one sandbox and arrive with it. Changing this switch changes the Pod spec and therefore rolls the Env's pools.",
+              "ref": "GatewaySpec",
+              "fields": [
+                {
+                  "name": "enabled",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Inject the egress proxy sidecar. A create request carrying network rules against an environment without it is refused rather than silently unenforced."
+                }
+              ]
             },
             {
               "name": "envd",
-              "type": "object",
+              "type": "EnvdSpec",
               "required": false,
               "fixed": false,
-              "describe": "Tunes the sandbox agent (envd) every member Pool's Pods run. These are process flags fixed when a Pod starts, so changing them re-renders the pod template and rolls the Env's idle pools — the same way an image or gateway change does."
+              "describe": "Tunes the sandbox agent (envd) every member Pool's Pods run. These are process flags fixed when a Pod starts, so changing them re-renders the pod template and rolls the Env's idle pools — the same way an image or gateway change does.",
+              "ref": "EnvdSpec",
+              "fields": [
+                {
+                  "name": "verbose",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Write one structured line per API call envd serves to the container's stdout — for a command, the command itself, its arguments, working directory and environment. It is how a deployment gets a record of what agents actually ran inside a sandbox, since a command's output otherwise only travels back to its caller. Defaults to on; a GET always reports the value in force. Two costs. A PTY session sends one API call per keystroke and each is logged with its whole request, so an interactive terminal produces a lot of lines and pays a serialization cost on a hot path. And environment variable VALUES appear in the log — anything secret belongs in a Secret the sandbox reads, or in the egress credential injection path, not in a plain environment variable."
+                }
+              ]
             },
             {
               "name": "updateStrategy",
-              "type": "object",
+              "type": "EnvUpdateStrategy",
               "required": false,
               "fixed": false,
-              "describe": "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy."
+              "describe": "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy.",
+              "ref": "EnvUpdateStrategy",
+              "fields": [
+                {
+                  "name": "autoUpdate",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+                },
+                {
+                  "name": "maxUnavailable",
+                  "type": "string",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+                }
+              ]
             },
             {
               "name": "volumes",
-              "type": "object[]",
+              "type": "EnvVolumeMount[]",
               "required": false,
               "fixed": false,
-              "describe": "Mount existing PersistentVolumeClaims from this Env's namespace into the sandbox container. The claim must already exist and be Bound; the server never creates or deletes a PVC. Discover mountable claims with GET /volumes. Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes on a live Pod — so editing this list rolls the member Pools' idle Pods. Sandboxes already running keep their previous mounts until they are returned. In-place image upgrades never touch volumes."
+              "describe": "Mount existing PersistentVolumeClaims from this Env's namespace into the sandbox container. The claim must already exist and be Bound; the server never creates or deletes a PVC. Discover mountable claims with GET /volumes. Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes on a live Pod — so editing this list rolls the member Pools' idle Pods. Sandboxes already running keep their previous mounts until they are returned. In-place image upgrades never touch volumes.",
+              "ref": "EnvVolumeMount",
+              "fields": [
+                {
+                  "name": "claimName",
+                  "type": "string",
+                  "required": true,
+                  "fixed": false,
+                  "describe": "Name of an existing, Bound PersistentVolumeClaim in this Env's namespace. Cross-namespace mounts are not possible in Kubernetes, which is the authorisation boundary: a caller only ever reaches claims in the namespace their identity resolved to."
+                },
+                {
+                  "name": "mountPath",
+                  "type": "string",
+                  "required": true,
+                  "fixed": false,
+                  "describe": "Absolute path inside the sandbox container. Must not be '/' or '/mnt', must not sit inside a reserved path (/proc, /sys, /dev, /etc, /var/run, /var/lib/kubelet), and must not collide with or nest against a path the Template already mounts."
+                },
+                {
+                  "name": "subPath",
+                  "type": "string",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Mount a subtree of the volume instead of its root. Relative, no '..' segments. Recommended when the backing PersistentVolume is exposed at its filesystem root. Note kubelet creates a missing subPath directory, so a mistyped value mounts an empty directory rather than failing."
+                },
+                {
+                  "name": "readOnly",
+                  "type": "bool",
+                  "required": false,
+                  "fixed": false,
+                  "describe": "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out.",
+                  "default": true
+                }
+              ]
             }
           ]
         },
         {
           "name": "labels",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Metadata stamped onto the Env's objects. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix).",
@@ -345,13 +881,331 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "annotations",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Annotations stamped onto the Env's objects.",
           "lever": "create a new Env with the annotations you want"
         }
-      ]
+      ],
+      "schemas": {
+        "SandboxEnvTemplateRef": [
+          {
+            "name": "name",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Name of the cluster-scoped SandboxTemplate the Env binds to."
+          },
+          {
+            "name": "version",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Optional Template version pin. When empty, the Env tracks the Template's current spec.version."
+          }
+        ],
+        "EnvOverrides": [
+          {
+            "name": "image",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Override the main container (containers[0]) image of the rendered Template. Applied before any per-Member overrides."
+          },
+          {
+            "name": "podCreationImagePolicy",
+            "type": "PoolDefaultImage | IdleImage",
+            "required": false,
+            "fixed": false,
+            "describe": "Mirrored onto every member Pool's spec.podCreationImagePolicy.",
+            "values": [
+              "PoolDefaultImage",
+              "IdleImage"
+            ]
+          },
+          {
+            "name": "defaultStartupTimeout",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Mirrored onto every member Pool's spec.defaultStartupTimeout. Duration string, e.g. '5m'."
+          },
+          {
+            "name": "defaultIdleTimeout",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Mirrored onto every member Pool's spec.defaultIdleTimeout. Duration string, e.g. '30m'."
+          },
+          {
+            "name": "imagePullSecret",
+            "type": "ImagePullSecretInput",
+            "required": false,
+            "fixed": false,
+            "describe": "Write-only image-pull credentials. On create / update the server materialises a dockerconfigjson Secret named `ips-{envName}` in the Env's namespace with an OwnerReference back to the Env (cascade-deleted by Kubernetes GC). At render time the Env Reconciler appends that Secret's reference to every member Pool's spec.template.spec.imagePullSecrets so the kubelet can pull private images uniformly across the Env. Not returned on GET — check imagePullSecretConfigured for read-state.",
+            "ref": "ImagePullSecretInput",
+            "fields": [
+              {
+                "name": "registries",
+                "type": "RegistryCredential[]",
+                "required": true,
+                "fixed": false,
+                "describe": "",
+                "ref": "RegistryCredential",
+                "fields": [
+                  {
+                    "name": "registry",
+                    "type": "string",
+                    "required": true,
+                    "fixed": false,
+                    "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+                  },
+                  {
+                    "name": "username",
+                    "type": "string",
+                    "required": true,
+                    "fixed": false,
+                    "describe": ""
+                  },
+                  {
+                    "name": "password",
+                    "type": "string",
+                    "required": true,
+                    "fixed": false,
+                    "describe": ""
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "imagePullSecretConfigured",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Server-set on GET: true when the `ips-{envName}` Secret exists in the Env's namespace. On PUT it is the KEEP signal, and the only way to say it. The request is desired state, and the credentials cannot be read back to be echoed — so a PUT carrying neither `imagePullSecret` nor this flag is asking for the Secret to be DELETED. Sending back what GET returned therefore preserves the stored material, exactly as it does for every other field; a client that strips this flag while editing an unrelated setting revokes the registry credentials as a side effect. `imagePullSecret` present wins: new credentials replace the old ones whatever this says."
+          },
+          {
+            "name": "gateway",
+            "type": "GatewaySpec",
+            "required": false,
+            "fixed": false,
+            "describe": "Egress gateway for every member Pool's sandbox Pods. Enabling it injects a transparent proxy sidecar, which is what makes per-sandbox egress filtering (network.allowOut / denyOut) and credential injection (network.rules with Secret.fill) possible on the create call. It carries no rules of its own: what a sandbox may reach, and what gets injected into which request, belong to that one sandbox and arrive with it. Changing this switch changes the Pod spec and therefore rolls the Env's pools.",
+            "ref": "GatewaySpec",
+            "fields": [
+              {
+                "name": "enabled",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Inject the egress proxy sidecar. A create request carrying network rules against an environment without it is refused rather than silently unenforced."
+              }
+            ]
+          },
+          {
+            "name": "envd",
+            "type": "EnvdSpec",
+            "required": false,
+            "fixed": false,
+            "describe": "Tunes the sandbox agent (envd) every member Pool's Pods run. These are process flags fixed when a Pod starts, so changing them re-renders the pod template and rolls the Env's idle pools — the same way an image or gateway change does.",
+            "ref": "EnvdSpec",
+            "fields": [
+              {
+                "name": "verbose",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Write one structured line per API call envd serves to the container's stdout — for a command, the command itself, its arguments, working directory and environment. It is how a deployment gets a record of what agents actually ran inside a sandbox, since a command's output otherwise only travels back to its caller. Defaults to on; a GET always reports the value in force. Two costs. A PTY session sends one API call per keystroke and each is logged with its whole request, so an interactive terminal produces a lot of lines and pays a serialization cost on a hot path. And environment variable VALUES appear in the log — anything secret belongs in a Secret the sandbox reads, or in the egress credential injection path, not in a plain environment variable."
+              }
+            ]
+          },
+          {
+            "name": "updateStrategy",
+            "type": "EnvUpdateStrategy",
+            "required": false,
+            "fixed": false,
+            "describe": "Env-wide default rollout policy for member Pools when their idle-Pod identity changes. Overridable per member via EnvClusterMemberConfig.updateStrategy.",
+            "ref": "EnvUpdateStrategy",
+            "fields": [
+              {
+                "name": "autoUpdate",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+              },
+              {
+                "name": "maxUnavailable",
+                "type": "string",
+                "required": false,
+                "fixed": false,
+                "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+              }
+            ]
+          },
+          {
+            "name": "volumes",
+            "type": "EnvVolumeMount[]",
+            "required": false,
+            "fixed": false,
+            "describe": "Mount existing PersistentVolumeClaims from this Env's namespace into the sandbox container. The claim must already exist and be Bound; the server never creates or deletes a PVC. Discover mountable claims with GET /volumes. Mounts are fixed at Pod creation — Kubernetes forbids mutating spec.volumes on a live Pod — so editing this list rolls the member Pools' idle Pods. Sandboxes already running keep their previous mounts until they are returned. In-place image upgrades never touch volumes.",
+            "ref": "EnvVolumeMount",
+            "fields": [
+              {
+                "name": "claimName",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": "Name of an existing, Bound PersistentVolumeClaim in this Env's namespace. Cross-namespace mounts are not possible in Kubernetes, which is the authorisation boundary: a caller only ever reaches claims in the namespace their identity resolved to."
+              },
+              {
+                "name": "mountPath",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": "Absolute path inside the sandbox container. Must not be '/' or '/mnt', must not sit inside a reserved path (/proc, /sys, /dev, /etc, /var/run, /var/lib/kubelet), and must not collide with or nest against a path the Template already mounts."
+              },
+              {
+                "name": "subPath",
+                "type": "string",
+                "required": false,
+                "fixed": false,
+                "describe": "Mount a subtree of the volume instead of its root. Relative, no '..' segments. Recommended when the backing PersistentVolume is exposed at its filesystem root. Note kubelet creates a missing subPath directory, so a mistyped value mounts an empty directory rather than failing."
+              },
+              {
+                "name": "readOnly",
+                "type": "bool",
+                "required": false,
+                "fixed": false,
+                "describe": "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out.",
+                "default": true
+              }
+            ]
+          }
+        ],
+        "ImagePullSecretInput": [
+          {
+            "name": "registries",
+            "type": "RegistryCredential[]",
+            "required": true,
+            "fixed": false,
+            "describe": "",
+            "ref": "RegistryCredential",
+            "fields": [
+              {
+                "name": "registry",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+              },
+              {
+                "name": "username",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": ""
+              },
+              {
+                "name": "password",
+                "type": "string",
+                "required": true,
+                "fixed": false,
+                "describe": ""
+              }
+            ]
+          }
+        ],
+        "RegistryCredential": [
+          {
+            "name": "registry",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Registry host or URL (e.g. 'https://index.docker.io/v1/', 'ghcr.io', 'quay.io')."
+          },
+          {
+            "name": "username",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": ""
+          },
+          {
+            "name": "password",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": ""
+          }
+        ],
+        "GatewaySpec": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Inject the egress proxy sidecar. A create request carrying network rules against an environment without it is refused rather than silently unenforced."
+          }
+        ],
+        "EnvdSpec": [
+          {
+            "name": "verbose",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Write one structured line per API call envd serves to the container's stdout — for a command, the command itself, its arguments, working directory and environment. It is how a deployment gets a record of what agents actually ran inside a sandbox, since a command's output otherwise only travels back to its caller. Defaults to on; a GET always reports the value in force. Two costs. A PTY session sends one API call per keystroke and each is logged with its whole request, so an interactive terminal produces a lot of lines and pays a serialization cost on a hot path. And environment variable VALUES appear in the log — anything secret belongs in a Secret the sandbox reads, or in the egress credential injection path, not in a plain environment variable."
+          }
+        ],
+        "EnvUpdateStrategy": [
+          {
+            "name": "autoUpdate",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+          },
+          {
+            "name": "maxUnavailable",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+          }
+        ],
+        "EnvVolumeMount": [
+          {
+            "name": "claimName",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Name of an existing, Bound PersistentVolumeClaim in this Env's namespace. Cross-namespace mounts are not possible in Kubernetes, which is the authorisation boundary: a caller only ever reaches claims in the namespace their identity resolved to."
+          },
+          {
+            "name": "mountPath",
+            "type": "string",
+            "required": true,
+            "fixed": false,
+            "describe": "Absolute path inside the sandbox container. Must not be '/' or '/mnt', must not sit inside a reserved path (/proc, /sys, /dev, /etc, /var/run, /var/lib/kubelet), and must not collide with or nest against a path the Template already mounts."
+          },
+          {
+            "name": "subPath",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Mount a subtree of the volume instead of its root. Relative, no '..' segments. Recommended when the backing PersistentVolume is exposed at its filesystem root. Note kubelet creates a missing subPath directory, so a mistyped value mounts an empty directory rather than failing."
+          },
+          {
+            "name": "readOnly",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Defaults to true. Enforced on the Kubernetes volume source rather than the mount, so no container can request read-write for the same claim. Set false only when the agent must write: sandbox code runs as root with passwordless sudo and can delete anything writable. Read-only is a container-runtime bind flag — a Template whose pod spec can reach the host mount namespace (privileged, SYS_ADMIN, Bidirectional propagation, hostPath) cannot enforce it, and such a combination is rejected unless an administrator has opted the Template out.",
+            "default": true
+          }
+        ]
+      }
     }
   },
   {
@@ -379,22 +1233,23 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "inlineResources",
-          "type": "object",
+          "type": "ResourceRequirements",
           "required": false,
           "fixed": true,
           "describe": "Explicit per-Pool resource requests/limits. Required — and used alone — when the Pool's Env is free-form (env.poolSizing=free-form), where it is the whole of the Pod's sizing; on a billed Env it is optional and instead combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits.",
           "lever": "add a member with the resources you want, then remove this one",
+          "ref": "ResourceRequirements",
           "fields": [
             {
               "name": "requests",
-              "type": "object",
+              "type": "map[string]string",
               "required": false,
               "fixed": false,
               "describe": "Resource requests keyed by resource name (e.g. cpu, memory). Values use Kubernetes Quantity strings, e.g. '500m', '1Gi'."
             },
             {
               "name": "limits",
-              "type": "object",
+              "type": "map[string]string",
               "required": false,
               "fixed": false,
               "describe": "Resource limits keyed by resource name."
@@ -424,7 +1279,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "labels",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix). Required when the Pool's Env is billed (env.poolSizing=billed) — the Pool is rejected without it, because the scheduler it is submitted to has nothing to charge; rejected when the Env is free-form.",
@@ -432,7 +1287,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "annotations",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Annotations stamped onto this member's SandboxPool.",
@@ -440,10 +1295,11 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "updateStrategy",
-          "type": "object",
+          "type": "EnvUpdateStrategy",
           "required": false,
           "fixed": false,
           "describe": "Per-member rollout policy override. Unset inherits the Env overrides.updateStrategy, then autoUpdate=true / maxUnavailable=20%.",
+          "ref": "EnvUpdateStrategy",
           "fields": [
             {
               "name": "autoUpdate",
@@ -481,6 +1337,40 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         "labels": {
           "quota.scitix.ai/url": "https://quota.example/q/1"
         }
+      },
+      "schemas": {
+        "ResourceRequirements": [
+          {
+            "name": "requests",
+            "type": "map[string]string",
+            "required": false,
+            "fixed": false,
+            "describe": "Resource requests keyed by resource name (e.g. cpu, memory). Values use Kubernetes Quantity strings, e.g. '500m', '1Gi'."
+          },
+          {
+            "name": "limits",
+            "type": "map[string]string",
+            "required": false,
+            "fixed": false,
+            "describe": "Resource limits keyed by resource name."
+          }
+        ],
+        "EnvUpdateStrategy": [
+          {
+            "name": "autoUpdate",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+          },
+          {
+            "name": "maxUnavailable",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+          }
+        ]
       }
     },
     "update": {
@@ -505,22 +1395,23 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "inlineResources",
-          "type": "object",
+          "type": "ResourceRequirements",
           "required": false,
           "fixed": true,
           "describe": "Explicit per-Pool resource requests/limits. Required — and used alone — when the Pool's Env is free-form (env.poolSizing=free-form), where it is the whole of the Pod's sizing; on a billed Env it is optional and instead combined with instanceType as the rounded-down actual Pod request (must fit within instanceType × multiplier). Sets both requests and limits.",
           "lever": "add a member with the resources you want, then remove this one",
+          "ref": "ResourceRequirements",
           "fields": [
             {
               "name": "requests",
-              "type": "object",
+              "type": "map[string]string",
               "required": false,
               "fixed": false,
               "describe": "Resource requests keyed by resource name (e.g. cpu, memory). Values use Kubernetes Quantity strings, e.g. '500m', '1Gi'."
             },
             {
               "name": "limits",
-              "type": "object",
+              "type": "map[string]string",
               "required": false,
               "fixed": false,
               "describe": "Resource limits keyed by resource name."
@@ -550,7 +1441,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "labels",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Labels stamped onto this member's SandboxPool. Use for plugin-driven metadata such as quota.scitix.ai/url (parsed by the server to derive the pool-name suffix). Required when the Pool's Env is billed (env.poolSizing=billed) — the Pool is rejected without it, because the scheduler it is submitted to has nothing to charge; rejected when the Env is free-form.",
@@ -558,7 +1449,7 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "annotations",
-          "type": "object",
+          "type": "map[string]string",
           "required": false,
           "fixed": true,
           "describe": "Annotations stamped onto this member's SandboxPool.",
@@ -566,10 +1457,11 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "updateStrategy",
-          "type": "object",
+          "type": "EnvUpdateStrategy",
           "required": false,
           "fixed": false,
           "describe": "Per-member rollout policy override. Unset inherits the Env overrides.updateStrategy, then autoUpdate=true / maxUnavailable=20%.",
+          "ref": "EnvUpdateStrategy",
           "fields": [
             {
               "name": "autoUpdate",
@@ -607,6 +1499,40 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         "labels": {
           "quota.scitix.ai/url": "https://quota.example/q/1"
         }
+      },
+      "schemas": {
+        "ResourceRequirements": [
+          {
+            "name": "requests",
+            "type": "map[string]string",
+            "required": false,
+            "fixed": false,
+            "describe": "Resource requests keyed by resource name (e.g. cpu, memory). Values use Kubernetes Quantity strings, e.g. '500m', '1Gi'."
+          },
+          {
+            "name": "limits",
+            "type": "map[string]string",
+            "required": false,
+            "fixed": false,
+            "describe": "Resource limits keyed by resource name."
+          }
+        ],
+        "EnvUpdateStrategy": [
+          {
+            "name": "autoUpdate",
+            "type": "bool",
+            "required": false,
+            "fixed": false,
+            "describe": "Whether the member auto-rolls when its revision changes. Resolution order: member → env → default true. Set false to freeze a member on its current revision."
+          },
+          {
+            "name": "maxUnavailable",
+            "type": "string",
+            "required": false,
+            "fixed": false,
+            "describe": "Rollout unavailability budget as an absolute count (\"3\") or a percentage of desired idle replicas (\"20%\"). Rounded down, floored at 1. Resolution order: member → env → default \"20%\"."
+          }
+        ]
       }
     }
   },
@@ -640,10 +1566,11 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "scaleUpPolicy",
-          "type": "object",
+          "type": "PoolScaleUpPolicy",
           "required": false,
           "fixed": false,
           "describe": "Scale-up behaviour for a scaling group (mode + cooldown + idle threshold + saturation cooldown).",
+          "ref": "PoolScaleUpPolicy",
           "fields": [
             {
               "name": "mode",
@@ -689,10 +1616,11 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
         },
         {
           "name": "scaleDownPolicy",
-          "type": "object",
+          "type": "PoolScaleDownPolicy",
           "required": false,
           "fixed": false,
           "describe": "Scale-down timing for a scaling group. How many replicas each event removes comes from scaleUpPolicy.mode — scale-down mirrors the scale-up mode so a pool sheds capacity on the same scale it acquired it.",
+          "ref": "PoolScaleDownPolicy",
           "fields": [
             {
               "name": "idleTimeoutSeconds",
@@ -717,7 +1645,74 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
             }
           ]
         }
-      ]
+      ],
+      "schemas": {
+        "PoolScaleUpPolicy": [
+          {
+            "name": "mode",
+            "type": "Conservative | Default | Aggressive",
+            "required": false,
+            "fixed": false,
+            "describe": "How much warm headroom to keep, and how large a bite each scale-down takes. Sizing is relative to demand (claimed Pods + waiting claims), never to the pool's own replica count; waiting claims are always covered in full regardless of mode. Conservative=1 spare Pod, ceiling demand+1, scale-down -1; Default=ceil(demand/4) spare, ceiling 1.5x demand, scale-down -ceil(replicas/4); Aggressive=ceil(demand/2) spare, ceiling 2x demand, scale-down -ceil(replicas/2).",
+            "values": [
+              "Conservative",
+              "Default",
+              "Aggressive"
+            ]
+          },
+          {
+            "name": "cooldownSeconds",
+            "type": "int",
+            "required": false,
+            "fixed": false,
+            "describe": "Minimum seconds between two consecutive scale-up events (group-level)."
+          },
+          {
+            "name": "idleThresholdSeconds",
+            "type": "int",
+            "required": false,
+            "fixed": false,
+            "describe": "Aggregate idleReplicas=0 must persist for this long before the proactive trigger fires. Zero disables proactive scale-up."
+          },
+          {
+            "name": "idleZeroQuietWindowSeconds",
+            "type": "int",
+            "required": false,
+            "fixed": false,
+            "describe": "Suppresses the proactive idleZero trigger when no Sandbox.Create has been observed for the Pool within this many seconds. Reactive scale-ups (queue length > 0 with no idle Pod) ignore this window. Set to 0 to disable the gate. Default 300."
+          },
+          {
+            "name": "saturationCooldownSeconds",
+            "type": "int",
+            "required": false,
+            "fixed": false,
+            "describe": "How long a member stays marked saturated after a probe returned InsufficientResources / InvalidSpec. Default 60s."
+          }
+        ],
+        "PoolScaleDownPolicy": [
+          {
+            "name": "idleTimeoutSeconds",
+            "type": "int",
+            "required": false,
+            "fixed": false,
+            "describe": "Minimum seconds a pod must remain Idle before it becomes a scale-down candidate. Also bounds the step: a scale-down never removes more pods than have aged past this."
+          },
+          {
+            "name": "stabilizationSeconds",
+            "type": "int",
+            "required": false,
+            "fixed": false,
+            "describe": "Minimum seconds between two consecutive scale-down events."
+          },
+          {
+            "name": "protectionWindowSeconds",
+            "type": "int",
+            "required": false,
+            "fixed": false,
+            "describe": "Seconds during which a scale-down-marked pod can still be claimed (cancels deletion)."
+          }
+        ]
+      }
     }
   },
   {
@@ -780,7 +1775,8 @@ export const WRITE_DOCS: readonly WriteDoc[] = [
           "values": [
             "unrestricted",
             "agent"
-          ]
+          ],
+          "default": "unrestricted"
         }
       ]
     }

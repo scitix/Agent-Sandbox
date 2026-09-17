@@ -90,11 +90,20 @@ const BODIES = [
 
 interface Field {
   name: string
+  /** How the value is spelled in JSON: `string`, `int`, `map[string]string`, `EnvVolumeMount[]`, or an enum's values. */
   type: string
+  /**
+   * The named component the value is — or, for an array or a map, the
+   * component its elements are. `schemas` resolves it.
+   */
+  ref?: string
   required: boolean
   fixed: boolean
   lever?: string
+  /** The accepted values, when the field is an enum. */
   values?: string[]
+  /** The schema's own default, when it states one. */
+  default?: unknown
   describe: string
   fields?: Field[]
 }
@@ -104,6 +113,12 @@ interface Body {
   describe: string
   example?: unknown
   fields: Field[]
+  /**
+   * Every named component the body reaches, each expanded once, so a `ref` is
+   * a lookup rather than a dead end. Keyed by name, which also makes a cycle
+   * impossible: a component that references itself was already rendered.
+   */
+  schemas?: Record<string, Field[]>
 }
 
 type Node = Record<string, unknown>
@@ -114,10 +129,25 @@ function prose(node: Node): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
+/**
+ * The component a node references.
+ *
+ * Through `allOf` too, because that is how this spec attaches a note —
+ * `x-immutable`, a longer description — to a `$ref`: `labels` is
+ * `allOf: [$ref: StringMap]` plus a description, and stopping at `$ref` alone
+ * is what made it print as an anonymous `object`.
+ */
 function refName(node: Node): string | undefined {
-  const ref = node.$ref
-  if (typeof ref !== 'string') return undefined
-  return ref.replace(/^#\/components\/schemas\//, '')
+  if (typeof node.$ref === 'string') {
+    return node.$ref.replace(/^#\/components\/schemas\//, '')
+  }
+  if (Array.isArray(node.allOf)) {
+    for (const part of node.allOf) {
+      const name = refName(part as Node)
+      if (name) return name
+    }
+  }
+  return undefined
 }
 
 /**
@@ -151,35 +181,72 @@ function deref(schemas: Record<string, Node>, node: Node, depth = 0): Node {
   return merged
 }
 
-/** How a field's value is spelled, in the words a caller writing JSON uses. */
+/**
+ * How a field's value is spelled, in the words a caller writing JSON uses.
+ *
+ * A named component answers with its own name (`EnvVolumeMount`, not
+ * `object`), an array with its element's name (`EnvVolumeMount[]`), and a
+ * free-form map with what it maps to (`map[string]string`). `object` is kept
+ * for an anonymous shape, and `any` for a schema that states nothing — the two
+ * used to be the same answer, which told a reader nothing either way.
+ */
 function typeOf(schemas: Record<string, Node>, node: Node): string {
   const resolved = deref(schemas, node)
   if (Array.isArray(resolved.enum)) return (resolved.enum as string[]).join(' | ')
-  if (resolved.type === 'array') {
-    const items = deref(schemas, (resolved.items as Node) ?? {})
-    return `${scalarType(items)}[]`
-  }
-  return scalarType(resolved)
-}
-
-function scalarType(node: Node): string {
-  if (node.type === 'integer') return 'int'
-  if (node.type === 'number') return 'number'
-  if (node.type === 'boolean') return 'bool'
-  if (node.type === 'string') return 'string'
-  if (node.type === 'object' || node.properties) return 'object'
+  if (resolved.type === 'array') return `${typeOf(schemas, (resolved.items as Node) ?? {})}[]`
+  if (resolved.type === 'integer') return 'int'
+  if (resolved.type === 'number') return 'number'
+  if (resolved.type === 'boolean') return 'bool'
+  if (resolved.type === 'string') return 'string'
+  const properties = resolved.properties as Node | undefined
+  if (properties && Object.keys(properties).length) return refName(node) ?? 'object'
+  const values = resolved.additionalProperties
+  if (values && typeof values === 'object') return `map[string]${typeOf(schemas, values as Node)}`
+  if (values === true) return 'map[string]any'
+  if (resolved.type === 'object') return refName(node) ?? 'object'
   return 'any'
 }
 
 /**
- * One level of nesting, deliberately.
+ * The named component that describes this field's value — or, when the value
+ * is a list or a map, the component its elements are.
  *
- * The pages are read while holding a file, and two levels in is where a table
- * stops being scannable. `overrides` is the one place that matters, and one
- * level is exactly what it needs.
+ * A map of scalars (`StringMap`) has no such component: `map[string]string`
+ * already says everything, and inventing a `ref` for it would only send a
+ * reader to an empty table entry.
  */
-function fieldsOf(schemas: Record<string, Node>, node: Node, depth = 0): Field[] {
+function valueRef(schemas: Record<string, Node>, node: Node): string | undefined {
   const resolved = deref(schemas, node)
+  if (resolved.type === 'array') return valueRef(schemas, (resolved.items as Node) ?? {})
+  const properties = resolved.properties as Node | undefined
+  if (properties && Object.keys(properties).length) return refName(node)
+  const values = resolved.additionalProperties
+  if (values && typeof values === 'object') return valueRef(schemas, values as Node)
+  return undefined
+}
+
+/** How deep the inline expansion goes. Beyond it, `ref` and `schemas` take over. */
+const MAX_DEPTH = 3
+
+/**
+ * The fields of a value, arrays and maps transparent.
+ *
+ * A reader who asks what `volumes` carries is asking about its elements, so an
+ * array does not cost a level of nesting — `claimName` and `mountPath` sit
+ * directly under `volumes`, where the question was. `ref` still names the
+ * element's component, and `schemas` carries it, so nothing below the depth
+ * limit is unreachable: it is a lookup rather than a guess.
+ */
+function fieldsOf(schemas: Record<string, Node>, node: Node, depth = 0, path: string[] = []): Field[] {
+  const resolved = deref(schemas, node)
+  if (resolved.type === 'array') {
+    return fieldsOf(schemas, (resolved.items as Node) ?? {}, depth, path)
+  }
+  const values = resolved.additionalProperties
+  const hasProperties = Boolean(resolved.properties && Object.keys(resolved.properties as Node).length)
+  if (!hasProperties && values && typeof values === 'object') {
+    return fieldsOf(schemas, values as Node, depth, path)
+  }
   const properties = (resolved.properties as Record<string, Node>) ?? {}
   const required = new Set((resolved.required as string[]) ?? [])
   return Object.entries(properties).map(([name, raw]) => {
@@ -194,27 +261,61 @@ function fieldsOf(schemas: Record<string, Node>, node: Node, depth = 0): Field[]
     const lever = field['x-immutable-lever']
     if (typeof lever === 'string') out.lever = lever
     if (Array.isArray(field.enum)) out.values = field.enum as string[]
-    if (depth === 0) {
-      const nested = deref(schemas, field)
-      if (nested.properties && Object.keys(nested.properties as Node).length) {
-        const kids = fieldsOf(schemas, nested, depth + 1)
-        if (kids.length) out.fields = kids
-      }
+    if (field.default !== undefined) out.default = field.default
+    const ref = valueRef(schemas, raw)
+    if (ref) out.ref = ref
+    if (depth < MAX_DEPTH && !(ref && path.includes(ref))) {
+      const kids = fieldsOf(schemas, raw, depth + 1, ref ? [...path, ref] : path)
+      if (kids.length) out.fields = kids
     }
     return out
   })
+}
+
+/** Every ref a field tree names, so the table below is complete rather than one level deep. */
+function refsOf(fields: readonly Field[]): string[] {
+  const out: string[] = []
+  const walk = (fs: readonly Field[]) => {
+    for (const f of fs) {
+      if (f.ref) out.push(f.ref)
+      if (f.fields) walk(f.fields)
+    }
+  }
+  walk(fields)
+  return out
+}
+
+/** Each named component the body reaches, expanded once. */
+function componentsOf(schemas: Record<string, Node>, fields: readonly Field[]): Record<string, Field[]> {
+  const table: Record<string, Field[]> = {}
+  const seen = new Set<string>()
+  const queue = refsOf(fields)
+  while (queue.length) {
+    const name = queue.shift() as string
+    if (seen.has(name)) continue
+    seen.add(name)
+    const node = schemas[name]
+    if (!node) continue
+    const expanded = fieldsOf(schemas, node)
+    table[name] = expanded
+    queue.push(...refsOf(expanded))
+  }
+  return table
 }
 
 function bodyOf(schemas: Record<string, Node>, schema: string): Body {
   const node = schemas[schema]
   if (!node) throw new Error(`no schema ${schema} in the spec`)
   const resolved = deref(schemas, node)
+  const fields = fieldsOf(schemas, resolved)
   const body: Body = {
     schema,
     describe: prose(resolved),
-    fields: fieldsOf(schemas, resolved),
+    fields,
   }
   if (resolved.example !== undefined) body.example = resolved.example
+  const components = componentsOf(schemas, fields)
+  if (Object.keys(components).length) body.schemas = components
   return body
 }
 
@@ -266,11 +367,13 @@ function moduleText(specText: string, header: string): string {
 
   return `${header}
 
-/** One field of a write body. \`fields\` is the one level of nesting worth showing. */
+/** One field of a write body. \`fields\` expands the value; \`ref\` names the component it is. */
 export interface WriteDocField {
   name: string
-  /** How the value is spelled in JSON: \`string\`, \`int\`, \`bool\`, or an enum's values. */
+  /** How the value is spelled in JSON: \`string\`, \`int\`, \`map[string]string\`, \`EnvVolumeMount[]\`, or an enum's values. */
   type: string
+  /** The named component the value — or its elements, for a list or map — is. Resolved in \`schemas\`. */
+  ref?: string
   /** Required by the schema — for a create that is the whole of "you must say". */
   required: boolean
   /** Fixed after create: an update has to carry it back unchanged. */
@@ -279,6 +382,8 @@ export interface WriteDocField {
   lever?: string
   /** The accepted values, when the field is an enum. */
   values?: string[]
+  /** The schema's own default, when it states one. */
+  default?: unknown
   describe: string
   fields?: WriteDocField[]
 }
@@ -288,6 +393,8 @@ export interface WriteDocBody {
   describe: string
   example?: unknown
   fields: WriteDocField[]
+  /** Every named component the body reaches, expanded once. */
+  schemas?: Record<string, WriteDocField[]>
 }
 
 export interface WriteDoc {

@@ -82,7 +82,9 @@ time the schema moves:
 
 ```bash
 abx create envs --help              # the file create takes: example + every field
+abx create envs --schema            # …the same body as JSON, refs resolved, no key needed
 abx update envs <env> --help        # the same file, plus how to obtain one
+abx update envs <env> --schema      # …and the same body as JSON
 abx envs <env> pools --help         # …and for a member pool, addressed the same way
 abx <resource> --help               # columns, filters, sub-resources, writes
 abx envs <env> --editable           # the current values, in exactly that shape
@@ -199,6 +201,7 @@ substitutes them on the way out.
 
 ```bash
 abx create envs --help                  # create's file: address, example, fields
+abx create envs --schema                # the same body as JSON, every ref resolved
 abx update envs <env> --help            # the same file, plus how to get one
 abx create envs <env> pools --help      # …and the same for a member pool
 ```
@@ -206,7 +209,9 @@ abx create envs <env> pools --help      # …and the same for a member pool
 That page is generated from the API schema, so it lists every field, which are
 required, and which are **fixed at create** — it cannot be out of date in the
 way a copy in a document can. `abx agent-context` carries the same data as
-JSON, if you want to read it once rather than per command.
+JSON, if you want to read it once rather than per command; `--schema` is the
+same body for one address, and it works with no deployment or key, because the
+shape comes from the build, not the server.
 
 The two verbs are separate words now: `create` makes one (it must not exist
 yet), `update` changes one (it must exist). They take the **same file** — the

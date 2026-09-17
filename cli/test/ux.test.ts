@@ -668,3 +668,119 @@ describe('a pool body is checked against the env that will receive it', () => {
     expect(err).toBe('')
   })
 })
+
+describe('context names deployments, and --help says how to switch', () => {
+  it('answers with its own page, not the root usage', async () => {
+    const { out } = await cli(['context', '--help'])
+    expect(out).not.toContain('Resources:')
+    expect(out).toContain('abx context use <name>')
+    expect(out).toContain('abx context set <name> [flags]')
+    expect(out).toContain('abx context remove <name>')
+    expect(out).toContain('--endpoint <url>')
+  })
+
+  it('accepts -h and the contexts spelling', async () => {
+    expect((await cli(['context', '-h'])).out).toContain('abx context use <name>')
+    expect((await cli(['contexts', '--help'])).out).toContain('abx context use <name>')
+  })
+
+  it('lists, switches and removes, marking the current one', async () => {
+    await cli(['context', 'set', 'alpha', '--endpoint', 'https://a.test', '--api-key', 'k1'])
+    await cli(['context', 'set', 'beta', '--endpoint', 'https://b.test', '--api-key', 'k2'])
+
+    const first = await cli(['context'])
+    expect(first.out).toMatch(/^\* alpha\s+https:\/\/a\.test$/m)
+    // The switch is what someone with two contexts came for; the listing names
+    // the command rather than leaving them to find it in a README.
+    expect(first.out).toContain('abx context use beta')
+
+    expect((await cli(['context', 'use', 'beta'])).out).toBe('now using beta')
+    expect((await cli(['context'])).out).toMatch(/^\* beta\s+https:\/\/b\.test$/m)
+
+    expect((await cli(['context', 'remove', 'beta'])).out).toBe('removed beta')
+    expect((await cli(['context'])).out).toMatch(/^\* alpha\s+https:\/\/a\.test$/m)
+  })
+
+  it('shows what is configured, and never the key', async () => {
+    await cli(['context', 'set', 'alpha', '--endpoint', 'https://a.test', '--api-key', 'k1'])
+    const { out } = await cli(['context', '--help'])
+    expect(out).toContain('Configured:')
+    expect(out).toMatch(/^\s*\* alpha\s+https:\/\/a\.test$/m)
+    expect(out).not.toContain('k1')
+  })
+})
+
+describe('--schema prints the file a write takes, and only a write', () => {
+  it('answers a create with the generated body, refs and containers included', async () => {
+    const { code, out } = await cli(['create', 'envs', '--schema'])
+    expect(code).toBe(0)
+    const body = JSON.parse(out) as {
+      schema: string
+      fields: { name: string; type: string; ref?: string; fields?: { name: string; type: string; ref?: string }[] }[]
+      schemas?: Record<string, { name: string }[]>
+    }
+    expect(body.schema).toBe('CreateSandboxEnvRequest')
+    const top = new Map(body.fields.map((f) => [f.name, f]))
+    // The two shapes the page could not state: a free-form map, and a list of
+    // objects whose element fields were invisible.
+    expect(top.get('labels')!.type).toBe('map[string]string')
+    const volumes = top.get('overrides')!.fields!.find((f) => f.name === 'volumes')!
+    expect(volumes.type).toBe('EnvVolumeMount[]')
+    expect(volumes.ref).toBe('EnvVolumeMount')
+    expect(body.schemas!.EnvVolumeMount.map((f) => f.name)).toEqual([
+      'claimName',
+      'mountPath',
+      'subPath',
+      'readOnly',
+    ])
+  })
+
+  it('is the same body agent-context carries, so the two cannot drift', async () => {
+    const doc = JSON.parse((await cli(['agent-context'])).out) as {
+      resources: { plural: string; body?: { create?: unknown } }[]
+    }
+    const carried = doc.resources.find((r) => r.plural === 'envs')!.body!.create
+    expect(JSON.parse((await cli(['create', 'envs', '--schema'])).out)).toEqual(carried)
+  })
+
+  it('needs no deployment, key or cluster', async () => {
+    delete process.env.AGENTBOX_ENDPOINT
+    delete process.env.AGENTBOX_API_KEY
+    process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), 'abx-noconf-'))
+    const { code, out } = await cli(['create', 'envs', '--schema'])
+    expect(code).toBe(0)
+    expect(JSON.parse(out).schema).toBe('CreateSandboxEnvRequest')
+  })
+
+  it('answers an update, and an address nested under its parent', async () => {
+    const updated = JSON.parse((await cli(['update', 'envs', 'demo', '--schema'])).out) as { schema: string }
+    expect(updated.schema).toBe('UpsertSandboxEnvRequest')
+    const pool = JSON.parse((await cli(['create', 'envs', 'demo', 'pools', '--schema'])).out) as {
+      schema: string
+      fields: { name: string; type: string }[]
+    }
+    expect(pool.schema).toBe('CreateEnvSandboxPoolRequest')
+    expect(pool.fields.find((f) => f.name === 'inlineResources')!.type).toBe('ResourceRequirements')
+  })
+
+  it('refuses a read, and names the writes that do take a file', async () => {
+    const { code, err } = await cli(['envs', '--schema'])
+    expect(code).toBe(1)
+    expect(err).toContain('takes no file')
+    expect(err).toContain('abx create envs --schema')
+  })
+
+  it('refuses delete and scale, which take no file either', async () => {
+    expect((await cli(['delete', 'envs', 'demo', '--schema'])).err).toContain('takes no file')
+    expect((await cli(['scale', 'envs', 'demo', 'pools', 'p', '--schema'])).err).toContain('takes no file')
+  })
+
+  it('is offered where a file is, and never where a reader would be misled', async () => {
+    expect((await cli(['create', 'envs', '--help'])).out).toContain('abx create envs --schema')
+    expect((await cli(['update', 'envs', '--help'])).out).toContain('abx update envs <env> --schema')
+    // A read has no file to describe. A help page that offered one would send
+    // its reader looking for a shape that does not exist.
+    expect((await cli(['envs', '--help'])).out).not.toContain('--schema')
+    expect((await cli(['--help'])).out).not.toContain('--schema')
+  })
+})

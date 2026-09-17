@@ -17,7 +17,7 @@ name: agent-sandbox-hub
 description: Agent Sandbox Hub — Management plane (Dashboard UI + ws-proxy) deployed on the control cluster
 type: application
 version: 0.1.0
-appVersion: "0.1.7"
+appVersion: "0.1.8"
 keywords:
   - ai
   - agent
