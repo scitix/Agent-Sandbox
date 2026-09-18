@@ -139,6 +139,8 @@ Deploy sandbox pools across multiple clouds or regions. The built-in ExtProc rou
 | E2B SDK guide — creating and driving sandboxes | [/docs/tutorials/e2b](https://scitix.github.io/Agent-Sandbox/docs/tutorials/e2b) |
 | Skills — the nine files an agent installs | [/docs/skills](https://scitix.github.io/Agent-Sandbox/docs/skills) |
 | Examples — templates and environments to apply | [/docs/examples](https://scitix.github.io/Agent-Sandbox/docs/examples) |
+| Designs — the egress filter, cross-cluster routing, our envd patches | [/docs/designs](https://scitix.github.io/Agent-Sandbox/docs/designs) |
+| Managed agents — the Brain/Hands split | [/docs/tutorials/managed-agents/brain-hands](https://scitix.github.io/Agent-Sandbox/docs/tutorials/managed-agents/brain-hands) |
 | API Reference (OpenAPI) | [/docs/api/sandboxes/CreateSandbox](https://scitix.github.io/Agent-Sandbox/docs/api/sandboxes/CreateSandbox/) |
 
 ---

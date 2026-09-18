@@ -1,0 +1,110 @@
+---
+title: Cross-cluster routing
+description: How a create lands on another cluster, how the sandbox's ports follow it, and what the federation state is allowed to decide.
+---
+
+[Cross-cluster](/docs/concepts/cross-cluster) is what a user writes: a bare env
+name, or `cluster::env`, or `cluster::pool`. This page is the machinery behind
+those three, and the two planes it has to work on.
+
+## Two planes
+
+| Plane | What crosses | Decided by |
+|---|---|---|
+| **Control** — `Sandbox.create()` | one HTTP request, forwarded verbatim | the Env router on the cluster that received it |
+| **Data** — exec, files, PTY, ports | every later connection to the sandbox | ExtProc and Envoy, using the cluster prefix inside the sandbox id |
+
+Getting the first one right is the visible half. The second is the one that
+makes a forwarded sandbox usable: a caller on cluster A talks to a sandbox the
+gateway placed on cluster B for hours, without knowing it.
+
+## Control: who decides where a create lands
+
+A create arrives as a reference with three possible shapes. The first is
+obeyed, the other two are resolved:
+
+| The caller wrote | What happens |
+|---|---|
+| `SOME_CLUSTER::env` or `SOME_CLUSTER::pool` | forwarded to that cluster's E2B API, verbatim — no second-guessing |
+| `env` (bare) | resolved locally, and forwarded only if the local answer is "not here" |
+| `env//image` | as above; the image override travels with the forward |
+
+The bare name is where the design lives. Resolution runs in one order, and each
+step exists because the alternative is worse:
+
+1. **local has an idle Pod** → serve it locally. A cross-cluster hop costs a
+   round trip; there is no reason to pay it when the answer is already here.
+2. **a foreign member has an idle Pod** → forward, rewritten as
+   `cluster::pool` so the receiver claims that exact pool instead of routing
+   again.
+3. **nobody has idle capacity, but the local cluster can still scale** → stay
+   local, and let it scale.
+4. **only a foreign member can scale** → forward there.
+5. **nobody can serve it** → park it locally. A request that waits is a request
+   the operator can see; one that bounced between clusters is not.
+
+The distinction between 3 and 4 is the part that is easy to get wrong:
+forwarding a request to a cluster that also has to scale buys a hop and a
+second queue, without buying capacity.
+
+The state this reads — local idle, foreign idle, whether the local cluster can
+grow — is maintained per Env across clusters, keyed by `(namespace, env name)`.
+That keying is why the same env in two clusters must live in the same namespace
+name: change team or namespace and the two halves stop being one env, and a bare
+name silently stops spreading. The explicit `cluster::env` form keeps working,
+because it never consults the federation at all.
+
+## Data: making a forwarded sandbox reachable
+
+Once a sandbox exists on cluster B, every later call has to be able to reach
+its ports from wherever the caller is. The sandbox id carries the cluster, so
+nothing has to be looked up — but a plain `ORIGINAL_DST` load balancer on
+cluster A would happily try to resolve a Pod that does not exist there.
+
+ExtProc sits in that path and rewrites the request before Envoy routes it:
+
+- `:authority` becomes the target gateway's host, for TLS SNI and HTTP Host
+  matching;
+- `:path` gets the data-plane prefix;
+- `x-agentbox-cross-cluster: true` makes Envoy match the header-routed
+  `ORIGINAL_DST` cluster instead of the local one.
+
+The scheme cannot be assumed: Envoy applies a transport socket per cluster, not
+per request, so a header carries `https` or `http` and selects between the TLS
+and plain-text gateway clusters.
+
+<Callout title="A header name that is a loop guard" type="warn">
+The resolved upstream host travels in `x-agentbox-upstream-host`, not in
+`x-envoy-original-dst-host`. The well-known name is read by *any* Envoy that
+receives it: if it leaked through an nginx-ingress to the remote cluster's own
+`original_dst_cluster`, that Envoy would dial the public IP it was handed —
+itself — and fail with `TLS_WRONG_VERSION_NUMBER` as a 503. A private name
+means the same value is meaningless on the far side.
+</Callout>
+
+## What is not on this path
+
+- **Not failover.** A cluster with no Pod to give you is not rescued by another
+  one holding a spare — capacity routing is decided at create time, and a
+  cluster that cannot serve returns a failure rather than a long queue.
+- **Not image distribution.** A sandbox runs where its image can be pulled;
+  the platform rewrites a private registry's *host* to this region's equivalent,
+  which is why the same image path has to exist in each.
+- **Not the console's job.** The console lists the clusters its config names;
+  a console that does not know a cluster cannot offer it, and `abx clusters`
+  prints what the address behind it reaches.
+
+## Where the code is
+
+| Path | What it holds |
+|---|---|
+| [`pkg/e2bcompat/handlers/server.go`](https://github.com/scitix/Agent-Sandbox/blob/develop/pkg/e2bcompat/handlers/server.go) | the create path: parse the reference, forward when it names another cluster, resolve a bare name through the router |
+| [`pkg/apiserver/service/envscheduler/`](https://github.com/scitix/Agent-Sandbox/tree/develop/pkg/apiserver/service/envscheduler) | the five-step order above, and the federation state it reads |
+| [`pkg/apiserver/service/cross_cluster_forwarder.go`](https://github.com/scitix/Agent-Sandbox/blob/develop/pkg/apiserver/service/cross_cluster_forwarder.go) | the protocol-agnostic forwarder: method, path, query, headers and body verbatim, base URL swapped by kind |
+| [`pkg/envoy/extproc/cross_cluster.go`](https://github.com/scitix/Agent-Sandbox/blob/develop/pkg/envoy/extproc/cross_cluster.go) | the data-plane rewrite: authority, path prefix, and the two private headers |
+
+## See also
+
+- [Cross-cluster](/docs/concepts/cross-cluster) — addressing, federation, images
+- [Pools](/docs/concepts/pools) — what "idle" means, since it decides the route
+- [The egress filter](/docs/designs/egress) — the other sidecar in the same Pod

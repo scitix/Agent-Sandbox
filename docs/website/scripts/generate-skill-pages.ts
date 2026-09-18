@@ -31,7 +31,7 @@
  * content directory when it compiles.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { load } from 'js-yaml';
 
@@ -99,6 +99,14 @@ function main() {
     .sort();
 
   mkdirSync(outDir, { recursive: true });
+  // Prune what this run did not produce: a skill directory that is gone must
+  // not leave a page, and nothing in `git status` would have said so — these
+  // pages are gitignored on purpose.
+  for (const file of readdirSync(outDir)) {
+    if (file.startsWith('abx-') && file.endsWith('.mdx') && !names.includes(file.replace(/\.mdx$/, ''))) {
+      unlinkSync(join(outDir, file));
+    }
+  }
   for (const name of names) {
     writeFileSync(join(outDir, `${name}.mdx`), page(readSkill(name)));
   }

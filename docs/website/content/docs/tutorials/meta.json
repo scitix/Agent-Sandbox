@@ -1,7 +1,10 @@
 {
     "title": "Tutorials",
     "pages": [
-        "..."
+        "cli",
+        "e2b",
+        "evals",
+        "managed-agents"
     ],
     "defaultOpen": true
 }

@@ -1,0 +1,8 @@
+{
+  "title": "Designs",
+  "pages": [
+    "envd",
+    "egress",
+    "cross-cluster"
+  ]
+}

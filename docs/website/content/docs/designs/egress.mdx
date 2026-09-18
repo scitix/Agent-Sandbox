@@ -1,0 +1,125 @@
+---
+title: The egress filter
+description: How a sandbox's traffic is filtered and a credential is injected on the way out — the sidecar, the iptables redirect, the per-sandbox CA, and the two-tier SSRF baseline.
+---
+
+[Egress and secrets](/docs/concepts/egress-and-secrets) is what a user asks
+for: one switch on the Env, rules on the create call. This page is what
+implements it, and where the sharp edges are.
+
+The enforcement model follows
+[E2B's tcpfirewall](https://github.com/e2b-dev/infra), adapted for a Kubernetes
+Pod and hardened for evaluation: **the default action is deny**, not allow.
+
+## Two containers, and why not zero
+
+Turning the gateway on adds two things to every sandbox Pod:
+
+| Container | What it does | Why separate |
+|---|---|---|
+| `egress-init` (init) | installs one `nat` OUTPUT chain in the Pod's network namespace | needs `CAP_NET_ADMIN`, and a network namespace is shared by every container in the Pod — one install covers the sandbox, whatever it runs |
+| `egress-proxy` (native sidecar, uid 1337) | evaluates policy and injects headers | the redirect exempts uid 1337, which is what keeps the proxy's own upstream connections from being redirected back into itself |
+
+Everything is expressed in the Pod's network namespace, so enforcement is
+independent of two things that would otherwise matter: the sandbox's image
+(the filter survives an in-place image swap, because it is not in that image)
+and the cluster's CNI (the same rules work on Calico, ENI or anything else that
+gives a Pod a netns).
+
+The proxy listens on three ports — 15001 for `:80`, 15002 for `:443`, 15003 for
+everything else — plus a health port, 15004, which is deliberately *not* one of
+the three: a probe aimed at a data-plane port arrives indistinguishable from a
+redirected sandbox connection, so it would be policy-evaluated and logged as a
+denial on every interval.
+
+<Callout title="Only 80 and 443 are understood" type="warn">
+`HTTP` rules match on the `Host` header, `TLS` rules on the SNI. Any other port
+is CIDR-only: a rule written for `:3000` never fires, and nothing says so — the
+traffic simply passes the filter unexamined. That is a property of layer-7
+filtering, not a bug to be waited out.
+</Callout>
+
+## The policy is a file, and absence means deny
+
+The control plane writes a policy document into an `emptyDir` that only the
+sidecar mounts; the proxy watches it with `fsnotify` and re-reads on change.
+The contract is fail-closed at every step:
+
+- **an absent, empty or unparseable file denies everything** except DNS, which
+  stays resolvable so lookups fail fast instead of hanging;
+- `enforce: false` means the same as deny-all. The control plane flips it to
+  true only after it has resolved a concrete ruleset for a claimed sandbox —
+  so the window between a Pod starting and its policy arriving is closed by
+  default, not by timing.
+
+## The SSRF baseline is two tiers
+
+"Internal" covers two things that deserve different answers, and collapsing
+them forces a bad trade — a sandbox that needs one internal service would have
+to be handed the cloud metadata endpoint with it.
+
+| Tier | What it is | Can a policy open it? |
+|---|---|---|
+| Always denied | instance-metadata and link-local (`169.254.0.0/16`, `100.100.100.200`, `fd00:ec2::254`, `fe80::/10`) and loopback | **no.** An unauthenticated `GET` to these hands out cloud credentials, and no sandbox workload has a legitimate reason to reach them |
+| Default denied | RFC1918, CGNAT and ULA | yes — naming a host or CIDR in the allow list lifts the baseline for exactly that destination |
+
+A wildcard does not lift the second tier: `allowOut: ["*"]` means the public
+internet. `agentbox.scitix.ai/allow-private-networks` is the explicit way to say
+"everything, including the cluster's own network".
+
+## Credentials, and why the value never enters the sandbox
+
+This is the part the design is shaped around: an agent with a shell must not be
+able to read the credential it is allowed to use.
+
+```
+vault (write-only)
+  → operator reads it during one reconcile
+    → sidecar tmpfs (0600, never mounted into the sandbox)
+      → header rewritten on the matching request
+```
+
+Three consequences fall out of that path:
+
+- The operator resolves the CRD's `${e2b.secrets.NAME}` templates **before**
+  pushing, so credential *names* never reach the sidecar and it needs no
+  template engine. The wire between them carries values for one push and
+  nothing else.
+- The sidecar file lives on the sidecar's own tmpfs and is **removed when the
+  sandbox is released**. It is never an annotation, an environment variable or
+  a log line — the CRD holds the reference, not the value.
+- The sandbox sees a **decoy**: a placeholder in the environment it can read,
+  which the proxy replaces on the way out. Code inside runs unmodified; an
+  agent that prints its environment prints the decoy.
+
+Interception needs TLS to stop being end-to-end, so the proxy mints a
+**per-sandbox CA** and a leaf certificate per intercepted host (cached in
+memory, 24-hour TTL, never written to a volume the sandbox can mount). The CA
+certificate is installed into the sandbox's trust store through `/init` — which
+is why a custom image needs `/etc/ssl/certs/ca-certificates.crt` to exist, and
+why the container must not run as uid 1337: that uid is exempt from the
+redirect, so a sandbox process running as it would bypass the filter entirely.
+
+<Callout title="What injection does not do" type="warn">
+It rewrites **headers** on matching requests. It does not inspect bodies or
+query strings, it does not follow a redirect to another host, and a client with
+certificate pinning will fail rather than be helped. The sandbox can also use
+the injected credential as many times as it likes for the hosts the rule names —
+readable was the problem, not usable. Keep the rule's path and host as narrow as
+the workload allows.
+</Callout>
+
+## Where the code is
+
+| Path | What it holds |
+|---|---|
+| [`pkg/egressproxy/`](https://github.com/scitix/Agent-Sandbox/tree/develop/pkg/egressproxy) | the proxy: policy, matching, the CA and MITM, the injection rules, the iptables redirect |
+| [`pkg/framework/plugins/egress/`](https://github.com/scitix/Agent-Sandbox/tree/develop/pkg/framework/plugins/egress) | the `PreCreatePod` plugin that puts the two containers into the Pod |
+| [`pkg/e2bcompat/handlers/egress.go`](https://github.com/scitix/Agent-Sandbox/blob/develop/pkg/e2bcompat/handlers/egress.go) | E2B's `network.allowOut` / `denyOut` / `rules` translated into that policy, including the refusals (literals, wildcards, identity tokens) |
+| [`installer/dockerfile/Dockerfile.idleimage`](https://github.com/scitix/Agent-Sandbox/blob/develop/installer/dockerfile/Dockerfile.idleimage) | the idle image, which carries `/egress-proxy` — the same image a Pod runs while idle is the one the sidecar executes |
+
+## See also
+
+- [Egress and secrets](/docs/concepts/egress-and-secrets) — the user-facing half
+- [envd, and the patches we carry](/docs/designs/envd) — the filter's dependency on that runtime
+- [Pools](/docs/concepts/pools) — why flipping the switch rolls them

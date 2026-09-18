@@ -29,7 +29,7 @@
  * it compiles.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 /** `docs/website` → the repository root that holds `config/samples`. */
@@ -144,6 +144,13 @@ function main() {
   for (const group of GROUPS) {
     const dir = join(contentDir, group.dir);
     mkdirSync(dir, { recursive: true });
+    // Prune what this run did not produce. These pages are gitignored, so a
+    // sample deleted from config/samples would otherwise leave its page on the
+    // site with nothing in `git status` to notice.
+    for (const file of readdirSync(dir)) {
+      const owned = group.examples.some((e) => `${e.slug}.mdx` === file);
+      if (file.endsWith('.mdx') && file !== 'index.mdx' && !owned) unlinkSync(join(dir, file));
+    }
     for (const example of group.examples) {
       writeFileSync(join(dir, `${example.slug}.mdx`), page(example));
       count++;

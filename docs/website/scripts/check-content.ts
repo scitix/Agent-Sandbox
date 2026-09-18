@@ -58,6 +58,13 @@ const ALLOWED_HOSTS = new Set([
   // The worked example for "an API behind a credential" — a public service, and
   // the one every SDK's own docs reach for.
   'api.openai.com',
+  // Vendor documentation the docs cite by name: the agent frameworks this
+  // platform is used with.
+  'openai.github.io',
+  'anthropic.com',
+  'www.anthropic.com',
+  'docs.claude.com',
+  'modelcontextprotocol.io',
   'localhost',
   '127.0.0.1',
   // The CLI's own default output names a cluster id; examples use these.
@@ -88,9 +95,11 @@ const ALLOWED_HOST_SUFFIXES = [
  * metadata endpoint by definition, and naming it is how the platform explains
  * that it is denied.
  */
+const METADATA_HOSTS = new Set(['0.0.0.0', '100.100.100.200']);
+
 function isReservedAddress(ip: string): boolean {
   return (
-    ip === '0.0.0.0' ||
+    METADATA_HOSTS.has(ip) ||
     /^169\.254\./.test(ip) ||
     /^127\./.test(ip) ||
     /^192\.0\.2\./.test(ip) ||
