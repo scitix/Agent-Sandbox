@@ -200,11 +200,11 @@ describe("listPeerSites", () => {
 
     fs.writeFileSync(
       file,
-      `${clusters}peerSites:\n  - name: "Console (CN)"\n    url: "https://console-cn.example.com/agentbox"\n`,
+      `${clusters}peerSites:\n  - name: "Console (peer)"\n    url: "https://console-peer.example.com/agentbox"\n`,
     )
 
     expect(mod.listPeerSites()).toEqual([
-      { name: "Console (CN)", url: "https://console-cn.example.com/agentbox" },
+      { name: "Console (peer)", url: "https://console-peer.example.com/agentbox" },
     ])
   })
 
