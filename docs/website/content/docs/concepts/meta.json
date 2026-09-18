@@ -8,6 +8,7 @@
     "autoscaling",
     "inplace-update",
     "cross-cluster",
-    "secrets"
+    "egress-and-secrets",
+    "skills"
   ]
 }

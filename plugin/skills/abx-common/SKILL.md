@@ -281,4 +281,4 @@ reformulating — it usually contains the answer, and a guess costs a round trip
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/index.md>
+[The object model](https://scitix.github.io/Agent-Sandbox/docs/concepts/index.md)

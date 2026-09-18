@@ -45,6 +45,8 @@ const ALLOWED_HOSTS = new Set([
   'github.com',
   'www.github.com',
   'oss-ap-southeast.scitix.ai',
+  // The public registry the charts and images are published to.
+  'ghcr.io',
   'e2b.dev',
   'apache.org',
   'www.apache.org',
@@ -67,7 +69,16 @@ const ALLOWED_HOSTS = new Set([
  * under them is a placeholder by construction, so a page may use as many as it
  * likes without inventing a real hostname to explain something.
  */
-const ALLOWED_HOST_SUFFIXES = ['.example', '.example.com', '.test', '.invalid', '.localhost'];
+const ALLOWED_HOST_SUFFIXES = [
+  '.example',
+  '.example.com',
+  '.test',
+  '.invalid',
+  '.localhost',
+  // Kubernetes service DNS: names no deployment, and the namespace and service
+  // in front of it come from the chart.
+  '.svc.cluster.local',
+];
 
 /**
  * RFC 5737 ranges, plus loopback: addresses that cannot be anybody's cluster.
@@ -106,7 +117,7 @@ function check(rel: string, source: string, findings: Finding[]) {
       if (!isReservedAddress(m[1])) add(`IP address ${m[1]} — use 192.0.2.x (RFC 5737)`);
     }
 
-    for (const m of text.matchAll(/https?:\/\/([A-Za-z0-9._-]+)/g)) {
+    for (const m of text.matchAll(/(?:https?|oci):\/\/([A-Za-z0-9._-]+)/g)) {
       const host = m[1];
       // `https://YOUR_CONSOLE/...` and `https://<console>/...` are placeholders
       // and the point of the exercise; only a resolvable-looking host is a leak.

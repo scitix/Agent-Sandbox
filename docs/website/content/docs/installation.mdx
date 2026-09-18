@@ -1,0 +1,166 @@
+---
+title: Installation
+description: Install Agent Sandbox on a Kubernetes cluster with Helm, and the `abx` CLI with its skills on your machine.
+---
+
+Agent Sandbox is two halves, and most people install both:
+
+- the **platform** — an operator, an API and the data plane that runs the
+  sandbox Pods — which goes on a Kubernetes cluster, with Helm;
+- the **client** — the `abx` CLI and the skills an agent reads — which goes on
+  your machine, or in the image your agent runs in.
+
+The [CLI guide](/docs/tutorials/cli) and the [concepts](/docs/concepts) assume
+both are done.
+
+## What you need
+
+| | |
+|---|---|
+| A Kubernetes cluster | 1.28 or newer; the charts install CRDs and cluster-scoped RBAC, so you need cluster-admin |
+| `kubectl` | pointed at that cluster |
+| Helm | 3.14 or newer — the charts are published as OCI artifacts |
+
+Every image is public on GHCR, so there is no registry login to perform. The
+charts default to `latest`; pin the chart version and the image tags for
+anything you intend to keep.
+
+## 1. The platform
+
+```bash
+helm upgrade --install agent-sandbox-worker \
+  oci://ghcr.io/scitix/agent-sandbox-worker \
+  --version 0.1.0 \
+  --namespace agentbox-system --create-namespace \
+  --set controller.localClusterId=YOUR_CLUSTER_ID
+```
+
+One release is the whole platform on one cluster:
+
+| Installs | What it is |
+|---|---|
+| three CRDs | `SandboxTemplate`, `SandboxEnv`, `SandboxPool` — [the object model](/docs/concepts/index) |
+| the controller | the operator that renders environments and pools, and the API `abx` talks to |
+| ExtProc + Envoy | the data plane, the gateway a sandbox's ports are published through |
+
+`controller.localClusterId` names this cluster and is **required**: it is how a
+member Pool is placed on a cluster segment, and how the console labels the
+cluster it is showing. Left empty, Pool writes answer `503 server-misconfigured`
+and the environment reconciler has nowhere to put a member.
+
+### Check it came up
+
+```bash
+kubectl -n agentbox-system get pods
+kubectl get crd | grep agents.navix.sh
+```
+
+### Reach it
+
+Everything a client needs is a Service in that namespace:
+
+| Service | Port | What it is |
+|---|---|---|
+| `agent-sandbox-api` | 80 | the native API — what `abx` talks to |
+| `agent-sandbox-e2b-api` | 80 | the E2B-compatible API |
+| `agent-sandbox-data-plane` | 80 | the gateway that sandbox ports are reached through |
+
+From outside the cluster, either publish the ingress the chart ships
+(`--set extproc.ingress.host=agentbox.example.com`, with an ingress controller
+installed) or, for a first look, forward one port:
+
+```bash
+kubectl -n agentbox-system port-forward svc/agent-sandbox-api 8080:80
+```
+
+## 2. The console (optional)
+
+The console is a separate release: a dashboard that reads the same API. Install
+it in the same cluster, or in another one that can reach the worker.
+
+```bash
+helm upgrade --install agent-sandbox-hub \
+  oci://ghcr.io/scitix/agent-sandbox-hub \
+  --version 0.1.0 \
+  --namespace agentbox-system \
+  --set env.secret="$(openssl rand -hex 32)" \
+  --set clusters[0].id=YOUR_CLUSTER_ID \
+  --set clusters[0].name="YOUR_CLUSTER" \
+  --set clusters[0].url=http://agent-sandbox-api.agentbox-system.svc.cluster.local \
+  --set ingress.host=agentbox.example.com
+```
+
+Two settings matter more than the rest:
+
+- **`env.secret`** is the shared secret between the console and the worker
+  (`controller.secrets.secret`). Generate it once and give both releases the
+  same value; the console cannot authenticate against a worker that does not
+  share it.
+- **`clusters[]`** is the list of workers the console knows about. A console
+  only knows the clusters configured here — that is the list its cluster picker
+  shows, and the list `abx clusters` will print if you point `abx` at the
+  console's address.
+
+The console's built-in assistant is off by default (`assistant.enabled`), and
+its images are not part of the public release. Everything else — environments,
+pools, autoscaling, quotas, templates, the vault — is the same API the CLI uses.
+
+## 3. The CLI, and the skills
+
+`abx` is a single binary with no runtime dependencies, and it ships nine skills
+— Markdown files an agent reads before it touches the platform:
+
+```bash
+curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
+```
+
+That writes `~/.local/bin/abx` and `~/.agents/skills/`. Then name the deployment
+you are talking to:
+
+```bash
+abx context set YOUR_DEPLOYMENT \
+  --endpoint 'https://YOUR_CONSOLE/agentbox' \
+  --api-key agbx_...
+
+abx clusters
+```
+
+The endpoint is the console's address, or a worker's API address if you are not
+running the console; the key is issued in the console under **API Keys** (or, on
+a worker with no console, by whoever created the release). The
+[CLI guide](/docs/tutorials/cli) takes it from there, and
+[Skills](/docs/concepts/skills) explains what was installed for your agent.
+
+## First sandbox
+
+An environment is created from a **template**, and a sandbox from an
+environment's **pool** — nothing exists to create sandboxes from until you add
+both. The repository carries one to start with:
+
+```bash
+kubectl apply -f config/samples/e2b_sandboxtemplate.yaml
+```
+
+Then follow the [CLI guide](/docs/tutorials/cli#5-run-code-in-a-sandbox): create
+an environment on that template, add a pool to it, and read the environment's
+own documentation for the endpoints of your cluster. The
+[concepts](/docs/concepts) explain what the two objects are for, and why a
+template is not the thing you pass to `Sandbox.create()`.
+
+## Upgrading and removing
+
+```bash
+helm upgrade agent-sandbox-worker oci://ghcr.io/scitix/agent-sandbox-worker \
+  --namespace agentbox-system --reuse-values --version 0.1.1
+
+helm uninstall agent-sandbox-worker --namespace agentbox-system
+```
+
+The CRDs carry `helm.sh/resource-policy: keep`, so `uninstall` leaves them — and
+every environment, pool and template you created — in place. That is deliberate:
+deleting a CRD deletes its objects, and with them the record of what your
+sandboxes were. Remove them explicitly when you mean it:
+
+```bash
+kubectl delete crd sandboxtemplates.agents.navix.sh sandboxenvs.agents.navix.sh sandboxpools.agents.navix.sh
+```

@@ -30,7 +30,7 @@ there is capacity, and then your trainer talks E2B for the rest of the run.
 
 ```
 trainer process                     AgentBox
-  ├─ abx envs … pools … scale        provision the pool once, up front
+  ├─ abx scale envs … pools …        provision the pool once, up front
   └─ e2b.Sandbox(...)  × N           claim / run / discard, per episode
 ```
 
@@ -77,7 +77,7 @@ abx envs <env> pools                            # idleReplicas is what you can c
 abx instancetypes                               # shapes and relative cost
 abx quotas                                      # your ceiling
 
-abx envs <env> pools <pool> scale --replicas 64
+abx scale envs <env> pools <pool> --replicas 64
 ```
 
 Then leave autoscaling on with a ceiling at your peak, so the pool drains
@@ -122,4 +122,4 @@ the tail.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/inplace-update.md>
+[In-place update](https://scitix.github.io/Agent-Sandbox/docs/concepts/inplace-update.md)

@@ -71,7 +71,7 @@ Then say the confinement sentence below **before** they build anything on it.
 ```bash
 abx envs
 abx envs <env> pools
-abx envs <env> pools <pool> scale --replicas 10
+abx scale envs <env> pools <pool> --replicas 10
 abx whoami          # which identity, and whether this key's writes need approval
 abx envs <env> docs # where the SDK points: E2B API URL, data domain, scheme
 ```
@@ -118,4 +118,4 @@ what the vault and injection rules are for, not an environment variable.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/envs.md>
+[Sandbox environments](https://scitix.github.io/Agent-Sandbox/docs/concepts/envs.md)

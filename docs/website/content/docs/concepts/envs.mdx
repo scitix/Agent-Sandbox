@@ -3,8 +3,6 @@ title: Sandbox environments
 description: A SandboxEnv binds one template, carries the settings every sandbox in it shares, and is the name you create sandboxes with.
 ---
 
-# Sandbox environments
-
 A **SandboxEnv** is the addressable unit: the name you pass to
 `Sandbox.create()`, the thing the console shows a page for, and the object
 that binds exactly one [template](/docs/concepts/templates).
@@ -29,7 +27,7 @@ These are the settings every sandbox claimed from the env inherits:
 | `overrides.defaultStartupTimeout` | how long a claim waits for the sandbox to become ready, when it does not say |
 | `overrides.defaultIdleTimeout` | how long an untouched sandbox lives before it is reclaimed, when it does not say |
 | `overrides.imagePullSecret` | credentials for a private registry, materialised into a Secret the member pools reference |
-| `overrides.gateway` | the **switch** that gives the env's Pods an egress sidecar — see [egress and secrets](/docs/concepts/secrets) |
+| `overrides.gateway` | the **switch** that gives the env's Pods an egress sidecar — see [egress and secrets](/docs/concepts/egress-and-secrets) |
 | `overrides.volumes` | PersistentVolumeClaims mounted into every sandbox |
 | `overrides.updateStrategy` | `autoUpdate` and `maxUnavailable` for rollouts |
 | `labels`, `annotations` | metadata stamped on the env and its member pools |
@@ -92,4 +90,4 @@ about it are worth knowing before you edit a file:
 
 - [Pools](/docs/concepts/pools) — where the capacity is
 - [Autoscaling](/docs/concepts/autoscaling) — the size of that capacity over time
-- [Egress and secrets](/docs/concepts/secrets) — the env's gateway switch
+- [Egress and secrets](/docs/concepts/egress-and-secrets) — the env's gateway switch

@@ -85,4 +85,4 @@ inject it on the way out, so the sandbox reaches the API while holding no key.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/secrets.md>
+[Egress and secrets](https://scitix.github.io/Agent-Sandbox/docs/concepts/egress-and-secrets.md)

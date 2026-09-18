@@ -91,4 +91,4 @@ report `Ready` while having nothing claimable.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/pools.md>
+[Sandbox pools](https://scitix.github.io/Agent-Sandbox/docs/concepts/pools.md)

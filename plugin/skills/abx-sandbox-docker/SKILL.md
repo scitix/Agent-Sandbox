@@ -91,4 +91,4 @@ it rolls the pool.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/templates.md>
+[Sandbox templates](https://scitix.github.io/Agent-Sandbox/docs/concepts/templates.md)

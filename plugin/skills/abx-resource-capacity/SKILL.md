@@ -29,7 +29,7 @@ abx envs demo scaling-groups
 If the pool's group has autoscaling **off**, the size is yours:
 
 ```bash
-abx envs demo pools demo-1c2gi scale --replicas 40
+abx scale envs demo pools demo-1c2gi --replicas 40
 ```
 
 If the group is **on**, `replicas` belongs to the autoscaler and setting it is
@@ -121,4 +121,4 @@ pointed at before the first create.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/autoscaling.md>
+[Autoscaling](https://scitix.github.io/Agent-Sandbox/docs/concepts/autoscaling.md)

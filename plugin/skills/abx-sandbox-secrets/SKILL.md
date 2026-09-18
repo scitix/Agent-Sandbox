@@ -94,4 +94,4 @@ different answer. See `abx-common`.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/secrets.md>
+[Egress and secrets](https://scitix.github.io/Agent-Sandbox/docs/concepts/egress-and-secrets.md)

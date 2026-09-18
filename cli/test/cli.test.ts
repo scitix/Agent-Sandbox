@@ -342,8 +342,8 @@ describe('every resource points at a page that exists', () => {
 describe('the documented commands are commands this CLI has', () => {
   const docsDir = join(__dirname, '..', '..', 'docs', 'website', 'content', 'docs')
   const VERBS = ['create', 'update', 'delete', 'scale']
-  /** Commands outside the resource grammar: they take their own verbs. */
-  const OUTSIDE = ['context', 'agent-context']
+  /** Commands outside the resource grammar: they address nothing. */
+  const OUTSIDE = ['context', 'agent-context', 'whoami']
   /** Every flag the CLI takes a value for; all of them precede an address. */
   const FLAGS_WITH_VALUE = [
     '--context',
@@ -387,8 +387,7 @@ describe('the documented commands are commands this CLI has', () => {
         continue
       }
       pending = ''
-      // A redirection belongs to the shell, not to the CLI.
-      if (/^abx\s/.test(line)) out.push(line.replace(/\s*[<>].*$/, '').trim())
+      if (/^abx\s/.test(line)) out.push(line)
     }
     return out
   }
@@ -398,12 +397,18 @@ describe('the documented commands are commands this CLI has', () => {
     for (const abs of [...pages(join(docsDir, 'concepts')), ...pages(join(docsDir, 'tutorials'))]) {
       const rel = abs.slice(docsDir.length + 1)
       for (const command of commands(abs)) {
-        const tokens = command.split(/\s+/).slice(1)
+        // A pipeline or a redirection belongs to the shell; what is checked is
+        // the `abx` half of `abx … | jq …`. Cut at the first operator TOKEN, so
+        // an `<env>` placeholder in an argument is not mistaken for one.
+        const words = command.split(/\s+/).slice(1)
+        const op = words.findIndex((w) => /^(\d*>|[|;>])|^&&$|^\|\|$/.test(w))
+        const tokens = op === -1 ? words : words.slice(0, op)
         for (const t of tokens) {
           if (!t.startsWith('-')) continue
           expect(FLAGS, `${rel}: unknown flag in \`${command}\``).toContain(t)
         }
-        // Positionals, with every flag's value removed.
+        // Positionals, with every flag's value removed. `<id>` stands in for a
+        // value the reader supplies, exactly as it does in the CLI's own hints.
         const positional: string[] = []
         for (let i = 0; i < tokens.length; i++) {
           if (FLAGS_WITH_VALUE.includes(tokens[i])) i++
@@ -411,17 +416,22 @@ describe('the documented commands are commands this CLI has', () => {
         }
         expect(positional.length, `${rel}: \`${command}\` addresses nothing`).toBeGreaterThan(0)
 
-        const verb = VERBS.includes(positional[0]) ? positional.shift() : undefined
-        if (OUTSIDE.includes(positional[0])) continue
+        const verb = VERBS.includes(positional[0]) ? positional[0] : undefined
+        const subject = verb ? positional.slice(1) : positional
+        // Grammar illustrations (`abx <resource> <id>`, `abx create <collection…>`)
+        // name no resource, so there is nothing to check them against.
+        if (subject[0].startsWith('<')) continue
+        const concrete = subject.map((t) => (t.startsWith('<') ? 'x' : t))
+        if (OUTSIDE.includes(concrete[0])) continue
         expect(
           ROOT_SEGMENTS,
           `${rel}: \`${command}\` names an unknown resource`,
-        ).toContain(positional[0])
+        ).toContain(concrete[0])
         if (verb) {
           // The address it writes to is the same grammar as the read.
-          expect(parsePositional(positional), `${rel}: \`${command}\``).not.toBeNull()
-        } else if (!positional.includes('--help')) {
-          const parsed = parsePositional(positional)
+          expect(parsePositional(concrete), `${rel}: \`${command}\``).not.toBeNull()
+        } else if (!concrete.includes('--help')) {
+          const parsed = parsePositional(concrete)
           expect(parsed, `${rel}: \`${command}\``).not.toBeNull()
           expect(addressError({ ...parsed!, cluster: 'c' }), `${rel}: \`${command}\``).toBeNull()
         }

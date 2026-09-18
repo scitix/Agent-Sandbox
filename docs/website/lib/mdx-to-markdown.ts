@@ -45,6 +45,36 @@ export function stripFrontmatter(source: string): string {
   return end === -1 ? source : source.slice(end + 4).replace(/^\n+/, '');
 }
 
+function frontmatterTitle(source: string): string | undefined {
+  if (!source.startsWith('---\n')) return undefined;
+  const end = source.indexOf('\n---', 3);
+  if (end === -1) return undefined;
+  return source
+    .slice(4, end)
+    .match(/^title:\s*(.*)$/m)?.[1]
+    ?.trim()
+    .replace(/^["']|["']$/g, '');
+}
+
+/**
+ * Put the page's title back, as a heading, when the body does not carry one.
+ *
+ * The pages on the site do not repeat their frontmatter title — the layout
+ * renders it above the body, and printing it twice was a bug. A `.md` twin is
+ * not a page though: it is a document someone (or something) opens on its own,
+ * and a document that starts in the middle of a sentence is worse than one
+ * heading too many.
+ */
+function ensureTitle(md: string, title: string | undefined): string {
+  if (!title) return md;
+  const fmEnd = md.startsWith('---\n') ? md.indexOf('\n---', 3) : -1;
+  const head = fmEnd === -1 ? '' : md.slice(0, fmEnd + 4);
+  const rest = fmEnd === -1 ? md : md.slice(fmEnd + 4);
+  const firstLine = rest.split('\n').find((l) => l.trim());
+  if (firstLine?.startsWith('# ')) return md;
+  return `${head}\n\n# ${title}\n\n${rest.trimStart()}`;
+}
+
 export function toMarkdown(source: string, file: string): string {
   const out: string[] = [];
   let inFence = false;
@@ -131,7 +161,7 @@ export function toMarkdown(source: string, file: string): string {
         'or the document ships JSX to whatever agent fetches it',
     );
   }
-  return md;
+  return ensureTitle(md, frontmatterTitle(source));
 }
 
 /** One blank line between blocks, and no trailing whitespace — outside fences. */

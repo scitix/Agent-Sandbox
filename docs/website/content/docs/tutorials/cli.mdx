@@ -3,8 +3,6 @@ title: Agent Sandbox CLI Guide
 description: How to drive Agent Sandbox from a shell or from a coding agent — environments and pools with `abx`, sandboxes with the E2B SDK.
 ---
 
-# Agent Sandbox CLI Guide
-
 Agent Sandbox runs on the command line, which is what makes it usable by an
 agent as well as by a person: everything the console does, `abx` does, and
 everything a sandbox does, the E2B SDK does. Hand this page to an agent and it
@@ -37,7 +35,9 @@ If the key is going to an unattended agent, issue it in **agent** mode — see
 
 `abx` is a single binary with nothing behind it: no Node.js, no virtualenv. One
 script installs it on either platform and writes nine skills to
-`~/.agents/skills` — see [section 4](#4-using-it-from-an-agent).
+`~/.agents/skills` — see [section 4](#4-using-it-from-an-agent). It needs a
+platform to talk to; if you have not installed one yet, start at
+[Installation](/docs/installation).
 
 <Tabs items={['macOS', 'Linux']}>
 <Tab value="macOS">
@@ -174,6 +174,9 @@ writes then wait for your approval, while sandbox work is unaffected. And have i
 read the environment's own documentation ([section 5](#5-run-code-in-a-sandbox))
 rather than carrying endpoints in its prompt: that document is rendered for the
 cluster it belongs to, and the prompt is not.
+
+All nine are also rendered on this site, one page each, for reading rather than
+installing: [Skills](/docs/concepts/skills).
 
 ## 5. Run code in a sandbox
 

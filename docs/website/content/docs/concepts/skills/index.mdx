@@ -1,0 +1,99 @@
+---
+title: Using the skills
+description: The nine skills that ship with the CLI — what they are, how to install them, and how an agent picks one up.
+---
+
+A **skill** is a Markdown file an agent reads before it touches the platform. It
+carries the part a `--help` page cannot: when to reach for a command at all, and
+what the objects mean once you have.
+
+`abx` ships nine of them. They are not documentation *about* the product — they
+are the vocabulary the platform hands an agent, which is why this site renders
+them here: what you read on these pages is the file the installer writes to
+`~/.agents/skills`, generated from that same file at build time.
+
+## Install
+
+The skills arrive with the CLI. There is nothing to install separately.
+
+<Tabs items={['Installer', 'Claude Code', 'Sandbox image']}>
+<Tab value="Installer">
+
+`abx`'s installer writes the binary to `~/.local/bin` and the nine skills to
+`~/.agents/skills`:
+
+```bash
+curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
+```
+
+Both paths are overridable, which is what an image build wants:
+
+```bash
+AGBX_BIN_DIR=/usr/local/bin AGBX_SKILL_DIR=/opt/skills sh install.sh
+```
+
+</Tab>
+<Tab value="Claude Code">
+
+The plugin installs the skills and keeps the API key in the OS keychain, where
+the agent never sees it:
+
+```bash
+/plugin marketplace add scitix/agent-sandbox
+/plugin install agentbox
+```
+
+</Tab>
+<Tab value="Sandbox image">
+
+A sandbox that is meant to drive the platform itself has the same two things to
+do — the binary on `PATH`, the skills somewhere readable. `/opt/skills` is the
+predictable place, and any harness told to read that directory will find them:
+
+```dockerfile
+RUN curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh \
+      | AGBX_BIN_DIR=/usr/local/bin AGBX_SKILL_DIR=/opt/skills sh
+```
+
+</Tab>
+</Tabs>
+
+## The nine
+
+| Skill | Read it when |
+|---|---|
+| [`abx-common`](/docs/concepts/skills/abx-common) | reaching a platform at all: the endpoint, the key, which cluster, and what happens to a write that needs a person's approval. Every other skill defers here. |
+| [`abx-resource-capacity`](/docs/concepts/skills/abx-resource-capacity) | sizing: how many sandboxes fit, why a pool will not grow, how autoscaling and quota interact. |
+| [`abx-observe`](/docs/concepts/skills/abx-observe) | something is failing or slow — events, pool status, sandbox logs, metrics. |
+| [`abx-harbor-framework`](/docs/concepts/skills/abx-harbor-framework) | running a benchmark suite (Terminal-Bench, SWE-bench, a custom dataset) against pre-warmed pools. |
+| [`abx-reinforcement-learning`](/docs/concepts/skills/abx-reinforcement-learning) | rollouts for training: concurrency, environment resets, collecting trajectories. |
+| [`abx-managed-agent`](/docs/concepts/skills/abx-managed-agent) | giving your own agent a sandbox for its file and shell tools, durably across restarts. |
+| [`abx-sandbox-docker`](/docs/concepts/skills/abx-sandbox-docker) | the workload needs Docker inside the sandbox. |
+| [`abx-sandbox-network`](/docs/concepts/skills/abx-sandbox-network) | cutting a sandbox off the network, or allowing exactly one host. |
+| [`abx-sandbox-secrets`](/docs/concepts/skills/abx-sandbox-secrets) | a sandbox needs a credential it must not be able to read. |
+
+## How an agent uses them
+
+A skill describes a task; the tool it reaches for is the CLI, whose shape is one
+document:
+
+```bash
+abx agent-context        # every resource, filter, column and write body, as JSON
+```
+
+Two habits are worth engineering into whatever agent you run, and both are in
+`abx-common`: have it read that document once rather than guessing at commands,
+and have it read the environment's own documentation
+(`abx envs YOUR_ENV docs --cluster YOUR_CLUSTER`) rather than carrying endpoints
+in its prompt.
+
+Give an agent an **agent**-mode key
+([section 6 of the CLI guide](/docs/tutorials/cli#6-api-key-permissions)), never
+an unrestricted one: the platform's writes then wait for your approval, and
+sandbox work is unaffected.
+
+## See also
+
+- [CLI guide](/docs/tutorials/cli) — installing `abx` itself, and using it from
+  an agent
+- [E2B SDK guide](/docs/tutorials/e2b) — the sandbox half these skills assume

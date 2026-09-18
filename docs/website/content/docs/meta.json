@@ -1,6 +1,7 @@
 {
   "pages": [
     "index",
+    "installation",
     "tutorials",
     "concepts",
     "...",

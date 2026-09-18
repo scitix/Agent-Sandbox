@@ -46,7 +46,7 @@ before the run starts moving. Size the pool for it first:
 
 ```bash
 abx envs <env> pools                          # idleReplicas is the real answer
-abx envs <env> pools <pool> scale --replicas 16
+abx scale envs <env> pools <pool> --replicas 16
 ```
 
 See `abx-resource-capacity` if it will not grow.
@@ -101,4 +101,4 @@ registry; individual tasks failing is usually the task.
 
 ## Read more
 
-<https://scitix.github.io/Agent-Sandbox/docs/concepts/pools.md>
+[Sandbox pools](https://scitix.github.io/Agent-Sandbox/docs/concepts/pools.md)
