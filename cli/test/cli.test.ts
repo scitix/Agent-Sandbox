@@ -27,13 +27,14 @@ import { describe, expect, it } from 'bun:test'
 import {
   DOCS_BASE,
   RESOURCES,
+  ROOT_SEGMENTS,
   addressError,
   childrenOf,
   parsePositional,
   resolveApi,
   rootResources,
 } from '@headless/index'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { applyFilters, hints, renderDetail, renderTable, visibleColumns } from '../src/render'
 import { generate, generateForDashboard } from '../../scripts/gen-body-docs'
@@ -321,6 +322,115 @@ describe('every resource points at a page that exists', () => {
     const doc = agentContext('test')
     expect(doc.docs.index).toBe(`${DOCS_BASE}/concepts/index.md`)
     expect(doc.resources.find(r => r.plural === 'envs')!.docs).toBe(`${DOCS_BASE}/concepts/envs.md`)
+  })
+})
+
+/**
+ * The commands the documentation prints, run through the CLI's own parser.
+ *
+ * The tutorial that shipped `abx envs` on the line after `abx context set` was
+ * wrong in a way no reviewer caught and no test could have caught, because
+ * nothing ever looked at the pages. These are the pages the CLI links to, so
+ * they are the CLI's problem: a command that does not parse, or that names a
+ * resource or a flag that does not exist, is a reader (or an agent) following
+ * the documentation into an error message.
+ *
+ * What is checked is grammar, not behaviour — a page may say `abx envs YOUR_ENV
+ * --cluster YOUR_CLUSTER` about an env that exists only on the reader's
+ * cluster, and that is exactly the shape this has to accept.
+ */
+describe('the documented commands are commands this CLI has', () => {
+  const docsDir = join(__dirname, '..', '..', 'docs', 'website', 'content', 'docs')
+  const VERBS = ['create', 'update', 'delete', 'scale']
+  /** Commands outside the resource grammar: they take their own verbs. */
+  const OUTSIDE = ['context', 'agent-context']
+  /** Every flag the CLI takes a value for; all of them precede an address. */
+  const FLAGS_WITH_VALUE = [
+    '--context',
+    '--cluster',
+    '--endpoint',
+    '--cluster-api',
+    '--api-key',
+    '--filter',
+    '--limit',
+    '--auth-scheme',
+    '--replicas',
+    '-f',
+  ]
+  const FLAGS = [...FLAGS_WITH_VALUE, '--json', '--csv', '--wide', '--editable', '--schema', '--help', '-h', '--version']
+
+  /** Every page under a directory, as absolute paths. */
+  function pages(dir: string): string[] {
+    const out: string[] = []
+    for (const entry of readdirSync(dir)) {
+      const abs = join(dir, entry)
+      if (statSync(abs).isDirectory()) out.push(...pages(abs))
+      else if (/\.mdx?$/.test(entry)) out.push(abs)
+    }
+    return out
+  }
+
+  /** `abx …` lines out of the fenced blocks, continuations joined. */
+  function commands(abs: string): string[] {
+    const out: string[] = []
+    let fenced = false
+    let pending = ''
+    for (const raw of readFileSync(abs, 'utf8').split('\n')) {
+      if (/^\s*```/.test(raw)) {
+        fenced = !fenced
+        continue
+      }
+      if (!fenced) continue
+      const line = (pending + raw.replace(/\s+#\s.*$/, '')).trim()
+      if (line.endsWith('\\')) {
+        pending = `${line.slice(0, -1).trim()} `
+        continue
+      }
+      pending = ''
+      // A redirection belongs to the shell, not to the CLI.
+      if (/^abx\s/.test(line)) out.push(line.replace(/\s*[<>].*$/, '').trim())
+    }
+    return out
+  }
+
+  it('parses, and names resources and flags that exist', () => {
+    const checked: string[] = []
+    for (const abs of [...pages(join(docsDir, 'concepts')), ...pages(join(docsDir, 'tutorials'))]) {
+      const rel = abs.slice(docsDir.length + 1)
+      for (const command of commands(abs)) {
+        const tokens = command.split(/\s+/).slice(1)
+        for (const t of tokens) {
+          if (!t.startsWith('-')) continue
+          expect(FLAGS, `${rel}: unknown flag in \`${command}\``).toContain(t)
+        }
+        // Positionals, with every flag's value removed.
+        const positional: string[] = []
+        for (let i = 0; i < tokens.length; i++) {
+          if (FLAGS_WITH_VALUE.includes(tokens[i])) i++
+          else if (!tokens[i].startsWith('-')) positional.push(tokens[i])
+        }
+        expect(positional.length, `${rel}: \`${command}\` addresses nothing`).toBeGreaterThan(0)
+
+        const verb = VERBS.includes(positional[0]) ? positional.shift() : undefined
+        if (OUTSIDE.includes(positional[0])) continue
+        expect(
+          ROOT_SEGMENTS,
+          `${rel}: \`${command}\` names an unknown resource`,
+        ).toContain(positional[0])
+        if (verb) {
+          // The address it writes to is the same grammar as the read.
+          expect(parsePositional(positional), `${rel}: \`${command}\``).not.toBeNull()
+        } else if (!positional.includes('--help')) {
+          const parsed = parsePositional(positional)
+          expect(parsed, `${rel}: \`${command}\``).not.toBeNull()
+          expect(addressError({ ...parsed!, cluster: 'c' }), `${rel}: \`${command}\``).toBeNull()
+        }
+        checked.push(command)
+      }
+    }
+    // A parser that stops matching nothing passes silently; the pages are the
+    // reason this exists, so at least a handful of commands have to be read.
+    expect(checked.length).toBeGreaterThan(20)
   })
 })
 
