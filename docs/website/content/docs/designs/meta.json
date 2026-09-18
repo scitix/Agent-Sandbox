@@ -1,6 +1,7 @@
 {
   "title": "Designs",
   "pages": [
+    "index",
     "envd",
     "egress",
     "cross-cluster"

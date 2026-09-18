@@ -1,0 +1,18 @@
+---
+title: What is here
+description: Manifests from config/samples, rendered on the page — three templates and an environment to apply to your cluster.
+---
+
+Every page in this section is a file from
+[`config/samples`](https://github.com/scitix/Agent-Sandbox/tree/develop/config/samples),
+rendered as it ships: the manifest's own comments become the introduction, and
+the page links to the same file on `develop`.
+
+| Group | What it holds |
+|---|---|
+| [Templates](/docs/examples/templates) | three `SandboxTemplate`s to start from: [E2B Basic](/docs/examples/templates/e2b), [E2B Docker](/docs/examples/templates/e2b-docker), [E2B Kata](/docs/examples/templates/e2b-kata) |
+| [Environments](/docs/examples/envs) | a `SandboxEnv` with a warm pool, and the one line that points it at another template |
+
+Apply a template first, then an environment — an environment with no template
+to bind has nothing to render. [Installation](/docs/installation#first-sandbox)
+walks the two commands in order.

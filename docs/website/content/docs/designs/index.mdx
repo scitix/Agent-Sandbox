@@ -1,0 +1,19 @@
+---
+title: Design notes
+description: The decisions behind the platform — what we changed in the runtime, how egress is filtered, and how a create lands on another cluster.
+---
+
+These pages are the *why* behind behaviour described elsewhere on this site.
+Each one starts from a problem, says what it cost to solve, and links the code
+that carries it — including the parts that are not settled.
+
+| Page | The question it answers |
+|---|---|
+| [envd, and the patches we carry](/docs/designs/envd) | which parts of the runtime inside every sandbox are upstream, which are ours, and what each change fixes |
+| [The egress filter](/docs/designs/egress) | how a sandbox's traffic is filtered, and how a credential is injected without ever entering the sandbox |
+| [Cross-cluster routing](/docs/designs/cross-cluster) | how a create lands on another cluster, and how every later connection follows it |
+
+They are written for someone deciding whether to trust the platform with
+something — a benchmark run, an untrusted model's code, a multi-cluster rollout
+— rather than for someone about to change the code. Where a design has an open
+question, it says so.
