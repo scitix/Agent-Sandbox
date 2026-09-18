@@ -13,26 +13,38 @@ latency, and behind "run any image without building a template".
 
 ## The life of a Pod
 
-```
-created ──▶ Idle (idle image; no workload)
-               │  claim: image swapped in place, container restarts
-               ▼
-            Running (your image; your sandbox)
-               │  sandbox killed / idle timeout: container restarts, metadata cleared
-               ▼
-            Idle again
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Idle : the pool creates it
+  Idle --> Running : a claim swaps the image in place
+  Running --> Idle : killed, or the idle timeout expires
+  Idle --> [*] : the pool is scaled down or rolled
 ```
 
-1. **Idle.** The Pod runs the template's `idleImage` — the sandbox runtime
-   sitting in front of no workload. This is what makes it cheap to keep Pods
-   around: 20 idle Pods are not 20 copies of your image.
-2. **Claim.** The platform picks an idle Pod and replaces the main container's
-   image with the one the create asked for. Kubernetes restarts that container
-   on the same Pod — no scheduling, no new Pod, no volume re-attach.
-3. **Running.** Your process starts, and the sandbox is handed to the caller.
-4. **Return.** When the sandbox is killed or times out, the container is
-   restarted onto the idle image and the previous sandbox's metadata is
-   cleared, so the next claim does not inherit it.
+The same three states, in the order they matter:
+
+<Steps>
+<Step>
+**Idle — the Pod runs the template's `idleImage`.** That is the sandbox runtime
+sitting in front of no workload, which is what makes it cheap to keep Pods
+around: twenty idle Pods are not twenty copies of your image.
+</Step>
+<Step>
+**Claim — the image is swapped in place.** The platform picks an idle Pod and
+replaces the main container's image with the one the create asked for.
+Kubernetes restarts that container on the same Pod: no scheduling, no new Pod,
+no volume re-attach.
+</Step>
+<Step>
+**Running — your process starts**, and the sandbox is handed to the caller.
+</Step>
+<Step>
+**Return — the Pod goes back to idle.** When the sandbox is killed or times
+out, the container is restarted onto the idle image and the previous sandbox's
+metadata is cleared, so the next claim does not inherit it.
+</Step>
+</Steps>
 
 ## What that buys, and what it costs
 

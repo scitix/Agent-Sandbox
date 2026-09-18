@@ -14,13 +14,21 @@
  * limitations under the License.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { source } from '@/lib/source';
+import { stripFrontmatter, toMarkdown } from '@/lib/mdx-to-markdown';
 
 export async function getLLMText(page: (typeof source)['$inferPage']) {
-  if (!('getText' in page.data)) return null;
-  const processed = await page.data.getText('processed');
+  // The source file rather than fumadocs' processed markdown, so the llms text
+  // and the `.md` twin of the same page are the same document: a diagram stays
+  // a `mermaid` fence instead of becoming a `<Mermaid chart="…"/>` element, and
+  // a tab becomes its heading instead of JSX.
+  const file = join(process.cwd(), 'content/docs', page.path ?? '');
+  if (!page.path || !existsSync(file)) return null;
 
+  const body = toMarkdown(stripFrontmatter(readFileSync(file, 'utf8')), page.path);
   return `# ${page.data.title} (${page.url})
 
-${processed}`;
+${body}`;
 }

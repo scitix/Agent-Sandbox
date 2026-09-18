@@ -15,11 +15,29 @@
  */
 
 import defaultMdxComponents from 'fumadocs-ui/mdx';
+import { File, Files, Folder } from 'fumadocs-ui/components/files';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Mermaid } from '@/components/mermaid';
 
-// Re-export a typed getMDXComponents without depending on the external `mdx` package
+// Re-export a typed getMDXComponents without depending on the external `mdx` package.
+//
+// Components are registered rather than imported per page so a page stays a
+// document: `scripts/generate-md-pages.ts` has to turn every one of these back
+// into plain Markdown for the `.md` twin, and a page that imports its own
+// components would put an import line in the middle of what an agent fetches.
+// Anything registered here needs a case in that transform.
 export function getMDXComponents(components?: Record<string, unknown>) {
   return {
     ...defaultMdxComponents,
+    Tabs,
+    Tab,
+    Steps,
+    Step,
+    Files,
+    File,
+    Folder,
+    Mermaid,
     ...components,
   };
 }

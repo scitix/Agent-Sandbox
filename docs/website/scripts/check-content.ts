@@ -53,6 +53,9 @@ const ALLOWED_HOSTS = new Set([
   'python.org',
   'docs.python.org',
   'pypi.org',
+  // The worked example for "an API behind a credential" — a public service, and
+  // the one every SDK's own docs reach for.
+  'api.openai.com',
   'localhost',
   '127.0.0.1',
   // The CLI's own default output names a cluster id; examples use these.
@@ -66,9 +69,14 @@ const ALLOWED_HOSTS = new Set([
  */
 const ALLOWED_HOST_SUFFIXES = ['.example', '.example.com', '.test', '.invalid', '.localhost'];
 
-/** RFC 5737 ranges, plus loopback: addresses that cannot be anybody's cluster. */
+/**
+ * RFC 5737 ranges, plus loopback: addresses that cannot be anybody's cluster.
+ * `0.0.0.0` is allowed by name because the egress syntax spells "everywhere" as
+ * `0.0.0.0/0`, and writing that is how a run gets cut off from the internet.
+ */
 function isReservedAddress(ip: string): boolean {
   return (
+    ip === '0.0.0.0' ||
     /^127\./.test(ip) ||
     /^192\.0\.2\./.test(ip) ||
     /^198\.51\.100\./.test(ip) ||

@@ -17,9 +17,16 @@
 /**
  * Copies MDX source files to out/docs/<slug>.md after static export.
  * Lets AI agents fetch raw Markdown by appending .md to any docs URL.
+ *
+ * The twin is the document, not the page's source. Components are a rendering
+ * device — tabs for two ways of doing one thing, a callout for an aside — and
+ * an agent fetching `.md` wants what they say, in the order a person reads it.
+ * So every component a page may use has a case below, and a page that uses one
+ * it does not know is a build failure rather than a `.md` full of JSX.
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
+import { toMarkdown } from '../lib/mdx-to-markdown';
 
 const outDir = join(process.cwd(), 'out');
 const contentDir = join(process.cwd(), 'content/docs');
@@ -49,7 +56,7 @@ function main() {
     const urlPath = slugs.length === 0 ? '/docs' : `/docs/${slugs.join('/')}`;
     const dest = join(outDir, `${urlPath}.md`);
     mkdirSync(dirname(dest), { recursive: true });
-    writeFileSync(dest, readFileSync(absPath));
+    writeFileSync(dest, toMarkdown(readFileSync(absPath, 'utf8'), urlPath));
     console.log(`  ${urlPath}.md`);
     count++;
   }

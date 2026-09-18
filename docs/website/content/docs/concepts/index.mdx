@@ -8,17 +8,16 @@ description: Start here — SandboxTemplate, SandboxEnv and SandboxPool, how the
 Agent Sandbox is four objects and the chain between them. The console, `abx`
 and the E2B SDK are three ways of driving that same chain.
 
-```
-SandboxTemplate      what a sandbox is made from        platform admin
-      │ binds
-      ▼
-SandboxEnv           the name you create sandboxes with      you
-      │ has members
-      ▼
-SandboxPool          pre-warmed Pods of one resource shape   you
-      │ claim
-      ▼
-Pod ─────────────────────────────────────────────▶ sandbox
+```mermaid
+flowchart TB
+  T["SandboxTemplate<br/>the Pod shape and runtime<br/><i>platform admin</i>"]
+  E["SandboxEnv<br/>the name you create sandboxes with<br/><i>you</i>"]
+  P["SandboxPool<br/>pre-warmed Pods of one resource shape<br/><i>you</i>"]
+  S(["sandbox<br/>your code, running"])
+
+  T -->|binds to one| E
+  E -->|owns members| P
+  P -->|a claim hands one over| S
 ```
 
 | Object | What it decides | Who creates it | In the console |
@@ -28,19 +27,23 @@ Pod ─────────────────────────�
 | **SandboxPool** | how much warm capacity of one resource shape there is | you | the env's Pools tab |
 | **Pod → sandbox** | one running sandbox, handed to one claim | the platform | Sandboxes |
 
-## The same words in E2B, Agent Sandbox and Kubernetes
+## The same word means different things
 
-| You say | E2B SDK | Agent Sandbox | Kubernetes |
-|---|---|---|---|
-| template | a built snapshot | `SandboxTemplate` | `SandboxTemplate` |
-| env | the first argument of `Sandbox.create()` | `SandboxEnv` | `SandboxEnv` |
-| pool | — | `SandboxPool` | `SandboxPool` |
-| sandbox | `Sandbox` | a claimed Pod | a `Pod` |
+Agent Sandbox runs on Kubernetes and serves the E2B API, so the two vocabularies
+meet in one place — and one word is genuinely misleading:
 
-The row worth reading twice: the E2B SDK calls the first argument of
-`Sandbox.create()` a **template**, and on Agent Sandbox that argument is an
-env. A template is what an env is made from, not what you create sandboxes
-with. [Sandbox templates](/docs/concepts/templates) is about that difference.
+| You say | E2B SDK | Agent Sandbox |
+|---|---|---|
+| template | a snapshot built from a Dockerfile | a **container image you bring**, plus the platform's `SandboxTemplate` that says how to run it — nothing is built |
+| the first argument of `Sandbox.create()` | the template | the **env** |
+| pool | — | a `SandboxPool`: warm Pods, which E2B has no equivalent of |
+| sandbox | `Sandbox` | a claimed Pod |
+
+Read the first two rows together: in the E2B SDK the argument is called
+`template`, and on Agent Sandbox the value you put there is an env name. A
+template is what an env is *made from*, not what you create sandboxes with —
+[Sandbox templates](/docs/concepts/templates) is about that difference, and
+about why there is no build step and no snapshot format here.
 
 ## Two facts the design follows from
 

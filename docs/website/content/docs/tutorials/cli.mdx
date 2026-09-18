@@ -35,15 +35,40 @@ If the key is going to an unattended agent, issue it in **agent** mode — see
 
 ## 2. Install `abx`
 
-`abx` is a single binary with nothing behind it: no Node.js, no virtualenv.
+`abx` is a single binary with nothing behind it: no Node.js, no virtualenv. One
+script installs it on either platform and writes nine skills to
+`~/.agents/skills` — see [section 4](#4-using-it-from-an-agent).
+
+<Tabs items={['macOS', 'Linux']}>
+<Tab value="macOS">
 
 ```bash
 curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
 ```
 
-The script installs the binary to `~/.local/bin/abx` (and tells you if that
-directory is not on your PATH) and writes nine skills to `~/.agents/skills` —
-see [section 4](#4-using-it-from-an-agent).
+The binary lands in `~/.local/bin`. New shells find it through `~/.zprofile`;
+for the one you already have open:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+</Tab>
+<Tab value="Linux">
+
+```bash
+curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/latest/install.sh | sh
+```
+
+The binary lands in `~/.local/bin`. Not every distribution puts that on `PATH`;
+the script tells you when yours does not, and this fixes the shell you are in:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+</Tab>
+</Tabs>
 
 ## 3. Initialise `abx`
 
@@ -79,8 +104,16 @@ stand in for a context.
 
 ## 4. Using it from an agent
 
-**Claude Code** — the plugin stores your key in the OS keychain, where the agent
-never sees it:
+The install above is the whole prerequisite: the binary, and nine skills that
+give an agent the platform's vocabulary — rollouts, capacity, evaluations,
+Docker-in-sandbox, egress isolation, vault secrets, approvals. What differs is
+where your agent looks for them.
+
+<Tabs items={['Claude Code', 'Codex', 'OpenCode', 'Anything else']}>
+<Tab value="Claude Code">
+
+The plugin installs the skills and keeps your key in the OS keychain, where the
+agent never sees it:
 
 ```bash
 /plugin marketplace add scitix/agent-sandbox
@@ -90,17 +123,57 @@ never sees it:
 Then set the endpoint and key in the plugin's settings; a hook writes them to
 `~/.config/abx/config.json` for the CLI to read.
 
-**Codex, or anything else that runs shell** — the install in step 2 already
-placed the binary on your PATH and nine skills in `~/.agents/skills`. Point your
-agent at that directory and it has the platform's vocabulary: rollouts,
-capacity, evaluations, Docker-in-sandbox, egress isolation, vault secrets. Give
-it an **agent**-mode key ([section 6](#6-api-key-permissions)), never an
-unrestricted one.
+</Tab>
+<Tab value="Codex">
 
-Two habits make an agent reliable here: have it read `abx agent-context` once
-rather than guessing at commands, and have it read the environment's own
-documentation ([section 5](#5-run-code-in-a-sandbox)) rather than carrying
-endpoints in its prompt.
+Codex reads `~/.agents/skills` directly, so the install already did it:
+
+```bash
+ls ~/.agents/skills        # abx-common, abx-resource-capacity, abx-observe, …
+```
+
+Give it a context ([section 3](#3-initialise-abx)) and the skills are live; the
+only other thing worth telling it is to read `abx agent-context` rather than
+guess at commands.
+
+</Tab>
+<Tab value="OpenCode">
+
+The same directory, named from OpenCode's own instructions (an `AGENTS.md`, or
+whatever file your project uses for agent guidance):
+
+```markdown
+Platform access is documented in ~/.agents/skills/abx-common/SKILL.md.
+Run `abx agent-context` before composing an abx command.
+```
+
+Nothing about the platform changes with the tool: same binary, same key, same
+commands.
+
+</Tab>
+<Tab value="Anything else">
+
+Any agent that can run a shell needs two things: the binary on its `PATH`, and
+one of these two commands, whose output is written to be read by a model rather
+than parsed by a person.
+
+```bash
+abx agent-context        # the whole CLI as JSON — the entry point
+abx envs YOUR_ENV docs --cluster YOUR_CLUSTER   # this cluster's endpoints
+```
+
+Point it at `~/.agents/skills` if it reads a skills directory, and at
+`abx agent-context` if it does not.
+
+</Tab>
+</Tabs>
+
+Whichever it is, give the agent an **agent**-mode key
+([section 6](#6-api-key-permissions)), never an unrestricted one — the platform's
+writes then wait for your approval, while sandbox work is unaffected. And have it
+read the environment's own documentation ([section 5](#5-run-code-in-a-sandbox))
+rather than carrying endpoints in its prompt: that document is rendered for the
+cluster it belongs to, and the prompt is not.
 
 ## 5. Run code in a sandbox
 
