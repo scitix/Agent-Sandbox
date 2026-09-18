@@ -1,0 +1,40 @@
+# SandboxEnv: a warm pool of microVM-isolated E2B sandboxes.
+#
+# The same environment as e2b-basic_sandboxenv.yaml, on the template that runs
+# each sandbox in its own kernel. Warm capacity is smaller by default: a microVM
+# is not free, and the point of this template is that you can hand it untrusted
+# code.
+#
+#   `kubectl apply -f config/samples/e2b-kata_sandboxenv.yaml`
+#
+# The template has to exist first, and its `runtimeClassName` has to be a class
+# this cluster publishes (see e2b-kata_sandboxtemplate.yaml).
+apiVersion: agents.navix.sh/v1alpha1
+kind: SandboxEnv
+metadata:
+  name: e2b-kata
+spec:
+  templateRef:
+    name: e2b-envd-kata
+  mode: WarmPool
+  autoscaling:
+    groups:
+      - name: 1c4gi
+        enabled: true
+        minReplicas: 0
+        maxReplicas: 4
+  clusters:
+    - clusterID: YOUR_CLUSTER_ID
+      members:
+        - name: e2b-kata-1c4gi
+          config:
+            scalingGroup: 1c4gi
+            inlineResources:
+              requests:
+                cpu: "1"
+                memory: 4Gi
+              limits:
+                cpu: "1"
+                memory: 4Gi
+          spec:
+            replicas: 1

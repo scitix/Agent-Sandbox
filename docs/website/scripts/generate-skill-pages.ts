@@ -19,7 +19,7 @@
  *
  * `plugin/skills/*&#47;SKILL.md` is the source of truth: the installer fetches
  * those files into `~/.agents/skills`, and an agent reads them there. This
- * script renders the same files into `content/docs/concepts/skills/` so they
+ * script renders the same files into `content/docs/skills/` so they
  * can be read — and reviewed — in a browser, with a `.md` twin for an agent.
  *
  * Generated rather than copied by hand, and written to a gitignored path: a
@@ -38,7 +38,7 @@ import { load } from 'js-yaml';
 /** `docs/website` → the repository root that holds `plugin/skills`. */
 const ossRoot = join(process.cwd(), '..', '..');
 const skillsDir = join(ossRoot, 'plugin', 'skills');
-const outDir = join(process.cwd(), 'content', 'docs', 'concepts', 'skills');
+const outDir = join(process.cwd(), 'content', 'docs', 'skills');
 
 interface Skill {
   /** Directory name — what `~/.agents/skills` will hold. */

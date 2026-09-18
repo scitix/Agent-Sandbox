@@ -101,7 +101,7 @@ touches the platform, from `abx-common` (endpoint, key, cluster, approvals) to
 `/plugin marketplace add scitix/agent-sandbox`.
 
 → **[CLI guide](https://scitix.github.io/Agent-Sandbox/docs/tutorials/cli)** ·
-**[Skills](https://scitix.github.io/Agent-Sandbox/docs/concepts/skills)** ·
+**[Skills](https://scitix.github.io/Agent-Sandbox/docs/skills)** ·
 **[E2B SDK guide](https://scitix.github.io/Agent-Sandbox/docs/tutorials/e2b)**
 
 Every page is also a plain-text document: append `.md` to any docs URL
@@ -137,7 +137,8 @@ Deploy sandbox pools across multiple clouds or regions. The built-in ExtProc rou
 | Concepts — the object model, envs, pools, autoscaling | [/docs/concepts](https://scitix.github.io/Agent-Sandbox/docs/concepts) |
 | CLI guide — `abx`, endpoints and keys | [/docs/tutorials/cli](https://scitix.github.io/Agent-Sandbox/docs/tutorials/cli) |
 | E2B SDK guide — creating and driving sandboxes | [/docs/tutorials/e2b](https://scitix.github.io/Agent-Sandbox/docs/tutorials/e2b) |
-| Skills — the nine files an agent installs | [/docs/concepts/skills](https://scitix.github.io/Agent-Sandbox/docs/concepts/skills) |
+| Skills — the nine files an agent installs | [/docs/skills](https://scitix.github.io/Agent-Sandbox/docs/skills) |
+| Examples — templates and environments to apply | [/docs/examples](https://scitix.github.io/Agent-Sandbox/docs/examples) |
 | API Reference (OpenAPI) | [/docs/api/sandboxes/CreateSandbox](https://scitix.github.io/Agent-Sandbox/docs/api/sandboxes/CreateSandbox/) |
 
 ---

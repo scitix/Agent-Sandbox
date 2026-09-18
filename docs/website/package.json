@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx scripts/generate-skill-pages.ts && next dev",
-    "build": "tsx scripts/generate-skill-pages.ts && next build",
+    "dev": "tsx scripts/generate-skill-pages.ts && tsx scripts/generate-example-pages.ts && next dev",
+    "build": "tsx scripts/generate-skill-pages.ts && tsx scripts/generate-example-pages.ts && next build",
     "postbuild": "tsx scripts/check-content.ts && tsx scripts/generate-md-pages.ts && next-sitemap",
     "start": "next start",
     "compress-images": "uv run --with pillow python scripts/compress-images.py",

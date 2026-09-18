@@ -1,0 +1,129 @@
+---
+title: Harbor benchmarks
+description: Run Terminal-Bench, SWE-bench or a custom dataset on warm pools with Harbor and the agent-sandbox-harbor environment plugin.
+---
+
+[Harbor](https://github.com/harbor-framework/harbor) already knows how to drive
+a benchmark: datasets, agents, verifiers, results. `agent-sandbox-harbor` is an
+environment plugin that changes one thing — where the sandbox comes from. Each
+task claims one from a warm pool instead of building and starting one of its
+own, and that difference is most of the wall-clock time of a normal run.
+
+There is no Harbor fork to maintain and no template build step: Agent Sandbox
+swaps the workload image into a Pod that already exists, so a task starts with
+one API call.
+
+## Before you start
+
+You need a platform with somewhere to run, which is two objects: an environment
+and a member pool with idle capacity. The [installation
+guide](/docs/installation) covers the platform, and
+[Examples](/docs/examples/templates) has templates and environments to apply if
+you have none yet.
+
+Then read the environment's own documentation — it is the only place that knows
+which endpoints *your* cluster answers on:
+
+```bash
+abx envs YOUR_ENV docs --cluster YOUR_CLUSTER
+```
+
+Use the public entry it offers; the in-cluster one is for a client running
+inside the cluster.
+
+## Install
+
+```bash
+uv pip install 'harbor[e2b]' agent-sandbox-harbor
+```
+
+The plugin attaches through Harbor's own `--environment-import-path`, so the
+Harbor you already have stays the Harbor you have.
+
+## Size the pool for the concurrency
+
+`-n` is how many tasks run at once, and every one of them needs a Pod that is
+**already idle** when the run starts. The number that matters is not the pool's
+`replicas` but its `idleReplicas`:
+
+```bash
+abx envs YOUR_ENV pools --cluster YOUR_CLUSTER      # idleReplicas is the real answer
+abx scale envs YOUR_ENV pools YOUR_POOL --replicas 16 --cluster YOUR_CLUSTER
+```
+
+A pool that is short does not fail — the run just sits waiting for sandboxes to
+come back, which looks like a slow model and is not. If the pool will not grow,
+that is quota or the autoscaler: see [Autoscaling](/docs/concepts/autoscaling).
+
+## Run it
+
+The environment file is where the credentials and endpoints go:
+
+```bash
+cat > agentbox.env <<'EOF'
+E2B_API_KEY=agbx_…
+E2B_API_URL=https://YOUR_GATEWAY/agent-sandbox/api/e2b
+E2B_DOMAIN=YOUR_GATEWAY/agent-sandbox/api/data
+AGBX_POOL_NAME=YOUR_POOL
+AGBX_CLUSTER_ID=YOUR_CLUSTER
+AGBX_IMAGE_PREFIX=registry.example.com/agent-sandbox
+EOF
+
+harbor run \
+  -d terminal-bench@2.0 -a oracle -n 16 -y \
+  --environment-import-path agent_sandbox_harbor:AgentSandboxEnvironment \
+  --env-file agentbox.env
+```
+
+`E2B_DOMAIN` carries no scheme — the plugin adds it, and `AGBX_HTTPS=false` is
+how you say the data plane is plain HTTP. A mismatch there is worth watching
+for: it shows up as "the sandbox never connects", never as a scheme error.
+
+## Images are the part that bites
+
+Every task needs a **pre-built image**. This environment does not build from a
+Dockerfile and does not mutate a running sandbox, so an image is chosen in
+exactly this order:
+
+1. **`AGBX_IMAGE_MAP`** — a file of `<task-name> <image>` lines, used verbatim.
+   This is how a dataset whose tasks have no `docker_image` at all gets run,
+   which is the case for **SWE-bench**, where the task *is* a Dockerfile.
+2. **the task's own `docker_image`** — Terminal-Bench's case, rewritten by
+   `AGBX_IMAGE_PREFIX` (with `docker.io/` stripped first) and `AGBX_IMAGE_TAG`.
+3. neither → **the task is rejected**, loudly and on purpose.
+
+So a SWE-bench run is really two jobs: mirror or build the images once and write
+the map file; then run Harbor against that map. Budget for the first — it is
+minutes to hours, and it is done once per dataset version.
+
+## Settings worth knowing
+
+| Variable | Why you would touch it |
+|---|---|
+| `AGBX_STARTUP_TIMEOUT` | default 300s. Raise it for heavy images: this is the wait for a claimed Pod to become ready. |
+| `AGBX_READY_TIMEOUT` | default 600s. A cold SWE-bench image can exceed it on a first pull. |
+| `AGBX_IMAGE_PREFIX` | points every `docker.io/…` image at a mirror, which is what keeps a 500-task run from being rate-limited. |
+| `AGBX_HTTPS` | `false` when the data plane is plain HTTP. |
+
+One version note, so you do not blame the platform: E2B's SDK ≥ 2.24 rejects
+keys that do not start with `e2b_` on the client side. `agent-sandbox-e2b >=
+0.0.4` neutralises that so an `agbx_` key works, and `harbor >= 0.13` pulls a
+new enough E2B SDK to need it.
+
+## When tasks fail, and not the run
+
+```bash
+abx sandboxes --filter status=Failed --cluster YOUR_CLUSTER
+abx sandboxes YOUR_SANDBOX_ID logs --cluster YOUR_CLUSTER
+abx envs YOUR_ENV events --cluster YOUR_CLUSTER
+```
+
+A whole dataset failing the same way is almost always the image map or the
+registry; individual tasks failing is usually the task itself.
+
+## See also
+
+- [E2B Python SDK](/docs/tutorials/e2b) — the client the plugin uses underneath
+- [Autoscaling](/docs/concepts/autoscaling) — making the concurrency exist
+- [In-place update](/docs/concepts/inplace-update) — why a claim is fast, and
+  what it costs

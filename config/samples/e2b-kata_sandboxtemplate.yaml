@@ -1,0 +1,124 @@
+# SandboxTemplate: the E2B runtime in a microVM.
+#
+# The same sandbox as e2b-basic_sandboxtemplate.yaml, with one line that matters:
+# `runtimeClassName`, which asks the cluster to run the Pod in its own kernel
+# (Kata Containers, Firecracker, or whatever your cluster publishes) instead of
+# sharing the node's. A container escape from a shared-kernel Pod lands on the
+# node; from here it lands in a virtual machine.
+#
+#   `kubectl apply -f config/samples/e2b-kata_sandboxtemplate.yaml`
+#
+# Two things to check before you use it:
+#   - the class exists: `kubectl get runtimeclass`. The name below is the
+#     conventional one; use whatever yours is called, or the Pod never schedules.
+#   - the runtime has the RAM: a microVM carries its own kernel, so a sandbox
+#     that fits in 2Gi on runc may want more here.
+#
+# Cost is the other half of the trade: start-up is slower and each sandbox
+# occupies more than a container would. Pay it where the code is untrusted —
+# evaluations of a model you do not control, agents given a shell and a network.
+# Every image below is public, like the other examples.
+apiVersion: agents.navix.sh/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: e2b-envd-kata
+spec:
+  version: 0.0.1
+  description: E2B-compatible sandbox in a microVM — envd on a runtime class with its own kernel.
+  idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.9
+  runtimes:
+    - name: envd
+      port: 49983
+      protocol: TCP
+      description: E2B envd runtime
+      readinessProbe:
+        httpGet:
+          port: 49983
+          path: /health
+  template:
+    spec:
+      # The whole difference from the basic template. Set this to the class
+      # `kubectl get runtimeclass` shows on your cluster.
+      runtimeClassName: kata-fc
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      shareProcessNamespace: false
+      containers:
+        - name: sandbox
+          image: ghcr.io/scitix/agent-sandbox-envd:0.5.16
+          imagePullPolicy: IfNotPresent
+          command:
+            - /mnt/agentbox/tini
+            - -g
+            - --
+            - /bin/sh
+            - /mnt/agentbox/agentbox-entrypoint.sh
+          env:
+            - name: AGENTBOX_DIR
+              value: /mnt/agentbox
+            - name: PORT
+              value: "49999"
+          ports:
+            - containerPort: 49983
+              name: envd
+              protocol: TCP
+            - containerPort: 49999
+              name: app
+              protocol: TCP
+          # More headroom than the basic template on purpose: the guest kernel
+          # and its own page cache live inside these numbers.
+          resources:
+            limits:
+              cpu: "1"
+              memory: 4Gi
+            requests:
+              cpu: "1"
+              memory: 4Gi
+          securityContext:
+            runAsGroup: 0
+            runAsUser: 0
+          volumeMounts:
+            - mountPath: /mnt/agentbox
+              name: shared-bin
+              readOnly: true
+      initContainers:
+        - name: tini-injector
+          image: ghcr.io/scitix/agent-sandbox-tini:v0.19.0-static
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c]
+          args:
+            - |
+              TARGET_DIR="/mnt/agentbox"
+              mkdir -p "$TARGET_DIR"
+              if [ -f "$TARGET_DIR/tini" ]; then
+                  echo "[Init] tini already exists at $TARGET_DIR. Skipping copy."
+              else
+                  cp /workspace/tini "$TARGET_DIR/tini"
+                  chmod +x "$TARGET_DIR/tini"
+                  echo "[Init] tini static injected successfully."
+              fi
+          volumeMounts:
+            - name: shared-bin
+              mountPath: /mnt/agentbox
+        - name: envd-injector
+          image: ghcr.io/scitix/agent-sandbox-envd:0.5.24
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c]
+          args:
+            - |
+              TARGET_DIR="/mnt/agentbox"
+              mkdir -p "$TARGET_DIR"
+              if [ -f "$TARGET_DIR/envd" ] && [ -f "$TARGET_DIR/agentbox-entrypoint.sh" ]; then
+                  echo "[Init] envd and scripts already exist in $TARGET_DIR. Skipping copy."
+              else
+                  cp /workspace/envd "$TARGET_DIR/"
+                  cp /workspace/agentbox-entrypoint.sh "$TARGET_DIR/"
+                  chmod +x "$TARGET_DIR/envd" "$TARGET_DIR/agentbox-entrypoint.sh"
+                  echo "[Init] envd & scripts successfully injected."
+              fi
+          volumeMounts:
+            - name: shared-bin
+              mountPath: /mnt/agentbox
+      volumes:
+        - name: shared-bin
+          emptyDir: {}

@@ -16,5 +16,10 @@ next-env.d.ts
 
 # Rendered from ../../plugin/skills by scripts/generate-skill-pages.ts — the
 # skill files are the source of truth, and a committed copy would drift.
-content/docs/concepts/skills/abx-*.mdx
-content/docs/concepts/skills/meta.json
+content/docs/skills/abx-*.mdx
+content/docs/skills/meta.json
+
+# Rendered from ../../config/samples by scripts/generate-example-pages.ts, for
+# the same reason: the manifests are the source of truth.
+content/docs/examples/*/e2b*.mdx
+content/docs/examples/*/meta.json

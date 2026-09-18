@@ -1,0 +1,43 @@
+---
+title: Using the templates
+description: Ready-to-apply SandboxTemplates — the base runtime, Docker inside the sandbox, and a microVM-isolated one.
+---
+
+A [SandboxTemplate](/docs/concepts/templates) is what a sandbox is made from:
+the Pod shape, the idle image, the runtime, and the defaults a claim inherits.
+These pages are the real files — each one is the manifest in
+[`config/samples`](https://github.com/scitix/Agent-Sandbox/tree/develop/config/samples)
+on the `develop` branch, rendered here so it can be read before it is applied.
+
+All of the images are public (this project's GHCR packages, and Docker Hub's own
+images), so each works on a cluster that has never seen Agent Sandbox before.
+
+| Template | What it is for |
+|---|---|
+| [E2B Basic](/docs/examples/templates/e2b) | the sandbox itself: envd in a Pod, any image swapped in on claim. Start here. |
+| [E2B Docker](/docs/examples/templates/e2b-docker) | the same, plus a container engine inside the sandbox — `docker build`, `docker run`, `docker compose up`. |
+| [E2B Kata](/docs/examples/templates/e2b-kata) | the same sandbox in its own kernel, on a microVM runtime class. For code you do not trust. |
+
+## Apply one
+
+```bash
+kubectl apply -f config/samples/e2b-basic_sandboxtemplate.yaml
+```
+
+Then give it an [environment](/docs/examples/envs) to hold capacity — a
+template on its own creates nothing.
+
+## Reading a template
+
+Three fields decide almost everything, and each example page comments the rest:
+
+| Field | What it decides |
+|---|---|
+| `idleImage` | what a Pod runs while no sandbox holds it. Keeping this small is what makes a deep warm pool affordable. |
+| `runtimes` | the runtime inside the Pod, and the ports it answers on. `envd` is the one the E2B SDK speaks to. |
+| `template.spec` | the Pod: images, resources, security context, volumes. Anything you would write in a Pod spec, plus the `runtimeClassName` that picks the isolation level. |
+
+The one field worth understanding before you edit an example: the running image
+is chosen when a sandbox is *claimed*, not when the template is applied, so a
+template does not pin your workload image — see
+[in-place update](/docs/concepts/inplace-update).

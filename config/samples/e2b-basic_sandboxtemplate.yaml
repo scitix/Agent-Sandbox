@@ -1,10 +1,22 @@
+# SandboxTemplate: the E2B runtime.
+#
+# The base template: a Pod that runs envd, the agent the E2B SDK talks to. A
+# sandbox created from an Env on this template can run any image the cluster can
+# pull — the image is swapped in on the claim, so there is nothing to rebuild
+# when the workload changes.
+#
+#   `kubectl apply -f config/samples/e2b-basic_sandboxtemplate.yaml`
+#
+# Every image below is public, so this works on a cluster that has never seen
+# this project before. Pinning: the tags are the ones the platform runs; move
+# them together with your platform release.
 apiVersion: agents.navix.sh/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: e2b-envd
 spec:
   version: 0.0.1
-  description: E2B-compatible sandbox with pure explicit injection logic in Template
+  description: E2B-compatible sandbox — envd inside a Pod, any image on claim.
   idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.9
   runtimes:
     - name: envd
@@ -40,13 +52,17 @@ spec:
             - containerPort: 49999
               name: app
               protocol: TCP
+          # The Pod's size when nothing else decides it. A Pool on this Env
+          # usually does: on a billed deployment its instance type (times the
+          # multiplier) is the envelope, and inlineResources is what the Pod
+          # actually asks for. This is the default for a free-form Pool.
           resources:
             limits:
               cpu: "1"
-              memory: 16Gi
+              memory: 2Gi
             requests:
               cpu: "1"
-              memory: 16Gi
+              memory: 2Gi
           securityContext:
             runAsGroup: 0
             runAsUser: 0

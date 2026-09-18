@@ -1,0 +1,164 @@
+# SandboxTemplate: the E2B runtime, with Docker inside the sandbox.
+#
+# Same envd runtime as e2b-basic_sandboxtemplate.yaml, but the Pod runs a container
+# engine of its own: dockerd starts in the background, and code inside the
+# sandbox can `docker build`, `docker run` and `docker compose up`. That is what
+# a workload needs when the task is "build this image", "bring up this compose
+# file" or "run a database".
+#
+#   `kubectl apply -f config/samples/e2b-docker_sandboxtemplate.yaml`
+#
+# WARNING: privileged. A container engine needs more of the kernel than a
+# container is usually given, so this template runs the sandbox Pod privileged
+# (and starts dockerd inside it). A container escape from here reaches the
+# node. It is the right trade for a trusted workload, and the wrong one for
+# untrusted code. On a cluster with a microVM runtime class — kata, or anything
+# that can run a Pod in its own kernel — add `runtimeClassName` to the Pod spec
+# below and the same privileged dockerd is confined to a guest VM instead of
+# sharing the node's kernel. e2b-kata_sandboxtemplate.yaml is that template with
+# the field already set.
+#
+# Every image is public: the container engine comes from Docker Hub's own dind
+# image, and the runtime pieces from this project's GHCR packages.
+apiVersion: agents.navix.sh/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: e2b-envd-docker
+spec:
+  version: 0.0.1
+  description: E2B-compatible sandbox with Docker inside — dockerd and the compose plugin in the sandbox.
+  idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.9
+  runtimes:
+    - name: envd
+      port: 49983
+      protocol: TCP
+      description: E2B envd runtime
+      readinessProbe:
+        httpGet:
+          port: 49983
+          path: /health
+  template:
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      shareProcessNamespace: false
+      containers:
+        - name: sandbox
+          # A container engine, not a workload image: dockerd, the docker CLI
+          # and the compose plugin are all in this one.
+          image: docker:27-dind
+          imagePullPolicy: IfNotPresent
+          command:
+            - /mnt/agentbox/tini
+            - -g
+            - --
+            - /bin/sh
+            - -c
+            - |
+              # An idle Pod wears the idle image, which has no dockerd to start.
+              if [ "$AGENTBOX_IS_IDLE_IMAGE" = "true" ] || [ -f /etc/agentbox_is_idle_image ]; then
+                echo "[dind] idle Pod; waiting for a claim."
+                exec sleep infinity
+              fi
+              # Plain unix socket: the socket is inside this Pod, and nothing
+              # outside it needs to reach the daemon.
+              export DOCKER_TLS_CERTDIR=""
+              echo "[dind] starting dockerd"
+              dockerd --host=unix:///var/run/docker.sock >/var/log/dockerd.log 2>&1 &
+              # Best effort: the first `docker` call should not race the daemon.
+              # Not fatal — a failure here is visible in the log above.
+              for _ in $(seq 1 30); do
+                if docker version >/dev/null 2>&1; then
+                  echo "[dind] dockerd is ready"
+                  break
+                fi
+                sleep 1
+              done
+              # Hand the foreground to envd, which is what the E2B SDK talks to.
+              exec /bin/sh /mnt/agentbox/agentbox-entrypoint.sh
+          env:
+            - name: AGENTBOX_DIR
+              value: /mnt/agentbox
+            - name: PORT
+              value: "49999"
+            # Scrub the service environment Kubernetes injects, so a command
+            # inside the sandbox cannot see the cluster's addresses.
+            - name: KUBERNETES_SERVICE_HOST
+            - name: KUBERNETES_SERVICE_PORT
+            - name: KUBERNETES_SERVICE_PORT_HTTPS
+            - name: KUBERNETES_PORT
+            - name: KUBERNETES_PORT_443_TCP
+            - name: KUBERNETES_PORT_443_TCP_ADDR
+            - name: KUBERNETES_PORT_443_TCP_PORT
+            - name: KUBERNETES_PORT_443_TCP_PROTO
+          ports:
+            - containerPort: 49983
+              name: envd
+              protocol: TCP
+            - containerPort: 49999
+              name: app
+              protocol: TCP
+          # A container engine plus whatever it builds: size for both. As with
+          # the E2B template, a Pool's own sizing overrides this.
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi
+            requests:
+              cpu: "2"
+              memory: 4Gi
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: shared-bin
+              mountPath: /mnt/agentbox
+              readOnly: true
+            # Node disk, not the container's own overlay root: overlay2 on top
+            # of overlayfs is something dockerd refuses to start with.
+            - name: docker-storage
+              mountPath: /var/lib/docker
+      initContainers:
+        - name: tini-injector
+          image: ghcr.io/scitix/agent-sandbox-tini:v0.19.0-static
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c]
+          args:
+            - |
+              TARGET_DIR="/mnt/agentbox"
+              mkdir -p "$TARGET_DIR"
+              if [ -f "$TARGET_DIR/tini" ]; then
+                  echo "[Init] tini already exists at $TARGET_DIR. Skipping copy."
+              else
+                  cp /workspace/tini "$TARGET_DIR/tini"
+                  chmod +x "$TARGET_DIR/tini"
+                  echo "[Init] tini static injected successfully."
+              fi
+          volumeMounts:
+            - name: shared-bin
+              mountPath: /mnt/agentbox
+        - name: envd-injector
+          image: ghcr.io/scitix/agent-sandbox-envd:0.9.0
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c]
+          args:
+            - |
+              TARGET_DIR="/mnt/agentbox"
+              mkdir -p "$TARGET_DIR"
+              if [ -f "$TARGET_DIR/envd" ] && [ -f "$TARGET_DIR/agentbox-entrypoint.sh" ]; then
+                  echo "[Init] envd and scripts already exist in $TARGET_DIR. Skipping copy."
+              else
+                  cp /workspace/envd "$TARGET_DIR/"
+                  cp /workspace/agentbox-entrypoint.sh "$TARGET_DIR/"
+                  chmod +x "$TARGET_DIR/envd" "$TARGET_DIR/agentbox-entrypoint.sh"
+                  echo "[Init] envd & scripts successfully injected."
+              fi
+          volumeMounts:
+            - name: shared-bin
+              mountPath: /mnt/agentbox
+      volumes:
+        - name: shared-bin
+          emptyDir: {}
+        - name: docker-storage
+          emptyDir: {}

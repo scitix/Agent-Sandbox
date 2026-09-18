@@ -62,15 +62,15 @@ RUN curl -fsSL https://oss-ap-southeast.scitix.ai/scitix/packages/agentbox/cli/l
 
 | Skill | Read it when |
 |---|---|
-| [`abx-common`](/docs/concepts/skills/abx-common) | reaching a platform at all: the endpoint, the key, which cluster, and what happens to a write that needs a person's approval. Every other skill defers here. |
-| [`abx-resource-capacity`](/docs/concepts/skills/abx-resource-capacity) | sizing: how many sandboxes fit, why a pool will not grow, how autoscaling and quota interact. |
-| [`abx-observe`](/docs/concepts/skills/abx-observe) | something is failing or slow — events, pool status, sandbox logs, metrics. |
-| [`abx-harbor-framework`](/docs/concepts/skills/abx-harbor-framework) | running a benchmark suite (Terminal-Bench, SWE-bench, a custom dataset) against pre-warmed pools. |
-| [`abx-reinforcement-learning`](/docs/concepts/skills/abx-reinforcement-learning) | rollouts for training: concurrency, environment resets, collecting trajectories. |
-| [`abx-managed-agent`](/docs/concepts/skills/abx-managed-agent) | giving your own agent a sandbox for its file and shell tools, durably across restarts. |
-| [`abx-sandbox-docker`](/docs/concepts/skills/abx-sandbox-docker) | the workload needs Docker inside the sandbox. |
-| [`abx-sandbox-network`](/docs/concepts/skills/abx-sandbox-network) | cutting a sandbox off the network, or allowing exactly one host. |
-| [`abx-sandbox-secrets`](/docs/concepts/skills/abx-sandbox-secrets) | a sandbox needs a credential it must not be able to read. |
+| [`abx-common`](/docs/skills/abx-common) | reaching a platform at all: the endpoint, the key, which cluster, and what happens to a write that needs a person's approval. Every other skill defers here. |
+| [`abx-resource-capacity`](/docs/skills/abx-resource-capacity) | sizing: how many sandboxes fit, why a pool will not grow, how autoscaling and quota interact. |
+| [`abx-observe`](/docs/skills/abx-observe) | something is failing or slow — events, pool status, sandbox logs, metrics. |
+| [`abx-harbor-framework`](/docs/skills/abx-harbor-framework) | running a benchmark suite (Terminal-Bench, SWE-bench, a custom dataset) against pre-warmed pools. |
+| [`abx-reinforcement-learning`](/docs/skills/abx-reinforcement-learning) | rollouts for training: concurrency, environment resets, collecting trajectories. |
+| [`abx-managed-agent`](/docs/skills/abx-managed-agent) | giving your own agent a sandbox for its file and shell tools, durably across restarts. |
+| [`abx-sandbox-docker`](/docs/skills/abx-sandbox-docker) | the workload needs Docker inside the sandbox. |
+| [`abx-sandbox-network`](/docs/skills/abx-sandbox-network) | cutting a sandbox off the network, or allowing exactly one host. |
+| [`abx-sandbox-secrets`](/docs/skills/abx-sandbox-secrets) | a sandbox needs a credential it must not be able to read. |
 
 ## How an agent uses them
 

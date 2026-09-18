@@ -129,23 +129,27 @@ The endpoint is the console's address, or a worker's API address if you are not
 running the console; the key is issued in the console under **API Keys** (or, on
 a worker with no console, by whoever created the release). The
 [CLI guide](/docs/tutorials/cli) takes it from there, and
-[Skills](/docs/concepts/skills) explains what was installed for your agent.
+[Skills](/docs/skills) explains what was installed for your agent.
 
 ## First sandbox
 
 An environment is created from a **template**, and a sandbox from an
 environment's **pool** — nothing exists to create sandboxes from until you add
-both. The repository carries one to start with:
+both. The repository carries three to start with, each with a matching
+environment:
 
 ```bash
-kubectl apply -f config/samples/e2b_sandboxtemplate.yaml
+kubectl apply -f config/samples/e2b-basic_sandboxtemplate.yaml   # the template
+kubectl apply -f config/samples/e2b-basic_sandboxenv.yaml        # a warm pool on it
 ```
 
-Then follow the [CLI guide](/docs/tutorials/cli#5-run-code-in-a-sandbox): create
-an environment on that template, add a pool to it, and read the environment's
-own documentation for the endpoints of your cluster. The
-[concepts](/docs/concepts) explain what the two objects are for, and why a
-template is not the thing you pass to `Sandbox.create()`.
+[Examples](/docs/examples/templates) has the other two — Docker inside the
+sandbox, and a microVM-isolated one — with the manifests rendered on the page.
+From there the [CLI guide](/docs/tutorials/cli#5-run-code-in-a-sandbox) takes
+over: read the environment's own documentation for the endpoints of your
+cluster, then create a sandbox. The [concepts](/docs/concepts) explain what the
+two objects are for, and why a template is not the thing you pass to
+`Sandbox.create()`.
 
 ## Upgrading and removing
 

@@ -1,0 +1,51 @@
+---
+title: Using the environments
+description: Ready-to-apply SandboxEnvs — an environment with a warm pool, one per template.
+---
+
+A [SandboxEnv](/docs/concepts/envs) binds one template and fans out to member
+pools; the pool is what holds the Pods a sandbox is claimed from. These are the
+manifests in
+[`config/samples`](https://github.com/scitix/Agent-Sandbox/tree/develop/config/samples),
+one per template, rendered from the same files.
+
+| Environment | On which template |
+|---|---|
+| [E2B Basic warm pool](/docs/examples/envs/e2b) | [E2B Basic](/docs/examples/templates/e2b) — two Pods kept warm |
+| [E2B Docker warm pool](/docs/examples/envs/e2b-docker) | [E2B Docker](/docs/examples/templates/e2b-docker) — one Pod, sized for a container engine |
+| [E2B Kata warm pool](/docs/examples/envs/e2b-kata) | [E2B Kata](/docs/examples/templates/e2b-kata) — one microVM |
+
+## Order of application
+
+The template has to exist first, and the cluster id has to be the one the
+worker was installed with (`controller.localClusterId` and
+`spec.clusters[].clusterID` are the same value):
+
+```bash
+kubectl apply -f config/samples/e2b-basic_sandboxtemplate.yaml
+kubectl apply -f config/samples/e2b-basic_sandboxenv.yaml
+```
+
+## What the sample decides, and what the platform does
+
+The member declares the shape (`inlineResources`), how it scales
+(`config.scalingGroup`, matched by an entry in `spec.autoscaling.groups`), and
+how many Pods to keep warm (`spec.replicas`). It does **not** repeat the Pod
+spec: the environment renders each member from the template on the next
+reconcile, so the file stays the part a person decides.
+
+On a deployment that bills by quota (`abx envs <env>` prints `poolSizing`), a
+member must name an instance type and a quota label instead of
+`inlineResources` — the CLI guide's [pools section](/docs/concepts/pools) has
+the three shapes.
+
+## Check it
+
+```bash
+kubectl get sandboxenv e2b
+abx envs --cluster YOUR_CLUSTER            # the env, and its pools
+abx envs e2b --cluster YOUR_CLUSTER        # one env, member by member
+```
+
+`idleReplicas` above zero means a claim will be served instantly; until then
+the Pods are still starting.

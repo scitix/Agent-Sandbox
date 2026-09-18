@@ -1,0 +1,53 @@
+# SandboxEnv: a warm pool of E2B sandboxes.
+#
+# An Env binds one template and fans out to member pools. This one keeps two
+# Pods warm on the cluster you name, so `Sandbox.create("e2b")` is served by a
+# Pod that already exists rather than by a cold start.
+#
+#   `kubectl apply -f config/samples/e2b-basic_sandboxenv.yaml`
+#
+# Two things have to be true first:
+#   - the template exists — `kubectl apply -f
+#     config/samples/e2b-basic_sandboxtemplate.yaml`
+#   - clusterID below is this cluster's id (the worker's `localClusterId`), and
+#     the namespace is one your team owns
+#
+# A member's `spec` is the pool's frozen snapshot; leaving it out of the file is
+# deliberate — the Env renders it from the template on the next reconcile, so
+# what is written here stays the part a person decides: shape, size, replicas.
+#
+# On a deployment that bills by quota (`abx envs <env>` prints poolSizing), a
+# pool must name a quota and an instance type instead of inlineResources.
+apiVersion: agents.navix.sh/v1alpha1
+kind: SandboxEnv
+metadata:
+  name: e2b
+spec:
+  templateRef:
+    name: e2b-envd
+  mode: WarmPool
+  autoscaling:
+    groups:
+      - name: 1c2gi
+        enabled: true
+        minReplicas: 0
+        maxReplicas: 4
+  clusters:
+    - clusterID: YOUR_CLUSTER_ID
+      members:
+        - name: e2b-1c2gi
+          config:
+            scalingGroup: 1c2gi
+            # The Pod's size. A billed deployment names instanceType and
+            # multiplier here instead.
+            inlineResources:
+              requests:
+                cpu: "1"
+                memory: 2Gi
+              limits:
+                cpu: "1"
+                memory: 2Gi
+          spec:
+            # Warm capacity: how many sandboxes this pool can hand out at once
+            # before anyone has to wait for one to come back.
+            replicas: 2
