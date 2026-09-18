@@ -30,6 +30,7 @@ const LIVE = {
   e2bURL: 'https://gw.example.test/agent-sandbox/api/e2b',
   dataURL: 'https://gw.example.test/agent-sandbox/api/data',
   consoleBase: 'https://console.acme.example/agentbox',
+  cluster: 'acme-manager',
 }
 
 describe('the setup guide carries this deployment and no other', () => {
@@ -71,6 +72,14 @@ describe('the setup guide carries this deployment and no other', () => {
       // abx leads; the E2B SDK is still there for the sandboxes themselves.
       expect(doc.indexOf('abx context set')).toBeLessThan(doc.indexOf('patch_e2b'))
       expect(doc).toContain(LIVE.e2bURL)
+      // The first command after saving the context is the one that needs no
+      // `--cluster` — a platform can reach several clusters, and `abx envs`
+      // refused outright without one. The commands that do address an Env
+      // carry the id of the cluster this page is about.
+      expect(doc).toContain('abx clusters')
+      expect(doc).not.toMatch(/^abx envs$/m)
+      expect(doc).toContain(`abx envs YOUR_ENV pools --cluster ${LIVE.cluster}`)
+      expect(doc).toContain(`abx envs YOUR_ENV docs --cluster ${LIVE.cluster}`)
       // The key is a placeholder for the console to fill in, never a value the
       // server or this module could have known. A document that arrives with a
       // live credential in it cannot be copied into a chat or handed to an
@@ -95,6 +104,8 @@ describe('the setup guide carries this deployment and no other', () => {
     const doc = cliGuide({}, 'en')
     expect(doc).toContain('https://<console>/agentbox')
     expect(doc).not.toMatch(/https:\/\/console\.[a-z]/)
+    // A cluster-less page says where the id goes rather than naming one.
+    expect(doc).toContain('abx envs YOUR_ENV pools --cluster YOUR_CLUSTER')
   })
 })
 

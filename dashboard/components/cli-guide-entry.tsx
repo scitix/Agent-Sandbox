@@ -106,6 +106,10 @@ export function CliGuideEntry() {
       {
         e2bURL: entry?.gateway?.e2bURL,
         dataURL: entry?.gateway?.dataURL,
+        // Which cluster the env-addressed commands name. The guide is read on
+        // the page for one cluster, and `abx envs … --cluster` is exactly the
+        // command that needs the id, so it goes in filled rather than blank.
+        cluster: cluster ?? undefined,
         consoleBase,
       },
       locale

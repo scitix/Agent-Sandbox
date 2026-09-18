@@ -40,6 +40,10 @@ export interface CliGuideInput {
   dataURL?: string
   /** Pool or Env name to use in the example, when one is known. */
   poolName?: string
+  /** The cluster whose page this is, when the route names one. Env-addressed
+   *  commands need it: a platform can reach several clusters, and a command
+   *  that names one of them is exactly the case where `--cluster` is asked for. */
+  cluster?: string
   /** This console's own origin + basePath, e.g. read off `window.location`. */
   consoleBase?: string
 }
@@ -80,6 +84,9 @@ export interface GuideVars {
   domain: string
   https: boolean
   pool: string
+  /** `--cluster` for Env-addressed commands; the real id when the console
+   *  knows which cluster the page belongs to. */
+  cluster: string
   /** `abx --endpoint` for this deployment: this console's own address. */
   endpoint: string
   /** Name to save the context under. */
@@ -93,6 +100,7 @@ export function cliGuide(input: CliGuideInput, locale: Locale): string {
     domain: input.dataURL ? stripScheme(input.dataURL) : "<data-plane>",
     https: input.dataURL ? !isPlainHttp(input.dataURL) : true,
     pool: input.poolName || "YOUR_ENV",
+    cluster: input.cluster || "YOUR_CLUSTER",
     // This console's own address, and the only one a reader has to supply: one
     // address reaches every cluster, so `--cluster` on a command selects among
     // them rather than being a claim the address cannot honour. Which header
@@ -140,18 +148,19 @@ abx context set ${v.ctx} \\
   --endpoint '${v.endpoint}' \\
   --api-key \${AGBX_API_KEY}
 
-abx envs
+abx clusters
 \`\`\`
 
 That is the entire configuration: the console address and the key.
 
 - The **address** reaches the platform, not one cluster: \`abx clusters\` lists every cluster it has, and any command takes \`--cluster <id>\`; a single-cluster platform fills it in for you.
+- The **first command** is therefore \`abx clusters\`, not \`abx envs\`: listing clusters needs no \`--cluster\`, so it is the one command that cannot fail for want of an id — and it prints the ids every other command takes.
 - The **auth header** follows from the address, so there is nothing else to configure.
 - To work with several AgentBox platforms, save each as its own context and switch with \`abx context use <name>\`. The context is which platform; \`--cluster\` is which of its clusters, per command.
 
 \`\`\`bash
 abx agent-context     # the whole CLI as JSON — hand this to an agent
-abx envs ${v.pool} pools
+abx envs ${v.pool} pools --cluster ${v.cluster}
 \`\`\`
 
 In CI or other unattended settings, \`AGENTBOX_ENDPOINT\` and \`AGENTBOX_API_KEY\` stand in for a context.
@@ -176,7 +185,7 @@ Two habits make an agent reliable here: have it read \`abx agent-context\` once 
 Every Env carries the documentation its template was written with, rendered for the cluster it belongs to — the E2B API URL, the data-plane domain, and the scheme to use:
 
 \`\`\`bash
-abx envs ${v.pool} docs
+abx envs ${v.pool} docs --cluster ${v.cluster}
 \`\`\`
 
 The same document is on the Env page in the console, with your own key filled in. Read it before driving an Env through E2B: it is the only place that knows which endpoints this cluster answers on, and it covers what this guide does not — the two access paths, pool and scaling-group selection, cross-cluster routing, and how images are rewritten between regions.
@@ -257,18 +266,19 @@ abx context set ${v.ctx} \\
   --endpoint '${v.endpoint}' \\
   --api-key \${AGBX_API_KEY}
 
-abx envs
+abx clusters
 \`\`\`
 
 配置只有两项：控制台地址与 API Key。
 
 - **地址**对应的是整个平台，而不是某个集群：\`abx clusters\` 列出该平台的全部集群，任意命令加 \`--cluster <id>\` 即可指定；平台只有一个集群时会自动补全。
+- **第一条命令**因此是 \`abx clusters\` 而不是 \`abx envs\`：列集群不需要 \`--cluster\`，所以它是唯一不会因为缺 id 而失败的命令，也正是告诉你其余命令该填哪个 id 的命令。
 - **认证 header** 由地址推导，无需另行配置。
 - 需要同时使用多个 AgentBox 平台时，每个平台保存为一个 context，用 \`abx context use <name>\` 切换。context 决定平台，\`--cluster\` 决定该平台下的集群，按命令指定。
 
 \`\`\`bash
 abx agent-context     # 以 JSON 输出整个 CLI 的能力，可直接交给 Agent
-abx envs ${v.pool} pools
+abx envs ${v.pool} pools --cluster ${v.cluster}
 \`\`\`
 
 在 CI 或无人值守环境中，可以用 \`AGENTBOX_ENDPOINT\` 与 \`AGENTBOX_API_KEY\` 环境变量代替 context。
@@ -293,7 +303,7 @@ abx envs ${v.pool} pools
 每个 Env 都带着所属模板的接入文档，并按它所在的集群渲染好——E2B API 地址、数据面域名、以及该用 http 还是 https：
 
 \`\`\`bash
-abx envs ${v.pool} docs
+abx envs ${v.pool} docs --cluster ${v.cluster}
 \`\`\`
 
 同一份文档也在控制台的 Env 详情页，并且按你选择的 Key 填好了密钥。通过 E2B 驱动某个 Env 之前先读它：只有它知道这个集群的端点是什么，而上面没有提到的那部分——公网与内网两种接入方式、成员池与扩缩容组的选择、跨集群路由、镜像在 region 间的自动改写——都在那份文档里。

@@ -49,7 +49,7 @@ abx context set YOUR_DEPLOYMENT \
   --endpoint 'https://YOUR_CONSOLE/agentbox' \
   --api-key agbx_...
 
-abx envs
+abx clusters
 ```
 
 That is the entire configuration: the console address and the key.
@@ -57,6 +57,9 @@ That is the entire configuration: the console address and the key.
 - The **address** reaches the platform, not one cluster: `abx clusters` lists
   every cluster it has, and any command takes `--cluster <id>`; a single-cluster
   platform fills it in for you.
+- The **first command** is therefore `abx clusters`, not `abx envs`: listing
+  clusters needs no `--cluster`, so it is the one command that cannot fail for
+  want of an id — and it prints the ids every other command takes.
 - The **auth header** follows from the address, so there is nothing else to
   configure.
 - To work with several Agent Sandbox platforms, save each as its own context and
@@ -65,7 +68,7 @@ That is the entire configuration: the console address and the key.
 
 ```bash
 abx agent-context     # the whole CLI as JSON — hand this to an agent
-abx envs YOUR_ENV pools
+abx envs YOUR_ENV pools --cluster YOUR_CLUSTER
 ```
 
 In CI or other unattended settings, `AGENTBOX_ENDPOINT` and `AGENTBOX_API_KEY`
@@ -103,7 +106,7 @@ rendered for the cluster it belongs to — the E2B API URL, the data-plane domai
 and the scheme to use:
 
 ```bash
-abx envs YOUR_ENV docs
+abx envs YOUR_ENV docs --cluster YOUR_CLUSTER
 ```
 
 Read it before driving an environment through E2B: it is the only place that
