@@ -27,7 +27,7 @@
 # Escape hatches:
 #   git commit --no-verify          # skip the hook entirely (native git flag)
 #   SKIP_HOOK=1 git commit ...       # same, via env var
-#   HOOK_SKIP="website go" git ...   # skip specific areas: secrets, go, dashboard, website, openapi
+#   HOOK_SKIP="website go" git ...   # skip specific areas: secrets, go, dashboard, website, cli, samples, openapi
 
 set -uo pipefail
 
@@ -100,12 +100,14 @@ touched_go=false
 touched_dashboard=false
 touched_website=false
 touched_cli=false
+touched_samples=false
 
 changed "^${OPENAPI_SPEC}$"                                   && touched_openapi=true
 changed '\.go$|^go\.(mod|sum)$|^\.golangci\.yml$'             && touched_go=true
 changed '^dashboard/'                                         && touched_dashboard=true
 changed '^docs/website/'                                      && touched_website=true
 changed '^cli/|^headless/'                                    && touched_cli=true
+changed '^config/samples/'                                    && touched_samples=true
 
 # The spec is the single source of truth for all three consumers.
 if $touched_openapi; then
@@ -120,8 +122,8 @@ if $touched_cli; then
   touched_dashboard=true
 fi
 
-printf '%spre-commit:%s areas → go=%s dashboard=%s website=%s cli=%s openapi=%s\n' \
-  "$BOLD" "$RESET" "$touched_go" "$touched_dashboard" "$touched_website" "$touched_cli" "$touched_openapi"
+printf '%spre-commit:%s areas → go=%s dashboard=%s website=%s cli=%s samples=%s openapi=%s\n' \
+  "$BOLD" "$RESET" "$touched_go" "$touched_dashboard" "$touched_website" "$touched_cli" "$touched_samples" "$touched_openapi"
 
 # --- Secret / internal-identifier scan (always, cheap) -----------------------
 # This repository is published publicly. .gitleaks.toml holds the credential
@@ -201,6 +203,17 @@ fi
 if $touched_website; then
   if require pnpm; then
     run website "Docs website build" pnpm -C docs/website run build
+  fi
+fi
+
+# --- Samples: the image tags are the platform's, not the newest on a registry -
+# The samples are a reader's first apply, so a tag that does not exist is a
+# first-run failure — this repository shipped one for months. The check reads a
+# registry, so an offline machine gets a warning rather than a blocked commit;
+# the script's header says which authority each image answers to.
+if $touched_samples; then
+  if require python3; then
+    run samples "Sample image versions" python3 hack/sync-sample-images.py --check
   fi
 fi
 

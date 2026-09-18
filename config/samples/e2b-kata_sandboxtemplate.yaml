@@ -25,7 +25,7 @@ metadata:
 spec:
   version: 0.0.1
   description: E2B-compatible sandbox in a microVM — envd on a runtime class with its own kernel.
-  idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.9
+  idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.10
   runtimes:
     - name: envd
       port: 49983
@@ -45,7 +45,7 @@ spec:
       shareProcessNamespace: false
       containers:
         - name: sandbox
-          image: ghcr.io/scitix/agent-sandbox-envd:0.5.16
+          image: ghcr.io/scitix/agent-sandbox-envd:0.9.0-2
           imagePullPolicy: IfNotPresent
           command:
             - /mnt/agentbox/tini
@@ -101,7 +101,7 @@ spec:
             - name: shared-bin
               mountPath: /mnt/agentbox
         - name: envd-injector
-          image: ghcr.io/scitix/agent-sandbox-envd:0.5.24
+          image: ghcr.io/scitix/agent-sandbox-envd:0.9.0-2
           imagePullPolicy: IfNotPresent
           command: [sh, -c]
           args:

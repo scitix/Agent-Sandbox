@@ -126,6 +126,10 @@ install-hooks: ## Point git at the tracked hooks in hack/git-hooks (pre-commit l
 	@echo "Installed: core.hooksPath -> hack/git-hooks"
 	@echo "Bypass a single commit with 'git commit --no-verify'; uninstall with 'git config --unset core.hooksPath'."
 
+.PHONY: sync-sample-images
+sync-sample-images: ## Point config/samples' image tags at the versions the platform is built for (ARGS=--check to report instead of writing)
+	python3 hack/sync-sample-images.py $(ARGS)
+
 ##@ Build
 
 # VERSION is read from the VERSION file at the repo root.

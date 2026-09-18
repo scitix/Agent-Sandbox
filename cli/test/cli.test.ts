@@ -326,6 +326,60 @@ describe('every resource points at a page that exists', () => {
 })
 
 /**
+ * The skills are one directory each, and the surfaces around them describe that
+ * set by hand: the installer fetches them by name, and several documents say
+ * how many there are. Adding a skill is then a directory away from being
+ * *almost* installed — fetched by nobody, described by a number that is now
+ * wrong.
+ */
+describe('the skills that exist are the skills that ship', () => {
+  const root = join(__dirname, '..', '..')
+  const dirs = readdirSync(join(root, 'plugin', 'skills'))
+    .filter((d) => d.startsWith('abx-'))
+    .sort()
+
+  it('the installer fetches every skill, and names no other', () => {
+    const installer = readFileSync(join(root, 'plugin', 'install.sh'), 'utf8')
+    const loop = installer.match(/for s in([\s\S]*?);\s*do/)?.[1] ?? ''
+    expect(loop, 'no `for s in …; do` list in the installer to check').not.toBe('')
+    expect([...loop.matchAll(/\b(abx-[a-z-]+)\b/g)].map((m) => m[1]).sort()).toEqual(dirs)
+  })
+
+  it('whatever says "nine skills" says the number there are', () => {
+    const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+    const claimed = [
+      'README.md',
+      'plugin/README.md',
+      'docs/website/content/docs/installation.mdx',
+      'docs/website/content/docs/skills/index.mdx',
+      'docs/website/content/docs/tutorials/cli.mdx',
+      'dashboard/components/assistant-ui/cli-guide.ts',
+    ]
+    const wrong: string[] = []
+    let seen = 0
+    for (const rel of claimed) {
+      const text = readFileSync(join(root, rel), 'utf8')
+      // "nine skills", "The nine", "nine of them" — these files write the word,
+      // not the numeral, so the number is checked where it is readable.
+      for (const m of text.matchAll(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b(?=[^.\n]{0,24}\bskills?\b)/g)) {
+        seen++
+        if (m[1] !== words[dirs.length]) wrong.push(`${rel}: says "${m[1]} skills", there are ${dirs.length}`)
+      }
+      // …and the Chinese guide writes it as a numeral.
+      const zh = { 九: 'nine', 十: 'ten', 八: 'eight' } as Record<string, string>
+      for (const m of text.matchAll(/([九十])个 skill/g)) {
+        seen++
+        if (zh[m[1]] !== words[dirs.length]) wrong.push(`${rel}: says "${m[1]}个 skill"`)
+      }
+    }
+    expect(wrong).toEqual([])
+    // A pattern that matches nothing passes silently; these files are the
+    // reason the check exists, so it has to have read some claims.
+    expect(seen).toBeGreaterThan(5)
+  })
+})
+
+/**
  * The commands the documentation prints, run through the CLI's own parser.
  *
  * The tutorial that shipped `abx envs` on the line after `abx context set` was

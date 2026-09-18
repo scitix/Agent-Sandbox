@@ -17,7 +17,7 @@ metadata:
 spec:
   version: 0.0.1
   description: E2B-compatible sandbox — envd inside a Pod, any image on claim.
-  idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.9
+  idleImage: ghcr.io/scitix/agent-sandbox-idle:0.0.10
   runtimes:
     - name: envd
       port: 49983
@@ -42,7 +42,7 @@ spec:
               value: /mnt/agentbox
             - name: PORT
               value: "49999"
-          image: ghcr.io/scitix/agent-sandbox-envd:0.5.16
+          image: ghcr.io/scitix/agent-sandbox-envd:0.9.0-2
           imagePullPolicy: IfNotPresent
           name: sandbox
           ports:
@@ -113,7 +113,7 @@ spec:
           command:
             - sh
             - -c
-          image: ghcr.io/scitix/agent-sandbox-envd:0.5.24
+          image: ghcr.io/scitix/agent-sandbox-envd:0.9.0-2
           imagePullPolicy: IfNotPresent
           name: envd-injector
           resources: {}
