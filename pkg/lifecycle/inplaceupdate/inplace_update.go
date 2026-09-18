@@ -660,6 +660,16 @@ func cleanupSandboxMetadataForIdle(pod *corev1.Pod) {
 		agentsv1alpha1.SandboxRunningImagesAnnotationKey,
 		agentsv1alpha1.SandboxContainerIDAnnotationKey,
 		agentsv1alpha1.SandboxPostStartHooksAnnotationKey,
+		// Not sandbox lifecycle annotations at all, and that is the point: they
+		// describe the Pool, and older revisions of createPod copied the Pool's
+		// whole annotation map onto the Pod, so Pods already in the fleet carry
+		// a frozen copy. createPod no longer writes them (see
+		// annotationsToExcludeFromPodSync); clearing them here is how the
+		// existing Pods lose theirs — on their next release, rather than by
+		// being deleted and rebuilt.
+		agentsv1alpha1.LastSandboxCreateTimeAnnotationKey,
+		agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey,
+		agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey,
 	} {
 		delete(pod.Annotations, key)
 	}

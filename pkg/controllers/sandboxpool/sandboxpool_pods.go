@@ -106,8 +106,34 @@ var annotationsToExcludeFromTemplateSync = map[string]struct{}{
 // skipping keys listed in annotationsToExcludeFromTemplateSync.
 // Callers are responsible for overwriting system-managed keys afterwards.
 func SyncAnnotationsFromTemplate(dst, tmplAnnotations map[string]string) {
-	for k, v := range tmplAnnotations {
-		if _, excluded := annotationsToExcludeFromTemplateSync[k]; !excluded {
+	syncAnnotations(dst, tmplAnnotations, annotationsToExcludeFromTemplateSync)
+}
+
+// annotationsToExcludeFromPodSync lists Pool annotation keys that must not be
+// copied onto the Pods created from that Pool.
+//
+// createPod copies the Pool's annotations wholesale (see the comment there), and
+// that map is not all about the Pod: the Pool carries its own provenance and its
+// autoscaler state as annotations too. Copying those puts a snapshot of Pool
+// state on every Pod, where nothing reads it, it is never refreshed, and — since
+// neither release path lists these keys — it outlives the sandbox it appears to
+// describe. The give-away is a Pod younger than the timestamp it carries: the
+// value is whatever the Pool said when the Pod was created, which on a busy Pool
+// can be minutes earlier and on an idle one is months earlier.
+var annotationsToExcludeFromPodSync = map[string]struct{}{
+	// The autoscaler's throttled "last Create for this Pool" mirror. Read from
+	// the Pool by pkg/controllers/sandboxpool/autoscalingstate; never from a Pod.
+	agentsv1alpha1.LastSandboxCreateTimeAnnotationKey: {},
+	// Where the Pool came from. Read from the Pool by the env projection and the
+	// env status writer; the Pod's own copy is neither used nor maintained.
+	agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey:    {},
+	agentsv1alpha1.SandboxPoolTemplateVersionAnnotationKey: {},
+}
+
+// syncAnnotations copies src into dst, skipping keys listed in exclude.
+func syncAnnotations(dst, src map[string]string, exclude map[string]struct{}) {
+	for k, v := range src {
+		if _, excluded := exclude[k]; !excluded {
 			dst[k] = v
 		}
 	}
@@ -161,7 +187,13 @@ func (r *SandboxPoolReconciler) createPod(ctx context.Context, sandboxPool *agen
 		pod.Spec.Containers[0].Image = sandboxPool.Spec.IdleImage
 	}
 
-	// Propagate labels and annotations from the pool spec to the pod, since the SI Scheduler expects them there
+	// Propagate labels and annotations from the pool spec to the pod, since the
+	// SI Scheduler expects them there.
+	//
+	// The annotations go through annotationsToExcludeFromPodSync because the
+	// Pool's annotation map also holds its own provenance and autoscaler state,
+	// which describe the Pool and would land on the Pod as a snapshot nobody
+	// reads and nothing refreshes.
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
@@ -172,7 +204,7 @@ func (r *SandboxPoolReconciler) createPod(ctx context.Context, sandboxPool *agen
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
-	maps.Copy(pod.Annotations, sandboxPool.Annotations)
+	syncAnnotations(pod.Annotations, sandboxPool.Annotations, annotationsToExcludeFromPodSync)
 
 	// Create the Pod. PreCreatePod runs before the API submit, so plugin
 	// mutations on `pod` are picked up by the Create call below — no
