@@ -31,7 +31,7 @@ anything. The cost of that design is visible in
 |---|---|
 | `template` | the Pod template: containers, sidecars, resources, volumes, node selectors |
 | `idleImage` | what an **unclaimed** Pod runs. Defaults to the main container's image |
-| `runtimes` | the sandbox runtime the Pod carries (the E2B runtime is the default) |
+| `runtimes` | the sandbox runtime the Pod carries (the E2B runtime is the default) — that runtime is envd, [and these are the patches we carry](/docs/internals/envd) |
 | default startup / idle timeouts | what a create means when it does not say |
 | documentation | the text `abx envs <env> docs` prints, rendered per cluster at read time |
 | visibility | which teams and users see the template at all; empty means public |
