@@ -20,10 +20,11 @@ import { useCallback, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 /**
- * Cluster scope for cluster-agnostic pages: every cluster, or an explicit
- * subset. "all" is deliberately not the same as "every ID listed" — it keeps
- * following the cluster list as clusters are added or become visible, and it
- * is what a shared link should reproduce.
+ * Cluster scope for the pages that read across clusters — `/overview`, whose
+ * route names a cluster but whose data does not, and `/admin`: every cluster,
+ * or an explicit subset. "all" is deliberately not the same as "every ID
+ * listed": it keeps following the cluster list as clusters are added or become
+ * visible, and it is what a shared link should reproduce.
  */
 export type ClusterScope = "all" | string[]
 

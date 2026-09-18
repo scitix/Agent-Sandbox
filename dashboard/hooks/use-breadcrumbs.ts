@@ -45,7 +45,6 @@ const SEGMENT_LABEL_KEY: Partial<Record<string, TranslationKey>> = {
   sandboxes: "nav.sandboxes",
   envs: "nav.envs",
   templates: "nav.templates",
-  images: "nav.images",
   datasets: "nav.datasets",
   assistant: "nav.assistant",
   general: "nav.general",

@@ -62,7 +62,6 @@ export const NON_RESOURCE_PAGES = [
   'approvals',
   'api-keys',
   'admin-api-keys',
-  'images',
   'datasets',
   'vault',
 ] as const

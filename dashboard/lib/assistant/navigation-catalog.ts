@@ -64,7 +64,6 @@ const LIST_PAGES = new Set([
   "sandboxes",
   "envs",
   "templates",
-  "images",
   "datasets",
   "vault",
   "approvals",

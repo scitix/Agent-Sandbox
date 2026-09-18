@@ -24,7 +24,7 @@ import { clusterIDAtom, clustersAtom } from "@/lib/atoms"
  * Returns the clusterID from the current route's [clusterID] dynamic segment.
  * Falls back to "default" when there is no [clusterID] segment — the BFF proxy
  * resolves "default" to the first configured cluster, so API calls from the
- * cluster-agnostic pages still work.
+ * one remaining cluster-agnostic page (`/admin`) still work.
  */
 export function useClusterID(): string {
   const params = useParams<{ clusterID?: string }>()
@@ -34,11 +34,10 @@ export function useClusterID(): string {
 /**
  * The clusterID to build navigation links with.
  *
- * Same as `useClusterID()` on a cluster-scoped route. On the cluster-agnostic
- * pages (`/overview`, `/admin`) there is no route segment to read, and linking
- * to the literal "default" would put a placeholder in the address bar and in
- * every shared link — so it resolves to the session's cluster, then to the
- * first available one.
+ * Same as `useClusterID()` on a cluster-scoped route. On `/admin` there is no
+ * route segment to read, and linking to the literal "default" would put a
+ * placeholder in the address bar and in every shared link — so it resolves to
+ * the session's cluster, then to the first available one.
  */
 export function useNavClusterID(): string {
   const params = useParams<{ clusterID?: string }>()

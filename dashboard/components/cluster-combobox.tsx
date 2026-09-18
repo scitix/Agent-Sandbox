@@ -110,10 +110,15 @@ export function ClusterCombobox({
               {peerSites.map((site) => (
                 // A real anchor, not an onClick handler: the whole point is to
                 // leave for another origin, and this keeps middle-click and
-                // "open in new tab" working on the way out.
+                // "open in new tab" working on the way out. `target="_blank"`
+                // makes that the default too: the other console is a separate
+                // product with its own session, and sending the tab away would
+                // throw away the work open in this one.
                 <a
                   key={site.url}
                   href={site.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground relative flex w-full items-center gap-2 rounded-sm py-1.5 pr-2 pl-2 text-sm outline-hidden"
                 >
                   <ArrowUpRightIcon className="text-muted-foreground size-4 shrink-0" />

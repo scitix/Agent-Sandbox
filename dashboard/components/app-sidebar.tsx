@@ -32,7 +32,6 @@ import {
   LayoutDashboard,
   LogOut,
   Moon,
-  Package,
   PanelLeftClose,
   ReceiptTextIcon,
   Settings,
@@ -93,7 +92,6 @@ export const navSectionDefs: NavSectionDef[] = [
     items: [
       { labelKey: "nav.envs", page: "envs", icon: Boxes },
       { labelKey: "nav.templates", page: "templates", icon: Layers },
-      { labelKey: "nav.images", page: "images", icon: Package },
       { labelKey: "nav.datasets", page: "datasets", icon: HardDrive },
     ],
   },

@@ -121,11 +121,15 @@ hostAliases: []
 # in different regions are two consoles with no route between them. Give each
 # side the other's address and the picker gains a way across. These are NOT
 # clusters: nothing is fetched from them and nothing is proxied to them —
-# selecting one navigates the browser away, and the other deployment
-# authenticates the user itself on arrival.
+# picking one opens it in a NEW TAB (a separate product with its own session,
+# so the work open here is not thrown away), and the other deployment
+# authenticates the user itself on arrival. The entry is pinned last, below the
+# cluster list, and the search box does not filter it away.
 #
 # `name` is shown verbatim (write it in whatever language the operators read);
 # `url` must be absolute and include the other side's basePath.
+#
+# Addresses belong here and nowhere else: no site is hardcoded on either side.
 # peerSites:
 #   - name: "Console (EU)"
 #     url: "https://console-eu.example.com/agentbox"

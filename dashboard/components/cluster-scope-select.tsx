@@ -43,9 +43,9 @@ interface ClusterScopeSelectProps {
 }
 
 /**
- * Cluster-scope picker for the cluster-agnostic `/overview` and `/admin`
- * pages: writes a searchParam instead of navigating/re-authenticating, unlike
- * `<ClusterSwitcher>`.
+ * Cluster-scope picker for the pages that aggregate across clusters
+ * (`/overview`, `/admin`): writes a searchParam instead of
+ * navigating/re-authenticating, unlike `<ClusterSwitcher>`.
  *
  * Multi-select, because comparing a couple of clusters side by side is a
  * normal thing to want and the metric queries express it as one regex matcher.

@@ -47,7 +47,6 @@ export const OPEN_PAGE_VALUES = [
   'sandboxes',
   'envs',
   'templates',
-  'images',
   'datasets',
   'vault',
   'approvals',

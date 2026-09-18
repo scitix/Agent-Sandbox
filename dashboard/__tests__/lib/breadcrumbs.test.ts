@@ -40,9 +40,20 @@ describe("breadcrumbsFor", () => {
   })
 
   it("labels a standalone page", () => {
-    expect(breadcrumbsFor("/overview", "foo", "en", t)).toEqual([
+    expect(breadcrumbsFor("/admin", "foo", "en", t)).toEqual([
+      { label: "nav.adminStats", href: undefined, isCurrent: true },
+    ])
+  })
+
+  // Overview went back under the cluster route, so its title is the sidebar's
+  // label on the same line as every other page's — not a second, self-drawn
+  // header. The matcher has to see it as cluster-scoped, or the crumb (which is
+  // also the page title) comes out empty on the standalone branch.
+  it("labels the overview page from its cluster-scoped route", () => {
+    expect(breadcrumbsFor("/clusters/foo/overview", "foo", "en", t)).toEqual([
       { label: "nav.overview", href: undefined, isCurrent: true },
     ])
+    expect(clusterPath("foo", "overview", "en")).toBe("/clusters/foo/overview")
   })
 
   // The regression this guards: the standalone matcher used to be anchored at

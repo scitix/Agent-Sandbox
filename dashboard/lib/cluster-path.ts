@@ -27,7 +27,6 @@ export type DashboardPage =
   | "sandboxes"
   | "envs"
   | "templates"
-  | "images"
   | "datasets"
   | "vault"
   | "approvals"
@@ -47,19 +46,25 @@ export function localePrefix(locale?: Locale): string {
 
 /**
  * Pages that live at a top-level, cluster-agnostic route instead of under
- * `/clusters/{clusterID}/`. Two different reasons put a page here:
+ * `/clusters/{clusterID}/`:
  *
- *   - It aggregates across clusters and carries its own in-page scope selector
- *     (`useClusterScopeSearchParams`): `overview`, `admin`.
+ *   - `admin` is admin-only and reads nothing cluster-scoped, so it has no
+ *     cluster to name.
  *
- * The assistant is deliberately NOT here. It is served once per deployment, so
- * by the second reason it looks like it belongs — but what it ACTS on is per
- * cluster, and the cluster in the route is what puts it in the `<page/>` marker
- * the agent receives. "What sandboxes are running?" then resolves against the
+ * `overview` used to be here too, and is deliberately not: a page that drops
+ * the cluster from its URL also drops it from every link the sidebar and the
+ * command palette build, so leaving overview cost the cluster the person was
+ * working in — the next click landed on the default one. The route carries a
+ * cluster again; what it READS still defaults to every cluster, via the page's
+ * own scope selector (`useClusterScopeSearchParams`).
+ *
+ * The assistant is not here for a third reason. It is served once per
+ * deployment, so it looks like it belongs — but what it ACTS on is per cluster,
+ * and the cluster in the route is what puts it in the `<page/>` marker the
+ * agent receives. "What sandboxes are running?" then resolves against the
  * cluster the user is looking at instead of asking them which one they meant.
  */
-export const STANDALONE_PAGES = ["overview", "admin"] as const satisfies
-  readonly DashboardPage[]
+export const STANDALONE_PAGES = ["admin"] as const satisfies readonly DashboardPage[]
 
 const STANDALONE_PAGE_SET: ReadonlySet<DashboardPage> = new Set(STANDALONE_PAGES)
 
