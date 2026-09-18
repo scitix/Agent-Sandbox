@@ -1,0 +1,100 @@
+---
+title: Cross-cluster
+description: One platform, several clusters — how an env spans them, how requests are routed, and how images follow.
+---
+
+# Cross-cluster
+
+One Agent Sandbox address reaches a platform, and a platform can reach several
+clusters. You do not open a second account to use the second cluster; you
+address it.
+
+```bash
+abx clusters                              # every cluster behind this address
+abx envs --cluster YOUR_CLUSTER           # the envs on one of them
+```
+
+## Same name, several clusters
+
+An env exists per cluster — pools, quota, instance types and images are local
+to one — but two envs with the **same name** on different clusters are
+associated, and the platform may serve a claim for that name from either.
+
+To build one: create the env on the first cluster, then extend it to the next
+one from the console (**Sandbox Envs → extend an environment to another
+cluster**). The extension creates the env there; you then add member pools on
+that cluster, because instance types and quota are properties of the cluster
+it lives on, and registry credentials are entered per cluster.
+
+Two conditions, and the second fails quietly:
+
+1. The image must exist in each cluster's registry —
+   [images follow you](#the-same-image-in-every-region).
+2. The team → namespace mapping must match across clusters. If it does not,
+   federation cannot pair `(namespace, env name)` and a bare env name will not
+   spread — name the cluster explicitly instead.
+
+## Addressing
+
+The E2B SDK's first argument is an address, and the address can carry a
+cluster:
+
+| You write | You get |
+|---|---|
+| `YOUR_ENV` | this cluster first; if it has no idle capacity and cannot scale, a cluster with the same-named env |
+| `SOME_CLUSTER::YOUR_ENV` | that cluster's env, which then routes across its own member pools |
+| `SOME_CLUSTER::YOUR_POOL` | that exact pool, with no routing at all |
+| `YOUR_ENV//IMAGE` | as above, with the main container image replaced |
+
+The `//IMAGE` suffix combines with any of the others. For a pipeline that
+should not care where capacity is, `YOUR_ENV` is the right spelling; for a
+result you may have to reproduce, `SOME_CLUSTER::YOUR_ENV` pins the cluster and
+still survives a pool being replaced by one of the same shape.
+
+In `abx`, a cluster is a flag rather than part of the address:
+`abx envs YOUR_ENV --cluster SOME_CLUSTER`.
+
+## The same image in every region
+
+When you name an image that belongs to another cluster's private registry, the
+platform rewrites the **registry host** to this cluster's equivalent — same
+type of registry, same path, same tag — so a sandbox is never pulling across
+regions:
+
+```
+you write:   registry-REGION-A.example.com/agentbox/eval/thing:260328
+pulled from: registry-REGION-B.example.com/agentbox/eval/thing:260328
+```
+
+The rules that follow from it:
+
+- the same image has to exist at the **same path** in each region's registry;
+- rewriting only happens between registries of the same configured type;
+- public registries (`docker.io` and friends) are never rewritten;
+- if this cluster has no registry of that type, the address is used as written
+  — which may work, and may be slow, and says nothing either way.
+
+## What is shared and what is not
+
+| Shared across the platform | Per cluster |
+|---|---|
+| the template catalogue (synced) | pools, their replicas and their autoscaling |
+| an env's identity and name | the env's member pools on that cluster |
+| API keys | quota, instance types, namespaces |
+| | registry credentials, and the images behind them |
+
+## Common misconceptions
+
+- **"A pool spans clusters."** It does not. A pool belongs to one cluster; the
+  env is what spans them.
+- **"Cross-cluster is a fallback for outages."** It is capacity routing, not
+  failover: a cluster that has no Pod to give you cannot be scaled into
+  existence instantly, and the request fails rather than waiting for one.
+- **"The same env name is enough."** Without the env on the target cluster, the
+  request has nowhere to go; without the image, it lands and then fails to pull.
+
+## See also
+
+- [Envs](/docs/concepts/envs) — naming and per-cluster membership
+- [Pools](/docs/concepts/pools) — where a cluster's capacity lives
+- [E2B Python SDK](/docs/tutorials/e2b) — create parameters and routing

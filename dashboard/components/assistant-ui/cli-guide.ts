@@ -123,6 +123,8 @@ Two tools, and the split between them is the product:
 | \`abx\` | the platform — environments, warm pools, autoscaling, quotas, templates |
 | E2B SDK | the sandboxes themselves — create, exec, files, network |
 
+The objects those commands address — templates, envs, pools — are described in the Concepts section, which is also a plain-text document any agent can fetch: <https://scitix.github.io/Agent-Sandbox/docs/concepts/index.md>
+
 Everything below is filled in for this deployment: the console address, the cluster and the E2B endpoints. The one value an agent supplies itself is its API key, and the API key appears in the code blocks and nowhere else.
 
 ## 1. Get an API key
@@ -240,6 +242,8 @@ AgentBox 的操作都可以在命令行里完成，这也是它适合交给 Agen
 |---|---|
 | \`abx\` | 平台：环境（Env）、预热池、自动扩缩容、配额、模板 |
 | E2B SDK | 沙箱：创建、命令执行、文件读写、网络 |
+
+这些命令操作的对象——模板、环境、资源池——的模型说明在 Concepts 一节，同时提供可直接抓取的纯文本文档：<https://scitix.github.io/Agent-Sandbox/docs/concepts/index.md>
 
 下面的内容已按当前部署填好：控制台地址、集群、E2B 端点都是可直接使用的真实值。Agent 唯一需要自己提供的只有它的 API Key，而 API Key 只出现在代码块里。
 

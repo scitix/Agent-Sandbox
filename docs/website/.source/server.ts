@@ -1,9 +1,18 @@
 // @ts-nocheck
-import * as __fd_glob_6 from "../content/docs/tutorials/mini-swe-agent.mdx?collection=docs"
-import * as __fd_glob_5 from "../content/docs/tutorials/e2b.mdx?collection=docs"
-import * as __fd_glob_4 from "../content/docs/tutorials/cli.mdx?collection=docs"
-import * as __fd_glob_3 from "../content/docs/index.mdx?collection=docs"
-import { default as __fd_glob_2 } from "../content/docs/tutorials/meta.json?collection=docs"
+import * as __fd_glob_15 from "../content/docs/tutorials/mini-swe-agent.mdx?collection=docs"
+import * as __fd_glob_14 from "../content/docs/tutorials/e2b.mdx?collection=docs"
+import * as __fd_glob_13 from "../content/docs/tutorials/cli.mdx?collection=docs"
+import * as __fd_glob_12 from "../content/docs/concepts/templates.mdx?collection=docs"
+import * as __fd_glob_11 from "../content/docs/concepts/secrets.mdx?collection=docs"
+import * as __fd_glob_10 from "../content/docs/concepts/pools.mdx?collection=docs"
+import * as __fd_glob_9 from "../content/docs/concepts/inplace-update.mdx?collection=docs"
+import * as __fd_glob_8 from "../content/docs/concepts/index.mdx?collection=docs"
+import * as __fd_glob_7 from "../content/docs/concepts/envs.mdx?collection=docs"
+import * as __fd_glob_6 from "../content/docs/concepts/cross-cluster.mdx?collection=docs"
+import * as __fd_glob_5 from "../content/docs/concepts/autoscaling.mdx?collection=docs"
+import * as __fd_glob_4 from "../content/docs/index.mdx?collection=docs"
+import { default as __fd_glob_3 } from "../content/docs/tutorials/meta.json?collection=docs"
+import { default as __fd_glob_2 } from "../content/docs/concepts/meta.json?collection=docs"
 import { default as __fd_glob_1 } from "../content/docs/api/meta.json?collection=docs"
 import { default as __fd_glob_0 } from "../content/docs/meta.json?collection=docs"
 import { server } from 'fumadocs-mdx/runtime/server';
@@ -14,4 +23,4 @@ const create = server<typeof Config, import("fumadocs-mdx/runtime/types").Intern
   }
 }>({"doc":{"passthroughs":["extractedReferences"]}});
 
-export const docs = await create.docs("docs", "content/docs", {"meta.json": __fd_glob_0, "api/meta.json": __fd_glob_1, "tutorials/meta.json": __fd_glob_2, }, {"index.mdx": __fd_glob_3, "tutorials/cli.mdx": __fd_glob_4, "tutorials/e2b.mdx": __fd_glob_5, "tutorials/mini-swe-agent.mdx": __fd_glob_6, });
+export const docs = await create.docs("docs", "content/docs", {"meta.json": __fd_glob_0, "api/meta.json": __fd_glob_1, "concepts/meta.json": __fd_glob_2, "tutorials/meta.json": __fd_glob_3, }, {"index.mdx": __fd_glob_4, "concepts/autoscaling.mdx": __fd_glob_5, "concepts/cross-cluster.mdx": __fd_glob_6, "concepts/envs.mdx": __fd_glob_7, "concepts/index.mdx": __fd_glob_8, "concepts/inplace-update.mdx": __fd_glob_9, "concepts/pools.mdx": __fd_glob_10, "concepts/secrets.mdx": __fd_glob_11, "concepts/templates.mdx": __fd_glob_12, "tutorials/cli.mdx": __fd_glob_13, "tutorials/e2b.mdx": __fd_glob_14, "tutorials/mini-swe-agent.mdx": __fd_glob_15, });

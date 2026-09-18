@@ -278,6 +278,17 @@ export interface ResourceSpec {
    */
   helpNote?: string
   /**
+   * Where this resource is explained in prose, as a slug under the docs site
+   * (`concepts/envs`).
+   *
+   * A slug rather than a URL, because the address of the site is one fact that
+   * belongs in one constant — and because the thing worth checking is that the
+   * page exists in this repository, which is a path, not a URL. It is the
+   * deployment-independent half of the documentation: unlike the console links,
+   * it is offered in direct mode too, where the caller has no console.
+   */
+  docs?: string
+  /**
    * The feature gate this resource depends on, from GET /feature-gates. Absent
    * means always available. Both surfaces hide the resource when the gate is
    * off, so a deployment without the feature never advertises it.

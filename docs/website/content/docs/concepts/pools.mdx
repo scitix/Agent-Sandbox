@@ -1,0 +1,99 @@
+---
+title: Sandbox pools
+description: A SandboxPool is a set of pre-warmed Pods of one resource shape — where capacity lives, and what decides how a pool is sized.
+---
+
+# Sandbox pools
+
+A **SandboxPool** is a set of Pods of one resource shape, kept warm for an
+[env](/docs/concepts/envs). It is where capacity and cost live: an env with no
+pool can be configured perfectly and still serve nothing.
+
+## The numbers on a pool
+
+| Field | Meaning |
+|---|---|
+| `replicas` | how many Pods this pool keeps — the pool's **theoretical maximum concurrency** |
+| `idleReplicas` | Pods ready to claim right now |
+| `runningReplicas` | Pods currently in use by a sandbox |
+| `startingReplicas`, `stoppingReplicas` | Pods mid-transition, on their way in or out |
+| `unavailableIdleReplicas` | idle Pods that are not Ready — counted as idle, but unable to take a claim |
+| `pendingRequests` | claims queued against this pool |
+
+`replicas` counts every state, so a claim that finds `idleReplicas = 0` waits,
+and the wait ends when a Pod is returned or the pool grows
+([autoscaling](/docs/concepts/autoscaling)).
+
+## Names are derived, shapes are fixed
+
+A pool's name is derived from the env name and the effective resources — as in
+`YOUR_ENV-1c16gi-10-ondemand` — and the same derivation produces its scaling
+group. Both follow from the shape, which is why the shape is **fixed at
+create**: a pool does not resize, it gets replaced by one of a different shape.
+
+That is also why the console asks you for the shape, not for a size: a pool's
+identity *is* its shape.
+
+## Which shape you may declare: `poolSizing`
+
+Whether a pool names a quota and an instance type is a property of the env's
+template, not a matter of taste. Read it off the env before writing a body:
+
+```bash
+abx envs YOUR_ENV --cluster YOUR_CLUSTER     # prints poolSizing
+```
+
+| `poolSizing` | What a member pool must declare | What it refuses |
+|---|---|---|
+| `billed` | a quota label **and** `instanceType` (with optional `multiplier`) | a pool without them |
+| `free-form` | `inlineResources` only | `instanceType`, `multiplier`, quota labels |
+| `either` | the caller chooses | nothing — the deployment states no rule |
+
+On a **billed** env the instance type is a billing *envelope*: `instanceType ×
+multiplier` is reserved and charged, and `inlineResources` may then ask for less
+than the envelope (rounded down is allowed, rounding up is refused). On a
+**free-form** env, `inlineResources` is the whole size of the Pod.
+
+The server enforces this rather than trusting the client, so the answer to
+"which fields do I send" is always the env's, never a template you copied.
+
+## Writing one
+
+```bash
+abx create envs YOUR_ENV pools --help                    # the body, field by field
+abx envs YOUR_ENV pools --cluster YOUR_CLUSTER           # what exists
+abx create envs YOUR_ENV pools -f pool.json --cluster YOUR_CLUSTER
+abx scale envs YOUR_ENV pools YOUR_POOL --replicas 4 --cluster YOUR_CLUSTER
+```
+
+`abx scale` changes size and nothing else: it re-sends the current bounds
+unchanged. Everything else is a `create`/`update` with a file.
+
+## Several pools, one env
+
+One env may hold pools of different shapes and different quotas, and a claim
+against the env is routed across them by the platform — by availability first,
+with the pool's priority as a tie-break.
+
+To make placement deterministic, name the shape you want instead of letting the
+platform choose: pass `agentbox.scitix.ai/scaling-group` in the create metadata
+(or address `cluster::pool` directly, [cross-cluster](/docs/concepts/cross-cluster)).
+If that group has no member in the env, the create fails with `503` rather than
+quietly landing on another shape — a deliberate choice, because a run that
+silently half-succeeded on the wrong hardware is worse than a run that did not
+start.
+
+## When capacity is not there
+
+| Symptom | Where to look |
+|---|---|
+| `idleReplicas = 0`, claims queue | add a pool, or let the group scale ([autoscaling](/docs/concepts/autoscaling)) |
+| the pool will not grow to `replicas` | quota: `abx quotas --cluster YOUR_CLUSTER`, and the pool's `ResourceQuotaExhausted` condition |
+| idle Pods never become claimable | `unavailableIdleReplicas` — Pods that are not Ready; usually an image pull |
+| an env has pools but no capacity | the pools may be on another cluster in the federation |
+
+## See also
+
+- [Autoscaling](/docs/concepts/autoscaling) — bounds, policies and cooldowns
+- [In-place update](/docs/concepts/inplace-update) — what a claim does to a Pod
+- [CLI guide](/docs/tutorials/cli) — endpoints, keys and the address grammar

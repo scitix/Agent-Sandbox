@@ -1,0 +1,95 @@
+---
+title: Sandbox environments
+description: A SandboxEnv binds one template, carries the settings every sandbox in it shares, and is the name you create sandboxes with.
+---
+
+# Sandbox environments
+
+A **SandboxEnv** is the addressable unit: the name you pass to
+`Sandbox.create()`, the thing the console shows a page for, and the object
+that binds exactly one [template](/docs/concepts/templates).
+
+```python
+sbx = Sandbox.create("YOUR_ENV", timeout=3000, secure=False)
+```
+
+An env is one class of runtime — "the E2B sandboxes for this team", "the
+Docker-in-Docker ones for this evaluation" — and it fans out to member
+[pools](/docs/concepts/pools) that hold the actual capacity. It holds no Pods
+itself.
+
+## What an env owns
+
+These are the settings every sandbox claimed from the env inherits:
+
+| Setting | What it does |
+|---|---|
+| `overrides.image` | replaces the template's main container image for every member pool |
+| `overrides.podCreationImagePolicy` | whether a new Pod starts on the template's image or on the idle image |
+| `overrides.defaultStartupTimeout` | how long a claim waits for the sandbox to become ready, when it does not say |
+| `overrides.defaultIdleTimeout` | how long an untouched sandbox lives before it is reclaimed, when it does not say |
+| `overrides.imagePullSecret` | credentials for a private registry, materialised into a Secret the member pools reference |
+| `overrides.gateway` | the **switch** that gives the env's Pods an egress sidecar — see [egress and secrets](/docs/concepts/secrets) |
+| `overrides.volumes` | PersistentVolumeClaims mounted into every sandbox |
+| `overrides.updateStrategy` | `autoUpdate` and `maxUnavailable` for rollouts |
+| `labels`, `annotations` | metadata stamped on the env and its member pools |
+
+Changing most of these changes the Pod spec, and a changed Pod spec means the
+env's pools **roll**: existing idle Pods are replaced, one rollout at a time,
+and running sandboxes are left alone until they are returned.
+
+## Mode
+
+| Mode | Behaviour |
+|---|---|
+| `WarmPool` | claims are served from the env's member pools. This is what the platform runs. |
+| `OnDemandJob` | reserved: accepted by the API enum, not implemented by the controller. Do not build on it. |
+
+## The name goes everywhere
+
+An env name is an RFC 1123 DNS label, capped at 24 characters because pool and
+Pod names are derived from it (`POOL = ENV + resourceKey (+ quotaShort)`,
+`POD = POOL + uuid`) and those have to stay inside the 63-character limit.
+
+The same name is the env in the E2B SDK, the console URL, and `abx`. Create the
+same-named env in two clusters and they federate —
+[cross-cluster](/docs/concepts/cross-cluster).
+
+## Reading and writing one
+
+```bash
+abx envs --cluster YOUR_CLUSTER          # every env on the cluster
+abx envs YOUR_ENV --cluster YOUR_CLUSTER # one env: template, mode, pools, sizing rule
+
+# the safe way to change one
+abx envs YOUR_ENV --editable --cluster YOUR_CLUSTER > env.json
+# edit env.json
+abx update envs YOUR_ENV -f env.json --cluster YOUR_CLUSTER
+```
+
+`abx create envs --help` prints the whole body, field by field. Two things
+about it are worth knowing before you edit a file:
+
+- **A write is a PUT.** A field you leave out is a field you are asking to
+  remove, and `overrides` is replaced wholesale.
+- **`imagePullSecret` cannot be read back.** `GET` reports
+  `imagePullSecretConfigured` instead of the credentials, and that flag is also
+  the only way to say "keep them": a PUT carrying neither the secret nor the
+  flag is asking for the stored credentials to be deleted. Editing an unrelated
+  setting with a file that dropped the flag revokes your registry access.
+
+## Common misconceptions
+
+- **"The env is a namespace."** It is not; the namespace comes from your team.
+  An env is a runtime identity plus its settings.
+- **"An env holds capacity."** Pools do. An env with no member pool has no
+  sandboxes to hand out, however it is configured.
+- **"I can repoint an env at another template."** `templateRef` is fixed at
+  create. Moving runtimes means creating an env on the new template and moving
+  traffic.
+
+## See also
+
+- [Pools](/docs/concepts/pools) — where the capacity is
+- [Autoscaling](/docs/concepts/autoscaling) — the size of that capacity over time
+- [Egress and secrets](/docs/concepts/secrets) — the env's gateway switch

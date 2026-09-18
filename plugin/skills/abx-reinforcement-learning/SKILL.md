@@ -119,3 +119,7 @@ the tail.
 - `abx-harbor-framework` — running an actual benchmark rather than free-form rollouts
 - `abx-observe` — logs, events and E2B-native metrics
 - `abx-common` — endpoint, key, cluster, approval
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/inplace-update.md>

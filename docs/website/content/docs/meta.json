@@ -1,6 +1,8 @@
 {
   "pages": [
     "index",
+    "concepts",
+    "tutorials",
     "...",
     "!api"
   ]

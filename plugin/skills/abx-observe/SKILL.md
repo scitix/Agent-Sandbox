@@ -88,3 +88,7 @@ report `Ready` while having nothing claimable.
 
 - `abx-resource-capacity` — the fix, once you know it is capacity
 - `abx-common` — endpoint, key, cluster, approval
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/pools.md>

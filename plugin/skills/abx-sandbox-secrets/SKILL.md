@@ -91,3 +91,7 @@ different answer. See `abx-common`.
 - `abx-managed-agent` — the same mechanism is how the platform's own assistant
   holds no real credential
 - `abx-common` — endpoint, key, cluster, approval
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/secrets.md>

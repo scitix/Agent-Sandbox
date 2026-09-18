@@ -98,3 +98,7 @@ registry; individual tasks failing is usually the task.
 - `abx-observe` — reading what failed
 - Reference: `sdk/python/harbor/README.md` and `INTEGRATION.md` in the
   agent-sandbox repository
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/pools.md>

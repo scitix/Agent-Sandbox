@@ -27,7 +27,7 @@
  * hand-maintained tool manifest.
  */
 
-import { RESOURCES, WRITE_DOCS, childrenOf, rootResources } from '@headless/index'
+import { DOCS_BASE, RESOURCES, WRITE_DOCS, childrenOf, rootResources } from '@headless/index'
 import type { ResourceSpec } from '@headless/types'
 
 /**
@@ -74,6 +74,17 @@ export function agentContext(
     version,
     describe:
       'Platform CLI for AgentBox. Addresses envs, member pools, autoscaling groups, templates and quotas. Sandboxes themselves are created and driven with the E2B SDK — this CLI is about where they come from.',
+    /**
+     * Where the prose is, for the questions --help cannot answer: what the
+     * objects are, why a claim is fast, how a cluster is chosen. The index is
+     * the entry point; every resource below carries its own page.
+     */
+    docs: {
+      index: `${DOCS_BASE}/concepts/index.md`,
+      site: DOCS_BASE,
+      note:
+        'Each page also exists as `.md` — a document meant to be fetched whole rather than scraped out of HTML.',
+    },
     grammar: {
       read: [
         'abx <resource>',
@@ -124,6 +135,7 @@ export function agentContext(
       plural: r.plural,
       kind: r.kind,
       describe: r.describe,
+      docs: r.docs ? `${DOCS_BASE}/${r.docs}.md` : undefined,
       parent: r.parent,
       detail: r.detail ?? false,
       gate: r.gate,

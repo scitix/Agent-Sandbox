@@ -82,3 +82,7 @@ inject it on the way out, so the sandbox reaches the API while holding no key.
 - `abx-sandbox-secrets` — reaching a service without holding its credential
 - `abx-harbor-framework` — running an evaluation suite on top of this
 - `abx-common` — endpoint, key, cluster, approval
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/secrets.md>

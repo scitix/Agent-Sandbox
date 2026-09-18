@@ -88,3 +88,7 @@ it rolls the pool.
   inside it cannot reach the internet
 - `abx-resource-capacity` — a dind sandbox is a bigger sandbox; size for it
 - `abx-common` — endpoint, key, cluster, approval
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/templates.md>

@@ -70,10 +70,10 @@ Deploy sandbox pools across multiple clouds or regions. The built-in ExtProc rou
 | Resource | Link |
 |----------|------|
 | Documentation site | [scitix.github.io/Agent-Sandbox](https://scitix.github.io/Agent-Sandbox/) |
+| Concepts — the object model, envs, pools, autoscaling | [/docs/concepts](https://scitix.github.io/Agent-Sandbox/docs/concepts) |
+| CLI guide — `abx`, endpoints and keys | [/docs/tutorials/cli](https://scitix.github.io/Agent-Sandbox/docs/tutorials/cli) |
+| E2B SDK guide — creating and driving sandboxes | [/docs/tutorials/e2b](https://scitix.github.io/Agent-Sandbox/docs/tutorials/e2b) |
 | API Reference (OpenAPI) | [/docs/api/sandboxes/CreateSandbox](https://scitix.github.io/Agent-Sandbox/docs/api/sandboxes/CreateSandbox/) |
-| Installation guide | [/docs/installation](https://scitix.github.io/Agent-Sandbox/docs/installation) |
-| Integrations | [/docs/integrations](https://scitix.github.io/Agent-Sandbox/docs/integrations) |
-| Changelog | [/docs/changelog](https://scitix.github.io/Agent-Sandbox/docs/changelog) |
 
 ---
 

@@ -1,0 +1,94 @@
+---
+title: Sandbox templates
+description: What a SandboxTemplate is, how it differs from an E2B template, and what it does and does not decide.
+---
+
+# Sandbox templates
+
+A **SandboxTemplate** is what a sandbox is made from: a Pod shape, an idle
+image, a runtime, the default timeouts, and the documentation an environment
+carries. It is a Kubernetes object, and it is the platform's, not yours.
+
+## It is not an E2B template
+
+This is the first thing E2B users ask, and the answer changes how you write
+code:
+
+| | E2B template | Agent Sandbox `SandboxTemplate` |
+|---|---|---|
+| What it is | a build artifact: a Dockerfile compiled into a snapshot | a Kubernetes object: Pod template, idle image, runtimes, defaults |
+| How it comes to exist | you run `e2b template build` | the platform publishes it; nothing is built per workload |
+| Where the workload image comes from | baked into the snapshot at build time | chosen when a sandbox is created, and swapped in on the claim |
+| What you pass to `Sandbox.create()` | the template id | the **env** name |
+| Versions | template builds | `spec.version` is a label a person maintains |
+
+So there is no build step and no per-workload snapshot to maintain: an env can
+serve any image you can pull, and changing that image does not rebuild
+anything. The cost of that design is visible in
+[in-place update](/docs/concepts/inplace-update).
+
+## What a template decides
+
+| Field | What it means |
+|---|---|
+| `template` | the Pod template: containers, sidecars, resources, volumes, node selectors |
+| `idleImage` | what an **unclaimed** Pod runs. Defaults to the main container's image |
+| `runtimes` | the sandbox runtime the Pod carries (the E2B runtime is the default) |
+| default startup / idle timeouts | what a create means when it does not say |
+| documentation | the text `abx envs <env> docs` prints, rendered per cluster at read time |
+| visibility | which teams and users see the template at all; empty means public |
+| `version` | a human-maintained string, surfaced as the template's version |
+
+## What a template does not decide
+
+Replicas, quota and instance type belong to a pool, not to a template: one
+template can back several envs, each with pools of different sizes. The env
+may override a few template fields — the image, the image policy, the default
+timeouts, private-registry credentials — uniformly for all of its pools; see
+[envs](/docs/concepts/envs).
+
+Resource *shape* is the exception worth knowing: Pods in one pool all have the
+same requests and limits. Resizing a workload means another pool, not another
+Pod — [pools](/docs/concepts/pools).
+
+## Reading one
+
+```bash
+abx templates --cluster YOUR_CLUSTER                  # the catalogue
+abx templates YOUR_TEMPLATE --cluster YOUR_CLUSTER    # one, with its docs
+```
+
+`abx templates <name>` prints the template's documentation and its raw object,
+which is what a diff against a rollout is read against. Writing a template is
+`abx admin-templates` and needs an admin credential — the catalogue everyone
+else reads is read-only.
+
+## Versions, and what actually triggers a rollout
+
+`spec.version` is a label a person keeps up to date; the platform does not
+resolve it to a revision. The thing that decides whether idle Pods are stale
+is a **revision hash** over the materialised idle Pod — the idle image, the Pod
+body, the gateway and the template's metadata.
+
+The running image is deliberately *not* part of that hash: an idle Pod is not
+running your workload image, and the image it will run is resolved when a
+sandbox is claimed. Edit a template's running image and the next claim picks it
+up with no rollout; edit anything in the idle Pod's identity and the pools roll
+onto the new revision, governed by each env's update strategy
+([envs](/docs/concepts/envs), [in-place update](/docs/concepts/inplace-update)).
+
+## Common misconceptions
+
+- **"The template is my image."** The template carries a default image, but the
+  image a sandbox runs is chosen per create and can differ every time.
+- **"A template bump upgrades running sandboxes."** It does not touch a running
+  sandbox. Rollouts replace **idle** Pods; claims that already happened keep
+  what they claimed.
+- **"Templates are per env."** They are cluster-scoped and shared: several envs
+  may bind one template, and an admin editing it affects all of them.
+
+## See also
+
+- [Envs](/docs/concepts/envs) — what binds a template and why
+- [In-place update](/docs/concepts/inplace-update) — how a claim uses the idle image
+- [E2B Python SDK](/docs/tutorials/e2b) — creating sandboxes from an env

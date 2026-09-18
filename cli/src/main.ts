@@ -46,6 +46,7 @@ import {
   addressError,
   childrenOf,
   consolePath,
+  docsURL,
   parsePositional,
   resolveAction,
   resolveApi,
@@ -504,6 +505,11 @@ function resourceHelp(spec: (typeof RESOURCES)[number]): string {
       'in full — every field, which are required, and which are fixed at create.',
     )
   }
+  // The prose half of the answer, at the end because it is the one line here
+  // that is not about this deployment: what the object IS, rather than what
+  // this command does to it.
+  const doc = docsURL(spec)
+  if (doc) out.push('', `Read more: ${doc}`)
   return out.join('\n')
 }
 

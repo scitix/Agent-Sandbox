@@ -25,6 +25,7 @@
 
 import { describe, expect, it } from 'bun:test'
 import {
+  DOCS_BASE,
   RESOURCES,
   addressError,
   childrenOf,
@@ -32,7 +33,7 @@ import {
   resolveApi,
   rootResources,
 } from '@headless/index'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { applyFilters, hints, renderDetail, renderTable, visibleColumns } from '../src/render'
 import { generate, generateForDashboard } from '../../scripts/gen-body-docs'
@@ -283,6 +284,43 @@ describe('agent-context describes this CLI and no other', () => {
     const off = agentContext('test', { quota: false })
     expect(off.resources.some(r => r.plural === 'quotas')).toBe(false)
     expect(doc.resources.some(r => r.plural === 'quotas')).toBe(true)
+  })
+})
+
+/**
+ * The prose links the CLI prints, and the one thing that can rot about them.
+ *
+ * `docs` is a slug into the documentation site, and the site is generated from
+ * this same repository — so "the page exists" is a filesystem question this
+ * test can answer rather than a hope. A rename that misses the registry is a
+ * 404 printed by `abx envs --help`, which is a bad place to find out.
+ */
+describe('every resource points at a page that exists', () => {
+  const contentDir = join(__dirname, '..', '..', 'docs', 'website', 'content', 'docs')
+
+  it('names a slug that is a real page in this repository', () => {
+    const linked = RESOURCES.filter(r => r.docs)
+    expect(linked.length).toBeGreaterThan(0)
+    for (const r of linked) {
+      const file = join(contentDir, `${r.docs}.mdx`)
+      expect(existsSync(file), `${r.plural} → ${r.docs}.mdx`).toBe(true)
+    }
+  })
+
+  it('prints the link in the list footer, including in direct mode', () => {
+    const spec = RESOURCES.find(r => r.plural === 'envs')!
+    expect(hints(spec, ctx, { resource: 'envs' })).toContain(`${DOCS_BASE}/concepts/envs.md`)
+    // The console link is the deployment's and is dropped without one. The
+    // prose is not: a sandbox reaching one cluster's own API is exactly where
+    // the caller has nothing else to read.
+    const direct: Context = { clusterApi: 'http://cluster.example:8080', apiKey: 'k' }
+    expect(hints(spec, direct, { resource: 'envs' })).toContain(`${DOCS_BASE}/concepts/envs.md`)
+  })
+
+  it('carries the link to an agent, per resource and as an entry point', () => {
+    const doc = agentContext('test')
+    expect(doc.docs.index).toBe(`${DOCS_BASE}/concepts/index.md`)
+    expect(doc.resources.find(r => r.plural === 'envs')!.docs).toBe(`${DOCS_BASE}/concepts/envs.md`)
   })
 })
 

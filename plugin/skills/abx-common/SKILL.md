@@ -278,3 +278,7 @@ reformulating — it usually contains the answer, and a guess costs a round trip
 | Stop a sandbox reaching the internet | `abx-sandbox-network` |
 | Give a sandbox a credential it cannot read | `abx-sandbox-secrets` |
 | Work out why something is broken or slow | `abx-observe` |
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/index.md>

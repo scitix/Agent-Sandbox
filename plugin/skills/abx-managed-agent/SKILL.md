@@ -115,3 +115,7 @@ what the vault and injection rules are for, not an environment variable.
 - `abx-observe` — why a session's sandbox failed
 - `abx-common` — endpoint, key, cluster, approval
 - Reference: `sdk/hands/README.md` in the agent-sandbox repository
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/envs.md>

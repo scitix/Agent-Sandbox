@@ -118,3 +118,7 @@ pointed at before the first create.
 - `abx-observe` — the metrics and logs behind "it is slow" or "it failed"
 - `abx-reinforcement-learning` — the rollout-shaped version of this
 - `abx-common` — endpoint, key, cluster, approval
+
+## Read more
+
+<https://scitix.github.io/Agent-Sandbox/docs/concepts/autoscaling.md>

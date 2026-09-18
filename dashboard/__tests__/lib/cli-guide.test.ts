@@ -45,7 +45,7 @@ describe('the setup guide carries this deployment and no other', () => {
     const hosts = [...src.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)].map(m => m[1])
     for (const h of hosts) {
       expect(h, `cli-guide.ts names the host ${h}`).toMatch(
-        /^(www\.apache\.org|oss-ap-southeast\.scitix\.ai|e2b\.dev)$/,
+        /^(www\.apache\.org|oss-ap-southeast\.scitix\.ai|scitix\.github\.io|e2b\.dev)$/,
       )
     }
   })

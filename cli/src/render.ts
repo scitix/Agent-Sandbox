@@ -16,7 +16,7 @@
 
 import type { ColumnSpec, ResourceSpec } from '@headless/index'
 import type { Address } from '@headless/index'
-import { childrenOf, cliArgs, consolePath, hasConsolePage } from '@headless/index'
+import { childrenOf, cliArgs, consolePath, docsURL, hasConsolePage } from '@headless/index'
 import { CliError, consoleBase, type Context } from './context'
 
 /** Rows past this are not printed. Context is not free and nobody reads 8000 rows. */
@@ -278,6 +278,11 @@ export function hints(spec: ResourceSpec, ctx: Context, a: Address, note?: strin
   if (web && hasConsolePage(a)) {
     parts.push(`view:\n  ${web}${consolePath(a)}`)
   }
+  // Unlike `view:`, this one is printed in direct mode as well: the console
+  // address is the deployment's, the prose is not, and a sandbox reaching one
+  // cluster on its own API is exactly where an agent has nothing else to read.
+  const doc = docsURL(spec)
+  if (doc) parts.push(`read:\n  ${doc}`)
   parts.push(`hint:\n${lines.join('\n')}`)
   return parts.join('\n')
 }

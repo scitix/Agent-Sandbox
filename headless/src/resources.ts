@@ -31,11 +31,26 @@
 
 import type { ApiOperation, ResourceSpec, Segment } from './types'
 
+/**
+ * Where the prose lives.
+ *
+ * The public documentation site, and the `.md` twin of each page: a fetchable
+ * document is what an agent wants, and the HTML is rendered from the same
+ * source. One constant, because every link the CLI prints is this plus a slug.
+ */
+export const DOCS_BASE = 'https://scitix.github.io/Agent-Sandbox/docs'
+
+/** The document for a registry entry, if it has one. */
+export function docsURL(spec: { docs?: string }): string | undefined {
+  return spec.docs ? `${DOCS_BASE}/${spec.docs}.md` : undefined
+}
+
 export const RESOURCES: readonly ResourceSpec[] = [
   {
     kind: 'cluster',
     plural: 'clusters',
     describe: 'Clusters this endpoint can reach.',
+    docs: 'concepts/cross-cluster',
     api: { list: '/clusters' },
     clusterScoped: false,
     // Switching clusters is a dropdown in the console's sidebar, not a page:
@@ -52,6 +67,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     plural: 'envs',
     describe:
       'A SandboxEnv binds one template and fans out to member warm pools. This is the object to create first; pools are added to it.',
+    docs: 'concepts/envs',
     api: { list: '/envs', item: '/envs/{name}', verbs: ['create', 'update', 'delete'] },
     detail: true,
     columns: [
@@ -140,6 +156,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
       'A member warm pool. Always belongs to an env, and takes its sizing shape from it: ' +
       'a billed env’s pools name a quota and an instance type, an unbilled env’s are sized ' +
       'with inlineResources. `abx envs <env>` prints which.',
+    docs: 'concepts/pools',
     api: {
       list: '/envs/{name}/sandboxpools',
       item: '/envs/{name}/sandboxpools/{poolName}',
@@ -204,6 +221,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     parent: 'envs',
     describe:
       'An autoscaling group: the bounds and policies a set of member pools scales under. Named for what the API field and the pool column both call it — only the old route said "autoscaling".',
+    docs: 'concepts/autoscaling',
     api: {
       list: '/envs/{name}/autoscaling/groups',
       item: '/envs/{name}/autoscaling/groups/{groupName}',
@@ -304,6 +322,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     plural: 'sandboxes',
     describe:
       'A running sandbox. Created and driven with the E2B SDK, not this CLI — these are read views of what that produced.',
+    docs: 'concepts/inplace-update',
     api: { list: '/sandboxes', item: '/sandboxes/{sandboxId}' },
     detail: true,
     columns: [
@@ -364,6 +383,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     kind: 'template',
     plural: 'templates',
     describe: 'Reusable Pod templates an env can be rendered from.',
+    docs: 'concepts/templates',
     api: { list: '/sandbox-templates', item: '/sandbox-templates/{name}' },
     detail: true,
     columns: [
@@ -397,6 +417,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     kind: 'instancetype',
     plural: 'instancetypes',
     describe: 'The quota classes a pool can be sized against.',
+    docs: 'concepts/pools',
     api: { list: '/instancetypes' },
     // No console route: the console surfaces these inside the pool form's
     // picker rather than as a page, so there is nothing to link to.
@@ -413,6 +434,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     kind: 'quota',
     plural: 'quotas',
     describe: 'Per-team quota and how much of it is in use.',
+    docs: 'concepts/pools',
     api: { list: '/quotas' },
     columns: [
       { id: 'name', describe: 'Quota name.', filter: 'name' },
@@ -670,6 +692,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     plural: 'admin-templates',
     describe:
       'Templates as their owner edits them. `templates` is the catalog everyone reads; this is the write side, and it is admin only.',
+    docs: 'concepts/templates',
     api: {
       list: '/admin/sandbox-templates',
       item: '/admin/sandbox-templates/{name}',

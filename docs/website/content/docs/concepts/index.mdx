@@ -1,0 +1,79 @@
+---
+title: The object model
+description: Start here — SandboxTemplate, SandboxEnv and SandboxPool, how they relate, and which page answers which question.
+---
+
+# The object model
+
+Agent Sandbox is four objects and the chain between them. The console, `abx`
+and the E2B SDK are three ways of driving that same chain.
+
+```
+SandboxTemplate      what a sandbox is made from        platform admin
+      │ binds
+      ▼
+SandboxEnv           the name you create sandboxes with      you
+      │ has members
+      ▼
+SandboxPool          pre-warmed Pods of one resource shape   you
+      │ claim
+      ▼
+Pod ─────────────────────────────────────────────▶ sandbox
+```
+
+| Object | What it decides | Who creates it | In the console |
+|---|---|---|---|
+| **SandboxTemplate** | the Pod shape, the idle image, default timeouts, an environment's own documentation | platform admin | Sandbox Templates |
+| **SandboxEnv** | which runtime, the timeouts, egress, the rollout policy | you | Sandbox Envs |
+| **SandboxPool** | how much warm capacity of one resource shape there is | you | the env's Pools tab |
+| **Pod → sandbox** | one running sandbox, handed to one claim | the platform | Sandboxes |
+
+## The same words in E2B, Agent Sandbox and Kubernetes
+
+| You say | E2B SDK | Agent Sandbox | Kubernetes |
+|---|---|---|---|
+| template | a built snapshot | `SandboxTemplate` | `SandboxTemplate` |
+| env | the first argument of `Sandbox.create()` | `SandboxEnv` | `SandboxEnv` |
+| pool | — | `SandboxPool` | `SandboxPool` |
+| sandbox | `Sandbox` | a claimed Pod | a `Pod` |
+
+The row worth reading twice: the E2B SDK calls the first argument of
+`Sandbox.create()` a **template**, and on Agent Sandbox that argument is an
+env. A template is what an env is made from, not what you create sandboxes
+with. [Sandbox templates](/docs/concepts/templates) is about that difference.
+
+## Two facts the design follows from
+
+**A sandbox is claimed, not created.** Pools hold Pods that already exist, so
+serving a request is a swap rather than a build — which is where the
+sub-second start comes from, and what
+[in-place update](/docs/concepts/inplace-update) is about.
+
+**Capacity is per cluster; identity is per name.** Quota, pools and images
+belong to one cluster, and an env with the same name in two clusters is one
+env the platform may dispatch to: [cross-cluster](/docs/concepts/cross-cluster).
+
+## Which page answers which question
+
+| Question | Page |
+|---|---|
+| What is a SandboxTemplate, and how does it differ from an E2B template? | [templates](/docs/concepts/templates) |
+| What can I configure on an environment? | [envs](/docs/concepts/envs) |
+| How many sandboxes can run at once, and what does one cost? | [pools](/docs/concepts/pools) |
+| Why is my pool not scaling, or scaling too far? | [autoscaling](/docs/concepts/autoscaling) |
+| Why is a claim fast, and what happens to the Pod afterwards? | [in-place update](/docs/concepts/inplace-update) |
+| How do I run the same workload on another cluster? | [cross-cluster](/docs/concepts/cross-cluster) |
+| How do I cut a sandbox off the network, or give it a credential it cannot read? | [egress and secrets](/docs/concepts/secrets) |
+
+## Driving it
+
+```bash
+abx clusters                              # every cluster this address reaches
+abx envs --cluster YOUR_CLUSTER           # the envs on one of them
+abx envs YOUR_ENV --cluster YOUR_CLUSTER  # one env: its template, pools, sizing rule
+```
+
+Everything the console shows for these objects is readable from `abx`, and
+almost all of it is writable from `abx` too. The
+[CLI guide](/docs/tutorials/cli) covers the setup; the
+[E2B SDK guide](/docs/tutorials/e2b) covers the sandbox side.

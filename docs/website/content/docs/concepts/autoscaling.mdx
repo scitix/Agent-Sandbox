@@ -1,0 +1,84 @@
+---
+title: Autoscaling
+description: Scaling groups, their bounds and policies, and how to reason about cost and concurrency with them.
+---
+
+# Autoscaling
+
+Autoscaling answers two questions about a set of
+[pools](/docs/concepts/pools): *how few Pods may I keep when nothing is
+running*, and *how many may I add when everything is busy*.
+
+## Groups, not pools
+
+Pools of the same resource shape inside one env form a **scaling group**, and
+the policy lives on the group. The group's name is derived from the shape
+(`4c64gi`-style), which is why you never create one: a group appears when a
+member pool declares its shape, and is collected when the last one goes away.
+
+```bash
+abx envs YOUR_ENV scaling-groups --cluster YOUR_CLUSTER
+abx envs YOUR_ENV scaling-groups YOUR_GROUP --cluster YOUR_CLUSTER
+```
+
+## The policy
+
+| Field | What it means |
+|---|---|
+| `enabled` | whether the autoscaler acts on this group at all; off means the pool's `replicas` is yours to set |
+| `minReplicas`, `maxReplicas` | the floor and the ceiling on the group's aggregate replicas |
+| `scaleUpPolicy.mode` | `Conservative`, `Default` or `Aggressive` — the step size in both directions |
+| `scaleUpPolicy.cooldownSeconds` | minimum gap between two scale-ups |
+| `scaleUpPolicy.idleThresholdSeconds` | how long aggregate idle must stay at zero before a proactive scale-up |
+| `scaleUpPolicy.idleZeroQuietWindowSeconds` | suppresses that trigger when nothing has been claimed for this long |
+| `scaleUpPolicy.saturationCooldownSeconds` | how long a member stays marked saturated after a failed probe |
+| `scaleDownPolicy.idleTimeoutSeconds` | how long a Pod idles before it counts as removable |
+| `scaleDownPolicy.stabilizationSeconds` | minimum gap between two scale-downs |
+| `scaleDownPolicy.protectionWindowSeconds` | how long a marked Pod can still be claimed, cancelling its deletion |
+
+Every member pool may also carry its own `minReplicas` and `maxReplicas`, which
+is how one shape is held larger than its siblings inside the same group.
+
+## Reading the policy against the two questions
+
+**Cost.** `minReplicas = 0` plus a short `idleTimeoutSeconds` is "keep nothing
+warm"; `minReplicas = N` is "always have N claims ready", and it is a floor on
+spend as much as on capacity.
+
+**Concurrency.** The ceiling is `maxReplicas` — and, separately, your quota.
+Quota is a hard cap the autoscaler cannot argue with: a group may sit below its
+ceiling indefinitely while the pool reports `ResourceQuotaExhausted`. Check
+both before promising a number of parallel sandboxes.
+
+**Speed.** Scaling up creates Pods, and a Pod that has just been created still
+has to start. The autoscaler removes the wait for *capacity*; it does not make
+a brand-new Pod faster than a pre-warmed one, which is why a floor above zero
+is what keeps first-claim latency flat.
+
+## Changing one
+
+```bash
+abx envs YOUR_ENV scaling-groups YOUR_GROUP --editable --cluster YOUR_CLUSTER > group.json
+# edit group.json
+abx update envs YOUR_ENV scaling-groups YOUR_GROUP -f group.json --cluster YOUR_CLUSTER
+```
+
+Like every write, this is a PUT: the file is the whole policy. A field left out
+is a field you are asking to remove — dropping `maxReplicas` removes the
+ceiling rather than keeping it.
+
+## When it does not behave
+
+| Symptom | Usual cause |
+|---|---|
+| never scales down | running sandboxes, `idleTimeoutSeconds`, or the protection window still counting |
+| scales down under load | `idleTimeoutSeconds` shorter than the gap between real claims |
+| scales up in bursts | `idleThresholdSeconds` / `idleZeroQuietWindowSeconds` too eager for the traffic pattern |
+| sits under `minReplicas` | quota, or the instance type has no room on the cluster |
+| a rolled-out pool refuses claims | the previous generation is still draining; `maxUnavailable` on the env governs how fast that is |
+
+## See also
+
+- [Pools](/docs/concepts/pools) — what is being scaled
+- [Envs](/docs/concepts/envs) — the rollout policy that governs rolling replacements
+- [Capacity and quotas](/docs/tutorials/cli) — reading quota from the CLI

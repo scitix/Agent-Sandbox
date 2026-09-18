@@ -531,6 +531,16 @@ describe('the write page is about the file, not the resource', () => {
     expect(out).not.toContain('WarmPool | OnDemandJob')
   })
 
+  it('help ends with where the object itself is explained', async () => {
+    const { out } = await cli(['envs', '--help'])
+    // The flags answer "what can I type"; this answers "what is an env", which
+    // is the question the help page cannot hold — and it is a `.md`, so the
+    // thing that follows the link can fetch it whole.
+    expect(out).toContain('Read more: https://scitix.github.io/Agent-Sandbox/docs/concepts/envs.md')
+    const pool = await cli(['envs', 'demo', 'pools', '--help'])
+    expect(pool.out).toContain('Read more: https://scitix.github.io/Agent-Sandbox/docs/concepts/pools.md')
+  })
+
   it('a missing -f answers with the file, before any question about clusters', async () => {
     const { code, err } = await cli(['create', 'envs'])
     expect(code).toBe(1)
