@@ -143,21 +143,23 @@ describe("listPeerSites", () => {
 
   /**
    * The config path is read once at module load, so each case needs its own
-   * file and a fresh import of the module under test.
+   * file and a fresh import of the module under test. The file comes back too,
+   * because a ConfigMap edit is a write to it after the module is loaded.
    */
   async function loadWith(yaml: string) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cluster-config-"))
     tmpDirs.push(dir)
-    fs.writeFileSync(path.join(dir, "clusters.yaml"), yaml)
-    process.env.CLUSTERS_CONFIG_PATH = path.join(dir, "clusters.yaml")
+    const file = path.join(dir, "clusters.yaml")
+    fs.writeFileSync(file, yaml)
+    process.env.CLUSTERS_CONFIG_PATH = file
     vi.resetModules()
-    return import("@/lib/cluster-config")
+    return { mod: await import("@/lib/cluster-config"), file }
   }
 
   const clusters = `clusters:\n  - id: c1\n    name: C1\n    url: http://c1\n`
 
   it("parses the peerSites block", async () => {
-    const mod = await loadWith(
+    const { mod } = await loadWith(
       `${clusters}peerSites:\n  - name: "Console (EU)"\n    url: "https://console-eu.example.com/agentbox"\n`,
     )
     expect(mod.listPeerSites()).toEqual([
@@ -166,7 +168,7 @@ describe("listPeerSites", () => {
   })
 
   it("is empty when the block is absent", async () => {
-    const mod = await loadWith(clusters)
+    const { mod } = await loadWith(clusters)
     expect(mod.listPeerSites()).toEqual([])
     // The clusters alongside it still parse — the two are cached together.
     expect(mod.listClusters().map((c) => c.id)).toEqual(["c1"])
@@ -175,9 +177,81 @@ describe("listPeerSites", () => {
   it("drops entries missing a name or a url", async () => {
     // Either half alone is unrenderable: a link with no label, or a label that
     // goes nowhere. Dropping beats shipping a dead entry in the picker.
-    const mod = await loadWith(
+    const { mod } = await loadWith(
       `${clusters}peerSites:\n  - name: "No URL"\n  - url: "https://nameless.example.com"\n  - name: "Blank URL"\n    url: ""\n  - name: "Good"\n    url: "https://good.example.com"\n`,
     )
     expect(mod.listPeerSites()).toEqual([{ name: "Good", url: "https://good.example.com" }])
+  })
+
+  // ─── Reloading after the file changes ───────────────────────────────────────
+  //
+  // Both of these are about a Kubernetes ConfigMap, which is the only way this
+  // file is edited outside a developer's laptop. kubelet does not write it in
+  // place: it materialises a new timestamped directory and swaps the `..data`
+  // symlink the file points at, so the only thing that reliably differs before
+  // and after an edit is the file behind the path. Reloading used to hang off
+  // an `fs.watch` on the directory that matched the event's file name against
+  // "clusters.yaml" — a name kubelet never emits — and the console served the
+  // pre-edit configuration until its pod was restarted.
+
+  it("picks up an edit to the file, with no restart", async () => {
+    const { mod, file } = await loadWith(clusters)
+    expect(mod.listPeerSites()).toEqual([])
+
+    fs.writeFileSync(
+      file,
+      `${clusters}peerSites:\n  - name: "Console (CN)"\n    url: "https://console-cn.example.com/agentbox"\n`,
+    )
+
+    expect(mod.listPeerSites()).toEqual([
+      { name: "Console (CN)", url: "https://console-cn.example.com/agentbox" },
+    ])
+  })
+
+  it("re-reads the file the symlink points at, which is what kubelet swaps", async () => {
+    const { mod, file } = await loadWith(clusters)
+    const dir = path.dirname(file)
+    // The same dance kubelet does: a second copy, then the symlink moved onto
+    // it. The file's own name and permissions never change.
+    const next = path.join(dir, "..2026_09_18_00_00_00.0000000000")
+    fs.mkdirSync(next)
+    fs.writeFileSync(
+      path.join(next, "clusters.yaml"),
+      `${clusters}peerSites:\n  - name: "Console (EU)"\n    url: "https://console-eu.example.com/agentbox"\n`,
+    )
+    fs.rmSync(file)
+    fs.symlinkSync(path.join(path.basename(next), "clusters.yaml"), file)
+
+    expect(mod.listPeerSites()).toEqual([
+      { name: "Console (EU)", url: "https://console-eu.example.com/agentbox" },
+    ])
+  })
+
+  it("keeps the last good configuration when the file cannot be read", async () => {
+    const { mod, file } = await loadWith(
+      `${clusters}peerSites:\n  - name: "Console (EU)"\n    url: "https://console-eu.example.com/agentbox"\n`,
+    )
+    expect(mod.listClusters().map((c) => c.id)).toEqual(["c1"])
+
+    // Mid-swap, or a mount that briefly answers with something else. Blanking
+    // the cluster list here would take every cluster-scoped page down.
+    fs.rmSync(file)
+    fs.mkdirSync(file)
+    expect(mod.listClusters().map((c) => c.id)).toEqual(["c1"])
+    expect(mod.listPeerSites()).toHaveLength(1)
+
+    // And it recovers on its own once the file is a file again.
+    fs.rmdirSync(file)
+    fs.writeFileSync(file, `clusters:\n  - id: c2\n    name: C2\n    url: http://c2\n`)
+    expect(mod.listClusters().map((c) => c.id)).toEqual(["c2"])
+  })
+
+  it("keeps the last good configuration when the new one does not parse", async () => {
+    const { mod, file } = await loadWith(clusters)
+    // Read it once first: the cache is what has to survive the bad edit, and a
+    // module that has never read the file has nothing to keep.
+    expect(mod.listClusters().map((c) => c.id)).toEqual(["c1"])
+    fs.writeFileSync(file, "clusters: [ this is not a list\n")
+    expect(mod.listClusters().map((c) => c.id)).toEqual(["c1"])
   })
 })

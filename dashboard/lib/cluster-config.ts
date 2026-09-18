@@ -15,7 +15,6 @@
  */
 
 import * as fs from "fs"
-import * as path from "path"
 import { parse as parseYaml } from "yaml"
 import { matchConfigEntry } from "@/lib/server/config-matcher"
 
@@ -137,105 +136,124 @@ interface ClustersFile {
 
 const CLUSTERS_FILE = process.env.CLUSTERS_CONFIG_PATH || "/etc/agentbox/clusters.yaml"
 
-// Cached state
-let cachedClusters: ClusterEntry[] = []
-let cachedHostAliases: ClusterHostAlias[] = []
-let cachedPeerSites: PeerSite[] = []
-let watcherInitialized = false
-
-/**
- * Parses the whole file once. Every part is cached together so a ConfigMap
- * update cannot leave the clusters and their host aliases out of step.
- */
-function loadConfig(): {
+interface ConfigSnapshot {
   clusters: ClusterEntry[]
   hostAliases: ClusterHostAlias[]
   peerSites: PeerSite[]
-} {
+}
+
+// Cached state. The three parts are cached together so a ConfigMap update
+// cannot leave the clusters and their host aliases out of step.
+let cached: ConfigSnapshot = { clusters: [], hostAliases: [], peerSites: [] }
+/**
+ * Identity of the file the cache was read from — device, inode, mtime, size.
+ * Null until a read succeeds, which is what makes the first access load.
+ */
+let cachedKey: string | null = null
+
+/**
+ * Parses the whole file. Returns null when the text is not valid YAML, which is
+ * a different answer from a file that parses to nothing: the first means "I
+ * cannot tell what this says", the second means "there are no clusters".
+ */
+function parseConfig(content: string): ConfigSnapshot | null {
+  let parsed: ClustersFile | null
   try {
-    const content = fs.readFileSync(CLUSTERS_FILE, "utf-8")
-    const parsed = parseYaml(content) as ClustersFile | null
-    if (!parsed || !Array.isArray(parsed.clusters)) {
-      return { clusters: [], hostAliases: [], peerSites: [] }
-    }
-    const clusters = parsed.clusters
-      .filter(
-        (c) =>
-          c && typeof c.id === "string" && typeof c.name === "string" && typeof c.url === "string",
-      )
-      .map((c) => ({
-        ...c,
-        ...(typeof c.selector === "string" ? { selector: c.selector } : {}),
-      }))
-    const hostAliases = (Array.isArray(parsed.hostAliases) ? parsed.hostAliases : []).filter(
-      (a): a is ClusterHostAlias =>
-        !!a && typeof a.ip === "string" && Array.isArray(a.hostnames) && a.hostnames.length > 0,
-    )
-    // Both fields are required: an entry missing either would render as a link
-    // with no label or a label that goes nowhere.
-    const peerSites = (Array.isArray(parsed.peerSites) ? parsed.peerSites : []).filter(
-      (s): s is PeerSite =>
-        !!s && typeof s.name === "string" && typeof s.url === "string" && !!s.url,
-    )
-    return { clusters, hostAliases, peerSites }
+    parsed = parseYaml(content) as ClustersFile | null
   } catch {
+    return null
+  }
+  if (!parsed || !Array.isArray(parsed.clusters)) {
     return { clusters: [], hostAliases: [], peerSites: [] }
+  }
+  const clusters = parsed.clusters
+    .filter(
+      (c) =>
+        c && typeof c.id === "string" && typeof c.name === "string" && typeof c.url === "string",
+    )
+    .map((c) => ({
+      ...c,
+      ...(typeof c.selector === "string" ? { selector: c.selector } : {}),
+    }))
+  const hostAliases = (Array.isArray(parsed.hostAliases) ? parsed.hostAliases : []).filter(
+    (a): a is ClusterHostAlias =>
+      !!a && typeof a.ip === "string" && Array.isArray(a.hostnames) && a.hostnames.length > 0,
+  )
+  // Both fields are required: an entry missing either would render as a link
+  // with no label or a label that goes nowhere.
+  const peerSites = (Array.isArray(parsed.peerSites) ? parsed.peerSites : []).filter(
+    (s): s is PeerSite => !!s && typeof s.name === "string" && typeof s.url === "string" && !!s.url,
+  )
+  return { clusters, hostAliases, peerSites }
+}
+
+/**
+ * Identity of the file behind the path, or null when there is nothing there.
+ *
+ * `statSync` follows the symlink, which is the whole point: a Kubernetes
+ * ConfigMap volume never writes this file in place. kubelet materialises a new
+ * timestamped directory and atomically swaps the `..data` symlink that
+ * `clusters.yaml` points at, so the file's own inode is the thing that changes.
+ */
+function configKey(): string | null {
+  try {
+    const s = fs.statSync(CLUSTERS_FILE)
+    return `${s.dev}:${s.ino}:${s.mtimeMs}:${s.size}`
+  } catch {
+    return null
   }
 }
 
-function ensureWatcher() {
-  if (watcherInitialized) return
-  watcherInitialized = true
-
-  // Initial load
-  const initial = loadConfig()
-  cachedClusters = initial.clusters
-  cachedHostAliases = initial.hostAliases
-  cachedPeerSites = initial.peerSites
-
-  const reload = () => {
-    const next = loadConfig()
-    cachedClusters = next.clusters
-    cachedHostAliases = next.hostAliases
-    cachedPeerSites = next.peerSites
-  }
-
-  // Watch the directory (not subPath, so K8s ConfigMap updates are picked up)
-  const dir = path.dirname(CLUSTERS_FILE)
+/**
+ * Re-reads the file when it is no longer the one the cache came from.
+ *
+ * Called on every read, which is affordable for a file of a few kilobytes that
+ * changes once a release, and it is the mechanism that has to be right: an
+ * `fs.watch` on this directory sees `..data`, `..data_tmp` and the new
+ * `..2026_…` directory — never `clusters.yaml` — so matching on the file name
+ * (what this used to do, with a watcher as the only reload path) matched
+ * nothing and a ConfigMap edit appeared only after a pod restart.
+ *
+ * A read that fails, or a file that does not parse, leaves the last good
+ * configuration in place rather than blanking the cluster list: the console
+ * cannot tell "someone is mid-write" from "there are no clusters", and one of
+ * those guesses takes every cluster-scoped page down.
+ */
+function refresh(): void {
+  const key = configKey()
+  if (key === null || key === cachedKey) return
+  let content: string
   try {
-    fs.watch(dir, (_eventType, filename) => {
-      if (filename && filename === path.basename(CLUSTERS_FILE)) {
-        reload()
-      } else if (!filename) {
-        // Some platforms don't provide filename; reload anyway
-        reload()
-      }
-    })
+    content = fs.readFileSync(CLUSTERS_FILE, "utf-8")
   } catch {
-    // Watcher not available (e.g., file not found yet); still serve the initial load
+    return
   }
+  const parsed = parseConfig(content)
+  if (!parsed) return
+  cached = parsed
+  cachedKey = key
 }
 
 export function listClusters(): ClusterEntry[] {
-  ensureWatcher()
-  return cachedClusters
+  refresh()
+  return cached.clusters
 }
 
 export function getClusterConfig(id: string): ClusterEntry | undefined {
-  ensureWatcher()
-  return cachedClusters.find((c) => c.id === id)
+  refresh()
+  return cached.clusters.find((c) => c.id === id)
 }
 
 /** The `peerSites` block from clusters.yaml. Empty when the file has none. */
 export function listPeerSites(): PeerSite[] {
-  ensureWatcher()
-  return cachedPeerSites
+  refresh()
+  return cached.peerSites
 }
 
 /** The `hostAliases` block from clusters.yaml. Empty when the file has none. */
 export function getHostAliases(): ClusterHostAlias[] {
-  ensureWatcher()
-  return cachedHostAliases
+  refresh()
+  return cached.hostAliases
 }
 
 /**
