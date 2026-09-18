@@ -35,6 +35,12 @@ spec:
       path: /stats/prometheus
       port: envoy-admin
       scheme: http
+    # The extproc manager's own counters. Everything the gateway knows about
+    # traffic (routing, activity flushing) that Envoy does not.
+    - interval: 30s
+      path: /metrics
+      port: metrics
+      scheme: http
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}

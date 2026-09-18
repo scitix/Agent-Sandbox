@@ -13,6 +13,25 @@ data:
           protocol: TCP
           address: 0.0.0.0
           port_value: 9901
+      # Probes and scrapes arrive on this listener. Envoy counts every
+      # connection towards the global limit below, including connections to
+      # listeners that opted out — so without this exemption, reaching the
+      # connection limit would also fail the readiness probe and take the
+      # replica out of service: worse than having no limit at all.
+      ignore_global_conn_limit: true
+{{- if gt (int .Values.extproc.downstreamConnectionLimit) 0 }}
+
+    # A cap on concurrent client connections, so the failure mode under a
+    # connection leak or a reconnect storm is a clean refusal with a counter
+    # (downstream_global_cx_overflow) instead of running out of file
+    # descriptors. Per replica — there is no coordination between replicas.
+    overload_manager:
+      resource_monitors:
+        - name: envoy.resource_monitors.global_downstream_max_connections
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+            max_active_downstream_connections: {{ .Values.extproc.downstreamConnectionLimit }}
+{{- end }}
     static_resources:
       listeners:
         - name: ingress

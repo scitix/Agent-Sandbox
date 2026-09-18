@@ -63,7 +63,7 @@ func newTestSandboxService(t *testing.T, objs ...any) SandboxService {
 			builder = builder.WithObjects(v)
 		}
 	}
-	return NewSandboxService(builder.Build(), nil, nil, nil, "", "", nil, nil)
+	return NewSandboxService(builder.Build(), nil, nil, nil, "", "", nil)
 }
 
 // newTestSandboxServiceWithCluster is newTestSandboxService with a non-empty
@@ -83,7 +83,7 @@ func newTestSandboxServiceWithCluster(t *testing.T, localClusterID string, objs 
 			builder = builder.WithObjects(v)
 		}
 	}
-	return NewSandboxService(builder.Build(), nil, nil, nil, "", localClusterID, nil, nil)
+	return NewSandboxService(builder.Build(), nil, nil, nil, "", localClusterID, nil)
 }
 
 func newTestSandboxServiceWithStore(t *testing.T, s store.SandboxStore, objs ...any) SandboxService {
@@ -101,7 +101,7 @@ func newTestSandboxServiceWithStore(t *testing.T, s store.SandboxStore, objs ...
 			builder = builder.WithObjects(v)
 		}
 	}
-	return NewSandboxService(builder.Build(), nil, nil, s, "", "", nil, nil)
+	return NewSandboxService(builder.Build(), nil, nil, s, "", "", nil)
 }
 
 func newTestStore(t *testing.T) store.SandboxStore {
@@ -775,7 +775,7 @@ func TestSandboxService_Create_NoIdlePods_WithStoppingDetail(t *testing.T) {
 		t.Fatalf("get fake client builder: %v", err)
 	}
 	client := cb.WithObjects(pool).Build()
-	svc := NewSandboxService(client, nil, nil, nil, "http://gateway.example.com", "", nil, nil)
+	svc := NewSandboxService(client, nil, nil, nil, "http://gateway.example.com", "", nil)
 
 	_, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:       "pool-a",
@@ -815,7 +815,7 @@ func TestSandboxService_Create_BuildsEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get fake client builder: %v", err)
 	}
-	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil, nil)
+	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil)
 
 	result, appErr := svc.Create(context.Background(), CreateSandboxInput{
 		PoolName:  "pool-a",
@@ -846,7 +846,7 @@ func TestSandboxService_Get_BuildsEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get fake client builder: %v", err)
 	}
-	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil, nil)
+	svc := NewSandboxService(cb.WithObjects(pool, pod).Build(), nil, nil, nil, "http://gw.example.com", "", nil)
 
 	result, appErr := svc.Get(context.Background(), "tenant-a", sandboxID)
 	if appErr != nil {
@@ -887,7 +887,7 @@ func TestSandboxService_Delete_SetsStopAnnotations(t *testing.T) {
 		t.Fatalf("get fake client builder: %v", err)
 	}
 	cli := cb.WithObjects(pool, pod).Build()
-	svc := NewSandboxService(cli, nil, nil, nil, "", "", nil, nil)
+	svc := NewSandboxService(cli, nil, nil, nil, "", "", nil)
 
 	result, appErr := svc.Delete(context.Background(), "tenant-a", sandboxID)
 	if appErr != nil {
@@ -1166,7 +1166,7 @@ func TestIsReady_NoReadinessProbe_DefaultsReady(t *testing.T) {
 	}
 	svc := NewSandboxService(
 		cb.WithObjects(pool, pod).Build(),
-		nil, nil, nil, "http://gw.example.com", "", nil, nil,
+		nil, nil, nil, "http://gw.example.com", "", nil,
 	)
 
 	result, appErr := svc.IsReady(context.Background(), testNamespace, "sb-ready-1")
@@ -1199,7 +1199,7 @@ func TestIsReady_SandboxNotRunning_NotReady(t *testing.T) {
 	}
 	svc := NewSandboxService(
 		cb.WithObjects(pool, pod).Build(),
-		nil, nil, nil, "", "", nil, nil,
+		nil, nil, nil, "", "", nil,
 	)
 
 	result, appErr := svc.IsReady(context.Background(), testNamespace, "sb-starting-1")
@@ -1370,7 +1370,7 @@ func newTestSandboxServiceWithRegistry(t *testing.T, rs RegistryStore, objs ...a
 			builder = builder.WithObjects(v)
 		}
 	}
-	svc := NewSandboxService(builder.Build(), nil, nil, nil, "", "eu-west", nil, rs)
+	svc := NewSandboxService(builder.Build(), nil, nil, nil, "", "eu-west", rs)
 	return svc.(*k8sSandboxService)
 }
 
@@ -1470,5 +1470,59 @@ func TestResolveContainerImages_NoRegistryStore(t *testing.T) {
 	got := imgs[pool.Spec.Template.Spec.Containers[0].Name]
 	if got != "us-docker.pkg.dev/myproject/myimage:v1.0" {
 		t.Errorf("nil store: image should not be rewritten, got %q", got)
+	}
+}
+
+// Setting a timeout is the caller saying "keep this alive for another N", so it
+// has to count as activity. Without stamping last-active in the same write, the
+// reconciler reads a Pod whose last-active still points at the claim — and for a
+// sandbox created without any timeout the gateway never refreshes it (there is
+// nothing to reclaim), so the first set_timeout on a long-lived sandbox would
+// look maximally idle and be released on the next tick.
+func TestSetTimeout_StampsLastActive(t *testing.T) {
+	claimed := time.Now().UTC().Add(-2 * time.Hour)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-set-timeout",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				agentsv1alpha1.SandboxPoolLabelKey:  testPoolName,
+				agentsv1alpha1.SandboxIDLabelKey:    "sb-timeout",
+				agentsv1alpha1.SandboxPhaseLabelKey: agentsv1alpha1.SandboxPhaseRunning,
+			},
+			Annotations: map[string]string{
+				agentsv1alpha1.SandboxIDAnnotationKey:         "sb-timeout",
+				agentsv1alpha1.SandboxStartedAtAnnotationKey:  claimed.Format(time.RFC3339),
+				agentsv1alpha1.SandboxLastActiveAnnotationKey: claimed.Format(time.RFC3339),
+			},
+		},
+	}
+	cb, buildErr := indexer.GetFakeClientBuilderWithIndexers()
+	if buildErr != nil {
+		t.Fatalf("get fake client builder: %v", buildErr)
+	}
+	cli := cb.WithObjects(pod).Build()
+	svc := NewSandboxService(cli, nil, nil, nil, "", "", nil)
+
+	before := time.Now().UTC()
+	if appErr := svc.SetTimeout(context.Background(), testNamespace, "sb-timeout", 5*time.Minute); appErr != nil {
+		t.Fatalf("SetTimeout: %v", appErr)
+	}
+
+	updated := &corev1.Pod{}
+	if err := cli.Get(context.Background(),
+		types.NamespacedName{Name: "pod-set-timeout", Namespace: testNamespace}, updated); err != nil {
+		t.Fatalf("read pod back: %v", err)
+	}
+	if got := updated.Annotations[agentsv1alpha1.SandboxIdleTimeoutAnnotationKey]; got != "300" {
+		t.Errorf("idle-timeout = %q, want %q", got, "300")
+	}
+	stamped, parseErr := time.Parse(time.RFC3339, updated.Annotations[agentsv1alpha1.SandboxLastActiveAnnotationKey])
+	if parseErr != nil {
+		t.Fatalf("last-active %q is not RFC3339: %v",
+			updated.Annotations[agentsv1alpha1.SandboxLastActiveAnnotationKey], parseErr)
+	}
+	if stamped.Before(before.Add(-time.Second)) {
+		t.Errorf("last-active = %v, want it stamped at ~%v (the call is activity)", stamped, before)
 	}
 }

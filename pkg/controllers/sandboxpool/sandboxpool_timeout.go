@@ -24,52 +24,46 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
+	"github.com/scitix/agent-sandbox/pkg/activity"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
 	"github.com/scitix/agent-sandbox/pkg/store"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
 )
 
-// LastActiveSource retrieves per-sandbox last-activity timestamps. Implemented
-// by the ExtProc gRPC client (production) and test doubles. Kept narrow so
-// this package stays decoupled from the full ExtProc RPC surface.
-type LastActiveSource interface {
-	GetLastActive(ctx context.Context) (map[string]time.Time, error)
-}
-
 // IdleTimeoutReconciler is a background runnable that periodically:
-//  1. Polls the ExtProc control-plane API for per-sandbox last-active timestamps.
-//  2. Patches pod last-active annotations so ExtProc can recover state after restarts.
-//  3. Releases Running pods whose idle duration exceeds their idle-timeout annotation.
+//  1. Lists Running pods that carry an idle-timeout annotation.
+//  2. Resolves each one's last activity from its own last-active annotation.
+//  3. Releases the ones that have been idle past their timeout plus the
+//     gateway's refresh slack.
 //
-// If the source is unreachable, the check is skipped entirely to avoid
-// false-positive releases during ExtProc rolling updates.
+// The annotation is the meeting point: every gateway replica observes the
+// requests that land on it and writes what it saw (see ActivityFlusher in
+// pkg/envoy/extproc), so the annotation is the union of all replicas' views.
+// This used to be a gRPC poll of the gateway, which cannot work with more than
+// one replica — one connection pins to one pod, so the controller saw 1/N of
+// the traffic and released sandboxes that were in use.
+//
+// The slack comes from pkg/activity: the annotation always lags the true last
+// activity by up to the gateway's refresh interval, so the comparison has to
+// add that bound back or the lag itself becomes a false-positive release.
 type IdleTimeoutReconciler struct {
 	client        client.Client
 	sandboxStore  store.SandboxStore
 	checkInterval time.Duration
-	lastActive    LastActiveSource
 }
 
-// NewIdleTimeoutReconciler creates a new IdleTimeoutReconciler. If lastActive
-// is nil, the reconciler logs a warning and idles (no releases issued).
-func NewIdleTimeoutReconciler(c client.Client, s store.SandboxStore, interval time.Duration, lastActive LastActiveSource) *IdleTimeoutReconciler {
+// NewIdleTimeoutReconciler creates a new IdleTimeoutReconciler.
+func NewIdleTimeoutReconciler(c client.Client, s store.SandboxStore, interval time.Duration) *IdleTimeoutReconciler {
 	return &IdleTimeoutReconciler{
 		client:        c,
 		sandboxStore:  s,
 		checkInterval: interval,
-		lastActive:    lastActive,
 	}
 }
 
 // Start implements manager.Runnable. It performs an initial check immediately,
 // then ticks at checkInterval. Runs only on the leader when leader election is enabled.
 func (r *IdleTimeoutReconciler) Start(ctx context.Context) error {
-	if r.lastActive == nil {
-		klog.InfoS("IdleTimeoutReconciler: lastActive source is nil, idle timeout enforcement disabled")
-		<-ctx.Done()
-		return nil
-	}
-
 	klog.InfoS("IdleTimeoutReconciler: starting", "checkInterval", r.checkInterval)
 
 	// Run-then-wait loop: each check must finish before the next interval begins,
@@ -86,24 +80,9 @@ func (r *IdleTimeoutReconciler) Start(ctx context.Context) error {
 	}
 }
 
-// fetchLastActiveFromExtProc calls the ExtProc control-plane API and returns
-// a map of sandboxID → last-active time. Returns an error when the source is
-// unreachable, so callers can skip the check.
-func (r *IdleTimeoutReconciler) fetchLastActiveFromExtProc(ctx context.Context) (map[string]time.Time, error) {
-	return r.lastActive.GetLastActive(ctx)
-}
-
 // checkAndReleaseIdleSandboxes is the main reconcile body for one tick.
 func (r *IdleTimeoutReconciler) checkAndReleaseIdleSandboxes(ctx context.Context) {
-
-	// Step 1: Poll ExtProc. Skip entirely if unreachable.
-	extprocMap, err := r.fetchLastActiveFromExtProc(ctx)
-	if err != nil {
-		klog.ErrorS(err, "IdleTimeoutReconciler: ExtProc unreachable, skipping check")
-		return
-	}
-
-	// Step 2: List Running pods that have an idle-timeout annotation.
+	// Step 1: List Running pods that have an idle-timeout annotation.
 	podList := &corev1.PodList{}
 	if listErr := r.client.List(ctx, podList,
 		client.MatchingFields{indexer.IndexFieldSandboxPhase: agentsv1alpha1.SandboxPhaseRunning},
@@ -129,31 +108,25 @@ func (r *IdleTimeoutReconciler) checkAndReleaseIdleSandboxes(ctx context.Context
 
 		sandboxID := pod.Labels[agentsv1alpha1.SandboxIDLabelKey]
 
-		// Step 3: Resolve last-active time.
-		// Priority: ExtProc in-memory value > last-active annotation > started-at annotation > CreationTimestamp
-		lastActive := resolveLastActive(pod, extprocMap)
+		// Step 2: Resolve last-active time from the Pod itself — the union of
+		// what every gateway replica observed.
+		lastActive := resolveLastActive(pod)
 
-		// Step 4: Decide whether to release.
-		idleDuration := now.Sub(lastActive)
-		if idleDuration > idleTimeout {
-			klog.InfoS("IdleTimeoutReconciler: releasing idle sandbox",
-				"namespace", pod.Namespace, "pod", pod.Name, "sandboxID", sandboxID,
-				"idleDuration", idleDuration.Round(time.Second), "idleTimeout", idleTimeout)
-
-			if releaseErr := r.releaseSandbox(ctx, pod); releaseErr != nil {
-				klog.ErrorS(releaseErr, "IdleTimeoutReconciler: failed to release pod",
-					"namespace", pod.Namespace, "pod", pod.Name)
-			}
+		// Step 3: Decide whether to release. The buffer absorbs the gateway's
+		// refresh lag; without it the lag itself would look like idleness.
+		if !activity.IsIdle(now, lastActive, idleTimeout) {
 			continue
 		}
 
-		// Step 5: Not timed out — patch the last-active annotation with the ExtProc value
-		// so it can recover state after a restart. Skip this when releasing to avoid a
-		// redundant write that releasePod will immediately overwrite.
-		if sandboxID != "" {
-			if extprocTs, ok := extprocMap[sandboxID]; ok {
-				patchLastActiveAnnotation(ctx, r.client, pod, extprocTs)
-			}
+		klog.InfoS("IdleTimeoutReconciler: releasing idle sandbox",
+			"namespace", pod.Namespace, "pod", pod.Name, "sandboxID", sandboxID,
+			"idleDuration", now.Sub(lastActive).Round(time.Second),
+			"idleTimeout", idleTimeout,
+			"reclaimBuffer", activity.ReclaimBuffer(idleTimeout).Round(time.Second))
+
+		if releaseErr := r.releaseSandbox(ctx, pod); releaseErr != nil {
+			klog.ErrorS(releaseErr, "IdleTimeoutReconciler: failed to release pod",
+				"namespace", pod.Namespace, "pod", pod.Name)
 		}
 	}
 }

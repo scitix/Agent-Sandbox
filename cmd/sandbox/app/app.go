@@ -103,7 +103,6 @@ func Run(opts Options) {
 		apikeyNamespace                                  string
 		apikeyCacheTTL                                   time.Duration
 		idleCheckInterval                                time.Duration
-		extprocInternalAPIURL                            string
 		e2bBindAddress                                   string
 		e2bDomain                                        string
 		secret                                           string
@@ -154,11 +153,10 @@ func Run(opts Options) {
 		"Kubernetes namespace where API key Secrets are stored.")
 	flag.DurationVar(&apikeyCacheTTL, "apikey-cache-ttl", time.Minute,
 		"Duration for which API key Validate results are cached in memory.")
-	flag.DurationVar(&idleCheckInterval, "idle-check-interval", 2*time.Minute,
-		"How often to check for idle sandboxes that have exceeded their idle timeout.")
-	flag.StringVar(&extprocInternalAPIURL, "extproc-internal-api-url", "",
-		"gRPC dial target of the ExtProc control-plane server "+
-			"(e.g. agentbox-extproc.agentbox-system.svc:9003). Required.")
+	flag.DurationVar(&idleCheckInterval, "idle-check-interval", 5*time.Minute,
+		"How often to check for idle sandboxes that have exceeded their idle timeout. "+
+			"This only quantises *when* an already-idle sandbox is noticed, so it can be "+
+			"coarse; the reading side adds the gateway's refresh slack on top (pkg/activity).")
 	flag.StringVar(&e2bBindAddress, "e2b-bind-address", "",
 		"The address the E2B-compatible API server binds to (e.g. :8090). Empty = disabled.")
 	flag.StringVar(&e2bDomain, "e2b-domain", "",
@@ -249,11 +247,6 @@ func Run(opts Options) {
 			"#  DO NOT run in this mode in production. Set --admin-key or the              #\n" +
 			"#  AGENTBOX_ADMIN_KEY environment variable to enable authentication.           #\n" +
 			"################################################################################")
-	}
-
-	if extprocInternalAPIURL == "" {
-		setupLog.Error(nil, "--extproc-internal-api-url is required (gRPC dial target, e.g. agentbox-extproc.agentbox-system.svc:9003)") //nolint:lll
-		os.Exit(1)
 	}
 
 	// A bad value here must not take the operator down: this flag's value is
@@ -456,21 +449,13 @@ func Run(opts Options) {
 	}
 
 	// ---- services ------------------------------------------------------------
-	// ExtProc control-plane client. Shared between sandboxSvc (for route push
-	// on Create) and the IdleTimeoutReconciler (for polling last-active).
-	extprocClient, err := service.NewExtProcClient(extprocInternalAPIURL, adminKey)
-	if err != nil {
-		setupLog.Error(err, "Failed to create ExtProc client", "target", extprocInternalAPIURL)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := extprocClient.Close(); err != nil {
-			setupLog.Error(err, "Failed to close ExtProc client")
-		}
-	}()
-
+	// No client for the gateway: it publishes observed activity into the Pod's
+	// last-active annotation, which this process already reads from its own
+	// cache. The old gRPC poll is gone — with more than one gateway replica a
+	// single connection pins to one pod, so it could only ever return 1/N of
+	// the traffic and released sandboxes that were in use.
 	sandboxSvc := service.NewSandboxService(
-		mgr.GetClient(), clientset, restCfg, sandboxStore, envoyGatewayBaseURL, localClusterID, extprocClient, clusterStore,
+		mgr.GetClient(), clientset, restCfg, sandboxStore, envoyGatewayBaseURL, localClusterID, clusterStore,
 	)
 	// Drain pending claim requests after the HTTP server stops accepting new ones.
 	if shutdownable, ok := sandboxSvc.(interface{ Shutdown() }); ok {
@@ -703,7 +688,7 @@ func Run(opts Options) {
 	}
 
 	idleTimeoutReconciler := sandboxpool.NewIdleTimeoutReconciler(
-		mgr.GetClient(), sandboxStore, idleCheckInterval, extprocClient,
+		mgr.GetClient(), sandboxStore, idleCheckInterval,
 	)
 	if err := mgr.Add(idleTimeoutReconciler); err != nil {
 		setupLog.Error(err, "Failed to add IdleTimeoutReconciler")

@@ -644,6 +644,13 @@ func cleanupSandboxMetadataForIdle(pod *corev1.Pod) {
 		agentsv1alpha1.SandboxIDAnnotationKey,
 		agentsv1alpha1.SandboxClaimedAtAnnotationKey,
 		agentsv1alpha1.SandboxStartedAtAnnotationKey,
+		// Cleared alongside the rest: the annotation is what the idle-timeout
+		// reconciler reads, and leaving the previous sandbox's activity behind
+		// on a Pod that has gone Idle would be a fact about a sandbox that is
+		// no longer on it. (It used to be harmless only because the claim path
+		// overwrites it — the annotation now also carries the "least recently
+		// seen" floor, so it has to go.)
+		agentsv1alpha1.SandboxLastActiveAnnotationKey,
 		agentsv1alpha1.SandboxMetadataAnnotationKey,
 		agentsv1alpha1.SandboxStopReasonAnnotationKey,
 		agentsv1alpha1.SandboxTerminatedAtAnnotationKey,

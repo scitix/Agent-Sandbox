@@ -144,10 +144,6 @@ controller:
   # member reconciler cannot place Pools on a cluster segment without it.
   localClusterId: ""
 
-  # extprocInternalApiUrl is the gRPC endpoint of the data-plane extproc manager.
-  # Defaults to the in-cluster service created by this chart.
-  extprocInternalApiUrl: ""
-
   # envoyGatewayBaseUrl is the HTTP base URL of the data-plane Envoy proxy.
   # Defaults to the in-cluster service created by this chart.
   envoyGatewayBaseUrl: ""
@@ -237,6 +233,19 @@ extproc:
   # as controller.appName: matching the existing selector is mandatory.
   appName: ""
 
+  # replicas is how many data-plane pods serve sandbox traffic.
+  #
+  # More than one is what makes a rollout (or a node drain, or an OOM kill)
+  # survivable: the other replicas keep serving while one restarts. It is only
+  # safe because routing is derived from the Pod informer inside each replica,
+  # and activity is published to the sandbox Pod's last-active annotation rather
+  # than kept in one replica's memory — with a single reader and N writers, a
+  # per-replica view would release sandboxes that are in use.
+  #
+  # Cost per extra replica: one more Pod informer cache (every sandbox Pod in
+  # the cluster) and one more apiserver watch.
+  replicas: 2
+
   image:
     repository: ghcr.io/scitix/agent-sandbox-envoyextproc
     tag: latest
@@ -245,8 +254,41 @@ extproc:
   envoy:
     image:
       repository: envoyproxy/envoy
-      tag: v1.37.0
+      # Patch release on the 1.37 line: same config surface, but it carries the
+      # 2026-08-26 security batch (13 CVEs — including two that touch the
+      # Original Dst clusters this config relies on, and the generic-HTTP-upgrade
+      # body-poisoning fix that matters because the sandbox routes upgrade to
+      # websockets) plus the ext_proc filter's use-after-free fixes.
+      #
+      # 1.38/1.39 are a separate decision: they turn `enforce_rsa_key_usage` on
+      # (1.39 unconditionally), which can break the cross-cluster upstream TLS
+      # handshake if that certificate is RSA without a usable keyUsage. Verify
+      # that link in staging before going past 1.37.
+      tag: v1.37.6
       pullPolicy: IfNotPresent
+    # concurrency is Envoy's worker-thread count. Zero means "one per core",
+    # which is wrong here: the container is capped at 500m CPU, so the default
+    # spawns a thread per *node* core (128 on a large node) and every one of
+    # them carries its own event loop and stats for a share of half a core.
+    concurrency: 2
+
+  # activityFlush is how each replica publishes the traffic it observed into
+  # the sandbox Pod's last-active annotation, which the controller reads as the
+  # union across replicas.
+  activityFlush:
+    # rateLimitPerSecond caps annotation writes per second. 0 = unlimited.
+    #
+    # Leave it at 0 until the deployment has run for a while and
+    # agentbox_gateway_activity_flush_written_total shows the real steady-state
+    # rate — that rate is (busy sandboxes with a timeout) / refresh interval and
+    # is a property of the workload, not something to guess. A limit below it
+    # makes deferred writes fall behind, and past the slack the controller can
+    # absorb (agentbox_gateway_activity_flush_queue_age_ratio reaching 1) it
+    # releases sandboxes that are still in use. The limiter exists to smooth
+    # bursts, not to reduce API server load.
+    rateLimitPerSecond: 0
+    # workers is how many annotation writes run in parallel.
+    workers: 4
 
   # Service name exposed by the data-plane (extproc + Envoy). Default is the
   # historical name; override semantics match controller.services above.
@@ -268,6 +310,63 @@ extproc:
       limits:
         cpu: 500m
         memory: 512Mi
+
+  # downstreamConnectionLimit caps concurrent client connections **per replica**.
+  #
+  # Without it Envoy accepts connections until it runs out of file descriptors
+  # or memory, and the failure looks like an OOM kill rather than a rejection.
+  # With it the failure is a clean refusal with a counter
+  # (downstream_global_cx_overflow) you can alert on.
+  #
+  # There is no coordination between replicas, so the deployment's ceiling is
+  # roughly (this value x replicas): size it against what one replica can carry,
+  # not against the total you want, and leave headroom for the uneven
+  # distribution that per-connection load balancing produces.
+  #
+  # 0 disables the limit (and restores Envoy's startup warning).
+  downstreamConnectionLimit: 5000
+
+  # gracefulShutdown bounds what happens to in-flight requests when a replica
+  # goes away. Envoy closes its listeners immediately on SIGTERM and does not
+  # consult --drain-time-s on that path, so without a preStop hook every
+  # rollout cuts every live connection — including the long-lived ones sandbox
+  # exec and log streaming use.
+  #
+  # The preStop sequence, per replica:
+  #   1. POST /healthcheck/fail   → the admin /ready probe starts answering 503,
+  #                                 so the pod leaves the Service endpoints
+  #   2. wait readinessGracePeriod so the removal actually propagates
+  #   3. POST /drain_listeners?graceful&skip_exit
+  #                                 → HTTP/1.1 gets "Connection: close", HTTP/2
+  #                                   gets GOAWAY, ramped over drainSeconds
+  #   4. wait drainSeconds, then let SIGTERM exit the process
+  #
+  # Requests that outlive drainSeconds are still cut: stream_idle_timeout and
+  # the route timeouts are an hour, and no drain window can be that long. That
+  # is a documented bound, not a promise.
+  gracefulShutdown:
+    enabled: true
+    readinessGracePeriodSeconds: 5
+    drainSeconds: 45
+
+  # terminationGracePeriodSeconds must exceed readinessGracePeriodSeconds +
+  # drainSeconds with room for the final exit. When it does not, kubelet
+  # SIGKILLs the pod mid-drain — the drain makes the rollout slower without
+  # making it graceful.
+  terminationGracePeriodSeconds: 65
+
+  # podDisruptionBudget keeps a voluntary disruption (node drain, cluster
+  # upgrade) from taking every replica at once. Only meaningful with
+  # replicas > 1, which is why the default is minAvailable: 1.
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # rollingUpdate bounds an involuntary gap during rollouts: never take a
+  # replica down before its replacement is ready.
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
 
   nodeAffinity: {}
   tolerations: []
@@ -318,4 +417,3 @@ metrics:
   # leave the old one orphaned alongside the new one.
   controllerMonitorName: ""
   extprocMonitorName: ""
-

@@ -66,8 +66,11 @@ const (
 	// Read by IdleTimeoutReconciler.cleanupTimedOutStartingPods to determine per-pod timeout.
 	// Takes priority over the pool-level StartupTimeout when both are set.
 	SandboxStartupTimeoutAnnotationKey = "agentbox.navix.sh/startup-timeout"
-	// SandboxLastActiveAnnotationKey stores the RFC3339 time of the last HTTP request
-	// proxied through ExtProc. Written asynchronously by ActivityTracker.
+	// SandboxLastActiveAnnotationKey stores the RFC3339 time of the most recent
+	// HTTP request proxied to this sandbox. Every gateway replica writes what it
+	// observed, so the value is the union across replicas; the controller reads
+	// it and adds the gateway's refresh slack before deciding a sandbox is idle
+	// (see pkg/activity). Never written by the control plane.
 	SandboxLastActiveAnnotationKey            = "agentbox.navix.sh/last-active"
 	SandboxMetadataAnnotationKey              = "agentbox.navix.sh/sandbox-metadata"
 	SandboxManagedLabelKeysAnnotationKey      = "agentbox.navix.sh/managed-label-keys"

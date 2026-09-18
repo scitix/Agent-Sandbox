@@ -334,18 +334,17 @@ generate-api: oapi-codegen ## Generate API code from OpenAPI specs
 	fi
 
 .PHONY: gen-internal-proto
-gen-internal-proto: protoc-gen-go protoc-gen-go-grpc goimports ## Generate Go/gRPC code from pkg/proto/ (internal Controller ↔ ExtProc RPCs).
+gen-internal-proto: protoc-gen-go protoc-gen-go-grpc goimports ## Generate Go/protobuf code from pkg/proto/.
 	@command -v protoc >/dev/null 2>&1 || { echo "protoc not found; install protobuf-compiler"; exit 1; }
 	@PATH="$(LOCALBIN):$$PATH" protoc \
 		--proto_path=pkg/proto \
 		--go_out=. --go_opt=module=github.com/scitix/agent-sandbox \
 		--go-grpc_out=. --go-grpc_opt=module=github.com/scitix/agent-sandbox \
-		pkg/proto/sandbox/ctrlplane/v1/ctrlplane.proto \
 		pkg/proto/sandbox/sync/v1/sync.proto
 	@# protoc-gen-go emits imports unsorted; normalise so re-running this target
 	@# produces a stable byte-identical diff against committed .pb.go files.
 	@$(GOIMPORTS) -w -local github.com/scitix/agent-sandbox \
-		pkg/proto/sandbox/ctrlplane/v1 pkg/proto/sandbox/sync/v1
+		pkg/proto/sandbox/sync/v1
 	@echo "Internal proto code regenerated alongside the .proto file."
 
 .PHONY: gen-all-api

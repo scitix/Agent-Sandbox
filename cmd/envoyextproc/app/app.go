@@ -26,11 +26,11 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"net"
+	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
-	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -44,7 +44,6 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	extprocsvc "github.com/scitix/agent-sandbox/pkg/envoy/extproc"
-	ctrlplanev1 "github.com/scitix/agent-sandbox/pkg/proto/sandbox/ctrlplane/v1"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
@@ -68,8 +67,10 @@ func Run() {
 	var adminKey string
 	var apikeyNamespace string
 	var apikeyCacheTTL time.Duration
-	var internalAPIBindAddress string
+	var metricsAddr string
 	var activityTrackerGCInterval time.Duration
+	var activityFlushRateLimit int
+	var activityFlushWorkers int
 	var localClusterID string
 	var clustersConfigMapName string
 
@@ -87,11 +88,20 @@ func Run() {
 		"Kubernetes namespace where API key Secrets are stored.")
 	flag.DurationVar(&apikeyCacheTTL, "apikey-cache-ttl", time.Minute,
 		"Duration for which API key Validate results are cached in memory.")
-	flag.StringVar(&internalAPIBindAddress, "internal-api-bind-address", ":9003",
-		"The address the internal gRPC control-plane server binds to. "+
-			"Exposes ControlPlaneService to the Controller for idle-timeout polling.")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8083",
+		"The address the metrics endpoint binds to. Exposes the activity-flush counters "+
+			"that the rate limit (see --activity-flush-rate-limit) has to be sized against. "+
+			"Set to \"0\" to disable.")
 	flag.DurationVar(&activityTrackerGCInterval, "activity-tracker-gc-interval", 5*time.Minute,
 		"Interval at which ActivityTracker GC runs to remove stale sandbox entries.")
+	flag.IntVar(&activityFlushRateLimit, "activity-flush-rate-limit", 0,
+		"Maximum last-active annotation writes per second. "+
+			"Zero (the default) means unlimited: the correct value is a property of how many "+
+			"sandboxes this deployment keeps busy, and a limit below the steady-state rate makes the "+
+			"deferred writes age past the slack the controller can absorb, which releases sandboxes "+
+			"that are still in use. Measure agentbox_gateway_activity_flush_written_total first.")
+	flag.IntVar(&activityFlushWorkers, "activity-flush-workers", 4,
+		"Concurrent last-active annotation writes.")
 	defaultLocalClusterID := os.Getenv("LOCAL_CLUSTER_ID")
 	flag.StringVar(&localClusterID, "local-cluster-id", defaultLocalClusterID,
 		"Identifier of the local cluster (e.g. cluster-1). Used for cross-cluster sandbox routing. "+
@@ -109,7 +119,10 @@ func Run() {
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
-			BindAddress: "0", // Disable metrics; extproc is stateless
+			// Enabled for the activity-flush counters: they are how an operator
+			// sizes --activity-flush-rate-limit against real traffic instead of
+			// guessing, and how they notice when a limit is too tight.
+			BindAddress: metricsAddr,
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         false, // ExtProc is stateless; no leader election needed
@@ -168,29 +181,40 @@ func Run() {
 		setupLog.Error(err, "Failed to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+
+	// Readiness is deliberately not healthz.Ping.
+	//
+	// With more than one replica a rolling update adds a *new* pod to the
+	// Service while the old one drains, and everything that makes this pod
+	// useful — the Pod informer index behind routing, and the tracker seed
+	// behind activity — is populated asynchronously after start. A pod that
+	// reports ready before the cache is warm accepts requests it cannot route
+	// and answers 502, handing the caller a failure that a single-replica
+	// deployment could not produce. Staying out of the endpoints until the
+	// cache has synced costs a few seconds of rollout time and removes that
+	// window.
+	warm := &atomic.Bool{}
+	if err := mgr.AddReadyzCheck("readyz", func(*http.Request) error {
+		if !warm.Load() {
+			return errors.New("informer cache not synced yet")
+		}
+		return nil
+	}); err != nil {
 		setupLog.Error(err, "Failed to set up ready check")
 		os.Exit(1)
 	}
 
-	// Internal gRPC server: exposes ControlPlaneService so the Controller can
-	// poll last-active timestamps (GetLastActive). Auth uses the shared admin
-	// key via a unary interceptor.
-	internalLis, err := net.Listen("tcp", internalAPIBindAddress)
-	if err != nil {
-		setupLog.Error(err, "Failed to listen on internal API address", "address", internalAPIBindAddress)
-		os.Exit(1)
-	}
-	var internalGRPCOpts []grpc.ServerOption
-	if adminKeyMgr != nil {
-		internalGRPCOpts = append(internalGRPCOpts, grpc.UnaryInterceptor(extprocsvc.AdminKeyUnaryInterceptor(adminKeyMgr)))
-	} else {
-		setupLog.Info("admin key empty; internal gRPC server will accept unauthenticated requests (dev mode)")
-	}
-	internalGRPC := grpc.NewServer(internalGRPCOpts...)
-	ctrlplanev1.RegisterControlPlaneServiceServer(internalGRPC, extprocsvc.NewInternalGRPCServer(tracker))
+	// The ActivityFlusher is the only writer of the last-active annotation: it
+	// publishes what this replica saw so the controller can read the union of
+	// every replica's view. There is no RPC back to the control plane any more —
+	// a single gRPC connection would pin to one replica and hand the controller
+	// a 1/N picture, which is exactly the bug this replaces.
+	flusher := extprocsvc.NewActivityFlusher(tracker, mgr.GetClient(), extprocsvc.ActivityFlusherConfig{
+		RateLimitPerSecond: activityFlushRateLimit,
+		Workers:            activityFlushWorkers,
+	})
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 2)
 
 	// Seed the ActivityTracker from K8s once the manager cache is warm. We run
 	// this in a dedicated goroutine because WaitForCacheSync blocks until the
@@ -202,7 +226,11 @@ func Run() {
 	// can reconstruct, so it is restored from the annotations instead.
 	go func() {
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
-			setupLog.Info("cache sync timed out, skipping seed")
+			// Only reachable when the context is done (shutdown), in which case
+			// the process is going away anyway — leaving `warm` false keeps the
+			// pod out of the endpoints, which is the right answer for a replica
+			// that cannot see the cluster.
+			setupLog.Info("cache sync did not complete; replica stays unready", "ctxErr", ctx.Err())
 			return
 		}
 
@@ -243,22 +271,16 @@ func Run() {
 			setupLog.Info("ActivityTracker seeded from K8s", "sandboxes", trackerSeeded)
 		}
 
-		// Cache is warm and the seed is complete — start background GC.
+		// Cache is warm and the seed is complete — start background GC, then
+		// the flusher. Both need Working index lookups: before the cache syncs
+		// every sandbox lookup misses and the flusher would spin for nothing.
 		tracker.StartGC(ctx)
-	}()
 
-	go func() {
-		setupLog.Info("Starting internal gRPC server", "address", internalAPIBindAddress)
-		if serveErr := internalGRPC.Serve(internalLis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
-			errCh <- serveErr
-		} else {
-			errCh <- nil
-		}
-	}()
-
-	go func() {
-		<-ctx.Done()
-		internalGRPC.GracefulStop()
+		// Only now is this replica able to answer both of the questions it
+		// exists to answer, so only now does it belong in the endpoints.
+		warm.Store(true)
+		setupLog.Info("ready to serve traffic", "cache", "synced", "tracker", "seeded")
+		flusher.Run(ctx)
 	}()
 
 	go func() {
@@ -271,7 +293,7 @@ func Run() {
 		errCh <- mgr.Start(ctx)
 	}()
 
-	for range 3 {
+	for range 2 {
 		err := <-errCh
 		if err == nil {
 			cancel()

@@ -28,7 +28,6 @@ spec:
           args:
             - --leader-elect
             - --health-probe-bind-address=:8081
-            - --extproc-internal-api-url={{ include "agent-sandbox-worker.extprocInternalApiUrl" . }}
             - --envoy-gateway-base-url={{ include "agent-sandbox-worker.envoyGatewayBaseUrl" . }}
             - --e2b-bind-address=:8090
             - --e2b-domain={{ include "agent-sandbox-worker.e2bDomain" . }}

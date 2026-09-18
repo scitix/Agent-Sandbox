@@ -19,7 +19,10 @@ spec:
       port: 9901
       protocol: TCP
       targetPort: envoy-admin
-    - name: internal-api
-      port: 9003
+    # The extproc manager's own metrics: the activity-flush counters the rate
+    # limit has to be sized against, and the queue-age ratio that says when a
+    # limit is too tight. Scraped by the extproc ServiceMonitor.
+    - name: metrics
+      port: 8083
       protocol: TCP
-      targetPort: internal-api
+      targetPort: metrics

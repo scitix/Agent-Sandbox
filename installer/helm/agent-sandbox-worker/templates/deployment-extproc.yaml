@@ -7,7 +7,12 @@ metadata:
     {{- include "agent-sandbox-worker.labels" . | nindent 4 }}
     {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.extproc.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.extproc.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.extproc.rollingUpdate.maxSurge }}
   selector:
     matchLabels:
       {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 6 }}
@@ -27,7 +32,9 @@ spec:
           args:
             - --health-probe-bind-address=:8081
             - --extproc-bind-address=:9002
-            - --internal-api-bind-address=:9003
+            - --metrics-bind-address=:8083
+            - --activity-flush-rate-limit={{ .Values.extproc.activityFlush.rateLimitPerSecond }}
+            - --activity-flush-workers={{ .Values.extproc.activityFlush.workers }}
             - --apikey-namespace={{ .Release.Namespace }}
             - --clusters-configmap-name={{ include "agent-sandbox-worker.clustersConfigMapName" . }}
           env:
@@ -37,8 +44,8 @@ spec:
             - containerPort: 9002
               name: extproc-grpc
               protocol: TCP
-            - containerPort: 9003
-              name: internal-api
+            - containerPort: 8083
+              name: metrics
               protocol: TCP
           livenessProbe:
             httpGet:
@@ -54,6 +61,21 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.extproc.resources.manager | nindent 12 }}
+          {{- if .Values.extproc.gracefulShutdown.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                # This container has to outlive the drain, not participate in
+                # it: Envoy keeps accepting new connections for the whole drain
+                # window, and every new request needs this ExtProc server. If it
+                # went away first, the requests the drain was meant to protect
+                # would fail with ext_proc unavailable (failure_mode_allow is
+                # false) instead of being served.
+                command:
+                  - /bin/sh
+                  - -c
+                  - sleep {{ add .Values.extproc.gracefulShutdown.readinessGracePeriodSeconds .Values.extproc.gracefulShutdown.drainSeconds }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -70,6 +92,10 @@ spec:
           args:
             - -c
             - /etc/envoy/envoy.yaml
+            - --drain-time-s
+            - {{ .Values.extproc.gracefulShutdown.drainSeconds | quote }}
+            - --concurrency
+            - {{ .Values.extproc.envoy.concurrency | quote }}
             - --log-level
             - warn
           ports:
@@ -93,6 +119,40 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.extproc.resources.envoy | nindent 12 }}
+          {{- if .Values.extproc.gracefulShutdown.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                # Envoy closes its listeners immediately on SIGTERM and ignores
+                # --drain-time-s on that path, so the only way to drain is to
+                # ask the admin endpoint before the signal arrives. kubelet runs
+                # this hook first and sends SIGTERM only when it returns.
+                #
+                # The image carries no curl or wget, but bash and /dev/tcp are
+                # there, so the two admin calls are made with a raw socket.
+                command:
+                  - /usr/bin/bash
+                  - -c
+                  - |
+                    set -u
+                    admin_post() {
+                      exec 3<>/dev/tcp/127.0.0.1/9901
+                      printf 'POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' "$1" >&3
+                      head -c 64 <&3 >/dev/null 2>&1 || true
+                      exec 3<&- 3>&-
+                    }
+                    # 1. Flip the admin /ready probe to 503. kubelet then marks
+                    #    the pod NotReady and it leaves the Service endpoints, so
+                    #    the front proxy stops picking it for new connections.
+                    admin_post /healthcheck/fail || true
+                    sleep {{ .Values.extproc.gracefulShutdown.readinessGracePeriodSeconds }}
+                    # 2. Drain what is still open: HTTP/1.1 responses get
+                    #    "Connection: close", HTTP/2 gets GOAWAY, ramped over
+                    #    --drain-time-s. skip_exit keeps the process up so the
+                    #    wait below decides when this hook ends.
+                    admin_post '/drain_listeners?graceful&skip_exit' || true
+                    sleep {{ .Values.extproc.gracefulShutdown.drainSeconds }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -111,15 +171,43 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       serviceAccountName: {{ include "agent-sandbox-worker.fullname" . }}-controller-manager
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: {{ .Values.extproc.terminationGracePeriodSeconds }}
+      # Spreading replicas is the point of having more than one: the same node
+      # failing twice in a row should not be able to take both down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 14 }}
       volumes:
         - name: envoy-config
           configMap:
             name: {{ include "agent-sandbox-worker.fullname" . }}-envoy-config
-      {{- with .Values.extproc.nodeAffinity }}
+      {{- if or .Values.extproc.nodeAffinity (gt (int .Values.extproc.replicas) 1) }}
       affinity:
+        {{- with .Values.extproc.nodeAffinity }}
         nodeAffinity:
           {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if gt (int .Values.extproc.replicas) 1 }}
+        # Preferred, not required: losing one node must not leave a replica
+        # Pending when the cluster is short on capacity, and a single-replica
+        # install must still schedule. It is a scoring hint — the scheduler
+        # tries to put each replica on a node that has none, which is what
+        # keeps one node failure (or one drain) from taking the whole data
+        # plane. topologySpreadConstraints below does the harder job of keeping
+        # 3+ replicas even; with only two they mostly say the same thing.
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "agent-sandbox-worker.extprocSelectorLabels" . | nindent 20 }}
+        {{- end }}
       {{- end }}
       {{- with .Values.extproc.tolerations }}
       tolerations:

@@ -143,7 +143,6 @@ type k8sSandboxService struct {
 	localClusterID string               // may be empty; used for cross-cluster sandbox ID prefixing
 	execTokens     *execTokenStore
 	httpClient     *http.Client
-	extprocClient  ExtProcClient // may be nil in tests; used to push new routes to ExtProc
 	registryStore  RegistryStore // may be nil; used for per-cluster image registry rewriting
 
 	envRouter EnvRouter // may be nil; set via SetEnvRouter at startup
@@ -321,9 +320,8 @@ const defaultCreateStartupTimeout = 2 * time.Minute
 // restConfig is the Kubernetes REST config for exec via SPDY; it may be nil (exec will be unavailable).
 // gatewayBaseURL is the base URL of the Envoy gateway (e.g. http://gateway.example.com); it may be empty.
 // localClusterID identifies the local cluster for cross-cluster sandbox ID prefixing; it may be empty.
-// extprocClient pushes new sandbox routes to ExtProc so Create can return without polling; may be nil in tests.
 // registryStore supplies per-cluster registry metadata for automatic image host rewriting; may be nil (no rewriting).
-func NewSandboxService(c client.Client, cs kubernetes.Interface, restCfg *rest.Config, s store.SandboxStore, gatewayBaseURL string, localClusterID string, extprocClient ExtProcClient, registryStore RegistryStore) SandboxService {
+func NewSandboxService(c client.Client, cs kubernetes.Interface, restCfg *rest.Config, s store.SandboxStore, gatewayBaseURL string, localClusterID string, registryStore RegistryStore) SandboxService {
 	// Use a never-closing channel; the GC goroutine will be cleaned up by the process exiting.
 	done := make(chan struct{})
 
@@ -336,7 +334,6 @@ func NewSandboxService(c client.Client, cs kubernetes.Interface, restCfg *rest.C
 		localClusterID: localClusterID,
 		execTokens:     newExecTokenStore(done),
 		httpClient:     &http.Client{Timeout: 5 * time.Second},
-		extprocClient:  extprocClient,
 		registryStore:  registryStore,
 		schedulers:     make(map[string]*schedule.PoolScheduler),
 	}
@@ -1775,6 +1772,15 @@ func (s *k8sSandboxService) SetTimeout(ctx context.Context, namespace, sandboxID
 	} else {
 		podCopy.Annotations[agentsv1alpha1.SandboxIdleTimeoutAnnotationKey] = strconv.FormatInt(int64(timeout.Seconds()), 10)
 	}
+	// Stamp last-active in the same write. Setting a timeout is the caller
+	// saying "keep this alive for another N" — an interaction with the sandbox
+	// — and it is also what keeps the reconciler from reading a Pod whose
+	// last-active still points at the claim (or at the previous owner) and
+	// releasing a sandbox the caller just extended. Sandboxes created without
+	// any timeout never get their annotation refreshed (the gateway skips them:
+	// there is nothing to reclaim), so without this the first set_timeout on a
+	// long-lived sandbox would look maximally idle.
+	podCopy.Annotations[agentsv1alpha1.SandboxLastActiveAnnotationKey] = time.Now().UTC().Format(time.RFC3339)
 
 	if patchErr := s.client.Patch(ctx, podCopy, client.MergeFrom(pod)); patchErr != nil {
 		return domain.NewInternal(fmt.Sprintf("failed to patch idle timeout: %v", patchErr), patchErr)

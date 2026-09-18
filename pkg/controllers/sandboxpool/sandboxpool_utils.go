@@ -15,15 +15,11 @@
 package sandboxpool
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog/v2"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 )
@@ -60,44 +56,34 @@ func resolveStartupTimeout(pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) ti
 	return 0
 }
 
-// resolveLastActive returns the best available last-active time for pod.
-// Priority: ExtProc map > last-active annotation > started-at annotation > CreationTimestamp.
-func resolveLastActive(pod *corev1.Pod, extprocMap map[string]time.Time) time.Time {
-	sandboxID := pod.Labels[agentsv1alpha1.SandboxIDLabelKey]
+// resolveLastActive returns the best available last-active time for pod, as a
+// maximum over every source rather than a priority list.
+//
+// The last-active annotation is written by the gateway replicas and is the only
+// source that reflects traffic; started-at and CreationTimestamp are floors for
+// a sandbox that has not been used yet. Taking the maximum matters: a priority
+// chain that prefers one source outright lets a stale value from that source
+// pull the answer *backwards*, which shows up as releasing a sandbox that is in
+// use. A maximum can only ever make the answer more conservative.
+func resolveLastActive(pod *corev1.Pod) time.Time {
+	best := pod.CreationTimestamp.Time
 
-	if ts, ok := extprocMap[sandboxID]; ok && !ts.IsZero() {
-		return ts
+	if t, err := parseRFC3339Annotation(pod, agentsv1alpha1.SandboxStartedAtAnnotationKey); err == nil && t.After(best) {
+		best = t
 	}
-	if v := pod.Annotations[agentsv1alpha1.SandboxLastActiveAnnotationKey]; v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			return t
-		}
+	if t, err := parseRFC3339Annotation(pod, agentsv1alpha1.SandboxLastActiveAnnotationKey); err == nil && t.After(best) {
+		best = t
 	}
-	if v := pod.Annotations[agentsv1alpha1.SandboxStartedAtAnnotationKey]; v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			return t
-		}
-	}
-	return pod.CreationTimestamp.Time
+	return best
 }
 
-// patchLastActiveAnnotation patches the last-active annotation on the pod
-// if the new timestamp is strictly newer than the existing one.
-func patchLastActiveAnnotation(ctx context.Context, c client.Client, pod *corev1.Pod, ts time.Time) {
-	// Only write if the new value is newer than what's already on the pod.
-	if existing := pod.Annotations[agentsv1alpha1.SandboxLastActiveAnnotationKey]; existing != "" {
-		if t, err := time.Parse(time.RFC3339, existing); err == nil && !ts.After(t) {
-			return
-		}
+// parseRFC3339Annotation reads a timestamp annotation. A missing annotation is
+// reported as an error so callers can skip it with the same branch as a
+// malformed one.
+func parseRFC3339Annotation(pod *corev1.Pod, key string) (time.Time, error) {
+	raw := pod.Annotations[key]
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("annotation %s is absent", key)
 	}
-
-	tsStr := ts.UTC().Format(time.RFC3339)
-	patch := fmt.Appendf(nil,
-		`{"metadata":{"annotations":{%q:%q}}}`,
-		agentsv1alpha1.SandboxLastActiveAnnotationKey, tsStr,
-	)
-	if err := c.Patch(ctx, pod, client.RawPatch(types.MergePatchType, patch)); err != nil {
-		klog.V(4).ErrorS(err, "sandboxpool: failed to patch last-active annotation",
-			"namespace", pod.Namespace, "pod", pod.Name)
-	}
+	return time.Parse(time.RFC3339, raw)
 }

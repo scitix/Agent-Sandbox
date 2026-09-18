@@ -16,9 +16,7 @@ package extproc
 
 import (
 	"context"
-	"encoding/json"
 	"maps"
-	"net/http"
 	"sync"
 	"time"
 
@@ -31,16 +29,22 @@ import (
 )
 
 // ActivityTracker is a lightweight in-memory store that records the last time
-// a proxied HTTP request was observed for each sandbox. It is intentionally
-// stateless with respect to Kubernetes — all K8s reads/writes are handled by
-// IdleTimeoutReconciler in the agentbox controller manager.
+// a proxied HTTP request was observed for each sandbox, by *this* replica. It
+// is intentionally stateless with respect to Kubernetes: it holds no Pod data
+// and does no I/O.
+//
+// It is not the whole truth, and it is not meant to be. A sandbox's traffic can
+// land on any gateway replica, so this map is one replica's view; what makes it
+// useful is that every replica publishes its view into the same place — the
+// sandbox Pod's last-active annotation — from which the controller reads the
+// union. See ActivityFlusher.
 //
 // Lifecycle:
 //  1. On startup, InitFromAnnotations is called for each Running pod that has a
 //     last-active annotation so that ExtProc restart does not reset history.
 //  2. On every proxied request, Touch is called (non-blocking, O(1)).
-//  3. IdleTimeoutReconciler polls LastActiveHandler to snapshot the map, writes
-//     the values back as pod annotations, and decides whether to release pods.
+//  3. ActivityFlusher snapshots the map on a ticker and writes what this replica
+//     saw into the Pod annotation.
 type ActivityTracker struct {
 	mu         sync.RWMutex
 	lastActive map[string]time.Time // sandboxID → last seen
@@ -170,24 +174,4 @@ func (t *ActivityTracker) snapshot() map[string]time.Time {
 	out := make(map[string]time.Time, len(t.lastActive))
 	maps.Copy(out, t.lastActive)
 	return out
-}
-
-// LastActiveHandler returns an HTTP handler that serves a JSON object mapping
-// sandboxID → RFC3339 timestamp for the IdleTimeoutReconciler to poll.
-//
-// Response format:
-//
-//	{ "sandboxId1": "2026-03-17T10:00:00Z", ... }
-func (t *ActivityTracker) LastActiveHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		snap := t.snapshot()
-		out := make(map[string]string, len(snap))
-		for id, ts := range snap {
-			out[id] = ts.UTC().Format(time.RFC3339)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(out); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-		}
-	}
 }

@@ -131,17 +131,6 @@ this via --clusters-configmap-name; the chart owns the ConfigMap object itself.
 {{- end }}
 
 {{/*
-Resolved extproc internal API URL.
-*/}}
-{{- define "agent-sandbox-worker.extprocInternalApiUrl" -}}
-{{- if .Values.controller.extprocInternalApiUrl }}
-{{- .Values.controller.extprocInternalApiUrl }}
-{{- else }}
-{{- printf "%s.%s.svc.cluster.local:9003" (include "agent-sandbox-worker.dataplaneServiceName" .) .Release.Namespace }}
-{{- end }}
-{{- end }}
-
-{{/*
 Resolved envoy gateway base URL.
 */}}
 {{- define "agent-sandbox-worker.envoyGatewayBaseUrl" -}}
