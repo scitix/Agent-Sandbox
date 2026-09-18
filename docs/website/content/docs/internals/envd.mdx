@@ -1,0 +1,121 @@
+---
+title: envd, and the patches we carry
+description: The runtime inside every sandbox is upstream envd, with three changes — what each one fixes, and what it costs.
+---
+
+Every sandbox runs **envd**: the agent the E2B SDK talks to. Process exec,
+filesystem, PTY — that is envd's surface, and it is
+[upstream](https://github.com/e2b-dev/infra), not a fork of ours.
+
+We do carry three patches, and this page is what they change and why, because
+each one is a difference you can run into: a command that never starts, a
+result that is wrong rather than an error, a log full of connection attempts to
+an address that cannot answer.
+
+| Patch | Fixes | Symptom without it |
+|---|---|---|
+| [0001](https://github.com/scitix/Agent-Sandbox/blob/develop/installer/runtimes/envd/patches/0001-skip-oom-nice-wrapper-when-not-firecracker.patch) | skips the OOM/`nice` exec wrapper outside a microVM | every command exits with a permission error, or never runs at all |
+| [0002](https://github.com/scitix/Agent-Sandbox/blob/develop/installer/runtimes/envd/patches/0002-await-init-gate.patch) | refuses RPCs until the sandbox is armed | a command runs in a sandbox with no environment and no credentials — and succeeds |
+| [0003](https://github.com/scitix/Agent-Sandbox/blob/develop/installer/runtimes/envd/patches/0003-skip-mmds-poll-when-not-firecracker.patch) | stops the MMDS poll outside a microVM | 1200 requests per sandbox to an address that never answers |
+
+The patches and the build script live in
+[`installer/runtimes/envd/`](https://github.com/scitix/Agent-Sandbox/tree/develop/installer/runtimes/envd);
+each patch file carries the longer version of what is below.
+
+## 1. Not a Firecracker microVM, so do not pretend to be one
+
+Before exec-ing a command, upstream envd wraps it as
+`/bin/sh -c "echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n N -- CMD"`.
+That priming makes sense **inside** a Firecracker microVM: children would
+otherwise inherit envd's protected `oom_score_adj=-1000` and `nice -20`.
+
+Under Kubernetes it is wrong twice over:
+
+- the kubelet manages `oom_score_adj` itself and pins a floor that forbids
+  lowering it, so the write fails with `EACCES` — and because the wrapper uses
+  `&&`, the user's command never runs;
+- routing every exec through `/bin/sh` makes execution depend on the image
+  having a working one, which is how busybox multi-call images broke.
+
+envd already takes a `-isnotfc` flag, which our entrypoint passes. The patch
+threads it into `execcontext.Defaults.IsNotFC` and, in that mode, execs the
+command directly. cgroups and uid setup are untouched: those are the real
+resource controls here.
+
+This replaced an earlier hack that rewrote `/bin/sh` inside every image, and it
+is a candidate for upstreaming — gating a wrapper on "not a microVM" is what
+upstream would do.
+
+## 2. A sandbox is not ready until it is armed
+
+A sandbox's environment variables, its injected trust-store certificate and its
+egress credentials all arrive in a `POST /init` that happens **after** envd is
+listening. A command accepted in that window runs in a sandbox that is not yet
+the one the caller asked for.
+
+It does not fail. It returns a wrong answer, which is the harder failure to
+notice.
+
+Two other layers already close this — the create call waits for the sandbox to
+be armed, and the data plane refuses to route to one that is not — and the
+patch is the third: the `-await-init` flag makes envd itself refuse process and
+filesystem RPCs with `failed_precondition` until the first `/init` lands.
+
+`/health` is deliberately not gated: the readiness probe is what drives the
+phase transition that triggers that `/init`, so gating it would deadlock the
+two against each other. It ships default-off for the same reason — the control
+plane has to be sending an unconditional `/init` before a template turns it on.
+
+## 3. Stop polling a metadata service that is not there
+
+`169.254.169.254` is Firecracker's MMDS — the microVM's metadata service.
+Outside a microVM nothing answers.
+
+The boot-time poll is already gated on `-isnotfc`, but a second one started on
+**every** `/init`, unconditionally. AgentBox sends an `/init` to every sandbox,
+so every sandbox polled: one request every 50 ms for 60 seconds, 1200 of them,
+each a real connection attempt that the pod's egress filter evaluated and
+logged. It was found in a sidecar log that was almost entirely
+
+```
+level=INFO msg="egress denied" host=169.254.169.254 port=80 match=ssrf
+```
+
+at a steady 50 ms cadence for the first minute of every sandbox's life.
+
+The patch gates that goroutine on the same flag. The two values it fetched
+(`E2B_SANDBOX_ID`, `E2B_TEMPLATE_ID`) are known to the orchestrator, which puts
+them in the `/init` body it was already sending.
+
+## How these images are built
+
+The build is deliberately boring, and the interesting part is what it refuses
+to do:
+
+- the upstream commit is **pinned** (`INFRA_REF` in
+  [`build-envd.sh`](https://github.com/scitix/Agent-Sandbox/blob/develop/installer/runtimes/envd/build-envd.sh)),
+  so a patch applies deterministically and the version cannot drift under you;
+- patches are applied in filename order onto one tree, so each is a diff against
+  the previous ones' result;
+- **a patch that does not apply aborts the build.** Shipping unpatched envd is
+  not a fallback, it is the bug coming back;
+- the image tag carries a rebuild suffix — `0.9.0-2` is the third image of
+  envd 0.9.0. That is not decoration: templates pull with
+  `imagePullPolicy: IfNotPresent`, so rebuilding at an unchanged tag would leave
+  every node that already has the image running the old code, with no error
+  anywhere.
+
+The version the platform *reports* to the SDK is a separate constant,
+`DefaultEnvdVersion` — and the [samples](/docs/examples/templates) are pinned to
+the image that carries it, which `hack/sync-sample-images.py` keeps true.
+
+## What this means when you run into it
+
+- **A command fails with `EACCES` on `oom_score_adj`**, or an image with a
+  minimal `/bin/sh` misbehaves: the sandbox is running an envd without
+  patch 1. Check what the template pins.
+- **A command succeeds with an empty environment**: the sandbox was used before
+  it was armed. The gate above is off by default; the create path should not
+  hand you a sandbox that early, and if it does, that is a bug worth reporting.
+- **Egress logs full of `169.254.169.254`**: an envd without patch 3. It is
+  noise, not a leak — the SSRF baseline denies it every time.

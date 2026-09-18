@@ -4,13 +4,18 @@
 # Pods warm on the cluster you name, so `Sandbox.create("e2b")` is served by a
 # Pod that already exists rather than by a cold start.
 #
-#   `kubectl apply -f config/samples/e2b-basic_sandboxenv.yaml`
+#   `kubectl apply -f config/samples/e2b_sandboxenv.yaml`
 #
 # Two things have to be true first:
 #   - the template exists — `kubectl apply -f
 #     config/samples/e2b-basic_sandboxtemplate.yaml`
 #   - clusterID below is this cluster's id (the worker's `localClusterId`), and
 #     the namespace is one your team owns
+#
+# The other two templates take this file unchanged except for one line: point
+# templateRef at e2b-envd-docker or e2b-envd-kata, and give the member a name
+# and a size that match what it runs — a container engine wants more memory than
+# a bare sandbox, and a microVM carries its own kernel inside the same numbers.
 #
 # A member's `spec` is the pool's frozen snapshot; leaving it out of the file is
 # deliberate — the Env renders it from the template on the next reconcile, so

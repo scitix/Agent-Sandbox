@@ -1,19 +1,24 @@
 ---
 title: Using the environments
-description: Ready-to-apply SandboxEnvs — an environment with a warm pool, one per template.
+description: A ready-to-apply SandboxEnv — an environment with a warm pool, and the one line that points it at another template.
 ---
 
 A [SandboxEnv](/docs/concepts/envs) binds one template and fans out to member
-pools; the pool is what holds the Pods a sandbox is claimed from. These are the
-manifests in
+pools; the pool is what holds the Pods a sandbox is claimed from. One
+environment is enough to show how they are put together — the page is the
+manifest from
 [`config/samples`](https://github.com/scitix/Agent-Sandbox/tree/develop/config/samples),
-one per template, rendered from the same files.
+and the other two templates take it with a one-line change.
 
 | Environment | On which template |
 |---|---|
-| [E2B Basic warm pool](/docs/examples/envs/e2b) | [E2B Basic](/docs/examples/templates/e2b) — two Pods kept warm |
-| [E2B Docker warm pool](/docs/examples/envs/e2b-docker) | [E2B Docker](/docs/examples/templates/e2b-docker) — one Pod, sized for a container engine |
-| [E2B Kata warm pool](/docs/examples/envs/e2b-kata) | [E2B Kata](/docs/examples/templates/e2b-kata) — one microVM |
+| [A warm pool](/docs/examples/envs/e2b) | [E2B Basic](/docs/examples/templates/e2b) — two Pods kept warm |
+
+Switching it to [E2B Docker](/docs/examples/templates/e2b-docker) or
+[E2B Kata](/docs/examples/templates/e2b-kata) is `templateRef.name`, plus a
+member name and a size that match what the sandbox actually runs: a container
+engine needs more memory than a bare sandbox, and a microVM carries its own
+kernel inside the same numbers.
 
 ## Order of application
 
@@ -23,7 +28,7 @@ worker was installed with (`controller.localClusterId` and
 
 ```bash
 kubectl apply -f config/samples/e2b-basic_sandboxtemplate.yaml
-kubectl apply -f config/samples/e2b-basic_sandboxenv.yaml
+kubectl apply -f config/samples/e2b_sandboxenv.yaml
 ```
 
 ## What the sample decides, and what the platform does

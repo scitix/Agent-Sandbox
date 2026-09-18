@@ -76,6 +76,13 @@ about it are worth knowing before you edit a file:
   flag is asking for the stored credentials to be deleted. Editing an unrelated
   setting with a file that dropped the flag revokes your registry access.
 
+<Callout title="The registry credentials are one flag away from being deleted" type="warn">
+`--editable` prints `imagePullSecretConfigured: true`, not the secret. Send that
+file back unchanged and the credentials survive. Strip the flag while editing
+something else and the PUT means "delete them" — the next image pull fails, and
+nothing in the response says why.
+</Callout>
+
 ## Common misconceptions
 
 - **"The env is a namespace."** It is not; the namespace comes from your team.

@@ -96,6 +96,13 @@ So a SWE-bench run is really two jobs: mirror or build the images once and write
 the map file; then run Harbor against that map. Budget for the first — it is
 minutes to hours, and it is done once per dataset version.
 
+<Callout title="A dataset with no images is not a slow run, it is a rejected one" type="warn">
+Every task is rejected before Harbor starts it if neither the map nor the task
+names an image. `AGBX_IMAGE_MAP` is what makes SWE-bench runnable at all, and
+writing it is the step people skip because the run otherwise looks like it is
+starting fine.
+</Callout>
+
 ## Settings worth knowing
 
 | Variable | Why you would touch it |

@@ -84,10 +84,14 @@ const ALLOWED_HOST_SUFFIXES = [
  * RFC 5737 ranges, plus loopback: addresses that cannot be anybody's cluster.
  * `0.0.0.0` is allowed by name because the egress syntax spells "everywhere" as
  * `0.0.0.0/0`, and writing that is how a run gets cut off from the internet.
+ * Link-local is allowed for the same reason: `169.254.169.254` is the cloud
+ * metadata endpoint by definition, and naming it is how the platform explains
+ * that it is denied.
  */
 function isReservedAddress(ip: string): boolean {
   return (
     ip === '0.0.0.0' ||
+    /^169\.254\./.test(ip) ||
     /^127\./.test(ip) ||
     /^192\.0\.2\./.test(ip) ||
     /^198\.51\.100\./.test(ip) ||

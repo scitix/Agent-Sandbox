@@ -48,6 +48,12 @@ member Pool is placed on a cluster segment, and how the console labels the
 cluster it is showing. Left empty, Pool writes answer `503 server-misconfigured`
 and the environment reconciler has nowhere to put a member.
 
+<Callout title="Pin the version">
+`--version 0.1.0` is the chart; the images inside it default to `latest`. For
+anything you keep, pin both — `--set controller.image.tag=…`,
+`--set extproc.image.tag=…` — so a rollout is something you chose.
+</Callout>
+
 ### Check it came up
 
 ```bash
@@ -140,7 +146,7 @@ environment:
 
 ```bash
 kubectl apply -f config/samples/e2b-basic_sandboxtemplate.yaml   # the template
-kubectl apply -f config/samples/e2b-basic_sandboxenv.yaml        # a warm pool on it
+kubectl apply -f config/samples/e2b_sandboxenv.yaml              # a warm pool on it
 ```
 
 [Examples](/docs/examples/templates) has the other two — Docker inside the
@@ -164,6 +170,12 @@ The CRDs carry `helm.sh/resource-policy: keep`, so `uninstall` leaves them — a
 every environment, pool and template you created — in place. That is deliberate:
 deleting a CRD deletes its objects, and with them the record of what your
 sandboxes were. Remove them explicitly when you mean it:
+
+<Callout title="Uninstall does not uninstall everything" type="warn">
+`helm uninstall` removes the controller and the data plane. The CRDs, and every
+`SandboxTemplate`, `SandboxEnv` and `SandboxPool` on the cluster, stay until you
+delete the CRDs themselves — which is the command below, and is irreversible.
+</Callout>
 
 ```bash
 kubectl delete crd sandboxtemplates.agents.navix.sh sandboxenvs.agents.navix.sh sandboxpools.agents.navix.sh

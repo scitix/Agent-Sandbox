@@ -63,7 +63,10 @@ Once running, logs related to Scitix Sandbox creation should appear, indicating 
 | `-c swebench_scitix` | Uses Scitix custom initialization configuration (sets Idle Timeout, Startup Timeout, etc.) |
 | `-c "environment.idle_timeout=30m"` | Overrides the default Idle Timeout (default is 5m); set to an appropriate value |
 
-> **Note**: `-c swebench_scitix` must be added *after* `-c swebench`. Do not replace the original `-c swebench`.
+<Callout title="Order matters">
+`-c swebench_scitix` must be added *after* `-c swebench`. Do not replace the
+original `-c swebench`.
+</Callout>
 
 ### Worker Count
 
@@ -79,7 +82,12 @@ If the sandbox env is in a different cluster, prefix `SCITIX_POOL_NAME` with the
 export SCITIX_POOL_NAME="${AGBX_CLUSTER_ID}::${AGBX_ENV_NAME}"
 ```
 
-> Cross-cluster requests are automatically forwarded by the AgentBox control plane via the Gateway. Authentication methods are the same as within the local cluster, requiring no additional configuration. If authentication errors occur, please re-apply for your API Key on the platform.
+<Callout title="Cross-cluster">
+Cross-cluster requests are forwarded by the AgentBox control plane through the
+gateway. Authentication is the same as within the local cluster, with no extra
+configuration; if you get an authentication error, re-issue the API key on the
+platform.
+</Callout>
 
 ---
 

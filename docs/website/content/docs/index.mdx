@@ -41,9 +41,11 @@ Give every agent turn or eval call its own isolated execution environment. The E
 
 Deploy sandbox pools across multiple clouds or regions. The built-in ExtProc routing layer dispatches requests to the most available cluster transparently — no routing logic required in application code. Supported cloud providers: AWS, Google Cloud, Azure, Alibaba Cloud, Volcengine, Cloudflare.
 
-> **Coming soon:** microVM-backed sandboxes for stronger isolation guarantees.
-
----
+<Callout title="Isolation">
+Sandboxes are containers by default. Where the code is untrusted, run them in
+their own kernel instead — a microVM runtime class is one field on the template:
+[E2B Kata](/docs/examples/templates/e2b-kata).
+</Callout>
 
 ## Start here
 

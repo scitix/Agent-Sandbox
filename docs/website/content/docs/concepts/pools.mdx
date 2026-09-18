@@ -55,6 +55,16 @@ than the envelope (rounded down is allowed, rounding up is refused). On a
 The server enforces this rather than trusting the client, so the answer to
 "which fields do I send" is always the env's, never a template you copied.
 
+<Callout title="Read the rule before writing a body">
+```bash
+abx envs YOUR_ENV --cluster YOUR_CLUSTER     # poolSizing: billed | free-form | either
+```
+
+`abx create envs <env> pools -f` refuses the wrong shape with a `400` that names
+the field. The console's Pool form shows the same rule, so the two cannot
+disagree.
+</Callout>
+
 ## Writing one
 
 ```bash
