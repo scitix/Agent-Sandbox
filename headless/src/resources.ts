@@ -436,16 +436,42 @@ export const RESOURCES: readonly ResourceSpec[] = [
     describe: 'Per-team quota and how much of it is in use.',
     docs: 'concepts/pools',
     api: { list: '/quotas' },
+    // One row per (quota × instance type), because that is the unit a caller
+    // decides on: a pool is sized against one quota AND one instance type, so
+    // "which quota do I put in my env" is answered per instance type and never
+    // by a quota's total. The quota's own `name` is the value a pool's
+    // `labels["quota.scitix.ai/url"]` carries.
+    expand: { field: 'resources', key: 'instanceType', keepEmpty: true },
     columns: [
-      { id: 'name', describe: 'Quota name.', filter: 'name' },
+      { id: 'name', describe: 'Quota url — what a pool\'s quota label carries.', filter: 'name' },
       { id: 'team', describe: 'Owning team.', filter: 'team' },
-      { id: 'used', describe: 'Committed against this quota.' },
-      { id: 'total', describe: 'Ceiling.' },
+      {
+        id: 'poolType',
+        path: 'metadata["quota.scitix.ai/pool-type"]',
+        describe: 'exclusive, shared, ondemand, idle or spot.',
+        filter: 'poolType',
+      },
+      { id: 'pool', path: 'metadata["quota.scitix.ai/pool-name"]', describe: 'The resource pool behind it.' },
+      { id: 'instanceType', describe: 'Instance type the numbers on this row belong to.' },
+      { id: 'used', path: 'resources.used', describe: 'In use now.' },
+      { id: 'ceiling', derive: 'quota-ceiling', describe: 'The enforced limit: a number, 0, or unlimited.' },
+      { id: 'free', derive: 'quota-free', describe: 'Room left.' },
+      { id: 'note', derive: 'quota-note', describe: 'What a ceiling of 0 or unlimited means here.' },
     ],
     filters: [
       { key: 'name', describe: 'substring of the quota name' },
       { key: 'team', describe: 'owning team' },
+      {
+        key: 'poolType',
+        describe: 'pool type',
+        values: ['exclusive', 'shared', 'ondemand', 'idle', 'spot'],
+      },
     ],
+    // The one thing a column cannot say for itself: a 0 and an unlimited are
+    // both "no number you can spend", and reading either as the other sends a
+    // caller at a quota that will refuse them.
+    helpNote:
+      'ceiling is the number the platform enforces, and it is one of three things. A number is the cap. 0 is a hard zero — nothing allocated, and a submission against it is refused. unlimited means this deployment skips the quota check for that pool, which is how the ondemand and spot pools are built: the number is not a limit and what decides is the pool\'s own stock, so it is worth trying. `name` is the quota url a pool carries as labels["quota.scitix.ai/url"].',
     gate: 'quota',
   },
   {

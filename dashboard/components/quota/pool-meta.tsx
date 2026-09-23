@@ -25,6 +25,16 @@ import { cn } from "@/lib/utils"
 // which case callers fall back to the raw quota id/name (its url).
 export const META_POOL_NAME = "quota.scitix.ai/pool-name"
 export const META_POOL_TYPE = "quota.scitix.ai/pool-type"
+/**
+ * Whether the deployment skips its quota check on this pool.
+ *
+ * The one hint a client cannot derive from the numbers: `spec.resources` is the
+ * quota provider's HARD limit, so a literal 0 means "nothing allocated" and
+ * never "no limit". With the check skipped the numbers are not enforced at all
+ * — which is how the ondemand and spot pools are built — and what decides is
+ * the pool's own stock.
+ */
+export const META_SKIP_CHECK = "quota.scitix.ai/skip-check"
 
 // Localization keys for the known pool types (generic cloud tiers). Unknown
 // values fall through to the raw string so a new provider value still renders.
@@ -37,9 +47,19 @@ const POOL_TYPE_KEYS: Record<string, TranslationKey> = {
 }
 
 /** Read the pool display hints off a quota's metadata bag. */
-export function getPoolMeta(quota: QuotaItem): { poolName?: string; poolType?: string } {
+export function getPoolMeta(quota: QuotaItem): {
+  poolName?: string
+  poolType?: string
+  unchecked: boolean
+} {
   const meta = quota.metadata ?? {}
-  return { poolName: meta[META_POOL_NAME], poolType: meta[META_POOL_TYPE] }
+  return {
+    poolName: meta[META_POOL_NAME],
+    poolType: meta[META_POOL_TYPE],
+    // Absent on a deployment older than the hint, where the numbers are the
+    // only thing to go on and reading them as a limit is the safe default.
+    unchecked: meta[META_SKIP_CHECK] === "true",
+  }
 }
 
 /** The name to show for a quota: the pool name when present, else its raw id/name. */

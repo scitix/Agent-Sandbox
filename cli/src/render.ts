@@ -22,10 +22,25 @@ import { CliError, consoleBase, type Context } from './context'
 /** Rows past this are not printed. Context is not free and nobody reads 8000 rows. */
 const DEFAULT_LIMIT = 200
 
+/**
+ * Split a path into the steps that read it.
+ *
+ * A step is either a bare field or `field["anything.at.all"]`, which is how a
+ * provider's metadata bag is addressed: `metadata.quota.scitix.ai/pool-type`
+ * would be read as five nested fields that do not exist, while
+ * `metadata["quota.scitix.ai/pool-type"]` is the one key the server sent.
+ */
+function steps(path: string): string[] {
+  const out: string[] = []
+  const re = /([^.[\]]+)|\["((?:[^"\\]|\\.)*)"\]/g
+  for (const m of path.matchAll(re)) out.push(m[1] ?? m[2].replace(/\\(.)/g, '$1'))
+  return out
+}
+
 /** Read a dot path out of a response row. */
 function at(row: Record<string, unknown>, path: string): unknown {
   let cur: unknown = row
-  for (const part of path.split('.')) {
+  for (const part of steps(path)) {
     if (cur === null || typeof cur !== 'object') return undefined
     cur = (cur as Record<string, unknown>)[part]
   }
@@ -52,8 +67,129 @@ function format(v: unknown): string {
   return String(v)
 }
 
-const cell = (row: Record<string, unknown>, col: ColumnSpec | string): string =>
-  format(typeof col === 'string' ? at(row, col) : at(row, col.path ?? col.id))
+/**
+ * The provider hint that says whether this quota's numbers are enforced.
+ *
+ * `spec.resources` is the HARD limit, so the literal 0 in it means "nothing
+ * allocated" and never "no limit". Which of the two a quota is depends on this
+ * label alone — with the check skipped the numbers are not enforced, and that
+ * is how the ondemand and spot pools are built.
+ */
+const SKIP_CHECK = 'metadata["quota.scitix.ai/skip-check"]'
+
+/** A ceiling that is not enforced. Spelled out for CSV, where `∞` would be a byte. */
+const UNLIMITED = 'unlimited'
+
+/**
+ * The ceiling the platform actually enforces, as one of three things.
+ *
+ * A number, a hard `0`, or `unlimited`. The order matters: the flag is read
+ * before the value, because a quota may declare a 0 and still be unchecked
+ * (the idle pools do exactly that), and reading the 0 as an allowance gets the
+ * answer backwards — it marks the one quota that accepts anything as one that
+ * accepts nothing.
+ */
+function ceilingOf(row: Record<string, unknown>): string {
+  const skip = at(row, SKIP_CHECK)
+  if (skip === 'true') return UNLIMITED
+  const total = at(row, 'resources.total')
+  if (total !== undefined && total !== null && total !== '') return format(total)
+  // No flag and nothing declared: a server older than the hint. Every quota in
+  // that state carries skip-check — an empty spec is what an unchecked quota
+  // IS — so absence reads as unchecked rather than as a zero.
+  if (skip === undefined) return UNLIMITED
+  return format(undefined)
+}
+
+/** What a caller has to know about the ceiling before submitting. */
+function noteOf(row: Record<string, unknown>): string {
+  const ceiling = ceilingOf(row)
+  if (ceiling === UNLIMITED) return "no cap — the pool's stock decides"
+  if (ceiling === '0') return 'no quota allocated'
+  return format(undefined)
+}
+
+/** Room left, from the declared free or from the three numbers that make it. */
+function freeOf(row: Record<string, unknown>): string {
+  if (ceilingOf(row) === UNLIMITED) return format(undefined)
+  const declared = at(row, 'resources.free')
+  if (declared !== undefined && declared !== null && declared !== '') return format(declared)
+  const num = (k: string): number | undefined => {
+    const v = at(row, `resources.${k}`)
+    if (v === undefined || v === null || v === '') return undefined
+    const n = Number(v)
+    return Number.isFinite(n) ? n : undefined
+  }
+  const total = num('total')
+  if (total === undefined) return format(undefined)
+  return String(Math.max(0, total - (num('used') ?? 0) - (num('reserved') ?? 0)))
+}
+
+const cell = (row: Record<string, unknown>, col: ColumnSpec | string): string => {
+  if (typeof col === 'string') return format(at(row, col))
+  switch (col.derive) {
+    case 'quota-ceiling':
+      return ceilingOf(row)
+    case 'quota-free':
+      return freeOf(row)
+    case 'quota-note':
+      return noteOf(row)
+    default:
+      return format(at(row, col.path ?? col.id))
+  }
+}
+
+/**
+ * One row per key of the maps an item holds.
+ *
+ * The keys are the union across every map in the field — a quota states its
+ * ceiling in `total` and its consumption in `used`, and a pool with no ceiling
+ * has the second without the first, so taking either alone would drop rows a
+ * caller needs. Each map is then replaced by the value under the key, which is
+ * what lets a column keep naming its field (`resources.used`) and still read a
+ * scalar.
+ *
+ * The item's own fields ride along on every row: the quota url, its team and
+ * its pool identify the row, and repeating them is what makes a flat table
+ * filterable and CSV-able without a second shape.
+ */
+export function expandRows(
+  spec: ResourceSpec,
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const expand = spec.expand
+  if (!expand) return rows
+  const out: Record<string, unknown>[] = []
+  for (const row of rows) {
+    const maps = at(row, expand.field)
+    const keys = new Set<string>()
+    if (maps !== null && typeof maps === 'object' && !Array.isArray(maps)) {
+      for (const value of Object.values(maps as Record<string, unknown>)) {
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+          for (const k of Object.keys(value as Record<string, unknown>)) keys.add(k)
+        }
+      }
+    }
+    if (!keys.size) {
+      // Nothing declared at all. For a quota that is a state worth a row — the
+      // ondemand pools are built this way, and they are the ones a caller most
+      // needs to be able to pick.
+      if (expand.keepEmpty) out.push({ ...row, [expand.key]: undefined })
+      continue
+    }
+    for (const k of [...keys].sort()) {
+      const sliced: Record<string, unknown> = {}
+      for (const [field, value] of Object.entries(maps as Record<string, unknown>)) {
+        sliced[field] =
+          value !== null && typeof value === 'object' && !Array.isArray(value)
+            ? (value as Record<string, unknown>)[k]
+            : value
+      }
+      out.push({ ...row, [expand.field]: sliced, [expand.key]: k })
+    }
+  }
+  return out
+}
 
 /**
  * Which columns to print.

@@ -85,6 +85,7 @@ import { request, requestAt } from './api'
 import { readFileSync } from 'node:fs'
 import {
   applyFilters,
+  expandRows,
   hints,
   renderCsv,
   renderDetail,
@@ -1514,12 +1515,16 @@ function printRows(
   note?: string,
 ): number {
   const first = spec.columns[0].id
-  let out = rows.map((r) => (r !== null && typeof r === 'object' ? r : { [first]: r }))
-  out = applyFilters(spec, out, filters)
+  const raw = rows.map((r) => (r !== null && typeof r === 'object' ? r : { [first]: r }))
   if (ctx.format === 'json') {
-    console.log(JSON.stringify(out))
+    console.log(JSON.stringify(applyFilters(spec, raw, filters)))
     return 0
   }
+  // Rows that hold a map of rows (a quota holds one number per instance type)
+  // are flattened BEFORE the filters, so the table, the CSV and the filters all
+  // agree on what a row is. `--json` is above this line on purpose: it is the
+  // response, and this projection is a view of it, not a second shape of it.
+  const out = applyFilters(spec, expandRows(spec, raw), filters)
   if (ctx.format === 'csv') {
     console.log(renderCsv(spec, out, Boolean(flags.wide)))
     return 0

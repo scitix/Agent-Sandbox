@@ -59,12 +59,73 @@ export interface ColumnSpec {
    * `spec.replicas` — because it is also the `--filter` key and the CSV header.
    * The wire shape is an implementation detail of the response and is allowed
    * to be nested without dragging its nesting into the vocabulary.
+   *
+   * A step whose key is not an identifier is written `field["its.key"]`, which
+   * is how the provider-metadata bag is read: a quota's pool type sits under
+   * `metadata.quota.scitix.ai/pool-type`, and splitting that on dots would look
+   * for three fields that do not exist.
    */
   path?: string
+  /**
+   * A value the reader derives rather than reads.
+   *
+   * For the columns that are a judgement about the data instead of a piece of
+   * it: a quota's `resources.total` is a hard limit, so the literal `0` in it
+   * means "no allowance" while an absent key plus a skipped check means "no
+   * ceiling at all" — the same cell position, two facts no single field
+   * carries. Naming the projection here rather than in a renderer keeps the
+   * table, the CSV and the filters reading one description.
+   */
+  derive?: DerivedColumn
   /** When set, this column is also filterable under the named FilterSpec. */
   filter?: string
   /** Hidden until asked for. Keeps the default view narrow enough to read. */
   optional?: boolean
+}
+
+/**
+ * A column a surface computes.
+ *
+ * Closed on purpose: each name is a projection both surfaces can implement, and
+ * a misspelling is a compile error rather than a column of dashes. The three
+ * quota ones exist together because they are the same reading of the same
+ * object — split across resources they would disagree.
+ */
+export type DerivedColumn =
+  /** The enforced ceiling, as a number, `0`, or `unlimited`. */
+  | 'quota-ceiling'
+  /** Room left: the declared free, else ceiling minus used minus reserved. */
+  | 'quota-free'
+  /** One line saying what a ceiling of `0` or `unlimited` means. */
+  | 'quota-note'
+
+/**
+ * Turning an item's keyed maps into one row per key.
+ *
+ * The keys are the union across every map in the field, not the keys of one of
+ * them: a quota states its ceiling in `total` and its consumption in `used`,
+ * and the pools a caller can actually reach are the ones that appear in either
+ * — an ondemand quota has `used` with no `total` at all, which is the case the
+ * old one-row-per-quota view rendered as a row of dashes.
+ */
+export interface ExpandSpec {
+  /**
+   * The field on the item that holds the maps, as one key (`resources`).
+   *
+   * One key rather than a path: the maps are siblings by construction, and a
+   * nested form would need to say which level the keys belong to.
+   */
+  field: string
+  /** The column the map key itself is printed under. */
+  key: string
+  /**
+   * Whether an item whose maps are empty still becomes one row.
+   *
+   * Absent means it does not. True for quota, where declaring nothing is a
+   * state and not an absence: the ondemand pools are built that way, and they
+   * are exactly the ones a caller has to be able to see and pick.
+   */
+  keepEmpty?: boolean
 }
 
 /**
@@ -226,6 +287,17 @@ export interface ResourceSpec {
   /** Absent when the resource has no per-item page (a pure list). */
   detail?: boolean
   columns: readonly ColumnSpec[]
+  /**
+   * How a list's rows are built when one item holds a map of them.
+   *
+   * A quota carries its accounting as maps keyed by instance type —
+   * `resources: {total: {"sci.g21-3": "160"}, used: {...}}` — so
+   * "how much sci.g21-3 is left" is not a field of the row but a key inside
+   * three of them. Declaring that here rather than in a renderer is what lets
+   * the CLI's table, its CSV and its filters stay one projection of one
+   * description.
+   */
+  expand?: ExpandSpec
   /**
    * The shape a get renders, one line per field.
    *

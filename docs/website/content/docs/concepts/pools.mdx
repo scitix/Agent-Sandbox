@@ -96,9 +96,27 @@ start.
 | Symptom | Where to look |
 |---|---|
 | `idleReplicas = 0`, claims queue | add a pool, or let the group scale ([autoscaling](/docs/concepts/autoscaling)) |
-| the pool will not grow to `replicas` | quota: `abx quotas --cluster YOUR_CLUSTER`, and the pool's `ResourceQuotaExhausted` condition |
+| the pool will not grow to `replicas` | quota ([reading a quota](#reading-a-quota)): `abx quotas --cluster YOUR_CLUSTER`, and the pool's `ResourceQuotaExhausted` condition |
 | idle Pods never become claimable | `unavailableIdleReplicas` — Pods that are not Ready; usually an image pull |
 | an env has pools but no capacity | the pools may be on another cluster in the federation |
+
+### Reading a quota
+
+`abx quotas` answers one row per instance type, because that is the unit a pool
+is sized in — a pool names a quota *and* a shape, and a quota's total across
+shapes is not a number anyone can spend. Each row's `ceiling` is one of three
+things, and which one decides whether a submission can succeed:
+
+| `ceiling` | Meaning |
+|---|---|
+| a number | the enforced cap for that instance type |
+| `0` | nothing allocated to you on this pool; a submission against it is refused |
+| `unlimited` | this deployment skips the quota check for that pool — the ondemand and spot pools are built that way |
+
+`unlimited` is not a promise of capacity. Nothing is capping you, so what decides
+is the pool's own stock: it is worth trying, and worth retrying once other
+tenants release Pods. The `name` column is the quota url a pool carries as
+`labels["quota.scitix.ai/url"]`.
 
 ## See also
 

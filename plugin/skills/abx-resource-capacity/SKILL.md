@@ -86,6 +86,12 @@ there. Doubling down on the number that already failed does nothing.
 If quota is the limit, no amount of pool configuration helps — that is a
 request to whoever owns the quota, not a setting.
 
+Read the `ceiling` column the way `abx quotas` means it: a number is the cap,
+`0` is a hard zero (nothing allocated — do not submit, ask for an allocation),
+and `unlimited` means the deployment skips the quota check for that pool, so
+nothing caps you and the pool's own stock decides. `unlimited` is worth
+retrying; `0` is not.
+
 ## Defaults worth stating out loud
 
 - **Autoscaling on, with a ceiling.** A fixed pool holds capacity nobody is

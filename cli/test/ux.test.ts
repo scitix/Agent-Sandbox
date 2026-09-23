@@ -69,6 +69,95 @@ const TEMPLATE = {
   syncSource: 'global',
 }
 
+/**
+ * The quota shapes a caller has to be able to tell apart, taken verbatim from a
+ * live cluster. Five quotas, and between them the three states a ceiling can be
+ * in: a number, a hard zero, and no ceiling at all.
+ *
+ *  19  ondemand, unchecked, declares nothing at all
+ *  20  shared,   checked,   declares a literal 0 per instance type
+ *  21  exclusive, checked,  declares 160 with 40 in use
+ *  10  ondemand, unchecked, declares nothing but is consuming 299
+ *  34  shared,   unchecked, declares 0s that are NOT a ceiling
+ */
+const QUOTAS = [
+  {
+    id: 'alice.19.team-a.ondemand',
+    name: 'alice.19.team-a.ondemand',
+    team: 'team-a',
+    user: 'alice',
+    metadata: {
+      'quota.scitix.ai/pool-id': '19',
+      'quota.scitix.ai/pool-name': 'demo-ondemand-shared',
+      'quota.scitix.ai/pool-type': 'ondemand',
+      'quota.scitix.ai/skip-check': 'true',
+    },
+    resources: { reserved: null, total: null, used: null },
+  },
+  {
+    id: 'alice.20.team-a.shared',
+    name: 'alice.20.team-a.shared',
+    team: 'team-a',
+    user: 'alice',
+    metadata: {
+      'quota.scitix.ai/pool-id': '20',
+      'quota.scitix.ai/pool-name': 'demo-reserved-shared',
+      'quota.scitix.ai/pool-type': 'shared',
+      'quota.scitix.ai/skip-check': 'false',
+    },
+    resources: { reserved: null, total: { 'sci.c23-2': '0', 'sci.g21-3': '0' }, used: null },
+  },
+  {
+    id: 'alice.21.team-a.exclusive',
+    name: 'alice.21.team-a.exclusive',
+    team: 'team-a',
+    user: 'alice',
+    metadata: {
+      'quota.scitix.ai/pool-id': '21',
+      'quota.scitix.ai/pool-name': 'demo-online',
+      'quota.scitix.ai/pool-type': 'exclusive',
+      'quota.scitix.ai/skip-check': 'false',
+    },
+    resources: {
+      reserved: { 'sci.g21-3': '0' },
+      total: { 'sci.g21-3': '160' },
+      used: { 'sci.g21-3': '40' },
+    },
+  },
+  {
+    id: 'bob.10.team-b.ondemand',
+    name: 'bob.10.team-b.ondemand',
+    team: 'team-b',
+    user: 'bob',
+    metadata: {
+      'quota.scitix.ai/pool-id': '10',
+      'quota.scitix.ai/pool-name': 'demo-ondemand-shared-b',
+      'quota.scitix.ai/pool-type': 'ondemand',
+      'quota.scitix.ai/skip-check': 'true',
+    },
+    // No ceiling declared anywhere, and 299 instance types in use: the map that
+    // carries the keys is `used`, and a row built from `total` alone would be
+    // no row at all.
+    resources: { reserved: { 'sci.c23-2': '0' }, total: null, used: { 'sci.c23-2': '299' } },
+  },
+  {
+    id: 'carol.34.team-a.shared',
+    name: 'carol.34.team-a.shared',
+    team: 'team-a',
+    user: 'carol',
+    metadata: {
+      'quota.scitix.ai/pool-id': '34',
+      'quota.scitix.ai/pool-name': 'demo-idle-pool',
+      'quota.scitix.ai/pool-type': 'shared',
+      'quota.scitix.ai/skip-check': 'true',
+    },
+    // The reason the flag is read before the number: a declared 0 that is not a
+    // ceiling. Reading the 0 as the ceiling marks the one quota that accepts
+    // anything as the one that accepts nothing.
+    resources: { reserved: null, total: { 'sci.c33-1': '0', 'sci.g20-3': '0' }, used: null },
+  },
+]
+
 let server: ReturnType<typeof Bun.serve>
 let base = ''
 let workdir = ''
@@ -206,6 +295,9 @@ beforeAll(() => {
       if (p.endsWith('/v1/sandbox-templates/demo-e2b-typescript')) {
         return json({ template: TEMPLATE })
       }
+      if (p.endsWith('/v1/quotas')) {
+        return json({ items: QUOTAS, limit: 0, offset: 0, total: QUOTAS.length })
+      }
       return json({ error: `nothing here: ${p}` }, 404)
     },
   })
@@ -295,6 +387,76 @@ describe('a get is the object, not a row of the list', () => {
     expect(out).toContain('docs (')
     expect(out).toContain('use ${AGBX_API_KEY}')
     expect(out).toContain('crdYaml (')
+  })
+})
+
+describe('a quota row is a quota and an instance type', () => {
+  it('prints one row per instance type, with the ceiling that is actually enforced', async () => {
+    const { out } = await cli(['quotas', '--cluster', 'prod-foo'])
+    expect(out).toMatch(/^name\s+team\s+poolType\s+pool\s+instanceType\s+used\s+ceiling\s+free\s+note$/m)
+    // A declared ceiling, with the arithmetic done for the reader.
+    expect(out).toMatch(
+      /^alice\.21\.team-a\.exclusive\s+team-a\s+exclusive\s+demo-online\s+sci\.g21-3\s+40\s+160\s+120\s+—$/m,
+    )
+  })
+
+  it('reads a declared 0 as no allowance, because the check is on', async () => {
+    const { out } = await cli(['quotas', '--cluster', 'prod-foo'])
+    const rows = out.match(/^alice\.20\.team-a\.shared.*$/gm) ?? []
+    expect(rows).toHaveLength(2) // one per instance type
+    for (const row of rows) expect(row).toMatch(/\s0\s+0\s+no quota allocated$/)
+  })
+
+  it('marks an unchecked quota unlimited, and still shows what is running on it', async () => {
+    const { out } = await cli(['quotas', '--cluster', 'prod-foo'])
+    // Nothing declared at all — the ondemand shape — is a row, not an absence:
+    // it is the state a caller most needs to see, because it is usable.
+    expect(out).toMatch(
+      /^alice\.19\.team-a\.ondemand\s+team-a\s+ondemand\s+\S+\s+—\s+—\s+unlimited\s+—\s+no cap/m,
+    )
+    // 299 in use with no ceiling declared anywhere: the row comes from the map
+    // that has the keys (`used`), which one-row-per-quota never looked at.
+    expect(out).toMatch(
+      /^bob\.10\.team-b\.ondemand\s+team-b\s+ondemand\s+\S+\s+sci\.c23-2\s+299\s+unlimited/m,
+    )
+  })
+
+  it('lets the flag decide a 0, not the number', async () => {
+    const { out } = await cli(['quotas', '--cluster', 'prod-foo'])
+    // Same shape as the hard zero above — declared 0s, a shared pool — and the
+    // opposite answer, because this deployment skips the check.
+    expect(out).toMatch(
+      /^carol\.34\.team-a\.shared\s+team-a\s+shared\s+\S+\s+sci\.c33-1\s+—\s+unlimited/m,
+    )
+  })
+
+  it('filters on a pool type the projection made addressable', async () => {
+    const all = await cli(['quotas', '--cluster', 'prod-foo'])
+    const ondemand = await cli(['quotas', '--cluster', 'prod-foo', '--filter', 'poolType=ondemand'])
+    expect(ondemand.out).toMatch(/alice\.19\.team-a\.ondemand/)
+    expect(ondemand.out).toMatch(/bob\.10\.team-b\.ondemand/)
+    expect(ondemand.out).not.toMatch(/alice\.21\.team-a\.exclusive/)
+    // A filter still narrows rather than reshaping: same headings, fewer rows.
+    // (Line 0 is the count line, which is supposed to move.)
+    expect(ondemand.out.split('\n')[1]).toBe(all.out.split('\n')[1])
+    expect(all.out).toMatch(/^quota · prod-foo · 7 total$/m)
+  })
+
+  it('leaves --json the response, not the projection', async () => {
+    const { out } = await cli(['quotas', '--cluster', 'prod-foo', '--json'])
+    const rows = JSON.parse(out) as Record<string, unknown>[]
+    expect(rows).toHaveLength(QUOTAS.length) // one per quota, not per instance type
+    expect(rows[0]).toHaveProperty('resources')
+    expect(rows[0]).not.toHaveProperty('instanceType')
+    expect(rows[0]).not.toHaveProperty('ceiling')
+  })
+
+  it('carries the reading into --csv, where a marker has to be a word', async () => {
+    const { out } = await cli(['quotas', '--cluster', 'prod-foo', '--csv'])
+    const [header, ...rows] = out.trim().split('\n')
+    expect(header).toBe('name,team,poolType,pool,instanceType,used,ceiling,free,note')
+    expect(rows.some((r) => r.includes('unlimited'))).toBe(true)
+    expect(rows.some((r) => r.includes('no quota allocated'))).toBe(true)
   })
 })
 

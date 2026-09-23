@@ -36,7 +36,7 @@ import {
 } from '@headless/index'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { applyFilters, hints, renderDetail, renderTable, visibleColumns } from '../src/render'
+import { applyFilters, expandRows, hints, renderDetail, renderTable, visibleColumns } from '../src/render'
 import { generate, generateForDashboard } from '../../scripts/gen-body-docs'
 import { WRITE_DOCS } from '@headless/index'
 import {
@@ -138,6 +138,71 @@ describe('the table is the vocabulary', () => {
     const out = renderTable(pools, [row], ctx)
     expect(out).toContain('3')
     expect(out).toContain('2')
+  })
+})
+
+/**
+ * A quota holds a map per instance type, and which map has the keys decides
+ * which rows exist.
+ *
+ * This is the projection that was missing: the columns used to name `used` and
+ * `total` at the top level of a response that has neither, so every quota in
+ * every deployment printed `used — total —` and the numbers — which were in the
+ * response all along, one level down and keyed by instance type — were never
+ * read. What each state MEANS is asserted against a verbatim live response in
+ * ux.test.ts; what is asserted here is the shape of the row set.
+ */
+describe('one quota is one row per instance type', () => {
+  const quotas = RESOURCES.find(r => r.plural === 'quotas')!
+  const item = {
+    id: 'alice.19.team-a.ondemand',
+    name: 'alice.19.team-a.ondemand',
+    team: 'team-a',
+    metadata: {
+      'quota.scitix.ai/pool-id': '19',
+      'quota.scitix.ai/pool-name': 'demo-ondemand-shared',
+      'quota.scitix.ai/pool-type': 'ondemand',
+      'quota.scitix.ai/skip-check': 'true',
+    },
+  }
+  const rowFor = (resources: unknown, skipCheck = 'true') =>
+    expandRows(quotas, [
+      { ...item, metadata: { ...item.metadata, 'quota.scitix.ai/skip-check': skipCheck }, resources },
+    ]) as Record<string, unknown>[]
+
+  it('takes the keys from every map, not only the ceiling one', () => {
+    // No ceiling declared anywhere and 299 in use: `used` is the only map with
+    // a key, and a row set built from `total` would be empty.
+    const rows = rowFor({ reserved: { 'sci.c23-2': '0' }, total: null, used: { 'sci.c23-2': '299' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].instanceType).toBe('sci.c23-2')
+    expect(renderTable(quotas, rows, ctx)).toMatch(/sci\.c23-2\s+299\s+unlimited/)
+  })
+
+  it('keeps a quota that declares nothing as one row', () => {
+    const rows = rowFor({ reserved: null, total: null, used: null })
+    expect(rows).toHaveLength(1)
+    expect(renderTable(quotas, rows, ctx)).toMatch(/^alice\.19\.team-a\.ondemand\s/m)
+  })
+
+  it('reads a provider hint whose key contains dots', () => {
+    const rows = rowFor({ reserved: null, total: { 'sci.g21-3': '160' }, used: null })
+    expect(renderTable(quotas, rows, ctx)).toMatch(/ondemand\s+demo-ondemand-shared/)
+  })
+
+  it('carries the numbers through, per instance type', () => {
+    // The checked shape: a number is a ceiling, and free is what is left of it.
+    const rows = rowFor(
+      { reserved: { 'sci.g21-3': '0' }, total: { 'sci.g21-3': '160' }, used: { 'sci.g21-3': '40' } },
+      'false',
+    )
+    expect(renderTable(quotas, rows, ctx)).toMatch(/sci\.g21-3\s+40\s+160\s+120/)
+  })
+
+  it('leaves a resource with no such maps exactly as it was', () => {
+    const pools = RESOURCES.find(r => r.plural === 'pools')!
+    const rows = [{ name: 'p', spec: { replicas: 3 } }]
+    expect(expandRows(pools, rows)).toEqual(rows)
   })
 })
 

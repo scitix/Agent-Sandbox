@@ -32,6 +32,13 @@ interface ResourceCardProps {
   total: number
   usedPct: number
   reservedPct: number
+  /**
+   * The deployment skips its quota check on this pool, so the numbers are not
+   * a limit — the pool's own stock is, and the sandbox may or may not start.
+   */
+  unchecked: boolean
+  /** Checked, and the ceiling is a literal 0: nothing allocated. */
+  noQuota: boolean
 }
 
 function ResourceCard({
@@ -42,6 +49,8 @@ function ResourceCard({
   total,
   usedPct,
   reservedPct,
+  unchecked,
+  noQuota,
 }: ResourceCardProps) {
   const { t } = useTranslation()
   return (
@@ -54,26 +63,53 @@ function ResourceCard({
           </span>
         </div>
 
-        <div className="text-foreground mb-1 font-mono text-3xl font-bold">
-          {used}
-          <span className="text-muted-foreground text-lg font-normal"> / {total}</span>
-        </div>
-        <div className="text-muted-foreground mb-3 font-mono text-xs">{t("quota.usedTotal")}</div>
+        {unchecked ? (
+          <div className="mb-1 flex flex-wrap items-baseline gap-2">
+            <span className="text-foreground font-mono text-3xl font-bold">{used}</span>
+            <span
+              className="border-brand/40 bg-brand/10 text-brand rounded-md border px-2 py-0.5 font-mono text-xs font-semibold uppercase"
+              title={t("quota.unlimitedHint")}
+            >
+              {t("quota.unlimited")}
+            </span>
+          </div>
+        ) : (
+          <div className="text-foreground mb-1 font-mono text-3xl font-bold">
+            {used}
+            <span className="text-muted-foreground text-lg font-normal"> / {total}</span>
+          </div>
+        )}
+        {noQuota ? (
+          <div
+            className="text-muted-foreground mb-3 font-mono text-xs"
+            title={t("quota.noQuotaHint")}
+          >
+            {t("quota.noQuota")}
+          </div>
+        ) : (
+          <div className="text-muted-foreground mb-3 font-mono text-xs">{t("quota.usedTotal")}</div>
+        )}
 
-        {/* Stacked progress bar: used (brand) + reserved (amber) */}
-        <div className="bg-secondary relative h-1.5 w-full overflow-hidden rounded-full">
-          <div
-            className="bg-brand absolute top-0 left-0 h-full transition-all"
-            style={{ width: `${Math.min(usedPct, 100)}%` }}
-          />
-          <div
-            className="absolute top-0 h-full bg-amber-400 transition-all dark:bg-amber-500"
-            style={{
-              left: `${Math.min(usedPct, 100)}%`,
-              width: `${Math.min(reservedPct, 100 - usedPct)}%`,
-            }}
-          />
-        </div>
+        {/*
+          Stacked progress bar: used (brand) + reserved (amber). Omitted where
+          there is no ceiling to be a fraction OF — a bar against an unlimited
+          pool would be a number the platform never said.
+        */}
+        {!unchecked && (
+          <div className="bg-secondary relative h-1.5 w-full overflow-hidden rounded-full">
+            <div
+              className="bg-brand absolute top-0 left-0 h-full transition-all"
+              style={{ width: `${Math.min(usedPct, 100)}%` }}
+            />
+            <div
+              className="absolute top-0 h-full bg-amber-400 transition-all dark:bg-amber-500"
+              style={{
+                left: `${Math.min(usedPct, 100)}%`,
+                width: `${Math.min(reservedPct, 100 - usedPct)}%`,
+              }}
+            />
+          </div>
+        )}
 
         {/* Stat pills */}
         <div className="mt-3 flex flex-wrap gap-3">
@@ -151,19 +187,33 @@ export default function QuotaPage() {
               const used = quota.resources?.used ?? {}
               const reserved = quota.resources?.reserved ?? {}
               const free = quota.resources?.free
+              // Which maps hold keys depends on the pool. An ondemand quota
+              // states what it is using and no ceiling at all, so a view built
+              // from `total` alone shows a pool with work running on it as one
+              // with no resource data.
+              const keys = [
+                ...new Set(
+                  [total, used, reserved, free].flatMap((m) => Object.keys(m ?? {})),
+                ),
+              ].sort()
+              // The numbers are only a limit where the deployment checks them:
+              // `spec.resources` is what the quota provider calls a HARD limit,
+              // so a literal 0 means "nothing allocated" — unless the check is
+              // skipped, which is how the ondemand and idle pools are built.
+              const { unchecked } = getPoolMeta(quota)
               return (
                 <div key={quota.id}>
                   <QuotaMeta quota={quota} />
-                  {Object.keys(total).length === 0 ? (
+                  {keys.length === 0 ? (
                     <div className="text-muted-foreground py-6 font-mono text-sm">
                       {t("quota.noResourceData")}
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      {Object.entries(total).map(([key, totalValue]) => {
+                      {keys.map((key) => {
                         const usedNum = Number(used[key] ?? "0")
                         const reservedNum = Number(reserved[key] ?? "0")
-                        const totalNum = Number(totalValue)
+                        const totalNum = Number(total[key] ?? "0")
                         const freeNum =
                           free && key in free
                             ? Number(free[key])
@@ -181,6 +231,8 @@ export default function QuotaPage() {
                             total={totalNum}
                             usedPct={usedPct}
                             reservedPct={reservedPct}
+                            unchecked={unchecked}
+                            noQuota={!unchecked && total[key] !== undefined && totalNum === 0}
                           />
                         )
                       })}
