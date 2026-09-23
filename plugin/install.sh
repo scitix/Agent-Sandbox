@@ -70,4 +70,6 @@ next:
   export AGENTBOX_API_KEY=...     # issued in the console under API keys
   abx whoami
   abx agent-context               # the whole tool, as JSON
+
+  abx upgrade                     # later, when there is a newer release
 EOF

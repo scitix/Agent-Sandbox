@@ -94,6 +94,7 @@ import {
   renderTable,
   visibleColumns,
 } from './render'
+import { DEFAULT_BASE, upgrade } from './update'
 import { agentContext } from './agent-context'
 
 declare const AGBX_CLI_VERSION: string
@@ -152,6 +153,10 @@ const FLAGS: Record<string, boolean> = {
   schema: false,
   csv: false,
   wide: false,
+  // `abx upgrade` only. Read nowhere else, but a flat flag table is what this
+  // CLI has, and an inert flag is the same trade `--wide` already makes.
+  check: false,
+  force: false,
   version: false,
   help: false,
   h: false,
@@ -345,6 +350,65 @@ function helpSubject(tokens: string[]): (typeof RESOURCES)[number] | undefined {
  * usage, which named the command and then stopped — leaving `use`, the one
  * verb someone with two contexts is looking for, nowhere to be found.
  */
+/**
+ * `abx upgrade` — the CLI replacing itself, and its own page.
+ *
+ * No deployment is read for this one. What it replaces is a file on this
+ * machine, which no console and no cluster can answer for — and the binary most
+ * in need of an upgrade is the one whose bucket, key or cluster is exactly what
+ * is not working.
+ *
+ * The verb is `upgrade` and not `update` because `update` is already taken: it
+ * changes one existing platform object from a file, and one word with two
+ * meanings is a coin flip for whoever typed it.
+ */
+async function upgradeCommand(
+  flags: Record<string, string | boolean>,
+  positional: string[],
+): Promise<number> {
+  if (positional.length > 1) {
+    throw new CliError(
+      'abx upgrade takes no address',
+      'it replaces the abx binary itself. The verbs that act on the platform ' +
+        'are create, update, delete and scale.',
+    )
+  }
+  console.log(
+    await upgrade(
+      {
+        version: VERSION,
+        execPath: process.execPath,
+        base: process.env.AGBX_CLI_BASE || DEFAULT_BASE,
+        os: process.platform,
+        arch: process.arch,
+        fetch,
+      },
+      { check: Boolean(flags.check), force: Boolean(flags.force) },
+    ),
+  )
+  return 0
+}
+
+function upgradeHelp(): string {
+  return [
+    'abx upgrade — replace this CLI with the latest release.',
+    '',
+    'It reads the same bucket `install.sh` installs from (AGBX_CLI_BASE names',
+    'another one), compares the version there against this build, downloads the',
+    'binary for this platform, checks it against the published checksum, and',
+    'renames it over the file it is running from. Nothing is written unless the',
+    'download checks out, so a bucket you cannot reach leaves you where you are.',
+    '',
+    'Usage:',
+    '  abx upgrade           install the latest release over this binary',
+    '  abx upgrade --check   say whether there is one, and install nothing',
+    '  abx upgrade --force   install it even when the version already matches',
+    '',
+    'The new binary takes effect on the next run, not this one.',
+    'This is not `abx update`, which changes one platform object from a file.',
+  ].join('\n')
+}
+
 function contextHelp(cfg: FileConfig): string {
   const names = contextNames(cfg)
   const out = [
@@ -420,6 +484,7 @@ function usage(role: string | null): string {
     'Other commands:',
     '  whoami         who this key authenticates as',
     '  context        name a deployment, and switch between them',
+    '  upgrade        replace this CLI with the latest release',
     '  agent-context  the whole CLI shape, as JSON',
     '',
     'Global flags:',
@@ -847,6 +912,13 @@ export async function run(argv: string[]): Promise<number> {
     return 0
   }
 
+  // `abx upgrade` is about this machine and not about a deployment: it needs no
+  // config, no key and no cluster, so it is answered before any of them is
+  // read — the binary that cannot reach its bucket is the one that needs it.
+  if (positional[0] === 'upgrade' && !flags.help && !flags.h) {
+    return await upgradeCommand(flags, positional)
+  }
+
   const fileConfig: FileConfig = await readConfig()
 
   if (!positional.length || flags.help || flags.h) {
@@ -856,6 +928,10 @@ export async function run(argv: string[]): Promise<number> {
     // said nothing about how to use it.
     if (positional[0] === 'context' || positional[0] === 'contexts') {
       console.log(contextHelp(fileConfig))
+      return 0
+    }
+    if (positional[0] === 'upgrade') {
+      console.log(upgradeHelp())
       return 0
     }
     // What to advertise depends on who is asking, and the answer is cached
@@ -954,6 +1030,20 @@ export async function run(argv: string[]): Promise<number> {
   // mistyped resource is answered with "unknown resource" rather than with
   // advice about a cluster — or a missing endpoint — it was never going to
   // reach. Nothing below this line can run without a valid address.
+  //
+  // A verb with nothing after it is that same mistake the other way round, and
+  // for `update` it is also what someone types meaning "update abx" — so it is
+  // answered here, where the word they did want can still be named.
+  if (verb && !parsed.resource) {
+    throw new CliError(
+      `${verb} needs an address, and none was given`,
+      verb === 'update'
+        ? 'abx update <item…> -f FILE — name which object to change.\n' +
+          'to replace the abx binary itself: abx upgrade'
+        : `abx ${verb} <address…> — run \`abx\` to see the addresses`,
+    )
+  }
+
   const bad = addressError(parsed)
   if (bad) throw new CliError(bad)
 

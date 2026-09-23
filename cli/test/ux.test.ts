@@ -506,6 +506,32 @@ describe('a held write says where to release it', () => {
   })
 })
 
+describe('upgrading the CLI is not the update verb', () => {
+  it('bare `abx update` names the word that does it', async () => {
+    const { err } = await cli(['update'])
+    // The verb they typed is real, so the answer says what it is missing and
+    // what they probably meant, in that order.
+    expect(err).toContain('update needs an address')
+    expect(err).toContain('abx upgrade')
+  })
+
+  it('`abx upgrade` explains itself without a deployment', async () => {
+    const { code, out } = await cli(['upgrade', '--help'])
+    expect(code).toBe(0)
+    expect(out).toContain('replace this CLI with the latest release')
+    expect(out).toContain('abx upgrade --check')
+    expect(out).toContain('This is not `abx update`')
+  })
+
+  it('a source build will not overwrite the runtime that started it', async () => {
+    // A test binary is a source build, so this is the guard firing rather than
+    // a mock of it: the network is never consulted.
+    const { code, err } = await cli(['upgrade'])
+    expect(code).toBe(1)
+    expect(err).toContain('source build')
+  })
+})
+
 describe('the address is validated before the deployment is', () => {
   it('a mistyped resource is an unknown resource, not a question about clusters', async () => {
     const { err } = await cli(['badtoken'])

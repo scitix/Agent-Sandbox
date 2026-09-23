@@ -34,9 +34,12 @@ import {
   resolveApi,
   rootResources,
 } from '@headless/index'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyFilters, expandRows, hints, renderDetail, renderTable, visibleColumns } from '../src/render'
+import { artifactName, upgrade } from '../src/update'
 import { generate, generateForDashboard } from '../../scripts/gen-body-docs'
 import { WRITE_DOCS } from '@headless/index'
 import {
@@ -203,6 +206,156 @@ describe('one quota is one row per instance type', () => {
     const pools = RESOURCES.find(r => r.plural === 'pools')!
     const rows = [{ name: 'p', spec: { replicas: 3 } }]
     expect(expandRows(pools, rows)).toEqual(rows)
+  })
+})
+
+/**
+ * `abx upgrade` writes one file, and every way of getting it wrong is a way of
+ * leaving that file alone.
+ *
+ * The word is not `update`: that verb already changes a platform object from a
+ * file, and the two share nothing but a direction. What is asserted here is the
+ * whole of the contract — a checksum that does not match writes nothing, a
+ * bucket that cannot be reached writes nothing, a source build refuses before
+ * it goes near the network, and the swap is a checked file renamed over the one
+ * that is running.
+ */
+describe('abx upgrade replaces the binary, and nothing else', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'abx-upgrade-'))
+  const target = join(dir, 'abx')
+  const base = 'https://bucket.test/latest'
+
+  const released = (v: string) => `#!/bin/sh\necho abx ${v}\n`
+  const shaOf = (body: string) => createHash('sha256').update(body).digest('hex')
+
+  /** A bucket: the three objects this reads, and a note of what was asked for. */
+  const bucket = (
+    version: string,
+    opts: { body?: string; sha?: string; versionStatus?: number } = {},
+  ) => {
+    const body = opts.body ?? released(version)
+    const asked: string[] = []
+    const fetch = async (url: string): Promise<Response> => {
+      asked.push(url)
+      if (url.endsWith('/VERSION')) {
+        return new Response(version, { status: opts.versionStatus ?? 200 })
+      }
+      if (url.endsWith('.sha256')) {
+        return new Response(opts.sha ?? `${shaOf(body)}  abx-linux-x64\n`)
+      }
+      return new Response(body)
+    }
+    return { fetch, asked, body }
+  }
+
+  const deps = (fetch: (url: string) => Promise<Response>, version = '0.1.0') => ({
+    version,
+    execPath: target,
+    base,
+    os: 'linux',
+    arch: 'x64',
+    fetch,
+  })
+
+  const installed = (body = released('old')) => writeFileSync(target, body)
+  const installBytes = () => readFileSync(target, 'utf8')
+
+  it('names the release asset the way the bucket spells it', () => {
+    expect(artifactName('linux', 'x64')).toBe('abx-linux-x64')
+    expect(artifactName('darwin', 'arm64')).toBe('abx-darwin-arm64')
+    // No build is published for these, and fetching something else would be
+    // worse than saying so.
+    expect(artifactName('win32', 'x64')).toBeUndefined()
+    expect(artifactName('linux', 'ia32')).toBeUndefined()
+  })
+
+  it('says it is current, and does not download the release to find out', async () => {
+    const b = bucket('0.1.0')
+    installed()
+    expect(await upgrade(deps(b.fetch))).toBe('abx 0.1.0 is the latest')
+    expect(b.asked).toEqual([`${base}/VERSION`])
+  })
+
+  it('installs the release over the file it is running from', async () => {
+    const b = bucket('0.2.0')
+    installed()
+    expect(await upgrade(deps(b.fetch))).toContain('upgraded abx 0.1.0 → 0.2.0')
+    expect(installBytes()).toBe(b.body)
+    // The replaced file has to be runnable, or the next command fails at the
+    // shell rather than in abx.
+    expect(statSync(target).mode & 0o111).not.toBe(0)
+  })
+
+  it('writes nothing when the download does not match its checksum', async () => {
+    const b = bucket('0.2.0', { sha: `${shaOf('something else')}  abx-linux-x64\n` })
+    installed()
+    await expect(upgrade(deps(b.fetch))).rejects.toThrow(/does not match its checksum/)
+    expect(installBytes()).toBe(released('old'))
+  })
+
+  it('writes nothing when the release publishes no checksum', async () => {
+    const b = bucket('0.2.0', { sha: '\n' })
+    installed()
+    await expect(upgrade(deps(b.fetch))).rejects.toThrow(/publishes no checksum/)
+    expect(installBytes()).toBe(released('old'))
+  })
+
+  it('names the bucket it could not reach, and stays put', async () => {
+    installed()
+    const down = async (): Promise<Response> => {
+      throw new Error('connect ECONNREFUSED')
+    }
+    await expect(upgrade(deps(down))).rejects.toThrow(/cannot reach the release bucket/)
+    expect(installBytes()).toBe(released('old'))
+  })
+
+  it('--check answers with the version, and installs nothing', async () => {
+    const b = bucket('0.2.0')
+    installed()
+    expect(await upgrade(deps(b.fetch), { check: true })).toBe('abx 0.1.0 — 0.2.0 is available')
+    expect(b.asked).toEqual([`${base}/VERSION`])
+    expect(installBytes()).toBe(released('old'))
+  })
+
+  it('--force reinstalls a version that already matches', async () => {
+    const b = bucket('0.1.0', { body: released('0.1.0 rebuilt') })
+    installed()
+    await upgrade(deps(b.fetch), { force: true })
+    expect(installBytes()).toBe(released('0.1.0 rebuilt'))
+  })
+
+  it('a source build refuses before it goes near the network', async () => {
+    installed()
+    let asked = 0
+    const counting = async (): Promise<Response> => {
+      asked++
+      return new Response('0.2.0')
+    }
+    await expect(upgrade(deps(counting, 'dev'))).rejects.toThrow(/source build/)
+    expect(asked).toBe(0)
+  })
+
+  it('refuses a platform the release does not cover', async () => {
+    installed()
+    await expect(upgrade({ ...deps(bucket('0.2.0').fetch), os: 'win32' })).rejects.toThrow(
+      /no abx release/,
+    )
+  })
+
+  it('reports a directory it cannot write to, rather than swallowing it', async () => {
+    // Skipped as root, which the read-only bit does not stop.
+    if (process.getuid?.() === 0) return
+    const b = bucket('0.2.0')
+    const locked = mkdtempSync(join(tmpdir(), 'abx-locked-'))
+    const file = join(locked, 'abx')
+    writeFileSync(file, released('old'))
+    chmodSync(locked, 0o500)
+    try {
+      await expect(upgrade({ ...deps(b.fetch), execPath: file })).rejects.toThrow(/cannot replace/)
+    } finally {
+      chmodSync(locked, 0o700)
+    }
+    expect(readFileSync(file, 'utf8')).toBe(released('old'))
   })
 })
 
@@ -627,7 +780,14 @@ describe('contexts name deployments, clusters name their clusters', () => {
     // compiled into the binary would publish an internal hostname AND point
     // every fresh install at somebody else's platform — so the only hosts
     // allowed in the source are the licence header and documentation examples.
-    const allowed = /^(www\.apache\.org|.*\.example|example\.(com|test|invalid))$/
+    //
+    // The release bucket is the one exception, and it is a different kind of
+    // address: it belongs to this project rather than to a deployment, it is
+    // already public (install.sh and the plugin shim print the same one), and
+    // `abx upgrade` cannot fetch a release without knowing where releases are.
+    // A deployment that mirrors them points AGBX_CLI_BASE at its own.
+    const allowed =
+      /^(www\.apache\.org|.*\.example|example\.(com|test|invalid)|oss-ap-southeast\.scitix\.ai)$/
     for (const file of readdirSync(join(import.meta.dir, '..', 'src'))) {
       const src = readFileSync(join(import.meta.dir, '..', 'src', file), 'utf8')
       for (const m of src.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) {
