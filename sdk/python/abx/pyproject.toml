@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentbox-sdk"
-version = "0.1.8"
+version = "0.1.9"
 description = "AgentBox Python SDK — manage Sandboxes, Pools, and Templates via async/await. The `abx` CLI is a separate, compiled binary; this package is the library only."
 readme = "README.md"
 license = { text = "Apache-2.0" }
