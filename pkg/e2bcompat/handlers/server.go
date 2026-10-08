@@ -413,7 +413,10 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 		}
 	}
 
-	result, appErr := s.sandbox.Create(ctx, input)
+	// Create waits for a claim and for arming, which can take minutes. A
+	// caller that gives up first must release the sandbox rather than leave
+	// it held for an ID nobody will receive.
+	result, appErr := s.sandbox.Create(httpctx.WithClientCancel(ctx), input)
 	if appErr != nil {
 		switch appErr.Code {
 		// A missing Env reads as a bad templateID rather than a missing

@@ -854,7 +854,14 @@ func (s *k8sSandboxService) Create(ctx context.Context, input CreateSandboxInput
 	// goroutines.
 	if armWait != nil {
 		if armErr := s.awaitArming(ctx, armWait, pod, sandboxID); armErr != nil {
-			s.releaseAfterFailedArm(pod, pool)
+			// A caller that went away is a cancellation, not a sandbox failure;
+			// recording it as Failed sends whoever reads the history looking for
+			// a fault that was never there.
+			reason := agentsv1alpha1.SandboxStopReasonFailed
+			if ctx.Err() != nil {
+				reason = agentsv1alpha1.SandboxStopReasonCanceled
+			}
+			s.releaseAfterFailedArm(pod, pool, reason)
 			pkgmetrics.SandboxCreateTotal.With(mkCreateLabels("error")).Inc()
 			return nil, armErr
 		}
@@ -2165,10 +2172,10 @@ func (s *k8sSandboxService) checkStillOurs(ctx context.Context, key client.Objec
 // out. Uses a background context: the request context is usually already done
 // (that is often why we are here), and leaving the Pod claimed would strand it
 // until the idle-timeout sweep.
-func (s *k8sSandboxService) releaseAfterFailedArm(pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool) {
+func (s *k8sSandboxService) releaseAfterFailedArm(pod *corev1.Pod, pool *agentsv1alpha1.SandboxPool, reason agentsv1alpha1.SandboxStopReason) {
 	if _, err := sandboxpool.ReleaseSandboxPod(context.Background(), s.client, pod, pool,
 		sandboxpool.ReleaseSandboxPodOptions{
-			StopReason:   agentsv1alpha1.SandboxStopReasonFailed,
+			StopReason:   reason,
 			TerminatedAt: time.Now().UTC().Format(time.RFC3339),
 		}); err != nil {
 		klog.ErrorS(err, "Create: failed to release pod after arming failure",

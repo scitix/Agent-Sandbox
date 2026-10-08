@@ -16,6 +16,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	apidomain "github.com/scitix/agent-sandbox/pkg/apiserver/domain"
+	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/apiserver/service"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 )
 
@@ -173,5 +176,46 @@ func TestAsV1Path_RewritesForTheCallAndRestores(t *testing.T) {
 		if got := gc.Request.URL.Path; got != in {
 			t.Errorf("%s: path not restored, got %q", in, got)
 		}
+	}
+}
+
+// blockingCreateService waits in Create until its context ends, as the real
+// one does while a claim or arming is pending, and reports whether that end
+// was a cancellation.
+type blockingCreateService struct {
+	mockSandboxService
+	sawCancel chan bool
+}
+
+func (b *blockingCreateService) Create(ctx context.Context, _ service.CreateSandboxInput) (*gen.Sandbox, *apidomain.AppError) {
+	select {
+	case <-ctx.Done():
+		b.sawCancel <- true
+		return nil, apidomain.NewInternal("request canceled by client", ctx.Err())
+	case <-time.After(3 * time.Second):
+		b.sawCancel <- false
+		return &gen.Sandbox{SandboxId: "sbx-late"}, nil
+	}
+}
+
+// A caller that gives up on create must reach the service as a cancellation.
+// Without it the claim runs to completion for nobody: the sandbox is armed and
+// held, and its ID never reaches anyone who could use or delete it.
+func TestPostV2Sandboxes_ClientDisconnectCancelsCreate(t *testing.T) {
+	svc := &blockingCreateService{sawCancel: make(chan bool, 1)}
+	srv := httptest.NewServer(newV2Router(&Server{sandbox: svc}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	b, _ := json.Marshal(e2bgen.NewSandboxV2{TemplateID: "my-env"})
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v2/sandboxes", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		_ = resp.Body.Close()
+	}
+
+	if !<-svc.sawCancel {
+		t.Fatal("create kept running after the client disconnected")
 	}
 }

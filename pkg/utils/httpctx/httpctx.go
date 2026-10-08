@@ -23,6 +23,7 @@ package httpctx
 
 import (
 	"context"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -91,3 +92,36 @@ func authFromGin(gc *gin.Context) domain.AuthInfo {
 	}
 	return auth
 }
+
+// WithClientCancel returns a context that is cancelled when the HTTP client
+// goes away, for a handler that waits on something long enough to outlive
+// its caller.
+//
+// The strict server hands each handler the *gin.Context itself, and with the
+// engine's ContextWithFallback off (the default) its Done/Err/Deadline report
+// nothing: a client that disconnects is invisible to the handler, which keeps
+// waiting and completes work nobody will receive. For create that means a
+// sandbox claimed, armed and held for a caller that never learns its ID, so it
+// stays allocated until the idle sweep.
+//
+// Cancellation is opt-in per handler rather than switched on for the engine:
+// handlers that make several writes, and roll back with the same context, would
+// otherwise abort half-way and fail the rollback too. Values (auth, the gin
+// context itself) still resolve through the *gin.Context, so AuthFrom and
+// GinFromCtx keep working on the result.
+func WithClientCancel(ctx context.Context) context.Context {
+	gc := GinFromCtx(ctx)
+	if gc == nil || gc.Request == nil {
+		return ctx
+	}
+	return clientCancelCtx{Context: ctx, req: gc.Request.Context()}
+}
+
+type clientCancelCtx struct {
+	context.Context
+	req context.Context
+}
+
+func (c clientCancelCtx) Deadline() (time.Time, bool) { return c.req.Deadline() }
+func (c clientCancelCtx) Done() <-chan struct{}       { return c.req.Done() }
+func (c clientCancelCtx) Err() error                  { return c.req.Err() }
