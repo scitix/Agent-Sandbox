@@ -5,6 +5,9 @@ requires-python = ">=3.10"
 [[package]]
 name = "agent-sandbox-e2b"
 source = { editable = "." }
+dependencies = [
+    { name = "e2b" },
+]
 
 [package.optional-dependencies]
 dev = [
@@ -18,6 +21,7 @@ e2b = [
 
 [package.metadata]
 requires-dist = [
+    { name = "e2b", specifier = ">=2.0.0" },
     { name = "e2b", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.0.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },

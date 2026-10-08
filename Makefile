@@ -251,7 +251,10 @@ ADDLICENSE_VERSION ?= v1.2.0
 # so `make gen-internal-proto` is reproducible across machines.
 PROTOC_GEN_GO_VERSION ?= v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
-E2B_SPEC_VERSION ?= 2026.30
+# A tag (e.g. 2026.30) or a commit SHA of e2b-dev/infra. Pinned to a SHA when the
+# SDKs already call an operation no tag carries yet: e2b-python >= 2.51 creates
+# and connects through POST /v2/sandboxes{,/{id}/connect}.
+E2B_SPEC_VERSION ?= ca7f76af355ebadd37f582ef42cf3aef628aa7bf
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \

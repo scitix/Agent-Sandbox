@@ -98,6 +98,9 @@ const (
 	msgLogs = "Sandbox log retrieval is not enabled in this AgentBox deployment. Use the output returned " +
 		"by the command call itself, or read the Pod logs in the AgentBox console."
 
+	msgEvents = "Sandbox lifecycle events and webhooks are not implemented. Poll GET /v2/sandboxes " +
+		"(filter by metadata or state) to observe sandboxes starting and ending instead."
+
 	msgMetrics = "Sandbox metrics are not enabled in this AgentBox deployment. Use the AgentBox console, " +
 		"or ask your platform admin to configure a metrics backend for this cluster."
 )
@@ -145,17 +148,10 @@ func (u unsupported) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWrit
 	return u.write(w)
 }
 func (u unsupported) VisitGetV2TemplatesResponse(w http.ResponseWriter) error { return u.write(w) }
-func (u unsupported) VisitPostTemplatesResponse(w http.ResponseWriter) error  { return u.write(w) }
-func (u unsupported) VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error {
-	return u.write(w)
-}
 func (u unsupported) VisitPatchTemplatesTemplateIDResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }
 func (u unsupported) VisitDeleteTemplatesTemplateIDResponse(w http.ResponseWriter) error {
-	return u.write(w)
-}
-func (u unsupported) VisitPostTemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }
 func (u unsupported) VisitGetTemplatesTemplateIDBuildsBuildIDLogsResponse(w http.ResponseWriter) error {
@@ -167,7 +163,6 @@ func (u unsupported) VisitGetTemplatesTemplateIDBuildsBuildIDStatusResponse(w ht
 func (u unsupported) VisitGetTemplatesTemplateIDFilesHashResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }
-func (u unsupported) VisitPostV2TemplatesResponse(w http.ResponseWriter) error { return u.write(w) }
 func (u unsupported) VisitPatchV2TemplatesTemplateIDResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }
@@ -247,5 +242,26 @@ func (u unsupported) VisitGetV2SandboxesSandboxIDLogsResponse(w http.ResponseWri
 }
 func (u unsupported) VisitGetSandboxesMetricsResponse(w http.ResponseWriter) error { return u.write(w) }
 func (u unsupported) VisitGetSandboxesSandboxIDMetricsResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitGetEventsSandboxesResponse(w http.ResponseWriter) error { return u.write(w) }
+func (u unsupported) VisitGetEventsSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitGetEventsWebhooksResponse(w http.ResponseWriter) error  { return u.write(w) }
+func (u unsupported) VisitPostEventsWebhooksResponse(w http.ResponseWriter) error { return u.write(w) }
+func (u unsupported) VisitGetEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitPatchEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitDeleteEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitGetEventsWebhooksWebhookIDDeliveriesResponse(w http.ResponseWriter) error {
+	return u.write(w)
+}
+func (u unsupported) VisitGetEventsWebhooksWebhookIDStatsResponse(w http.ResponseWriter) error {
 	return u.write(w)
 }

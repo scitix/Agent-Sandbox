@@ -40,6 +40,7 @@ var allMessages = map[string]string{
 	"secrets":        msgSecrets,
 	"logs":           msgLogs,
 	"metrics":        msgMetrics,
+	"events":         msgEvents,
 }
 
 func TestUnsupported_Writes501WithMessage(t *testing.T) {

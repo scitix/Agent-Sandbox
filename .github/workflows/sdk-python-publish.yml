@@ -193,6 +193,12 @@ jobs:
           print("patch_e2b compatibility check passed")
           PY
 
+          # The hook points above can all be intact while the SDK calls a route
+          # the server does not serve (e2b 2.51 moved create to /v2/sandboxes and
+          # every create got a router 404). Check the routes against the spec the
+          # server in this commit is generated from.
+          .compat-venv/bin/python check_sdk_routes.py ../../../pkg/openapi/e2b/openapi.yaml
+
       - name: Stamp supported e2b version
         run: |
           E2B_VERSION="${{ steps.compat.outputs.e2b_version }}"
@@ -207,11 +213,15 @@ jobs:
           e2b_version = os.environ["E2B_VERSION"]
           path = Path("sdk/python/e2b/pyproject.toml")
           text = path.read_text()
-          text = re.sub(
-              r'e2b = \["e2b>=2\.0\.0(?:,[^"]*)?"\]',
-              f'e2b = ["e2b>=2.0.0,<={e2b_version}"]',
+          # Cap both the core dependency and the legacy `e2b` extra, so a plain
+          # `pip install agent-sandbox-e2b` resolves to a checked SDK.
+          text, n = re.subn(
+              r'(dependencies = |e2b = )\["e2b>=2\.0\.0(?:,[^"]*)?"\]',
+              lambda m: f'{m.group(1)}["e2b>=2.0.0,<={e2b_version}"]',
               text,
           )
+          if n != 2:
+              raise SystemExit(f"expected to cap 2 e2b requirements, capped {n}")
           path.write_text(text)
           PY
         env:

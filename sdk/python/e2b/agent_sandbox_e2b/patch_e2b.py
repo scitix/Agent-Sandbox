@@ -31,12 +31,11 @@ Usage:
 """
 
 import os
+import warnings
 from urllib.parse import urlparse
 
 _DEFAULT_DOMAIN = "agentbox-data-plane.agentbox-system.svc.cluster.local"
-_DEFAULT_API_URL = (
-    "http://agentbox-e2b-api.agentbox-system.svc.cluster.local"
-)
+_DEFAULT_API_URL = "http://agentbox-e2b-api.agentbox-system.svc.cluster.local"
 
 
 def _domain_host_and_path(url: str) -> str:
@@ -60,6 +59,38 @@ def _make_sandbox_get_host(resolved_domain: str | None):
         return f"{dom}/sandboxes/{sid}/{port}"
 
     return _get_host
+
+
+def _warn_if_unchecked_e2b() -> None:
+    """Warn when the installed e2b is newer than this release was checked with.
+
+    The dependency is capped at release time, so this only fires when the
+    resolver was bypassed (``--no-deps``, a prebuilt image, a source checkout).
+    A newer SDK can call API routes the server does not serve yet, which
+    surfaces as a bare ``404: 404 page not found`` from ``Sandbox.create``.
+    """
+    from . import SUPPORTED_E2B_MAX_VERSION
+
+    if not SUPPORTED_E2B_MAX_VERSION:
+        return
+    try:
+        import importlib.metadata
+
+        from packaging.version import Version
+
+        installed = importlib.metadata.version("e2b")
+        if Version(installed) > Version(SUPPORTED_E2B_MAX_VERSION):
+            warnings.warn(
+                f"e2b {installed} is newer than {SUPPORTED_E2B_MAX_VERSION}, "
+                "the newest version this agent-sandbox-e2b release was checked "
+                "against. If Sandbox.create fails with '404 page not found', "
+                f"install e2b<={SUPPORTED_E2B_MAX_VERSION} or upgrade "
+                "agent-sandbox-e2b. See the compatibility matrix in the "
+                "agent-sandbox-e2b README.",
+                stacklevel=3,
+            )
+    except Exception:  # noqa: BLE001 - a version check must never break patching
+        pass
 
 
 def _truthy(value: str) -> bool:
@@ -95,6 +126,8 @@ def patch_e2b(
         raise ImportError(
             "The 'e2b' package is required. Install it with: pip install e2b"
         ) from exc
+
+    _warn_if_unchecked_e2b()
 
     if https is None:
         https = _truthy(os.environ.get("E2B_HTTPS", ""))

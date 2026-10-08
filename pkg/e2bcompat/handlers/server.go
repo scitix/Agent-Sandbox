@@ -907,10 +907,6 @@ func (s *Server) GetTeamsTeamIDMetricsMax(_ context.Context, _ e2bgen.GetTeamsTe
 	return unsupportedOp("GetTeamsTeamIDMetricsMax", catArchitectural, msgClusterAdmin), nil
 }
 
-func (s *Server) PostTemplates(_ context.Context, _ e2bgen.PostTemplatesRequestObject) (e2bgen.PostTemplatesResponseObject, error) {
-	return unsupportedOp("PostTemplates", catPlatform, msgTemplateBuild), nil
-}
-
 func (s *Server) GetTemplatesAliasesAlias(_ context.Context, _ e2bgen.GetTemplatesAliasesAliasRequestObject) (e2bgen.GetTemplatesAliasesAliasResponseObject, error) {
 	return unsupportedOp("GetTemplatesAliasesAlias", catUnimplemented, msgTemplateAlias), nil
 }
@@ -929,14 +925,6 @@ func (s *Server) DeleteTemplatesTemplateID(_ context.Context, _ e2bgen.DeleteTem
 
 func (s *Server) PatchTemplatesTemplateID(_ context.Context, _ e2bgen.PatchTemplatesTemplateIDRequestObject) (e2bgen.PatchTemplatesTemplateIDResponseObject, error) {
 	return unsupportedOp("PatchTemplatesTemplateID", catPlatform, msgTemplateBuild), nil
-}
-
-func (s *Server) PostTemplatesTemplateID(_ context.Context, _ e2bgen.PostTemplatesTemplateIDRequestObject) (e2bgen.PostTemplatesTemplateIDResponseObject, error) {
-	return unsupportedOp("PostTemplatesTemplateID", catPlatform, msgTemplateBuild), nil
-}
-
-func (s *Server) PostTemplatesTemplateIDBuildsBuildID(_ context.Context, _ e2bgen.PostTemplatesTemplateIDBuildsBuildIDRequestObject) (e2bgen.PostTemplatesTemplateIDBuildsBuildIDResponseObject, error) {
-	return unsupportedOp("PostTemplatesTemplateIDBuildsBuildID", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) GetTemplatesTemplateIDBuildsBuildIDLogs(_ context.Context, _ e2bgen.GetTemplatesTemplateIDBuildsBuildIDLogsRequestObject) (e2bgen.GetTemplatesTemplateIDBuildsBuildIDLogsResponseObject, error) {
@@ -1101,10 +1089,6 @@ func decodeNextToken(token *string) int {
 		return 0
 	}
 	return n
-}
-
-func (s *Server) PostV2Templates(_ context.Context, _ e2bgen.PostV2TemplatesRequestObject) (e2bgen.PostV2TemplatesResponseObject, error) {
-	return unsupportedOp("PostV2Templates", catPlatform, msgTemplateBuild), nil
 }
 
 func (s *Server) PatchV2TemplatesTemplateID(_ context.Context, _ e2bgen.PatchV2TemplatesTemplateIDRequestObject) (e2bgen.PatchV2TemplatesTemplateIDResponseObject, error) {

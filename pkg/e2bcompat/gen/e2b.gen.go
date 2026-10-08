@@ -240,6 +240,75 @@ func (e TemplateBuildStatus) Valid() bool {
 	}
 }
 
+// Defines values for WebhookDeliveryErrorClass.
+const (
+	Canceled       WebhookDeliveryErrorClass = "canceled"
+	DnsError       WebhookDeliveryErrorClass = "dns_error"
+	HttpError      WebhookDeliveryErrorClass = "http_error"
+	RequestError   WebhookDeliveryErrorClass = "request_error"
+	SignatureError WebhookDeliveryErrorClass = "signature_error"
+	Timeout        WebhookDeliveryErrorClass = "timeout"
+	TransportError WebhookDeliveryErrorClass = "transport_error"
+)
+
+// Valid indicates whether the value is a known member of the WebhookDeliveryErrorClass enum.
+func (e WebhookDeliveryErrorClass) Valid() bool {
+	switch e {
+	case Canceled:
+		return true
+	case DnsError:
+		return true
+	case HttpError:
+		return true
+	case RequestError:
+		return true
+	case SignatureError:
+		return true
+	case Timeout:
+		return true
+	case TransportError:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WebhookDeliveryStatus.
+const (
+	WebhookDeliveryStatusFailed  WebhookDeliveryStatus = "failed"
+	WebhookDeliveryStatusSuccess WebhookDeliveryStatus = "success"
+)
+
+// Valid indicates whether the value is a known member of the WebhookDeliveryStatus enum.
+func (e WebhookDeliveryStatus) Valid() bool {
+	switch e {
+	case WebhookDeliveryStatusFailed:
+		return true
+	case WebhookDeliveryStatusSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus.
+const (
+	GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatusFailed  GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus = "failed"
+	GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatusSuccess GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus = "success"
+)
+
+// Valid indicates whether the value is a known member of the GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus enum.
+func (e GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus) Valid() bool {
+	switch e {
+	case GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatusFailed:
+		return true
+	case GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatusSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetTeamsTeamIDMetricsMaxParamsMetric.
 const (
 	ConcurrentSandboxes GetTeamsTeamIDMetricsMaxParamsMetric = "concurrent_sandboxes"
@@ -356,6 +425,15 @@ type ConnectSandbox struct {
 	Timeout int32 `json:"timeout"`
 }
 
+// ConnectSandboxV2 defines model for ConnectSandboxV2.
+type ConnectSandboxV2 struct {
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	Memory *bool `json:"memory,omitempty"`
+
+	// Timeout Timeout in seconds from the current time after which the sandbox should expire
+	Timeout *int32 `json:"timeout,omitempty"`
+}
+
 // CreatedTeamAPIKey defines model for CreatedTeamAPIKey.
 type CreatedTeamAPIKey struct {
 	// CreatedAt Timestamp of API key creation
@@ -417,7 +495,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed, internal_server_error.
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed, internal_server_error, secret_limit_reached.
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -590,6 +668,37 @@ type NewSandbox struct {
 	VolumeMounts *[]SandboxVolumeMount `json:"volumeMounts,omitempty"`
 }
 
+// NewSandboxV2 Sandbox creation request. All system communication with the sandbox is always secured; the template's envd version must support secured access.
+type NewSandboxV2 struct {
+	// AllowInternetAccess Allow sandbox to access the internet. When set to false, it behaves the same as specifying denyOut to 0.0.0.0/0 in the network config.
+	AllowInternetAccess *bool `json:"allow_internet_access,omitempty"`
+
+	// AutoPause Automatically pauses the sandbox after the timeout
+	AutoPause *bool `json:"autoPause,omitempty"`
+
+	// AutoPauseMemory Controls the snapshot kind taken when the sandbox auto-pauses on timeout (only relevant when autoPause is true). When false, the auto-pause drops the in-memory state and persists only the filesystem (a filesystem-only snapshot); resuming it cold-boots (reboots) the sandbox from disk. Such a snapshot cannot be auto-resumed by traffic and must be resumed explicitly, so it cannot be combined with autoResume. Defaults to true (full memory snapshot).
+	AutoPauseMemory *bool `json:"autoPauseMemory,omitempty"`
+
+	// AutoResume Auto-resume configuration for paused sandboxes.
+	AutoResume *SandboxAutoResumeConfig `json:"autoResume,omitempty"`
+	EnvVars    *EnvVars                 `json:"envVars,omitempty"`
+
+	// Iam Sandbox workload identity configuration. A non-empty, valid tokens map enables workload identity for the sandbox.
+	Iam *SandboxIam `json:"iam,omitempty"`
+
+	// Mcp MCP configuration for the sandbox
+	Mcp      *Mcp                  `json:"mcp,omitempty"`
+	Metadata *SandboxMetadata      `json:"metadata,omitempty"`
+	Network  *SandboxNetworkConfig `json:"network,omitempty"`
+
+	// TemplateID Identifier of the required template
+	TemplateID string `json:"templateID"`
+
+	// Timeout Time to live for the sandbox in seconds.
+	Timeout      *int32                `json:"timeout,omitempty"`
+	VolumeMounts *[]SandboxVolumeMount `json:"volumeMounts,omitempty"`
+}
+
 // NewSecret defines model for NewSecret.
 type NewSecret struct {
 	// Metadata Customer metadata of the secret. Always present, empty when unset. At most 32 entries; keys are limited to 128 bytes, values to 1024 bytes, and a secret's metadata to 8192 bytes in total.
@@ -632,11 +741,14 @@ type Node struct {
 	Id          string      `json:"id"`
 	MachineInfo MachineInfo `json:"machineInfo"`
 
+	// MaxSandboxes Cached node-scoped sandbox admission limit. Nonpositive values reject creation.
+	MaxSandboxes int64 `json:"maxSandboxes"`
+
 	// Metrics Node metrics
 	Metrics NodeMetrics `json:"metrics"`
 
-	// OutstandingWork Observed work holds on the node. Omitted when unknown; zero does not authorize deletion.
-	OutstandingWork *uint64 `json:"outstandingWork,omitempty"`
+	// OutstandingWork Cached count of work holds on the node. Zero means idle or not yet reported; it does not by itself authorize deletion.
+	OutstandingWork uint64 `json:"outstandingWork"`
 
 	// SandboxCount Number of sandboxes running on the node
 	SandboxCount uint32 `json:"sandboxCount"`
@@ -676,11 +788,14 @@ type NodeDetail struct {
 	Id          string      `json:"id"`
 	MachineInfo MachineInfo `json:"machineInfo"`
 
+	// MaxSandboxes Cached node-scoped sandbox admission limit. Nonpositive values reject creation.
+	MaxSandboxes int64 `json:"maxSandboxes"`
+
 	// Metrics Node metrics
 	Metrics NodeMetrics `json:"metrics"`
 
-	// OutstandingWork Observed work holds on the node. Omitted when unknown; zero does not authorize deletion.
-	OutstandingWork *uint64 `json:"outstandingWork,omitempty"`
+	// OutstandingWork Cached count of work holds on the node. Zero means idle or not yet reported; it does not by itself authorize deletion.
+	OutstandingWork uint64 `json:"outstandingWork"`
 
 	// SandboxCount Number of sandboxes running on the node
 	SandboxCount uint32 `json:"sandboxCount"`
@@ -925,8 +1040,64 @@ type SandboxEgressProxyConfig struct {
 	// Password Optional SOCKS5 password (RFC 1929), max 255 bytes.
 	Password *string `json:"password,omitempty"`
 
+	// Tls TLS for the connection to the SOCKS5 proxy. The SOCKS5 negotiation and the tunneled traffic both run inside the TLS session, so the proxy credentials are not sent in the clear. This secures only the hop to the proxy; what the proxy does onward is its own concern. A half-close from the sandbox reaches the proxy as a TLS close_notify, not a TCP FIN, and a proxy that treats close_notify as a full close cuts the reply short.
+	Tls *SandboxEgressProxyTLSConfig `json:"tls,omitempty"`
+
 	// Username Optional SOCKS5 username (RFC 1929), max 255 bytes.
 	Username *string `json:"username,omitempty"`
+}
+
+// SandboxEgressProxyTLSConfig TLS for the connection to the SOCKS5 proxy. The SOCKS5 negotiation and the tunneled traffic both run inside the TLS session, so the proxy credentials are not sent in the clear. This secures only the hop to the proxy; what the proxy does onward is its own concern. A half-close from the sandbox reaches the proxy as a TLS close_notify, not a TCP FIN, and a proxy that treats close_notify as a full close cuts the reply short.
+type SandboxEgressProxyTLSConfig struct {
+	// CaCert One or more PEM-encoded certificates to verify the proxy against, for a proxy fronted by a private CA. These replace the system trust store, which is what is used when this is omitted. The system trust store depends on the host the orchestrator runs on, so set this to get the same verification everywhere.
+	CaCert *string `json:"caCert,omitempty"`
+
+	// Enabled Connect to the proxy over TLS. When false, no other field in this object may be set.
+	Enabled bool `json:"enabled"`
+
+	// ServerName Name to verify the proxy certificate against, and to send as SNI. Defaults to the host part of address. Set this only when the certificate does not match the address the proxy is reached at.
+	ServerName *string `json:"serverName,omitempty"`
+}
+
+// SandboxEvent Sandbox event
+type SandboxEvent struct {
+	// EventCategory Category of the event (e.g., 'lifecycle', 'process', etc.)
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	EventCategory *string `json:"eventCategory,omitempty"`
+
+	// EventData Optional JSON data associated with the event
+	EventData *map[string]interface{} `json:"eventData,omitempty"`
+
+	// EventLabel Label for the specific event type (e.g., 'sandbox_started', 'process_oom', etc.)
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	EventLabel *string `json:"eventLabel,omitempty"`
+
+	// Id Event unique identifier
+	Id openapi_types.UUID `json:"id"`
+
+	// SandboxBuildId Unique identifier for the sandbox build
+	SandboxBuildId string `json:"sandboxBuildId"`
+
+	// SandboxExecutionId Unique identifier for the sandbox execution
+	SandboxExecutionId string `json:"sandboxExecutionId"`
+
+	// SandboxId Unique identifier for the sandbox
+	SandboxId string `json:"sandboxId"`
+
+	// SandboxTeamId Team identifier associated with the sandbox
+	SandboxTeamId openapi_types.UUID `json:"sandboxTeamId"`
+
+	// SandboxTemplateId Unique identifier for the sandbox template
+	SandboxTemplateId string `json:"sandboxTemplateId"`
+
+	// Timestamp Timestamp of the event
+	Timestamp time.Time `json:"timestamp"`
+
+	// Type Event name
+	Type string `json:"type"`
+
+	// Version Event structure version
+	Version string `json:"version"`
 }
 
 // SandboxForkRequest defines model for SandboxForkRequest.
@@ -1114,6 +1285,9 @@ type SandboxRefreshRequest struct {
 
 // SandboxSnapshotRequest defines model for SandboxSnapshotRequest.
 type SandboxSnapshotRequest struct {
+	// Memory Whether to capture a full memory snapshot. When false, only the filesystem is persisted: the snapshot is smaller and faster to take, and sandboxes created from it cold-boot (start fresh from disk) instead of restoring memory, so they begin without the source sandbox's running processes, in-memory state, and open connections. The source sandbox keeps running in both cases. Defaults to true.
+	Memory *bool `json:"memory,omitempty"`
+
 	// Name Optional name for the snapshot template. If a snapshot template with this name already exists, a new build will be assigned to the existing template instead of creating a new one.
 	Name *string `json:"name,omitempty"`
 }
@@ -1332,6 +1506,9 @@ type TemplateBuild struct {
 
 // TemplateBuildFileUpload defines model for TemplateBuildFileUpload.
 type TemplateBuildFileUpload struct {
+	// Headers Request headers that must be sent with the upload request
+	Headers *map[string]string `json:"headers,omitempty"`
+
 	// Present Whether the file is already present in the cache
 	Present bool `json:"present"`
 
@@ -1347,7 +1524,8 @@ type TemplateBuildInfo struct {
 	// LogEntries Build logs structured
 	LogEntries []BuildLogEntry `json:"logEntries"`
 
-	// Logs Build logs
+	// Logs Build logs (always empty since the V1 build path was removed, use logEntries)
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Logs   []string           `json:"logs"`
 	Reason *BuildStatusReason `json:"reason,omitempty"`
 
@@ -1362,46 +1540,6 @@ type TemplateBuildInfo struct {
 type TemplateBuildLogsResponse struct {
 	// Logs Build logs structured
 	Logs []BuildLogEntry `json:"logs"`
-}
-
-// TemplateBuildRequest defines model for TemplateBuildRequest.
-type TemplateBuildRequest struct {
-	// Alias Alias of the template
-	Alias *string `json:"alias,omitempty"`
-
-	// CpuCount CPU cores for the sandbox
-	CpuCount *CPUCount `json:"cpuCount,omitempty"`
-
-	// Dockerfile Dockerfile for the template
-	Dockerfile string `json:"dockerfile"`
-
-	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
-
-	// ReadyCmd Ready check command to execute in the template after the build
-	ReadyCmd *string `json:"readyCmd,omitempty"`
-
-	// StartCmd Start command to execute in the template after the build
-	StartCmd *string `json:"startCmd,omitempty"`
-
-	// TeamID Identifier of the team
-	TeamID *string `json:"teamID,omitempty"`
-}
-
-// TemplateBuildRequestV2 defines model for TemplateBuildRequestV2.
-type TemplateBuildRequestV2 struct {
-	// Alias Alias of the template
-	Alias string `json:"alias"`
-
-	// CpuCount CPU cores for the sandbox
-	CpuCount *CPUCount `json:"cpuCount,omitempty"`
-
-	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
-
-	// TeamID Identifier of the team
-	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	TeamID *string `json:"teamID,omitempty"`
 }
 
 // TemplateBuildRequestV3 defines model for TemplateBuildRequestV3.
@@ -1425,12 +1563,12 @@ type TemplateBuildRequestV3 struct {
 	// Tags Tags to assign to the template build
 	Tags *[]string `json:"tags,omitempty"`
 
-	// TeamID Identifier of the team
+	// TeamID Identifier of the team, as its UUID or its public project ID (prj_)
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	TeamID *string `json:"teamID,omitempty"`
 }
 
-// TemplateBuildStartV2 defines model for TemplateBuildStartV2.
+// TemplateBuildStartV2 Exactly one of fromImage or fromTemplate must be given and non-empty.
 type TemplateBuildStartV2 struct {
 	// Force Whether the whole build should be forced to run regardless of the cache
 	Force *bool `json:"force,omitempty"`
@@ -1454,49 +1592,6 @@ type TemplateBuildStartV2 struct {
 
 // TemplateBuildStatus Status of the template build
 type TemplateBuildStatus string
-
-// TemplateLegacy defines model for TemplateLegacy.
-type TemplateLegacy struct {
-	// Aliases Aliases of the template
-	Aliases []string `json:"aliases"`
-
-	// BuildCount Number of times the template was built
-	BuildCount int32 `json:"buildCount"`
-
-	// BuildID Identifier of the last successful build for given template
-	BuildID string `json:"buildID"`
-
-	// CpuCount CPU cores for the sandbox
-	CpuCount CPUCount `json:"cpuCount"`
-
-	// CreatedAt Time when the template was created
-	CreatedAt time.Time `json:"createdAt"`
-	CreatedBy *TeamUser `json:"createdBy"`
-
-	// DiskSizeMB Disk size for the sandbox in MiB
-	DiskSizeMB DiskSizeMB `json:"diskSizeMB"`
-
-	// EnvdVersion Version of the envd running in the sandbox
-	EnvdVersion EnvdVersion `json:"envdVersion"`
-
-	// LastSpawnedAt Time when the template was last used
-	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
-
-	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB MemoryMB `json:"memoryMB"`
-
-	// Public Whether the template is public or only accessible by the team
-	Public bool `json:"public"`
-
-	// SpawnCount Number of times the template was used
-	SpawnCount int64 `json:"spawnCount"`
-
-	// TemplateID Identifier of the template
-	TemplateID string `json:"templateID"`
-
-	// UpdatedAt Time when the template was last updated
-	UpdatedAt time.Time `json:"updatedAt"`
-}
 
 // TemplateRequestResponseV3 defines model for TemplateRequestResponseV3.
 type TemplateRequestResponseV3 struct {
@@ -1525,7 +1620,7 @@ type TemplateStep struct {
 	// Args Arguments for the step
 	Args *[]string `json:"args,omitempty"`
 
-	// FilesHash Hash of the files used in the step
+	// FilesHash Hash of the files used in the step (lowercase hex SHA-256)
 	FilesHash *string `json:"filesHash,omitempty"`
 
 	// Force Whether the step should be forced to run regardless of the cache
@@ -1623,6 +1718,168 @@ type VolumeAndToken struct {
 	VolumeID string `json:"volumeID"`
 }
 
+// WebhookConfiguration Configuration for updating existing webhooks
+type WebhookConfiguration struct {
+	Enabled *bool     `json:"enabled,omitempty"`
+	Events  *[]string `json:"events,omitempty"`
+
+	// Name Webhook user friendly name
+	Name *string `json:"name,omitempty"`
+
+	// SignatureSecret Secret used to sign the webhook payloads
+	SignatureSecret *string `json:"signatureSecret,omitempty"`
+	Url             *string `json:"url,omitempty"`
+}
+
+// WebhookCreate Configuration for registering new webhooks
+type WebhookCreate struct {
+	Enabled *bool    `json:"enabled,omitempty"`
+	Events  []string `json:"events"`
+	Name    string   `json:"name"`
+
+	// SignatureSecret Secret used to sign the webhook payloads
+	SignatureSecret string `json:"signatureSecret"`
+	Url             string `json:"url"`
+}
+
+// WebhookCreation Webhook creation response
+type WebhookCreation struct {
+	// CreatedAt Time when the template was created
+	CreatedAt time.Time `json:"createdAt"`
+	Enabled   bool      `json:"enabled"`
+	Events    []string  `json:"events"`
+
+	// Id Webhook unique identifier
+	Id string `json:"id"`
+
+	// Name Webhook user friendly name
+	Name string `json:"name"`
+
+	// TeamId Unique identifier for the team
+	TeamId string `json:"teamId"`
+	Url    string `json:"url"`
+}
+
+// WebhookDeliveriesListPayload Paginated webhook delivery attempts grouped by event
+type WebhookDeliveriesListPayload struct {
+	Data []WebhookDeliveryGroup `json:"data"`
+
+	// NextCursor Cursor to pass to the next list request, or null when there is no next page.
+	NextCursor *string `json:"nextCursor"`
+}
+
+// WebhookDelivery Webhook delivery attempt
+type WebhookDelivery struct {
+	// DurationMs Delivery request duration in milliseconds
+	DurationMs int32 `json:"durationMs"`
+
+	// ErrorClass Machine-readable non-HTTP or HTTP failure class
+	ErrorClass *WebhookDeliveryErrorClass `json:"errorClass"`
+
+	// ErrorMessage Error message for failures without a useful response body
+	ErrorMessage *string `json:"errorMessage,omitempty"`
+
+	// EventId Sandbox event identifier
+	EventId openapi_types.UUID `json:"eventId"`
+
+	// EventType Sandbox event type
+	EventType string `json:"eventType"`
+
+	// Id Delivery attempt identifier
+	Id openapi_types.UUID `json:"id"`
+
+	// RequestBody Serialized webhook request body
+	RequestBody string `json:"requestBody"`
+
+	// RequestHeaders JSON-encoded request headers with sensitive values redacted
+	RequestHeaders string `json:"requestHeaders"`
+
+	// RequestUrl URL attempted for this delivery
+	RequestUrl string `json:"requestUrl"`
+
+	// ResponseBody Truncated response body, if a response was received
+	ResponseBody *string `json:"responseBody,omitempty"`
+
+	// ResponseHeaders JSON-encoded response headers, if a response was received
+	ResponseHeaders *string `json:"responseHeaders,omitempty"`
+
+	// ResponseHttpStatusCode HTTP response status code, if a response was received
+	ResponseHttpStatusCode *int32 `json:"responseHttpStatusCode,omitempty"`
+
+	// SandboxId Sandbox identifier
+	SandboxId string `json:"sandboxId"`
+
+	// Status Delivery attempt status
+	Status WebhookDeliveryStatus `json:"status"`
+
+	// TeamId Team identifier
+	TeamId openapi_types.UUID `json:"teamId"`
+
+	// Timestamp Time when the delivery attempt started
+	Timestamp time.Time `json:"timestamp"`
+
+	// WebhookId Webhook configuration identifier
+	WebhookId openapi_types.UUID `json:"webhookId"`
+}
+
+// WebhookDeliveryErrorClass Machine-readable non-HTTP or HTTP failure class
+type WebhookDeliveryErrorClass string
+
+// WebhookDeliveryStatus Delivery attempt status
+type WebhookDeliveryStatus string
+
+// WebhookDeliveryDurationStats Webhook delivery duration statistics in milliseconds
+type WebhookDeliveryDurationStats struct {
+	Average float64 `json:"average"`
+	Maximum float64 `json:"maximum"`
+	Minimum float64 `json:"minimum"`
+}
+
+// WebhookDeliveryGroup Webhook delivery attempts grouped by sandbox event
+type WebhookDeliveryGroup struct {
+	Attempts  []WebhookDelivery  `json:"attempts"`
+	EventId   openapi_types.UUID `json:"eventId"`
+	EventType string             `json:"eventType"`
+	SandboxId string             `json:"sandboxId"`
+}
+
+// WebhookDeliveryStats Webhook delivery aggregate stats
+type WebhookDeliveryStats struct {
+	Buckets []WebhookDeliveryStatsBucket `json:"buckets"`
+
+	// DurationMs Webhook delivery duration statistics in milliseconds
+	DurationMs WebhookDeliveryDurationStats `json:"durationMs"`
+	Failed     int64                        `json:"failed"`
+	Total      int64                        `json:"total"`
+}
+
+// WebhookDeliveryStatsBucket Webhook delivery stats for a time bucket
+type WebhookDeliveryStatsBucket struct {
+	// DurationMs Webhook delivery duration statistics in milliseconds
+	DurationMs WebhookDeliveryDurationStats `json:"durationMs"`
+	Failed     int64                        `json:"failed"`
+	Timestamp  time.Time                    `json:"timestamp"`
+	Total      int64                        `json:"total"`
+}
+
+// WebhookDetail Webhook detail response
+type WebhookDetail struct {
+	// CreatedAt Time when the template was created
+	CreatedAt time.Time `json:"createdAt"`
+	Enabled   bool      `json:"enabled"`
+	Events    []string  `json:"events"`
+
+	// Id Webhook unique identifier
+	Id string `json:"id"`
+
+	// Name Webhook user friendly name
+	Name string `json:"name"`
+
+	// TeamId Unique identifier for the team
+	TeamId string `json:"teamId"`
+	Url    string `json:"url"`
+}
+
 // ApiKeyID defines model for apiKeyID.
 type ApiKeyID = string
 
@@ -1658,6 +1915,9 @@ type TemplateID = string
 
 // VolumeID defines model for volumeID.
 type VolumeID = string
+
+// WebhookID defines model for webhookID.
+type WebhookID = openapi_types.UUID
 
 // N400 defines model for 400.
 type N400 = Error
@@ -1702,6 +1962,58 @@ type DeleteClustersClusterIDRigsInstancesInstanceIDParams struct {
 type GetClustersClusterIDRigsRigIDErrorsParams struct {
 	// Limit Maximum number of errors to return
 	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetEventsSandboxesParams defines parameters for GetEventsSandboxes.
+type GetEventsSandboxesParams struct {
+	Offset   *int32 `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit    *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+	OrderAsc *bool  `form:"orderAsc,omitempty" json:"orderAsc,omitempty"`
+
+	// Types Filter events to the provided event types
+	Types *[]string `form:"types,omitempty" json:"types,omitempty"`
+}
+
+// GetEventsSandboxesSandboxIDParams defines parameters for GetEventsSandboxesSandboxID.
+type GetEventsSandboxesSandboxIDParams struct {
+	Offset   *int32 `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit    *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+	OrderAsc *bool  `form:"orderAsc,omitempty" json:"orderAsc,omitempty"`
+
+	// Types Filter events to the provided event types
+	Types *[]string `form:"types,omitempty" json:"types,omitempty"`
+}
+
+// GetEventsWebhooksWebhookIDDeliveriesParams defines parameters for GetEventsWebhooksWebhookIDDeliveries.
+type GetEventsWebhooksWebhookIDDeliveriesParams struct {
+	// Cursor Opaque cursor from the previous response's nextCursor field.
+	Cursor   *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit    *int32  `form:"limit,omitempty" json:"limit,omitempty"`
+	OrderAsc *bool   `form:"orderAsc,omitempty" json:"orderAsc,omitempty"`
+
+	// Start Include deliveries at or after this timestamp.
+	Start *time.Time `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Include deliveries before this timestamp.
+	End *time.Time `form:"end,omitempty" json:"end,omitempty"`
+
+	// DeliveryStatus Filter deliveries by delivery status
+	DeliveryStatus *[]GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus `form:"deliveryStatus,omitempty" json:"deliveryStatus,omitempty"`
+
+	// EventType Filter deliveries by event type
+	EventType *[]string `form:"eventType,omitempty" json:"eventType,omitempty"`
+}
+
+// GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus defines parameters for GetEventsWebhooksWebhookIDDeliveries.
+type GetEventsWebhooksWebhookIDDeliveriesParamsDeliveryStatus string
+
+// GetEventsWebhooksWebhookIDStatsParams defines parameters for GetEventsWebhooksWebhookIDStats.
+type GetEventsWebhooksWebhookIDStatsParams struct {
+	// Start Inclusive stats range start. Defaults to 24 hours ago.
+	Start *time.Time `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Exclusive stats range end. Defaults to now.
+	End *time.Time `form:"end,omitempty" json:"end,omitempty"`
 }
 
 // GetNodesParams defines parameters for GetNodes.
@@ -1890,6 +2202,12 @@ type PatchApiKeysApiKeyIDJSONRequestBody = UpdateTeamAPIKey
 // PutClustersClusterIDRigsRigIDCapacityJSONRequestBody defines body for PutClustersClusterIDRigsRigIDCapacity for application/json ContentType.
 type PutClustersClusterIDRigsRigIDCapacityJSONRequestBody = RigCapacityChange
 
+// PostEventsWebhooksJSONRequestBody defines body for PostEventsWebhooks for application/json ContentType.
+type PostEventsWebhooksJSONRequestBody = WebhookCreate
+
+// PatchEventsWebhooksWebhookIDJSONRequestBody defines body for PatchEventsWebhooksWebhookID for application/json ContentType.
+type PatchEventsWebhooksWebhookIDJSONRequestBody = WebhookConfiguration
+
 // PostNodesNodeIDJSONRequestBody defines body for PostNodesNodeID for application/json ContentType.
 type PostNodesNodeIDJSONRequestBody = NodeStatusChange
 
@@ -1926,9 +2244,6 @@ type PostSecretsJSONRequestBody = NewSecret
 // PostSecretsSecretIDJSONRequestBody defines body for PostSecretsSecretID for application/json ContentType.
 type PostSecretsSecretIDJSONRequestBody = SecretUpdate
 
-// PostTemplatesJSONRequestBody defines body for PostTemplates for application/json ContentType.
-type PostTemplatesJSONRequestBody = TemplateBuildRequest
-
 // DeleteTemplatesTagsJSONRequestBody defines body for DeleteTemplatesTags for application/json ContentType.
 type DeleteTemplatesTagsJSONRequestBody = DeleteTemplateTagsRequest
 
@@ -1938,11 +2253,11 @@ type PostTemplatesTagsJSONRequestBody = AssignTemplateTagsRequest
 // PatchTemplatesTemplateIDJSONRequestBody defines body for PatchTemplatesTemplateID for application/json ContentType.
 type PatchTemplatesTemplateIDJSONRequestBody = TemplateUpdateRequest
 
-// PostTemplatesTemplateIDJSONRequestBody defines body for PostTemplatesTemplateID for application/json ContentType.
-type PostTemplatesTemplateIDJSONRequestBody = TemplateBuildRequest
+// PostV2SandboxesJSONRequestBody defines body for PostV2Sandboxes for application/json ContentType.
+type PostV2SandboxesJSONRequestBody = NewSandboxV2
 
-// PostV2TemplatesJSONRequestBody defines body for PostV2Templates for application/json ContentType.
-type PostV2TemplatesJSONRequestBody = TemplateBuildRequestV2
+// PostV2SandboxesSandboxIDConnectJSONRequestBody defines body for PostV2SandboxesSandboxIDConnect for application/json ContentType.
+type PostV2SandboxesSandboxIDConnectJSONRequestBody = ConnectSandboxV2
 
 // PatchV2TemplatesTemplateIDJSONRequestBody defines body for PatchV2TemplatesTemplateID for application/json ContentType.
 type PatchV2TemplatesTemplateIDJSONRequestBody = TemplateUpdateRequest
@@ -2119,6 +2434,33 @@ type ServerInterface interface {
 	// List the instances attached to a rig
 	// (GET /clusters/{clusterID}/rigs/{rigID}/instances)
 	GetClustersClusterIDRigsRigIDInstances(c *gin.Context, clusterID ClusterID, rigID RigID)
+
+	// (GET /events/sandboxes)
+	GetEventsSandboxes(c *gin.Context, params GetEventsSandboxesParams)
+
+	// (GET /events/sandboxes/{sandboxID})
+	GetEventsSandboxesSandboxID(c *gin.Context, sandboxID SandboxID, params GetEventsSandboxesSandboxIDParams)
+
+	// (GET /events/webhooks)
+	GetEventsWebhooks(c *gin.Context)
+
+	// (POST /events/webhooks)
+	PostEventsWebhooks(c *gin.Context)
+
+	// (DELETE /events/webhooks/{webhookID})
+	DeleteEventsWebhooksWebhookID(c *gin.Context, webhookID WebhookID)
+
+	// (GET /events/webhooks/{webhookID})
+	GetEventsWebhooksWebhookID(c *gin.Context, webhookID WebhookID)
+
+	// (PATCH /events/webhooks/{webhookID})
+	PatchEventsWebhooksWebhookID(c *gin.Context, webhookID WebhookID)
+
+	// (GET /events/webhooks/{webhookID}/deliveries)
+	GetEventsWebhooksWebhookIDDeliveries(c *gin.Context, webhookID WebhookID, params GetEventsWebhooksWebhookIDDeliveriesParams)
+
+	// (GET /events/webhooks/{webhookID}/stats)
+	GetEventsWebhooksWebhookIDStats(c *gin.Context, webhookID WebhookID, params GetEventsWebhooksWebhookIDStatsParams)
 	// Health check
 	// (GET /health)
 	GetHealth(c *gin.Context)
@@ -2206,9 +2548,6 @@ type ServerInterface interface {
 	// List templates
 	// (GET /templates)
 	GetTemplates(c *gin.Context, params GetTemplatesParams)
-	// Create template
-	// (POST /templates)
-	PostTemplates(c *gin.Context)
 	// Check template alias
 	// (GET /templates/aliases/{alias})
 	GetTemplatesAliasesAlias(c *gin.Context, alias string)
@@ -2227,12 +2566,6 @@ type ServerInterface interface {
 	// Update template
 	// (PATCH /templates/{templateID})
 	PatchTemplatesTemplateID(c *gin.Context, templateID TemplateID)
-	// Rebuild template
-	// (POST /templates/{templateID})
-	PostTemplatesTemplateID(c *gin.Context, templateID TemplateID)
-	// Start template build
-	// (POST /templates/{templateID}/builds/{buildID})
-	PostTemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID TemplateID, buildID BuildID)
 	// Template build logs
 	// (GET /templates/{templateID}/builds/{buildID}/logs)
 	GetTemplatesTemplateIDBuildsBuildIDLogs(c *gin.Context, templateID TemplateID, buildID BuildID, params GetTemplatesTemplateIDBuildsBuildIDLogsParams)
@@ -2248,15 +2581,18 @@ type ServerInterface interface {
 	// List sandboxes (v2)
 	// (GET /v2/sandboxes)
 	GetV2Sandboxes(c *gin.Context, params GetV2SandboxesParams)
+	// Create sandbox (v2)
+	// (POST /v2/sandboxes)
+	PostV2Sandboxes(c *gin.Context)
+	// Connect sandbox (v2)
+	// (POST /v2/sandboxes/{sandboxID}/connect)
+	PostV2SandboxesSandboxIDConnect(c *gin.Context, sandboxID SandboxID)
 	// Sandbox logs (v2)
 	// (GET /v2/sandboxes/{sandboxID}/logs)
 	GetV2SandboxesSandboxIDLogs(c *gin.Context, sandboxID SandboxID, params GetV2SandboxesSandboxIDLogsParams)
 	// List templates (v2)
 	// (GET /v2/templates)
 	GetV2Templates(c *gin.Context, params GetV2TemplatesParams)
-	// Create template (v2)
-	// (POST /v2/templates)
-	PostV2Templates(c *gin.Context)
 	// Update template (v2)
 	// (PATCH /v2/templates/{templateID})
 	PatchV2TemplatesTemplateID(c *gin.Context, templateID TemplateID)
@@ -2744,6 +3080,465 @@ func (siw *ServerInterfaceWrapper) GetClustersClusterIDRigsRigIDInstances(c *gin
 	}
 
 	siw.Handler.GetClustersClusterIDRigsRigIDInstances(c, clusterID, rigID)
+}
+
+// GetEventsSandboxes operation middleware
+func (siw *ServerInterfaceWrapper) GetEventsSandboxes(c *gin.Context) {
+
+	var err error
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEventsSandboxesParams
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", c.Request.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter offset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "orderAsc" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "orderAsc", c.Request.URL.Query(), &params.OrderAsc, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter orderAsc: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "types" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "types", c.Request.URL.Query(), &params.Types, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter types: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEventsSandboxes(c, params)
+}
+
+// GetEventsSandboxesSandboxID operation middleware
+func (siw *ServerInterfaceWrapper) GetEventsSandboxesSandboxID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEventsSandboxesSandboxIDParams
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", c.Request.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter offset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "orderAsc" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "orderAsc", c.Request.URL.Query(), &params.OrderAsc, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter orderAsc: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "types" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "types", c.Request.URL.Query(), &params.Types, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter types: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEventsSandboxesSandboxID(c, sandboxID, params)
+}
+
+// GetEventsWebhooks operation middleware
+func (siw *ServerInterfaceWrapper) GetEventsWebhooks(c *gin.Context) {
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEventsWebhooks(c)
+}
+
+// PostEventsWebhooks operation middleware
+func (siw *ServerInterfaceWrapper) PostEventsWebhooks(c *gin.Context) {
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostEventsWebhooks(c)
+}
+
+// DeleteEventsWebhooksWebhookID operation middleware
+func (siw *ServerInterfaceWrapper) DeleteEventsWebhooksWebhookID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "webhookID" -------------
+	var webhookID WebhookID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webhookID", c.Param("webhookID"), &webhookID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter webhookID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteEventsWebhooksWebhookID(c, webhookID)
+}
+
+// GetEventsWebhooksWebhookID operation middleware
+func (siw *ServerInterfaceWrapper) GetEventsWebhooksWebhookID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "webhookID" -------------
+	var webhookID WebhookID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webhookID", c.Param("webhookID"), &webhookID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter webhookID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEventsWebhooksWebhookID(c, webhookID)
+}
+
+// PatchEventsWebhooksWebhookID operation middleware
+func (siw *ServerInterfaceWrapper) PatchEventsWebhooksWebhookID(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "webhookID" -------------
+	var webhookID WebhookID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webhookID", c.Param("webhookID"), &webhookID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter webhookID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PatchEventsWebhooksWebhookID(c, webhookID)
+}
+
+// GetEventsWebhooksWebhookIDDeliveries operation middleware
+func (siw *ServerInterfaceWrapper) GetEventsWebhooksWebhookIDDeliveries(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "webhookID" -------------
+	var webhookID WebhookID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webhookID", c.Param("webhookID"), &webhookID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter webhookID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEventsWebhooksWebhookIDDeliveriesParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", c.Request.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter cursor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "orderAsc" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "orderAsc", c.Request.URL.Query(), &params.OrderAsc, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter orderAsc: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", c.Request.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter start: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", c.Request.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter end: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "deliveryStatus" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", false, false, "deliveryStatus", c.Request.URL.Query(), &params.DeliveryStatus, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter deliveryStatus: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "eventType" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", false, false, "eventType", c.Request.URL.Query(), &params.EventType, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter eventType: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEventsWebhooksWebhookIDDeliveries(c, webhookID, params)
+}
+
+// GetEventsWebhooksWebhookIDStats operation middleware
+func (siw *ServerInterfaceWrapper) GetEventsWebhooksWebhookIDStats(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "webhookID" -------------
+	var webhookID WebhookID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webhookID", c.Param("webhookID"), &webhookID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter webhookID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEventsWebhooksWebhookIDStatsParams
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", c.Request.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter start: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", c.Request.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter end: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetEventsWebhooksWebhookIDStats(c, webhookID, params)
 }
 
 // GetHealth operation middleware
@@ -3901,23 +4696,6 @@ func (siw *ServerInterfaceWrapper) GetTemplates(c *gin.Context) {
 	siw.Handler.GetTemplates(c, params)
 }
 
-// PostTemplates operation middleware
-func (siw *ServerInterfaceWrapper) PostTemplates(c *gin.Context) {
-
-	c.Set(AuthProviderBearerAuthScopes, []string{})
-
-	c.Set(AuthProviderTeamAuthScopes, []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostTemplates(c)
-}
-
 // GetTemplatesAliasesAlias operation middleware
 func (siw *ServerInterfaceWrapper) GetTemplatesAliasesAlias(c *gin.Context) {
 
@@ -4141,71 +4919,6 @@ func (siw *ServerInterfaceWrapper) PatchTemplatesTemplateID(c *gin.Context) {
 	}
 
 	siw.Handler.PatchTemplatesTemplateID(c, templateID)
-}
-
-// PostTemplatesTemplateID operation middleware
-func (siw *ServerInterfaceWrapper) PostTemplatesTemplateID(c *gin.Context) {
-
-	var err error
-
-	// ------------- Path parameter "templateID" -------------
-	var templateID TemplateID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "templateID", c.Param("templateID"), &templateID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter templateID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	c.Set(AuthProviderBearerAuthScopes, []string{})
-
-	c.Set(AuthProviderTeamAuthScopes, []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostTemplatesTemplateID(c, templateID)
-}
-
-// PostTemplatesTemplateIDBuildsBuildID operation middleware
-func (siw *ServerInterfaceWrapper) PostTemplatesTemplateIDBuildsBuildID(c *gin.Context) {
-
-	var err error
-
-	// ------------- Path parameter "templateID" -------------
-	var templateID TemplateID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "templateID", c.Param("templateID"), &templateID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter templateID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Path parameter "buildID" -------------
-	var buildID BuildID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "buildID", c.Param("buildID"), &buildID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter buildID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	c.Set(AuthProviderBearerAuthScopes, []string{})
-
-	c.Set(AuthProviderTeamAuthScopes, []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostTemplatesTemplateIDBuildsBuildID(c, templateID, buildID)
 }
 
 // GetTemplatesTemplateIDBuildsBuildIDLogs operation middleware
@@ -4545,6 +5258,71 @@ func (siw *ServerInterfaceWrapper) GetV2Sandboxes(c *gin.Context) {
 	siw.Handler.GetV2Sandboxes(c, params)
 }
 
+// PostV2Sandboxes operation middleware
+func (siw *ServerInterfaceWrapper) PostV2Sandboxes(c *gin.Context) {
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostV2Sandboxes(c)
+}
+
+// PostV2SandboxesSandboxIDConnect operation middleware
+func (siw *ServerInterfaceWrapper) PostV2SandboxesSandboxIDConnect(c *gin.Context) {
+
+	var err error
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	c.Set(ApiKeyAuthScopes, []string{})
+
+	c.Set(AuthProviderBearerAuthScopes, []string{})
+
+	c.Set(AuthProviderTeamAuthScopes, []string{})
+
+	c.Set(AdminApiKeyAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	c.Set(AdminJWTAuthScopes, []string{})
+
+	c.Set(AdminTeamAuthScopes, []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostV2SandboxesSandboxIDConnect(c, sandboxID)
+}
+
 // GetV2SandboxesSandboxIDLogs operation middleware
 func (siw *ServerInterfaceWrapper) GetV2SandboxesSandboxIDLogs(c *gin.Context) {
 
@@ -4680,33 +5458,6 @@ func (siw *ServerInterfaceWrapper) GetV2Templates(c *gin.Context) {
 	}
 
 	siw.Handler.GetV2Templates(c, params)
-}
-
-// PostV2Templates operation middleware
-func (siw *ServerInterfaceWrapper) PostV2Templates(c *gin.Context) {
-
-	c.Set(ApiKeyAuthScopes, []string{})
-
-	c.Set(AuthProviderBearerAuthScopes, []string{})
-
-	c.Set(AuthProviderTeamAuthScopes, []string{})
-
-	c.Set(AdminApiKeyAuthScopes, []string{})
-
-	c.Set(AdminTeamAuthScopes, []string{})
-
-	c.Set(AdminJWTAuthScopes, []string{})
-
-	c.Set(AdminTeamAuthScopes, []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostV2Templates(c)
 }
 
 // PatchV2TemplatesTemplateID operation middleware
@@ -4992,6 +5743,15 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.PUT(options.BaseURL+"/clusters/:clusterID/rigs/:rigID/capacity", wrapper.PutClustersClusterIDRigsRigIDCapacity)
 	router.GET(options.BaseURL+"/clusters/:clusterID/rigs/:rigID/errors", wrapper.GetClustersClusterIDRigsRigIDErrors)
 	router.GET(options.BaseURL+"/clusters/:clusterID/rigs/:rigID/instances", wrapper.GetClustersClusterIDRigsRigIDInstances)
+	router.GET(options.BaseURL+"/events/sandboxes", wrapper.GetEventsSandboxes)
+	router.GET(options.BaseURL+"/events/sandboxes/:sandboxID", wrapper.GetEventsSandboxesSandboxID)
+	router.GET(options.BaseURL+"/events/webhooks", wrapper.GetEventsWebhooks)
+	router.POST(options.BaseURL+"/events/webhooks", wrapper.PostEventsWebhooks)
+	router.DELETE(options.BaseURL+"/events/webhooks/:webhookID", wrapper.DeleteEventsWebhooksWebhookID)
+	router.GET(options.BaseURL+"/events/webhooks/:webhookID", wrapper.GetEventsWebhooksWebhookID)
+	router.PATCH(options.BaseURL+"/events/webhooks/:webhookID", wrapper.PatchEventsWebhooksWebhookID)
+	router.GET(options.BaseURL+"/events/webhooks/:webhookID/deliveries", wrapper.GetEventsWebhooksWebhookIDDeliveries)
+	router.GET(options.BaseURL+"/events/webhooks/:webhookID/stats", wrapper.GetEventsWebhooksWebhookIDStats)
 	router.GET(options.BaseURL+"/health", wrapper.GetHealth)
 	router.GET(options.BaseURL+"/nodes", wrapper.GetNodes)
 	router.GET(options.BaseURL+"/nodes/:nodeID", wrapper.GetNodesNodeID)
@@ -5021,23 +5781,21 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/teams/:teamID/metrics", wrapper.GetTeamsTeamIDMetrics)
 	router.GET(options.BaseURL+"/teams/:teamID/metrics/max", wrapper.GetTeamsTeamIDMetricsMax)
 	router.GET(options.BaseURL+"/templates", wrapper.GetTemplates)
-	router.POST(options.BaseURL+"/templates", wrapper.PostTemplates)
 	router.GET(options.BaseURL+"/templates/aliases/:alias", wrapper.GetTemplatesAliasesAlias)
 	router.DELETE(options.BaseURL+"/templates/tags", wrapper.DeleteTemplatesTags)
 	router.POST(options.BaseURL+"/templates/tags", wrapper.PostTemplatesTags)
 	router.DELETE(options.BaseURL+"/templates/:templateID", wrapper.DeleteTemplatesTemplateID)
 	router.GET(options.BaseURL+"/templates/:templateID", wrapper.GetTemplatesTemplateID)
 	router.PATCH(options.BaseURL+"/templates/:templateID", wrapper.PatchTemplatesTemplateID)
-	router.POST(options.BaseURL+"/templates/:templateID", wrapper.PostTemplatesTemplateID)
-	router.POST(options.BaseURL+"/templates/:templateID/builds/:buildID", wrapper.PostTemplatesTemplateIDBuildsBuildID)
 	router.GET(options.BaseURL+"/templates/:templateID/builds/:buildID/logs", wrapper.GetTemplatesTemplateIDBuildsBuildIDLogs)
 	router.GET(options.BaseURL+"/templates/:templateID/builds/:buildID/status", wrapper.GetTemplatesTemplateIDBuildsBuildIDStatus)
 	router.GET(options.BaseURL+"/templates/:templateID/files/:hash", wrapper.GetTemplatesTemplateIDFilesHash)
 	router.GET(options.BaseURL+"/templates/:templateID/tags", wrapper.GetTemplatesTemplateIDTags)
 	router.GET(options.BaseURL+"/v2/sandboxes", wrapper.GetV2Sandboxes)
+	router.POST(options.BaseURL+"/v2/sandboxes", wrapper.PostV2Sandboxes)
+	router.POST(options.BaseURL+"/v2/sandboxes/:sandboxID/connect", wrapper.PostV2SandboxesSandboxIDConnect)
 	router.GET(options.BaseURL+"/v2/sandboxes/:sandboxID/logs", wrapper.GetV2SandboxesSandboxIDLogs)
 	router.GET(options.BaseURL+"/v2/templates", wrapper.GetV2Templates)
-	router.POST(options.BaseURL+"/v2/templates", wrapper.PostV2Templates)
 	router.PATCH(options.BaseURL+"/v2/templates/:templateID", wrapper.PatchV2TemplatesTemplateID)
 	router.POST(options.BaseURL+"/v2/templates/:templateID/builds/:buildID", wrapper.PostV2TemplatesTemplateIDBuildsBuildID)
 	router.POST(options.BaseURL+"/v3/templates", wrapper.PostV3Templates)
@@ -5057,7 +5815,14 @@ type N404JSONResponse Error
 
 type N409JSONResponse Error
 
-type N429JSONResponse Error
+type N429ResponseHeaders struct {
+	RetryAfter int
+}
+type N429JSONResponse struct {
+	Body Error
+
+	Headers N429ResponseHeaders
+}
 
 type N500JSONResponse Error
 
@@ -5092,6 +5857,16 @@ func (response GetAdminSandboxesRunningCounts401JSONResponse) VisitGetAdminSandb
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetAdminSandboxesRunningCounts429JSONResponse struct{ N429JSONResponse }
+
+func (response GetAdminSandboxesRunningCounts429JSONResponse) VisitGetAdminSandboxesRunningCountsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetAdminSandboxesRunningCounts500JSONResponse struct{ N500JSONResponse }
@@ -5157,6 +5932,16 @@ func (response PostAdminTeamsTeamIDApiKeys404JSONResponse) VisitPostAdminTeamsTe
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostAdminTeamsTeamIDApiKeys429JSONResponse struct{ N429JSONResponse }
+
+func (response PostAdminTeamsTeamIDApiKeys429JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostAdminTeamsTeamIDApiKeys500JSONResponse struct{ N500JSONResponse }
 
 func (response PostAdminTeamsTeamIDApiKeys500JSONResponse) VisitPostAdminTeamsTeamIDApiKeysResponse(w http.ResponseWriter) error {
@@ -5210,6 +5995,16 @@ func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID404JSONResponse) VisitDelete
 	return json.NewEncoder(w).Encode(response)
 }
 
+type DeleteAdminTeamsTeamIDApiKeysApiKeyID429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID429JSONResponse) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type DeleteAdminTeamsTeamIDApiKeysApiKeyID500JSONResponse struct{ N500JSONResponse }
 
 func (response DeleteAdminTeamsTeamIDApiKeysApiKeyID500JSONResponse) VisitDeleteAdminTeamsTeamIDApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
@@ -5252,6 +6047,16 @@ func (response PostAdminTeamsTeamIDBuildsCancel404JSONResponse) VisitPostAdminTe
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PostAdminTeamsTeamIDBuildsCancel429JSONResponse struct{ N429JSONResponse }
+
+func (response PostAdminTeamsTeamIDBuildsCancel429JSONResponse) VisitPostAdminTeamsTeamIDBuildsCancelResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostAdminTeamsTeamIDBuildsCancel500JSONResponse struct{ N500JSONResponse }
@@ -5298,6 +6103,16 @@ func (response PostAdminTeamsTeamIDSandboxesKill404JSONResponse) VisitPostAdminT
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostAdminTeamsTeamIDSandboxesKill429JSONResponse struct{ N429JSONResponse }
+
+func (response PostAdminTeamsTeamIDSandboxesKill429JSONResponse) VisitPostAdminTeamsTeamIDSandboxesKillResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostAdminTeamsTeamIDSandboxesKill500JSONResponse struct{ N500JSONResponse }
 
 func (response PostAdminTeamsTeamIDSandboxesKill500JSONResponse) VisitPostAdminTeamsTeamIDSandboxesKillResponse(w http.ResponseWriter) error {
@@ -5330,6 +6145,16 @@ func (response GetApiKeys401JSONResponse) VisitGetApiKeysResponse(w http.Respons
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetApiKeys429JSONResponse struct{ N429JSONResponse }
+
+func (response GetApiKeys429JSONResponse) VisitGetApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetApiKeys500JSONResponse struct{ N500JSONResponse }
@@ -5365,6 +6190,16 @@ func (response PostApiKeys401JSONResponse) VisitPostApiKeysResponse(w http.Respo
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiKeys429JSONResponse struct{ N429JSONResponse }
+
+func (response PostApiKeys429JSONResponse) VisitPostApiKeysResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostApiKeys500JSONResponse struct{ N500JSONResponse }
@@ -5408,6 +6243,16 @@ func (response DeleteApiKeysApiKeyID404JSONResponse) VisitDeleteApiKeysApiKeyIDR
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteApiKeysApiKeyID429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteApiKeysApiKeyID429JSONResponse) VisitDeleteApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type DeleteApiKeysApiKeyID500JSONResponse struct{ N500JSONResponse }
@@ -5454,6 +6299,16 @@ func (response PatchApiKeysApiKeyID404JSONResponse) VisitPatchApiKeysApiKeyIDRes
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PatchApiKeysApiKeyID429JSONResponse struct{ N429JSONResponse }
+
+func (response PatchApiKeysApiKeyID429JSONResponse) VisitPatchApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PatchApiKeysApiKeyID500JSONResponse struct{ N500JSONResponse }
 
 func (response PatchApiKeysApiKeyID500JSONResponse) VisitPatchApiKeysApiKeyIDResponse(w http.ResponseWriter) error {
@@ -5496,6 +6351,16 @@ func (response GetClustersClusterIDRigs404JSONResponse) VisitGetClustersClusterI
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigs429JSONResponse struct{ N429JSONResponse }
+
+func (response GetClustersClusterIDRigs429JSONResponse) VisitGetClustersClusterIDRigsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetClustersClusterIDRigs500JSONResponse struct{ N500JSONResponse }
@@ -5570,6 +6435,16 @@ func (response DeleteClustersClusterIDRigsInstancesInstanceID409JSONResponse) Vi
 	return json.NewEncoder(w).Encode(response)
 }
 
+type DeleteClustersClusterIDRigsInstancesInstanceID429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteClustersClusterIDRigsInstancesInstanceID429JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type DeleteClustersClusterIDRigsInstancesInstanceID500JSONResponse struct{ N500JSONResponse }
 
 func (response DeleteClustersClusterIDRigsInstancesInstanceID500JSONResponse) VisitDeleteClustersClusterIDRigsInstancesInstanceIDResponse(w http.ResponseWriter) error {
@@ -5642,6 +6517,16 @@ func (response PutClustersClusterIDRigsRigIDCapacity409JSONResponse) VisitPutClu
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PutClustersClusterIDRigsRigIDCapacity429JSONResponse struct{ N429JSONResponse }
+
+func (response PutClustersClusterIDRigsRigIDCapacity429JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PutClustersClusterIDRigsRigIDCapacity500JSONResponse struct{ N500JSONResponse }
 
 func (response PutClustersClusterIDRigsRigIDCapacity500JSONResponse) VisitPutClustersClusterIDRigsRigIDCapacityResponse(w http.ResponseWriter) error {
@@ -5704,6 +6589,16 @@ func (response GetClustersClusterIDRigsRigIDErrors404JSONResponse) VisitGetClust
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetClustersClusterIDRigsRigIDErrors429JSONResponse struct{ N429JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDErrors429JSONResponse) VisitGetClustersClusterIDRigsRigIDErrorsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetClustersClusterIDRigsRigIDErrors500JSONResponse struct{ N500JSONResponse }
@@ -5769,6 +6664,16 @@ func (response GetClustersClusterIDRigsRigIDInstances404JSONResponse) VisitGetCl
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetClustersClusterIDRigsRigIDInstances429JSONResponse struct{ N429JSONResponse }
+
+func (response GetClustersClusterIDRigsRigIDInstances429JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetClustersClusterIDRigsRigIDInstances500JSONResponse struct{ N500JSONResponse }
 
 func (response GetClustersClusterIDRigsRigIDInstances500JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
@@ -5783,6 +6688,449 @@ type GetClustersClusterIDRigsRigIDInstances501JSONResponse struct{ N501JSONRespo
 func (response GetClustersClusterIDRigsRigIDInstances501JSONResponse) VisitGetClustersClusterIDRigsRigIDInstancesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(501)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxesRequestObject struct {
+	Params GetEventsSandboxesParams
+}
+
+type GetEventsSandboxesResponseObject interface {
+	VisitGetEventsSandboxesResponse(w http.ResponseWriter) error
+}
+
+type GetEventsSandboxes200JSONResponse []SandboxEvent
+
+func (response GetEventsSandboxes200JSONResponse) VisitGetEventsSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxes400JSONResponse struct{ N400JSONResponse }
+
+func (response GetEventsSandboxes400JSONResponse) VisitGetEventsSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxes401JSONResponse struct{ N401JSONResponse }
+
+func (response GetEventsSandboxes401JSONResponse) VisitGetEventsSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxes404JSONResponse struct{ N404JSONResponse }
+
+func (response GetEventsSandboxes404JSONResponse) VisitGetEventsSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxes500JSONResponse struct{ N500JSONResponse }
+
+func (response GetEventsSandboxes500JSONResponse) VisitGetEventsSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxesSandboxIDRequestObject struct {
+	SandboxID SandboxID `json:"sandboxID"`
+	Params    GetEventsSandboxesSandboxIDParams
+}
+
+type GetEventsSandboxesSandboxIDResponseObject interface {
+	VisitGetEventsSandboxesSandboxIDResponse(w http.ResponseWriter) error
+}
+
+type GetEventsSandboxesSandboxID200JSONResponse []SandboxEvent
+
+func (response GetEventsSandboxesSandboxID200JSONResponse) VisitGetEventsSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxesSandboxID400JSONResponse struct{ N400JSONResponse }
+
+func (response GetEventsSandboxesSandboxID400JSONResponse) VisitGetEventsSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxesSandboxID401JSONResponse struct{ N401JSONResponse }
+
+func (response GetEventsSandboxesSandboxID401JSONResponse) VisitGetEventsSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxesSandboxID404JSONResponse struct{ N404JSONResponse }
+
+func (response GetEventsSandboxesSandboxID404JSONResponse) VisitGetEventsSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsSandboxesSandboxID500JSONResponse struct{ N500JSONResponse }
+
+func (response GetEventsSandboxesSandboxID500JSONResponse) VisitGetEventsSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksRequestObject struct {
+}
+
+type GetEventsWebhooksResponseObject interface {
+	VisitGetEventsWebhooksResponse(w http.ResponseWriter) error
+}
+
+type GetEventsWebhooks200JSONResponse []WebhookDetail
+
+func (response GetEventsWebhooks200JSONResponse) VisitGetEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooks401JSONResponse struct{ N401JSONResponse }
+
+func (response GetEventsWebhooks401JSONResponse) VisitGetEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooks404JSONResponse struct{ N404JSONResponse }
+
+func (response GetEventsWebhooks404JSONResponse) VisitGetEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooks500JSONResponse struct{ N500JSONResponse }
+
+func (response GetEventsWebhooks500JSONResponse) VisitGetEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostEventsWebhooksRequestObject struct {
+	Body *PostEventsWebhooksJSONRequestBody
+}
+
+type PostEventsWebhooksResponseObject interface {
+	VisitPostEventsWebhooksResponse(w http.ResponseWriter) error
+}
+
+type PostEventsWebhooks201JSONResponse WebhookCreation
+
+func (response PostEventsWebhooks201JSONResponse) VisitPostEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostEventsWebhooks400JSONResponse struct{ N400JSONResponse }
+
+func (response PostEventsWebhooks400JSONResponse) VisitPostEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostEventsWebhooks401JSONResponse struct{ N401JSONResponse }
+
+func (response PostEventsWebhooks401JSONResponse) VisitPostEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostEventsWebhooks404JSONResponse struct{ N404JSONResponse }
+
+func (response PostEventsWebhooks404JSONResponse) VisitPostEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostEventsWebhooks500JSONResponse struct{ N500JSONResponse }
+
+func (response PostEventsWebhooks500JSONResponse) VisitPostEventsWebhooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteEventsWebhooksWebhookIDRequestObject struct {
+	WebhookID WebhookID `json:"webhookID"`
+}
+
+type DeleteEventsWebhooksWebhookIDResponseObject interface {
+	VisitDeleteEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error
+}
+
+type DeleteEventsWebhooksWebhookID200Response struct {
+}
+
+func (response DeleteEventsWebhooksWebhookID200Response) VisitDeleteEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type DeleteEventsWebhooksWebhookID401JSONResponse struct{ N401JSONResponse }
+
+func (response DeleteEventsWebhooksWebhookID401JSONResponse) VisitDeleteEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteEventsWebhooksWebhookID404JSONResponse struct{ N404JSONResponse }
+
+func (response DeleteEventsWebhooksWebhookID404JSONResponse) VisitDeleteEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteEventsWebhooksWebhookID500JSONResponse struct{ N500JSONResponse }
+
+func (response DeleteEventsWebhooksWebhookID500JSONResponse) VisitDeleteEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDRequestObject struct {
+	WebhookID WebhookID `json:"webhookID"`
+}
+
+type GetEventsWebhooksWebhookIDResponseObject interface {
+	VisitGetEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error
+}
+
+type GetEventsWebhooksWebhookID200JSONResponse WebhookDetail
+
+func (response GetEventsWebhooksWebhookID200JSONResponse) VisitGetEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookID401JSONResponse struct{ N401JSONResponse }
+
+func (response GetEventsWebhooksWebhookID401JSONResponse) VisitGetEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookID404JSONResponse struct{ N404JSONResponse }
+
+func (response GetEventsWebhooksWebhookID404JSONResponse) VisitGetEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookID500JSONResponse struct{ N500JSONResponse }
+
+func (response GetEventsWebhooksWebhookID500JSONResponse) VisitGetEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchEventsWebhooksWebhookIDRequestObject struct {
+	WebhookID WebhookID `json:"webhookID"`
+	Body      *PatchEventsWebhooksWebhookIDJSONRequestBody
+}
+
+type PatchEventsWebhooksWebhookIDResponseObject interface {
+	VisitPatchEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error
+}
+
+type PatchEventsWebhooksWebhookID200JSONResponse WebhookDetail
+
+func (response PatchEventsWebhooksWebhookID200JSONResponse) VisitPatchEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchEventsWebhooksWebhookID400JSONResponse struct{ N400JSONResponse }
+
+func (response PatchEventsWebhooksWebhookID400JSONResponse) VisitPatchEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchEventsWebhooksWebhookID401JSONResponse struct{ N401JSONResponse }
+
+func (response PatchEventsWebhooksWebhookID401JSONResponse) VisitPatchEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchEventsWebhooksWebhookID404JSONResponse struct{ N404JSONResponse }
+
+func (response PatchEventsWebhooksWebhookID404JSONResponse) VisitPatchEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchEventsWebhooksWebhookID500JSONResponse struct{ N500JSONResponse }
+
+func (response PatchEventsWebhooksWebhookID500JSONResponse) VisitPatchEventsWebhooksWebhookIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDDeliveriesRequestObject struct {
+	WebhookID WebhookID `json:"webhookID"`
+	Params    GetEventsWebhooksWebhookIDDeliveriesParams
+}
+
+type GetEventsWebhooksWebhookIDDeliveriesResponseObject interface {
+	VisitGetEventsWebhooksWebhookIDDeliveriesResponse(w http.ResponseWriter) error
+}
+
+type GetEventsWebhooksWebhookIDDeliveries200JSONResponse WebhookDeliveriesListPayload
+
+func (response GetEventsWebhooksWebhookIDDeliveries200JSONResponse) VisitGetEventsWebhooksWebhookIDDeliveriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDDeliveries400JSONResponse struct{ N400JSONResponse }
+
+func (response GetEventsWebhooksWebhookIDDeliveries400JSONResponse) VisitGetEventsWebhooksWebhookIDDeliveriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDDeliveries401JSONResponse struct{ N401JSONResponse }
+
+func (response GetEventsWebhooksWebhookIDDeliveries401JSONResponse) VisitGetEventsWebhooksWebhookIDDeliveriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDDeliveries404JSONResponse struct{ N404JSONResponse }
+
+func (response GetEventsWebhooksWebhookIDDeliveries404JSONResponse) VisitGetEventsWebhooksWebhookIDDeliveriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDDeliveries500JSONResponse struct{ N500JSONResponse }
+
+func (response GetEventsWebhooksWebhookIDDeliveries500JSONResponse) VisitGetEventsWebhooksWebhookIDDeliveriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDStatsRequestObject struct {
+	WebhookID WebhookID `json:"webhookID"`
+	Params    GetEventsWebhooksWebhookIDStatsParams
+}
+
+type GetEventsWebhooksWebhookIDStatsResponseObject interface {
+	VisitGetEventsWebhooksWebhookIDStatsResponse(w http.ResponseWriter) error
+}
+
+type GetEventsWebhooksWebhookIDStats200JSONResponse WebhookDeliveryStats
+
+func (response GetEventsWebhooksWebhookIDStats200JSONResponse) VisitGetEventsWebhooksWebhookIDStatsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDStats401JSONResponse struct{ N401JSONResponse }
+
+func (response GetEventsWebhooksWebhookIDStats401JSONResponse) VisitGetEventsWebhooksWebhookIDStatsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDStats404JSONResponse struct{ N404JSONResponse }
+
+func (response GetEventsWebhooksWebhookIDStats404JSONResponse) VisitGetEventsWebhooksWebhookIDStatsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventsWebhooksWebhookIDStats500JSONResponse struct{ N500JSONResponse }
+
+func (response GetEventsWebhooksWebhookIDStats500JSONResponse) VisitGetEventsWebhooksWebhookIDStatsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -5811,6 +7159,16 @@ func (response GetHealth401JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetHealth429JSONResponse struct{ N429JSONResponse }
+
+func (response GetHealth429JSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetNodesRequestObject struct {
 	Params GetNodesParams
 }
@@ -5835,6 +7193,16 @@ func (response GetNodes401JSONResponse) VisitGetNodesResponse(w http.ResponseWri
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetNodes429JSONResponse struct{ N429JSONResponse }
+
+func (response GetNodes429JSONResponse) VisitGetNodesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetNodes500JSONResponse struct{ N500JSONResponse }
@@ -5880,6 +7248,16 @@ func (response GetNodesNodeID404JSONResponse) VisitGetNodesNodeIDResponse(w http
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetNodesNodeID429JSONResponse struct{ N429JSONResponse }
+
+func (response GetNodesNodeID429JSONResponse) VisitGetNodesNodeIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetNodesNodeID500JSONResponse struct{ N500JSONResponse }
@@ -5935,6 +7313,16 @@ func (response PostNodesNodeID409JSONResponse) VisitPostNodesNodeIDResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostNodesNodeID429JSONResponse struct{ N429JSONResponse }
+
+func (response PostNodesNodeID429JSONResponse) VisitPostNodesNodeIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostNodesNodeID500JSONResponse struct{ N500JSONResponse }
 
 func (response PostNodesNodeID500JSONResponse) VisitPostNodesNodeIDResponse(w http.ResponseWriter) error {
@@ -5979,6 +7367,16 @@ func (response GetSandboxes401JSONResponse) VisitGetSandboxesResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetSandboxes429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSandboxes429JSONResponse) VisitGetSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetSandboxes500JSONResponse struct{ N500JSONResponse }
 
 func (response GetSandboxes500JSONResponse) VisitGetSandboxesResponse(w http.ResponseWriter) error {
@@ -6021,6 +7419,16 @@ func (response PostSandboxes401JSONResponse) VisitPostSandboxesResponse(w http.R
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxes429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxes429JSONResponse) VisitPostSandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostSandboxes500JSONResponse struct{ N500JSONResponse }
@@ -6085,6 +7493,16 @@ func (response GetSandboxesMetrics401JSONResponse) VisitGetSandboxesMetricsRespo
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetSandboxesMetrics429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSandboxesMetrics429JSONResponse) VisitGetSandboxesMetricsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetSandboxesMetrics500JSONResponse struct{ N500JSONResponse }
 
 func (response GetSandboxesMetrics500JSONResponse) VisitGetSandboxesMetricsResponse(w http.ResponseWriter) error {
@@ -6126,6 +7544,16 @@ func (response DeleteSandboxesSandboxID404JSONResponse) VisitDeleteSandboxesSand
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteSandboxesSandboxID429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteSandboxesSandboxID429JSONResponse) VisitDeleteSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type DeleteSandboxesSandboxID500JSONResponse struct{ N500JSONResponse }
@@ -6170,6 +7598,16 @@ func (response GetSandboxesSandboxID404JSONResponse) VisitGetSandboxesSandboxIDR
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSandboxesSandboxID429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSandboxesSandboxID429JSONResponse) VisitGetSandboxesSandboxIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetSandboxesSandboxID500JSONResponse struct{ N500JSONResponse }
@@ -6244,6 +7682,16 @@ func (response PostSandboxesSandboxIDConnect409JSONResponse) VisitPostSandboxesS
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostSandboxesSandboxIDConnect429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxesSandboxIDConnect429JSONResponse) VisitPostSandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostSandboxesSandboxIDConnect500JSONResponse struct{ N500JSONResponse }
 
 func (response PostSandboxesSandboxIDConnect500JSONResponse) VisitPostSandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
@@ -6316,6 +7764,16 @@ func (response PostSandboxesSandboxIDFork409JSONResponse) VisitPostSandboxesSand
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostSandboxesSandboxIDFork429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxesSandboxIDFork429JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostSandboxesSandboxIDFork500JSONResponse struct{ N500JSONResponse }
 
 func (response PostSandboxesSandboxIDFork500JSONResponse) VisitPostSandboxesSandboxIDForkResponse(w http.ResponseWriter) error {
@@ -6368,6 +7826,16 @@ func (response GetSandboxesSandboxIDLogs404JSONResponse) VisitGetSandboxesSandbo
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSandboxesSandboxIDLogs429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSandboxesSandboxIDLogs429JSONResponse) VisitGetSandboxesSandboxIDLogsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetSandboxesSandboxIDLogs500JSONResponse struct{ N500JSONResponse }
@@ -6424,6 +7892,16 @@ func (response GetSandboxesSandboxIDMetrics404JSONResponse) VisitGetSandboxesSan
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetSandboxesSandboxIDMetrics429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSandboxesSandboxIDMetrics429JSONResponse) VisitGetSandboxesSandboxIDMetricsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetSandboxesSandboxIDMetrics500JSONResponse struct{ N500JSONResponse }
 
 func (response GetSandboxesSandboxIDMetrics500JSONResponse) VisitGetSandboxesSandboxIDMetricsResponse(w http.ResponseWriter) error {
@@ -6475,6 +7953,16 @@ func (response PutSandboxesSandboxIDNetwork409JSONResponse) VisitPutSandboxesSan
 	w.WriteHeader(409)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PutSandboxesSandboxIDNetwork429JSONResponse struct{ N429JSONResponse }
+
+func (response PutSandboxesSandboxIDNetwork429JSONResponse) VisitPutSandboxesSandboxIDNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PutSandboxesSandboxIDNetwork500JSONResponse struct{ N500JSONResponse }
@@ -6530,6 +8018,16 @@ func (response PostSandboxesSandboxIDPause409JSONResponse) VisitPostSandboxesSan
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostSandboxesSandboxIDPause429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxesSandboxIDPause429JSONResponse) VisitPostSandboxesSandboxIDPauseResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostSandboxesSandboxIDPause500JSONResponse struct{ N500JSONResponse }
 
 func (response PostSandboxesSandboxIDPause500JSONResponse) VisitPostSandboxesSandboxIDPauseResponse(w http.ResponseWriter) error {
@@ -6581,6 +8079,16 @@ func (response PostSandboxesSandboxIDRefreshes404JSONResponse) VisitPostSandboxe
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDRefreshes429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxesSandboxIDRefreshes429JSONResponse) VisitPostSandboxesSandboxIDRefreshesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostSandboxesSandboxIDResumeRequestObject struct {
@@ -6635,6 +8143,16 @@ func (response PostSandboxesSandboxIDResume409JSONResponse) VisitPostSandboxesSa
 	w.WriteHeader(409)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDResume429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxesSandboxIDResume429JSONResponse) VisitPostSandboxesSandboxIDResumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostSandboxesSandboxIDResume500JSONResponse struct{ N500JSONResponse }
@@ -6709,6 +8227,16 @@ func (response PostSandboxesSandboxIDSnapshots404JSONResponse) VisitPostSandboxe
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostSandboxesSandboxIDSnapshots429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxesSandboxIDSnapshots429JSONResponse) VisitPostSandboxesSandboxIDSnapshotsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostSandboxesSandboxIDSnapshots500JSONResponse struct{ N500JSONResponse }
 
 func (response PostSandboxesSandboxIDSnapshots500JSONResponse) VisitPostSandboxesSandboxIDSnapshotsResponse(w http.ResponseWriter) error {
@@ -6751,6 +8279,16 @@ func (response PostSandboxesSandboxIDTimeout404JSONResponse) VisitPostSandboxesS
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PostSandboxesSandboxIDTimeout429JSONResponse struct{ N429JSONResponse }
+
+func (response PostSandboxesSandboxIDTimeout429JSONResponse) VisitPostSandboxesSandboxIDTimeoutResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostSandboxesSandboxIDTimeout500JSONResponse struct{ N500JSONResponse }
@@ -6836,9 +8374,10 @@ type GetSecrets429JSONResponse struct{ N429JSONResponse }
 
 func (response GetSecrets429JSONResponse) VisitGetSecretsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
 	w.WriteHeader(429)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetSecrets500JSONResponse struct{ N500JSONResponse }
@@ -6921,7 +8460,7 @@ func (response PostSecrets404JSONResponse) VisitPostSecretsResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PostSecrets409JSONResponse struct{ N409JSONResponse }
+type PostSecrets409JSONResponse Error
 
 func (response PostSecrets409JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
@@ -6934,9 +8473,10 @@ type PostSecrets429JSONResponse struct{ N429JSONResponse }
 
 func (response PostSecrets429JSONResponse) VisitPostSecretsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
 	w.WriteHeader(429)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostSecrets500JSONResponse struct{ N500JSONResponse }
@@ -7031,9 +8571,10 @@ type DeleteSecretsSecretID429JSONResponse struct{ N429JSONResponse }
 
 func (response DeleteSecretsSecretID429JSONResponse) VisitDeleteSecretsSecretIDResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
 	w.WriteHeader(429)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type DeleteSecretsSecretID500JSONResponse struct{ N500JSONResponse }
@@ -7129,9 +8670,10 @@ type GetSecretsSecretID429JSONResponse struct{ N429JSONResponse }
 
 func (response GetSecretsSecretID429JSONResponse) VisitGetSecretsSecretIDResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
 	w.WriteHeader(429)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetSecretsSecretID500JSONResponse struct{ N500JSONResponse }
@@ -7228,9 +8770,10 @@ type PostSecretsSecretID429JSONResponse struct{ N429JSONResponse }
 
 func (response PostSecretsSecretID429JSONResponse) VisitPostSecretsSecretIDResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
 	w.WriteHeader(429)
 
-	return json.NewEncoder(w).Encode(response)
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostSecretsSecretID500JSONResponse struct{ N500JSONResponse }
@@ -7294,6 +8837,16 @@ func (response GetSnapshots401JSONResponse) VisitGetSnapshotsResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetSnapshots429JSONResponse struct{ N429JSONResponse }
+
+func (response GetSnapshots429JSONResponse) VisitGetSnapshotsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetSnapshots500JSONResponse struct{ N500JSONResponse }
 
 func (response GetSnapshots500JSONResponse) VisitGetSnapshotsResponse(w http.ResponseWriter) error {
@@ -7326,6 +8879,16 @@ func (response GetTeams401JSONResponse) VisitGetTeamsResponse(w http.ResponseWri
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetTeams429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTeams429JSONResponse) VisitGetTeamsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetTeams500JSONResponse struct{ N500JSONResponse }
@@ -7382,6 +8945,16 @@ func (response GetTeamsTeamIDMetrics403JSONResponse) VisitGetTeamsTeamIDMetricsR
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetTeamsTeamIDMetrics429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTeamsTeamIDMetrics429JSONResponse) VisitGetTeamsTeamIDMetricsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetTeamsTeamIDMetrics500JSONResponse struct{ N500JSONResponse }
 
 func (response GetTeamsTeamIDMetrics500JSONResponse) VisitGetTeamsTeamIDMetricsResponse(w http.ResponseWriter) error {
@@ -7436,6 +9009,16 @@ func (response GetTeamsTeamIDMetricsMax403JSONResponse) VisitGetTeamsTeamIDMetri
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetTeamsTeamIDMetricsMax429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTeamsTeamIDMetricsMax429JSONResponse) VisitGetTeamsTeamIDMetricsMaxResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetTeamsTeamIDMetricsMax500JSONResponse struct{ N500JSONResponse }
 
 func (response GetTeamsTeamIDMetricsMax500JSONResponse) VisitGetTeamsTeamIDMetricsMaxResponse(w http.ResponseWriter) error {
@@ -7471,62 +9054,19 @@ func (response GetTemplates401JSONResponse) VisitGetTemplatesResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetTemplates429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTemplates429JSONResponse) VisitGetTemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetTemplates500JSONResponse struct{ N500JSONResponse }
 
 func (response GetTemplates500JSONResponse) VisitGetTemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplatesRequestObject struct {
-	Body *PostTemplatesJSONRequestBody
-}
-
-type PostTemplatesResponseObject interface {
-	VisitPostTemplatesResponse(w http.ResponseWriter) error
-}
-
-type PostTemplates202JSONResponse TemplateLegacy
-
-func (response PostTemplates202JSONResponse) VisitPostTemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(202)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplates400JSONResponse struct{ N400JSONResponse }
-
-func (response PostTemplates400JSONResponse) VisitPostTemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplates401JSONResponse struct{ N401JSONResponse }
-
-func (response PostTemplates401JSONResponse) VisitPostTemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplates409JSONResponse struct{ N409JSONResponse }
-
-func (response PostTemplates409JSONResponse) VisitPostTemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplates500JSONResponse struct{ N500JSONResponse }
-
-func (response PostTemplates500JSONResponse) VisitPostTemplatesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -7575,6 +9115,16 @@ func (response GetTemplatesAliasesAlias404JSONResponse) VisitGetTemplatesAliases
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetTemplatesAliasesAlias429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTemplatesAliasesAlias429JSONResponse) VisitGetTemplatesAliasesAliasResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetTemplatesAliasesAlias500JSONResponse struct{ N500JSONResponse }
@@ -7627,6 +9177,16 @@ func (response DeleteTemplatesTags404JSONResponse) VisitDeleteTemplatesTagsRespo
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteTemplatesTags429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteTemplatesTags429JSONResponse) VisitDeleteTemplatesTagsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type DeleteTemplatesTags500JSONResponse struct{ N500JSONResponse }
@@ -7682,6 +9242,16 @@ func (response PostTemplatesTags404JSONResponse) VisitPostTemplatesTagsResponse(
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostTemplatesTags429JSONResponse struct{ N429JSONResponse }
+
+func (response PostTemplatesTags429JSONResponse) VisitPostTemplatesTagsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostTemplatesTags500JSONResponse struct{ N500JSONResponse }
 
 func (response PostTemplatesTags500JSONResponse) VisitPostTemplatesTagsResponse(w http.ResponseWriter) error {
@@ -7714,6 +9284,16 @@ func (response DeleteTemplatesTemplateID401JSONResponse) VisitDeleteTemplatesTem
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteTemplatesTemplateID429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteTemplatesTemplateID429JSONResponse) VisitDeleteTemplatesTemplateIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type DeleteTemplatesTemplateID500JSONResponse struct{ N500JSONResponse }
@@ -7760,6 +9340,16 @@ func (response GetTemplatesTemplateID401JSONResponse) VisitGetTemplatesTemplateI
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetTemplatesTemplateID429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTemplatesTemplateID429JSONResponse) VisitGetTemplatesTemplateIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetTemplatesTemplateID500JSONResponse struct{ N500JSONResponse }
 
 func (response GetTemplatesTemplateID500JSONResponse) VisitGetTemplatesTemplateIDResponse(w http.ResponseWriter) error {
@@ -7804,89 +9394,19 @@ func (response PatchTemplatesTemplateID401JSONResponse) VisitPatchTemplatesTempl
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PatchTemplatesTemplateID429JSONResponse struct{ N429JSONResponse }
+
+func (response PatchTemplatesTemplateID429JSONResponse) VisitPatchTemplatesTemplateIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PatchTemplatesTemplateID500JSONResponse struct{ N500JSONResponse }
 
 func (response PatchTemplatesTemplateID500JSONResponse) VisitPatchTemplatesTemplateIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplatesTemplateIDRequestObject struct {
-	TemplateID TemplateID `json:"templateID"`
-	Body       *PostTemplatesTemplateIDJSONRequestBody
-}
-
-type PostTemplatesTemplateIDResponseObject interface {
-	VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error
-}
-
-type PostTemplatesTemplateID202JSONResponse TemplateLegacy
-
-func (response PostTemplatesTemplateID202JSONResponse) VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(202)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplatesTemplateID401JSONResponse struct{ N401JSONResponse }
-
-func (response PostTemplatesTemplateID401JSONResponse) VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplatesTemplateID409JSONResponse struct{ N409JSONResponse }
-
-func (response PostTemplatesTemplateID409JSONResponse) VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplatesTemplateID500JSONResponse struct{ N500JSONResponse }
-
-func (response PostTemplatesTemplateID500JSONResponse) VisitPostTemplatesTemplateIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplatesTemplateIDBuildsBuildIDRequestObject struct {
-	TemplateID TemplateID `json:"templateID"`
-	BuildID    BuildID    `json:"buildID"`
-}
-
-type PostTemplatesTemplateIDBuildsBuildIDResponseObject interface {
-	VisitPostTemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error
-}
-
-type PostTemplatesTemplateIDBuildsBuildID202Response struct {
-}
-
-func (response PostTemplatesTemplateIDBuildsBuildID202Response) VisitPostTemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error {
-	w.WriteHeader(202)
-	return nil
-}
-
-type PostTemplatesTemplateIDBuildsBuildID401JSONResponse struct{ N401JSONResponse }
-
-func (response PostTemplatesTemplateIDBuildsBuildID401JSONResponse) VisitPostTemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostTemplatesTemplateIDBuildsBuildID500JSONResponse struct{ N500JSONResponse }
-
-func (response PostTemplatesTemplateIDBuildsBuildID500JSONResponse) VisitPostTemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -7928,6 +9448,16 @@ func (response GetTemplatesTemplateIDBuildsBuildIDLogs404JSONResponse) VisitGetT
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetTemplatesTemplateIDBuildsBuildIDLogs429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTemplatesTemplateIDBuildsBuildIDLogs429JSONResponse) VisitGetTemplatesTemplateIDBuildsBuildIDLogsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetTemplatesTemplateIDBuildsBuildIDLogs500JSONResponse struct{ N500JSONResponse }
@@ -7974,6 +9504,16 @@ func (response GetTemplatesTemplateIDBuildsBuildIDStatus404JSONResponse) VisitGe
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetTemplatesTemplateIDBuildsBuildIDStatus429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTemplatesTemplateIDBuildsBuildIDStatus429JSONResponse) VisitGetTemplatesTemplateIDBuildsBuildIDStatusResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetTemplatesTemplateIDBuildsBuildIDStatus500JSONResponse struct{ N500JSONResponse }
@@ -8030,6 +9570,16 @@ func (response GetTemplatesTemplateIDFilesHash404JSONResponse) VisitGetTemplates
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetTemplatesTemplateIDFilesHash429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTemplatesTemplateIDFilesHash429JSONResponse) VisitGetTemplatesTemplateIDFilesHashResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetTemplatesTemplateIDFilesHash500JSONResponse struct{ N500JSONResponse }
 
 func (response GetTemplatesTemplateIDFilesHash500JSONResponse) VisitGetTemplatesTemplateIDFilesHashResponse(w http.ResponseWriter) error {
@@ -8081,6 +9631,16 @@ func (response GetTemplatesTemplateIDTags404JSONResponse) VisitGetTemplatesTempl
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetTemplatesTemplateIDTags429JSONResponse struct{ N429JSONResponse }
+
+func (response GetTemplatesTemplateIDTags429JSONResponse) VisitGetTemplatesTemplateIDTagsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetTemplatesTemplateIDTags500JSONResponse struct{ N500JSONResponse }
@@ -8137,11 +9697,193 @@ func (response GetV2Sandboxes401JSONResponse) VisitGetV2SandboxesResponse(w http
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetV2Sandboxes429JSONResponse struct{ N429JSONResponse }
+
+func (response GetV2Sandboxes429JSONResponse) VisitGetV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetV2Sandboxes500JSONResponse struct{ N500JSONResponse }
 
 func (response GetV2Sandboxes500JSONResponse) VisitGetV2SandboxesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesRequestObject struct {
+	Body *PostV2SandboxesJSONRequestBody
+}
+
+type PostV2SandboxesResponseObject interface {
+	VisitPostV2SandboxesResponse(w http.ResponseWriter) error
+}
+
+type PostV2Sandboxes201JSONResponse Sandbox
+
+func (response PostV2Sandboxes201JSONResponse) VisitPostV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2Sandboxes400JSONResponse struct{ N400JSONResponse }
+
+func (response PostV2Sandboxes400JSONResponse) VisitPostV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2Sandboxes401JSONResponse struct{ N401JSONResponse }
+
+func (response PostV2Sandboxes401JSONResponse) VisitPostV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2Sandboxes429JSONResponse struct{ N429JSONResponse }
+
+func (response PostV2Sandboxes429JSONResponse) VisitPostV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type PostV2Sandboxes500JSONResponse struct{ N500JSONResponse }
+
+func (response PostV2Sandboxes500JSONResponse) VisitPostV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2Sandboxes503JSONResponse struct{ N503JSONResponse }
+
+func (response PostV2Sandboxes503JSONResponse) VisitPostV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2Sandboxes504JSONResponse struct{ N504JSONResponse }
+
+func (response PostV2Sandboxes504JSONResponse) VisitPostV2SandboxesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnectRequestObject struct {
+	SandboxID SandboxID `json:"sandboxID"`
+	Body      *PostV2SandboxesSandboxIDConnectJSONRequestBody
+}
+
+type PostV2SandboxesSandboxIDConnectResponseObject interface {
+	VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error
+}
+
+type PostV2SandboxesSandboxIDConnect200JSONResponse Sandbox
+
+func (response PostV2SandboxesSandboxIDConnect200JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect201JSONResponse Sandbox
+
+func (response PostV2SandboxesSandboxIDConnect201JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect400JSONResponse struct{ N400JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect400JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect401JSONResponse struct{ N401JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect401JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect404JSONResponse struct{ N404JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect404JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect409JSONResponse struct{ N409JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect409JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect429JSONResponse struct{ N429JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect429JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type PostV2SandboxesSandboxIDConnect500JSONResponse struct{ N500JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect500JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect503JSONResponse struct{ N503JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect503JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2SandboxesSandboxIDConnect504JSONResponse struct{ N504JSONResponse }
+
+func (response PostV2SandboxesSandboxIDConnect504JSONResponse) VisitPostV2SandboxesSandboxIDConnectResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -8180,6 +9922,16 @@ func (response GetV2SandboxesSandboxIDLogs404JSONResponse) VisitGetV2SandboxesSa
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetV2SandboxesSandboxIDLogs429JSONResponse struct{ N429JSONResponse }
+
+func (response GetV2SandboxesSandboxIDLogs429JSONResponse) VisitGetV2SandboxesSandboxIDLogsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetV2SandboxesSandboxIDLogs500JSONResponse struct{ N500JSONResponse }
@@ -8243,62 +9995,19 @@ func (response GetV2Templates403JSONResponse) VisitGetV2TemplatesResponse(w http
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetV2Templates429JSONResponse struct{ N429JSONResponse }
+
+func (response GetV2Templates429JSONResponse) VisitGetV2TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetV2Templates500JSONResponse struct{ N500JSONResponse }
 
 func (response GetV2Templates500JSONResponse) VisitGetV2TemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostV2TemplatesRequestObject struct {
-	Body *PostV2TemplatesJSONRequestBody
-}
-
-type PostV2TemplatesResponseObject interface {
-	VisitPostV2TemplatesResponse(w http.ResponseWriter) error
-}
-
-type PostV2Templates202JSONResponse TemplateLegacy
-
-func (response PostV2Templates202JSONResponse) VisitPostV2TemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(202)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostV2Templates400JSONResponse struct{ N400JSONResponse }
-
-func (response PostV2Templates400JSONResponse) VisitPostV2TemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostV2Templates401JSONResponse struct{ N401JSONResponse }
-
-func (response PostV2Templates401JSONResponse) VisitPostV2TemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostV2Templates409JSONResponse struct{ N409JSONResponse }
-
-func (response PostV2Templates409JSONResponse) VisitPostV2TemplatesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostV2Templates500JSONResponse struct{ N500JSONResponse }
-
-func (response PostV2Templates500JSONResponse) VisitPostV2TemplatesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -8341,6 +10050,16 @@ func (response PatchV2TemplatesTemplateID401JSONResponse) VisitPatchV2TemplatesT
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PatchV2TemplatesTemplateID429JSONResponse struct{ N429JSONResponse }
+
+func (response PatchV2TemplatesTemplateID429JSONResponse) VisitPatchV2TemplatesTemplateIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PatchV2TemplatesTemplateID500JSONResponse struct{ N500JSONResponse }
 
 func (response PatchV2TemplatesTemplateID500JSONResponse) VisitPatchV2TemplatesTemplateIDResponse(w http.ResponseWriter) error {
@@ -8368,6 +10087,15 @@ func (response PostV2TemplatesTemplateIDBuildsBuildID202Response) VisitPostV2Tem
 	return nil
 }
 
+type PostV2TemplatesTemplateIDBuildsBuildID400JSONResponse struct{ N400JSONResponse }
+
+func (response PostV2TemplatesTemplateIDBuildsBuildID400JSONResponse) VisitPostV2TemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type PostV2TemplatesTemplateIDBuildsBuildID401JSONResponse struct{ N401JSONResponse }
 
 func (response PostV2TemplatesTemplateIDBuildsBuildID401JSONResponse) VisitPostV2TemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error {
@@ -8375,6 +10103,16 @@ func (response PostV2TemplatesTemplateIDBuildsBuildID401JSONResponse) VisitPostV
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type PostV2TemplatesTemplateIDBuildsBuildID429JSONResponse struct{ N429JSONResponse }
+
+func (response PostV2TemplatesTemplateIDBuildsBuildID429JSONResponse) VisitPostV2TemplatesTemplateIDBuildsBuildIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type PostV2TemplatesTemplateIDBuildsBuildID500JSONResponse struct{ N500JSONResponse }
@@ -8439,6 +10177,16 @@ func (response PostV3Templates409JSONResponse) VisitPostV3TemplatesResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostV3Templates429JSONResponse struct{ N429JSONResponse }
+
+func (response PostV3Templates429JSONResponse) VisitPostV3TemplatesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostV3Templates500JSONResponse struct{ N500JSONResponse }
 
 func (response PostV3Templates500JSONResponse) VisitPostV3TemplatesResponse(w http.ResponseWriter) error {
@@ -8471,6 +10219,16 @@ func (response GetVolumes401JSONResponse) VisitGetVolumesResponse(w http.Respons
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetVolumes429JSONResponse struct{ N429JSONResponse }
+
+func (response GetVolumes429JSONResponse) VisitGetVolumesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetVolumes500JSONResponse struct{ N500JSONResponse }
@@ -8517,6 +10275,16 @@ func (response PostVolumes401JSONResponse) VisitPostVolumesResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PostVolumes429JSONResponse struct{ N429JSONResponse }
+
+func (response PostVolumes429JSONResponse) VisitPostVolumesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PostVolumes500JSONResponse struct{ N500JSONResponse }
 
 func (response PostVolumes500JSONResponse) VisitPostVolumesResponse(w http.ResponseWriter) error {
@@ -8558,6 +10326,16 @@ func (response DeleteVolumesVolumeID404JSONResponse) VisitDeleteVolumesVolumeIDR
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteVolumesVolumeID429JSONResponse struct{ N429JSONResponse }
+
+func (response DeleteVolumesVolumeID429JSONResponse) VisitDeleteVolumesVolumeIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type DeleteVolumesVolumeID500JSONResponse struct{ N500JSONResponse }
@@ -8602,6 +10380,16 @@ func (response GetVolumesVolumeID404JSONResponse) VisitGetVolumesVolumeIDRespons
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetVolumesVolumeID429JSONResponse struct{ N429JSONResponse }
+
+func (response GetVolumesVolumeID429JSONResponse) VisitGetVolumesVolumeIDResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetVolumesVolumeID500JSONResponse struct{ N500JSONResponse }
@@ -8657,6 +10445,33 @@ type StrictServerInterface interface {
 	// List the instances attached to a rig
 	// (GET /clusters/{clusterID}/rigs/{rigID}/instances)
 	GetClustersClusterIDRigsRigIDInstances(ctx context.Context, request GetClustersClusterIDRigsRigIDInstancesRequestObject) (GetClustersClusterIDRigsRigIDInstancesResponseObject, error)
+
+	// (GET /events/sandboxes)
+	GetEventsSandboxes(ctx context.Context, request GetEventsSandboxesRequestObject) (GetEventsSandboxesResponseObject, error)
+
+	// (GET /events/sandboxes/{sandboxID})
+	GetEventsSandboxesSandboxID(ctx context.Context, request GetEventsSandboxesSandboxIDRequestObject) (GetEventsSandboxesSandboxIDResponseObject, error)
+
+	// (GET /events/webhooks)
+	GetEventsWebhooks(ctx context.Context, request GetEventsWebhooksRequestObject) (GetEventsWebhooksResponseObject, error)
+
+	// (POST /events/webhooks)
+	PostEventsWebhooks(ctx context.Context, request PostEventsWebhooksRequestObject) (PostEventsWebhooksResponseObject, error)
+
+	// (DELETE /events/webhooks/{webhookID})
+	DeleteEventsWebhooksWebhookID(ctx context.Context, request DeleteEventsWebhooksWebhookIDRequestObject) (DeleteEventsWebhooksWebhookIDResponseObject, error)
+
+	// (GET /events/webhooks/{webhookID})
+	GetEventsWebhooksWebhookID(ctx context.Context, request GetEventsWebhooksWebhookIDRequestObject) (GetEventsWebhooksWebhookIDResponseObject, error)
+
+	// (PATCH /events/webhooks/{webhookID})
+	PatchEventsWebhooksWebhookID(ctx context.Context, request PatchEventsWebhooksWebhookIDRequestObject) (PatchEventsWebhooksWebhookIDResponseObject, error)
+
+	// (GET /events/webhooks/{webhookID}/deliveries)
+	GetEventsWebhooksWebhookIDDeliveries(ctx context.Context, request GetEventsWebhooksWebhookIDDeliveriesRequestObject) (GetEventsWebhooksWebhookIDDeliveriesResponseObject, error)
+
+	// (GET /events/webhooks/{webhookID}/stats)
+	GetEventsWebhooksWebhookIDStats(ctx context.Context, request GetEventsWebhooksWebhookIDStatsRequestObject) (GetEventsWebhooksWebhookIDStatsResponseObject, error)
 	// Health check
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -8744,9 +10559,6 @@ type StrictServerInterface interface {
 	// List templates
 	// (GET /templates)
 	GetTemplates(ctx context.Context, request GetTemplatesRequestObject) (GetTemplatesResponseObject, error)
-	// Create template
-	// (POST /templates)
-	PostTemplates(ctx context.Context, request PostTemplatesRequestObject) (PostTemplatesResponseObject, error)
 	// Check template alias
 	// (GET /templates/aliases/{alias})
 	GetTemplatesAliasesAlias(ctx context.Context, request GetTemplatesAliasesAliasRequestObject) (GetTemplatesAliasesAliasResponseObject, error)
@@ -8765,12 +10577,6 @@ type StrictServerInterface interface {
 	// Update template
 	// (PATCH /templates/{templateID})
 	PatchTemplatesTemplateID(ctx context.Context, request PatchTemplatesTemplateIDRequestObject) (PatchTemplatesTemplateIDResponseObject, error)
-	// Rebuild template
-	// (POST /templates/{templateID})
-	PostTemplatesTemplateID(ctx context.Context, request PostTemplatesTemplateIDRequestObject) (PostTemplatesTemplateIDResponseObject, error)
-	// Start template build
-	// (POST /templates/{templateID}/builds/{buildID})
-	PostTemplatesTemplateIDBuildsBuildID(ctx context.Context, request PostTemplatesTemplateIDBuildsBuildIDRequestObject) (PostTemplatesTemplateIDBuildsBuildIDResponseObject, error)
 	// Template build logs
 	// (GET /templates/{templateID}/builds/{buildID}/logs)
 	GetTemplatesTemplateIDBuildsBuildIDLogs(ctx context.Context, request GetTemplatesTemplateIDBuildsBuildIDLogsRequestObject) (GetTemplatesTemplateIDBuildsBuildIDLogsResponseObject, error)
@@ -8786,15 +10592,18 @@ type StrictServerInterface interface {
 	// List sandboxes (v2)
 	// (GET /v2/sandboxes)
 	GetV2Sandboxes(ctx context.Context, request GetV2SandboxesRequestObject) (GetV2SandboxesResponseObject, error)
+	// Create sandbox (v2)
+	// (POST /v2/sandboxes)
+	PostV2Sandboxes(ctx context.Context, request PostV2SandboxesRequestObject) (PostV2SandboxesResponseObject, error)
+	// Connect sandbox (v2)
+	// (POST /v2/sandboxes/{sandboxID}/connect)
+	PostV2SandboxesSandboxIDConnect(ctx context.Context, request PostV2SandboxesSandboxIDConnectRequestObject) (PostV2SandboxesSandboxIDConnectResponseObject, error)
 	// Sandbox logs (v2)
 	// (GET /v2/sandboxes/{sandboxID}/logs)
 	GetV2SandboxesSandboxIDLogs(ctx context.Context, request GetV2SandboxesSandboxIDLogsRequestObject) (GetV2SandboxesSandboxIDLogsResponseObject, error)
 	// List templates (v2)
 	// (GET /v2/templates)
 	GetV2Templates(ctx context.Context, request GetV2TemplatesRequestObject) (GetV2TemplatesResponseObject, error)
-	// Create template (v2)
-	// (POST /v2/templates)
-	PostV2Templates(ctx context.Context, request PostV2TemplatesRequestObject) (PostV2TemplatesResponseObject, error)
 	// Update template (v2)
 	// (PATCH /v2/templates/{templateID})
 	PatchV2TemplatesTemplateID(ctx context.Context, request PatchV2TemplatesTemplateIDRequestObject) (PatchV2TemplatesTemplateIDResponseObject, error)
@@ -9234,6 +11043,264 @@ func (sh *strictHandler) GetClustersClusterIDRigsRigIDInstances(ctx *gin.Context
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(GetClustersClusterIDRigsRigIDInstancesResponseObject); ok {
 		if err := validResponse.VisitGetClustersClusterIDRigsRigIDInstancesResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventsSandboxes operation middleware
+func (sh *strictHandler) GetEventsSandboxes(ctx *gin.Context, params GetEventsSandboxesParams) {
+	var request GetEventsSandboxesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventsSandboxes(ctx, request.(GetEventsSandboxesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventsSandboxes")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEventsSandboxesResponseObject); ok {
+		if err := validResponse.VisitGetEventsSandboxesResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventsSandboxesSandboxID operation middleware
+func (sh *strictHandler) GetEventsSandboxesSandboxID(ctx *gin.Context, sandboxID SandboxID, params GetEventsSandboxesSandboxIDParams) {
+	var request GetEventsSandboxesSandboxIDRequestObject
+
+	request.SandboxID = sandboxID
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventsSandboxesSandboxID(ctx, request.(GetEventsSandboxesSandboxIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventsSandboxesSandboxID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEventsSandboxesSandboxIDResponseObject); ok {
+		if err := validResponse.VisitGetEventsSandboxesSandboxIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventsWebhooks operation middleware
+func (sh *strictHandler) GetEventsWebhooks(ctx *gin.Context) {
+	var request GetEventsWebhooksRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventsWebhooks(ctx, request.(GetEventsWebhooksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventsWebhooks")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEventsWebhooksResponseObject); ok {
+		if err := validResponse.VisitGetEventsWebhooksResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostEventsWebhooks operation middleware
+func (sh *strictHandler) PostEventsWebhooks(ctx *gin.Context) {
+	var request PostEventsWebhooksRequestObject
+
+	var body PostEventsWebhooksJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PostEventsWebhooks(ctx, request.(PostEventsWebhooksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostEventsWebhooks")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PostEventsWebhooksResponseObject); ok {
+		if err := validResponse.VisitPostEventsWebhooksResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteEventsWebhooksWebhookID operation middleware
+func (sh *strictHandler) DeleteEventsWebhooksWebhookID(ctx *gin.Context, webhookID WebhookID) {
+	var request DeleteEventsWebhooksWebhookIDRequestObject
+
+	request.WebhookID = webhookID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteEventsWebhooksWebhookID(ctx, request.(DeleteEventsWebhooksWebhookIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteEventsWebhooksWebhookID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(DeleteEventsWebhooksWebhookIDResponseObject); ok {
+		if err := validResponse.VisitDeleteEventsWebhooksWebhookIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventsWebhooksWebhookID operation middleware
+func (sh *strictHandler) GetEventsWebhooksWebhookID(ctx *gin.Context, webhookID WebhookID) {
+	var request GetEventsWebhooksWebhookIDRequestObject
+
+	request.WebhookID = webhookID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventsWebhooksWebhookID(ctx, request.(GetEventsWebhooksWebhookIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventsWebhooksWebhookID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEventsWebhooksWebhookIDResponseObject); ok {
+		if err := validResponse.VisitGetEventsWebhooksWebhookIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchEventsWebhooksWebhookID operation middleware
+func (sh *strictHandler) PatchEventsWebhooksWebhookID(ctx *gin.Context, webhookID WebhookID) {
+	var request PatchEventsWebhooksWebhookIDRequestObject
+
+	request.WebhookID = webhookID
+
+	var body PatchEventsWebhooksWebhookIDJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchEventsWebhooksWebhookID(ctx, request.(PatchEventsWebhooksWebhookIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchEventsWebhooksWebhookID")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PatchEventsWebhooksWebhookIDResponseObject); ok {
+		if err := validResponse.VisitPatchEventsWebhooksWebhookIDResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventsWebhooksWebhookIDDeliveries operation middleware
+func (sh *strictHandler) GetEventsWebhooksWebhookIDDeliveries(ctx *gin.Context, webhookID WebhookID, params GetEventsWebhooksWebhookIDDeliveriesParams) {
+	var request GetEventsWebhooksWebhookIDDeliveriesRequestObject
+
+	request.WebhookID = webhookID
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventsWebhooksWebhookIDDeliveries(ctx, request.(GetEventsWebhooksWebhookIDDeliveriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventsWebhooksWebhookIDDeliveries")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEventsWebhooksWebhookIDDeliveriesResponseObject); ok {
+		if err := validResponse.VisitGetEventsWebhooksWebhookIDDeliveriesResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventsWebhooksWebhookIDStats operation middleware
+func (sh *strictHandler) GetEventsWebhooksWebhookIDStats(ctx *gin.Context, webhookID WebhookID, params GetEventsWebhooksWebhookIDStatsParams) {
+	var request GetEventsWebhooksWebhookIDStatsRequestObject
+
+	request.WebhookID = webhookID
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventsWebhooksWebhookIDStats(ctx, request.(GetEventsWebhooksWebhookIDStatsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventsWebhooksWebhookIDStats")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(GetEventsWebhooksWebhookIDStatsResponseObject); ok {
+		if err := validResponse.VisitGetEventsWebhooksWebhookIDStatsResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {
@@ -10135,39 +12202,6 @@ func (sh *strictHandler) GetTemplates(ctx *gin.Context, params GetTemplatesParam
 	}
 }
 
-// PostTemplates operation middleware
-func (sh *strictHandler) PostTemplates(ctx *gin.Context) {
-	var request PostTemplatesRequestObject
-
-	var body PostTemplatesJSONRequestBody
-	if err := ctx.ShouldBindJSON(&body); err != nil {
-		ctx.Status(http.StatusBadRequest)
-		ctx.Error(err)
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.PostTemplates(ctx, request.(PostTemplatesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostTemplates")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		ctx.Error(err)
-		ctx.Status(http.StatusInternalServerError)
-	} else if validResponse, ok := response.(PostTemplatesResponseObject); ok {
-		if err := validResponse.VisitPostTemplatesResponse(ctx.Writer); err != nil {
-			ctx.Error(err)
-		}
-	} else if response != nil {
-		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // GetTemplatesAliasesAlias operation middleware
 func (sh *strictHandler) GetTemplatesAliasesAlias(ctx *gin.Context, alias string) {
 	var request GetTemplatesAliasesAliasRequestObject
@@ -10351,69 +12385,6 @@ func (sh *strictHandler) PatchTemplatesTemplateID(ctx *gin.Context, templateID T
 	}
 }
 
-// PostTemplatesTemplateID operation middleware
-func (sh *strictHandler) PostTemplatesTemplateID(ctx *gin.Context, templateID TemplateID) {
-	var request PostTemplatesTemplateIDRequestObject
-
-	request.TemplateID = templateID
-
-	var body PostTemplatesTemplateIDJSONRequestBody
-	if err := ctx.ShouldBindJSON(&body); err != nil {
-		ctx.Status(http.StatusBadRequest)
-		ctx.Error(err)
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.PostTemplatesTemplateID(ctx, request.(PostTemplatesTemplateIDRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostTemplatesTemplateID")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		ctx.Error(err)
-		ctx.Status(http.StatusInternalServerError)
-	} else if validResponse, ok := response.(PostTemplatesTemplateIDResponseObject); ok {
-		if err := validResponse.VisitPostTemplatesTemplateIDResponse(ctx.Writer); err != nil {
-			ctx.Error(err)
-		}
-	} else if response != nil {
-		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PostTemplatesTemplateIDBuildsBuildID operation middleware
-func (sh *strictHandler) PostTemplatesTemplateIDBuildsBuildID(ctx *gin.Context, templateID TemplateID, buildID BuildID) {
-	var request PostTemplatesTemplateIDBuildsBuildIDRequestObject
-
-	request.TemplateID = templateID
-	request.BuildID = buildID
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.PostTemplatesTemplateIDBuildsBuildID(ctx, request.(PostTemplatesTemplateIDBuildsBuildIDRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostTemplatesTemplateIDBuildsBuildID")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		ctx.Error(err)
-		ctx.Status(http.StatusInternalServerError)
-	} else if validResponse, ok := response.(PostTemplatesTemplateIDBuildsBuildIDResponseObject); ok {
-		if err := validResponse.VisitPostTemplatesTemplateIDBuildsBuildIDResponse(ctx.Writer); err != nil {
-			ctx.Error(err)
-		}
-	} else if response != nil {
-		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // GetTemplatesTemplateIDBuildsBuildIDLogs operation middleware
 func (sh *strictHandler) GetTemplatesTemplateIDBuildsBuildIDLogs(ctx *gin.Context, templateID TemplateID, buildID BuildID, params GetTemplatesTemplateIDBuildsBuildIDLogsParams) {
 	var request GetTemplatesTemplateIDBuildsBuildIDLogsRequestObject
@@ -10554,6 +12525,77 @@ func (sh *strictHandler) GetV2Sandboxes(ctx *gin.Context, params GetV2SandboxesP
 	}
 }
 
+// PostV2Sandboxes operation middleware
+func (sh *strictHandler) PostV2Sandboxes(ctx *gin.Context) {
+	var request PostV2SandboxesRequestObject
+
+	var body PostV2SandboxesJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		ctx.Error(err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PostV2Sandboxes(ctx, request.(PostV2SandboxesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostV2Sandboxes")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PostV2SandboxesResponseObject); ok {
+		if err := validResponse.VisitPostV2SandboxesResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostV2SandboxesSandboxIDConnect operation middleware
+func (sh *strictHandler) PostV2SandboxesSandboxIDConnect(ctx *gin.Context, sandboxID SandboxID) {
+	var request PostV2SandboxesSandboxIDConnectRequestObject
+
+	request.SandboxID = sandboxID
+
+	var body PostV2SandboxesSandboxIDConnectJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			ctx.Status(http.StatusBadRequest)
+			ctx.Error(err)
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PostV2SandboxesSandboxIDConnect(ctx, request.(PostV2SandboxesSandboxIDConnectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostV2SandboxesSandboxIDConnect")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		ctx.Error(err)
+		ctx.Status(http.StatusInternalServerError)
+	} else if validResponse, ok := response.(PostV2SandboxesSandboxIDConnectResponseObject); ok {
+		if err := validResponse.VisitPostV2SandboxesSandboxIDConnectResponse(ctx.Writer); err != nil {
+			ctx.Error(err)
+		}
+	} else if response != nil {
+		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetV2SandboxesSandboxIDLogs operation middleware
 func (sh *strictHandler) GetV2SandboxesSandboxIDLogs(ctx *gin.Context, sandboxID SandboxID, params GetV2SandboxesSandboxIDLogsParams) {
 	var request GetV2SandboxesSandboxIDLogsRequestObject
@@ -10602,39 +12644,6 @@ func (sh *strictHandler) GetV2Templates(ctx *gin.Context, params GetV2TemplatesP
 		ctx.Status(http.StatusInternalServerError)
 	} else if validResponse, ok := response.(GetV2TemplatesResponseObject); ok {
 		if err := validResponse.VisitGetV2TemplatesResponse(ctx.Writer); err != nil {
-			ctx.Error(err)
-		}
-	} else if response != nil {
-		ctx.Error(fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PostV2Templates operation middleware
-func (sh *strictHandler) PostV2Templates(ctx *gin.Context) {
-	var request PostV2TemplatesRequestObject
-
-	var body PostV2TemplatesJSONRequestBody
-	if err := ctx.ShouldBindJSON(&body); err != nil {
-		ctx.Status(http.StatusBadRequest)
-		ctx.Error(err)
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.PostV2Templates(ctx, request.(PostV2TemplatesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostV2Templates")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		ctx.Error(err)
-		ctx.Status(http.StatusInternalServerError)
-	} else if validResponse, ok := response.(PostV2TemplatesResponseObject); ok {
-		if err := validResponse.VisitPostV2TemplatesResponse(ctx.Writer); err != nil {
 			ctx.Error(err)
 		}
 	} else if response != nil {

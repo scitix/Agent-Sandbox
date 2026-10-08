@@ -9,7 +9,13 @@ description = "agent-sandbox E2B SDK patch — one-line switch to use Agent Sand
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-dependencies = []  # e2b is an optional peer dependency
+# e2b is a real dependency, upper-bounded at release time to the newest version
+# the release was checked against (see .github/workflows/sdk-python-publish.yml).
+# The patch reaches into SDK internals, and a new SDK can call API routes an
+# Agent Sandbox server does not serve yet, so an unchecked e2b is not a safe
+# default. The `e2b` extra is kept so existing `agent-sandbox-e2b[e2b]`
+# requirements still resolve.
+dependencies = ["e2b>=2.0.0"]
 
 [project.optional-dependencies]
 e2b = ["e2b>=2.0.0"]

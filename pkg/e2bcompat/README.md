@@ -19,13 +19,32 @@ the only reason this list can be trusted to be current.
 
 | Area | Operations |
 |---|---|
-| Sandboxes | `POST /sandboxes`, `GET /sandboxes`, `GET /v2/sandboxes`, `GET /sandboxes/{id}`, `DELETE /sandboxes/{id}`, `POST /sandboxes/{id}/timeout`, `POST /sandboxes/{id}/refreshes`, `POST /sandboxes/{id}/connect` |
+| Sandboxes | `POST /sandboxes`, `POST /v2/sandboxes`, `GET /sandboxes`, `GET /v2/sandboxes`, `GET /sandboxes/{id}`, `DELETE /sandboxes/{id}`, `POST /sandboxes/{id}/timeout`, `POST /sandboxes/{id}/refreshes`, `POST /sandboxes/{id}/connect`, `POST /v2/sandboxes/{id}/connect` |
 | Logs | `GET /sandboxes/{id}/logs`, `GET /v2/sandboxes/{id}/logs` |
 | Metrics | `GET /sandboxes/metrics`, `GET /sandboxes/{id}/metrics` (requires a metrics backend, see below) |
 | Templates | `GET /templates`, `GET /templates/{id}` (read-only) |
 | Secrets | `GET/POST /secrets`, `GET/POST/DELETE /secrets/{id}` |
 | API keys | `GET/POST /api-keys`, `DELETE /api-keys/{id}` |
 | Health | `GET /health` |
+
+### v1 and v2 create/connect
+
+The SDKs moved create and connect to `/v2/sandboxes` (Python `e2b` 2.51.0);
+older SDKs still call the v1 paths, so both are served. v2 is an adapter over
+the v1 handlers, not a second implementation (`handlers/sandboxes_v2.go`), and
+it differs from upstream v2 in two ways:
+
+- **`secure` is not forced on.** Upstream v2 always secures envd with its own
+  access token. AgentBox authenticates at the gateway, the same as v1 with
+  `secure` ignored.
+- **An omitted connect `timeout` leaves the deadline alone**, as on v1, rather
+  than resetting it to upstream's 300s default.
+
+Cross-cluster forwarding replays the v1 path on the target cluster, so a v2
+caller still reaches a cluster running a release that predates v2.
+
+Which SDK versions have been run against this server is recorded in
+`sdk/python/e2b/README.md` (compatibility matrix).
 
 ## Deliberately different
 
@@ -122,8 +141,8 @@ Three kinds, and the distinction is the `category` label on the metric below:
 | Category | Meaning | Operations |
 |---|---|---|
 | `architectural` | No counterpart here; the caller should stop asking | pause / resume / snapshots / fork (a sandbox is a claimed Pod, not a microVM, so there is no memory image), per-sandbox volumes, nodes, teams, rigs, `admin/*` |
-| `platform` | The capability exists, but not on this API | template builds (`POST /templates`, v2/v3, builds, files/hash, build logs/status), template tags |
-| `unimplemented` | A genuine gap, worth counting | `GET /templates/aliases/{alias}`, `GET /v2/templates`, `PATCH /api-keys/{id}` |
+| `platform` | The capability exists, but not on this API | template builds (`POST /v3/templates`, `PATCH`/`DELETE /templates/{id}`, v2 builds, files/hash, build logs/status), template tags |
+| `unimplemented` | A genuine gap, worth counting | `GET /templates/aliases/{alias}`, `GET /v2/templates`, `PATCH /api-keys/{id}`, sandbox events and webhooks (`/events/*`) |
 
 Rig inventory and capacity are the infrastructure operator's view of a fleet of
 machines. AgentBox schedules onto Kubernetes nodes, so the questions they

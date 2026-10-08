@@ -7,8 +7,12 @@ Agent Sandbox is a Kubernetes-native sandbox service for agentic AI scenarios (r
 ## Installation
 
 ```bash
-pip install e2b agent-sandbox-e2b
+pip install agent-sandbox-e2b        # or: uv pip install agent-sandbox-e2b
 ```
+
+`e2b` comes with it, capped at the newest version this release was checked
+against (see [Compatibility](#compatibility)). Don't pin `e2b` separately to
+something newer: the resolver will refuse it, and that refusal is the point.
 
 ## Quick Start
 
@@ -117,9 +121,64 @@ don't have the check. If you ever need the original behavior, do not call
 
 ## Compatibility
 
-Release builds verify the patch against the latest E2B SDK from PyPI before
-publishing (verified through E2B SDK `2.28.0`). After patching, all standard
-E2B SDK operations work unchanged:
+The patch hooks into SDK internals, and the SDK decides which API routes to
+call. A new `e2b` can break either one, so each release states what it was
+checked against and caps its dependency to match:
+
+- **Dependency cap.** `pip install agent-sandbox-e2b` resolves `e2b` to at most
+  `SUPPORTED_E2B_MAX_VERSION`. Asking for a newer `e2b` alongside it is an
+  unsatisfiable requirement, which you see at install time rather than as a
+  404 at runtime.
+- **Runtime warning.** If the cap was bypassed (`--no-deps`, a prebuilt image,
+  a source checkout), `patch_e2b()` warns that the installed `e2b` is newer
+  than the one checked.
+- **What gets checked.** The release workflow installs the latest `e2b`,
+  confirms the hook points still exist, and runs `check_sdk_routes.py`. That
+  script fails if `Sandbox` calls any route the server's E2B spec doesn't
+  declare.
+
+```python
+import agent_sandbox_e2b
+print(agent_sandbox_e2b.SUPPORTED_E2B_MAX_VERSION)
+```
+
+### Matrix
+
+The server side matters as much as the patch. `e2b` 2.51.0 moved create and
+connect to `POST /v2/sandboxes`. A server that doesn't serve those routes
+answers every `Sandbox.create` with `404: 404 page not found`, whatever patch
+version you have.
+
+| agent-sandbox-e2b | Checked up to `e2b` | Notes |
+|---|---|---|
+| 0.0.11+ | stamped at release (`SUPPORTED_E2B_MAX_VERSION`) | `e2b` is a direct, capped dependency. Route coverage is checked. |
+| 0.0.10 | 2.46.4 | Up to and including this release, the cap applies only through the `[e2b]` extra, so `pip install e2b agent-sandbox-e2b` installs the newest `e2b` regardless. Use `pip install 'agent-sandbox-e2b[e2b]'` to get the cap. |
+| 0.0.8 – 0.0.9 | 2.37.0 | |
+| 0.0.7 | 2.32.1 | |
+| 0.0.5 – 0.0.6 | 2.28.0 | |
+| 0.0.4 | 2.25.1 | |
+| 0.0.2 – 0.0.3 | 2.21.1 | |
+| 0.0.1 | `<3.0.0` (no check) | |
+
+Older rows come from each release's published `Requires-Dist`. The check back
+then covered hook points only, not routes, which made no difference until
+2.51.0.
+
+| `e2b` SDK | Server needs |
+|---|---|
+| ≤ 2.50.x | any Agent Sandbox release (v1 create/connect) |
+| ≥ 2.51.0 | a release that serves `POST /v2/sandboxes` and `POST /v2/sandboxes/{id}/connect` |
+
+If the server can't be upgraded yet, pin the SDK: `pip install 'e2b<2.51'`.
+
+To check a given SDK against a given server spec yourself (from a source
+checkout; the script is not shipped in the wheel):
+
+```bash
+python check_sdk_routes.py path/to/pkg/openapi/e2b/openapi.yaml
+```
+
+After patching, all standard E2B SDK operations work unchanged:
 
 ```python
 sandbox.commands.run("python --version")
