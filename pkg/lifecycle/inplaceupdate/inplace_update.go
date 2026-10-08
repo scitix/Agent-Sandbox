@@ -215,17 +215,23 @@ func IsInplaceUpdateCompleted(ctx context.Context, sandboxPool *agentsv1alpha1.S
 	// current status
 	statusImageIDs := make(map[string]string, len(pod.Status.ContainerStatuses))
 	statusImages := make(map[string]string, len(pod.Status.ContainerStatuses))
+	statuses := make(map[string]corev1.ContainerStatus, len(pod.Status.ContainerStatuses))
 	for _, status := range pod.Status.ContainerStatuses {
 		statusImageIDs[status.Name] = status.ImageID
 		statusImages[status.Name] = status.Image
+		statuses[status.Name] = status
 	}
 
 	// compare: resolve digests and check equality
-	for name := range state.LastContainerStatuses {
+	for name, last := range state.LastContainerStatuses {
 		currentImageID, ok := statusImageIDs[name]
 		if !ok {
 			// Container not yet reported in status — not completed.
 			return false
+		}
+
+		if kubeletStartedTarget(last, statuses[name], specImages[name]) {
+			continue
 		}
 
 		// Populate cache from pod status (free — no network call).
@@ -278,6 +284,46 @@ func IsInplaceUpdateCompleted(ctx context.Context, sandboxPool *agentsv1alpha1.S
 		}
 	}
 	return true
+}
+
+// kubeletStartedTarget reports whether kubelet has replaced the container with
+// one started from the target image reference, judged from the Pod status
+// alone.
+//
+// The registry comparison below asks a different question: does the running
+// content equal what the tag points to in the registry *now*. Under
+// imagePullPolicy IfNotPresent those two answers diverge whenever a node holds
+// an older copy of a mutable tag (an image cache that pre-seeds nodes makes this
+// the norm rather than the exception). kubelet then correctly starts the cached
+// copy without pulling, the digests never meet, and the Pod is wedged in
+// Starting/Stopping until a timeout recycles it. A spec image cannot be changed
+// in place to force a pull, so waiting does not help.
+//
+// All three conditions come from one ContainerStatus, which kubelet builds from
+// a single runtime status, so they cannot be observed half-updated:
+//
+//   - The containerID differs from the one recorded when the update was
+//     triggered: the old container is gone. An unchanged ID is the old container
+//     still running, which is exactly what the registry comparison must decide.
+//     An empty recorded ID (cache lag at trigger time) proves nothing, so it
+//     falls through to the registry comparison.
+//   - The status image names the target. A container restarted for another
+//     reason before kubelet saw the new spec (a crash, an OOM kill) gets a new
+//     ID too, but still reports the old image name, which never equals the
+//     target because the update is only recorded when the names differ.
+//   - The container is running, so a replacement that is created but failing,
+//     or waiting on a pull, is not mistaken for a finished one.
+//
+// When the name does not match (a digest reference, or a runtime that reports
+// the image under another name), the registry comparison still decides.
+func kubeletStartedTarget(last InplaceUpdateContainerStatus, cs corev1.ContainerStatus, specImage string) bool {
+	if last.ContainerID == "" || cs.ContainerID == "" || cs.ContainerID == last.ContainerID {
+		return false
+	}
+	if cs.State.Running == nil {
+		return false
+	}
+	return specImage != "" && normalizeImage(cs.Image) == normalizeImage(specImage)
 }
 
 // normalizeImage normalizes a container image reference to its canonical form

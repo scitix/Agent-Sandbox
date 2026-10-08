@@ -1024,6 +1024,146 @@ func imageID(repo, digest string) string {
 	return repo + "@" + digest
 }
 
+// kubeletSwapPod builds a Pod mid in-place update from the idle image to
+// target, recording oldID as the container that was running when the update
+// was triggered.
+func kubeletSwapPod(target, oldID string, cs corev1.ContainerStatus) *corev1.Pod {
+	state, _ := json.Marshal(InplaceUpdateState{
+		Phase:          InplaceUpdatePhaseStarting,
+		TargetPodPhase: agentsv1alpha1.SandboxPhaseRunning,
+		TargetImages:   map[string]string{"sandbox": target},
+		LastContainerStatuses: map[string]InplaceUpdateContainerStatus{"sandbox": {
+			ImageID:     imageID("registry.example.com/idle", digestPause),
+			ContainerID: oldID,
+		}},
+	})
+	cs.Name = "sandbox"
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{PodAnnotationInPlaceUpdateStateKey: string(state)}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "sandbox", Image: target}}},
+		Status:     corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{cs}},
+	}
+}
+
+// A mutable tag whose registry digest moved after the node cached it. Under
+// IfNotPresent kubelet starts the cached copy without pulling, so the running
+// digest never equals the registry's. Before kubelet's own evidence was
+// consulted this Pod sat in Starting until the startup timeout recycled it,
+// and the create request timed out on the client.
+func TestIsInplaceUpdateCompleted_KubeletEvidence(t *testing.T) {
+	const target = "docker.io/library/ubuntu:24.04"
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	// The registry now points the tag at digestNew and every config lookup
+	// fails, so only kubelet's evidence can complete these Pods.
+	registryMoved := map[string]string{target: digestNew}
+
+	tests := []struct {
+		name string
+		pod  *corev1.Pod
+		want bool
+	}{
+		{
+			name: "new container, target name, running, cached digest differs from registry → completed",
+			pod: kubeletSwapPod(target, "containerd://old", corev1.ContainerStatus{
+				ContainerID: "containerd://new", Image: target, State: running,
+				ImageID: imageID("docker.io/library/ubuntu", digestOld),
+			}),
+			want: true,
+		},
+		{
+			name: "kubelet reports the short name for the same reference → completed",
+			pod: kubeletSwapPod(target, "containerd://old", corev1.ContainerStatus{
+				ContainerID: "containerd://new", Image: "ubuntu:24.04", State: running,
+				ImageID: imageID("docker.io/library/ubuntu", digestOld),
+			}),
+			want: true,
+		},
+		{
+			// The case the registry comparison exists for: nothing has been
+			// replaced yet, so the old container must not count as the new one.
+			name: "same containerID → registry decides → not completed",
+			pod: kubeletSwapPod(target, "containerd://old", corev1.ContainerStatus{
+				ContainerID: "containerd://old", Image: target, State: running,
+				ImageID: imageID("docker.io/library/ubuntu", digestOld),
+			}),
+			want: false,
+		},
+		{
+			// The idle container crashed and was restarted before kubelet acted on
+			// the new spec: a new ID, but still the idle image.
+			name: "new containerID but old image name (crash restart) → not completed",
+			pod: kubeletSwapPod(target, "containerd://old", corev1.ContainerStatus{
+				ContainerID: "containerd://new", Image: "registry.example.com/idle:v1", State: running,
+				ImageID: imageID("registry.example.com/idle", digestPause),
+			}),
+			want: false,
+		},
+		{
+			// A claim timed out while its image was still pulling, the spec went
+			// back to idle, and the next claim targets another image. The pull for
+			// the abandoned target finishes late and kubelet reports *that*
+			// container: a new ID, running, but the wrong image. Counting it as
+			// done marked the update complete on the wrong image, and the real
+			// swap that followed was then flagged as an unexpected restart.
+			name: "late container from an abandoned target (new ID, running, other image) → not completed",
+			pod: kubeletSwapPod(target, "containerd://idle", corev1.ContainerStatus{
+				ContainerID: "containerd://abandoned", Image: "registry.example.com/astropy:v1", State: running,
+				ImageID: imageID("registry.example.com/astropy", digestRunning),
+			}),
+			want: false,
+		},
+		{
+			name: "replacement created but not running (pull pending / crashing) → not completed",
+			pod: kubeletSwapPod(target, "containerd://old", corev1.ContainerStatus{
+				ContainerID: "containerd://new", Image: target,
+				State:   corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				ImageID: imageID("docker.io/library/ubuntu", digestOld),
+			}),
+			want: false,
+		},
+		{
+			// Recorded under cache lag: no proof of replacement, so no shortcut.
+			name: "recorded containerID empty → registry decides → not completed",
+			pod: kubeletSwapPod(target, "", corev1.ContainerStatus{
+				ContainerID: "containerd://new", Image: target, State: running,
+				ImageID: imageID("docker.io/library/ubuntu", digestOld),
+			}),
+			want: false,
+		},
+		{
+			name: "current containerID empty → not completed",
+			pod: kubeletSwapPod(target, "containerd://old", corev1.ContainerStatus{
+				Image: target, State: running,
+				ImageID: imageID("docker.io/library/ubuntu", digestOld),
+			}),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver := newMockResolver()
+			maps.Copy(resolver.seedDigests, registryMoved)
+			if got := IsInplaceUpdateCompleted(context.Background(), &agentsv1alpha1.SandboxPool{}, tt.pod, resolver); got != tt.want {
+				t.Fatalf("IsInplaceUpdateCompleted() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A digest reference cannot drift, and kubelet may report it under a different
+// name, so it is never taken on kubelet's word: the digest still has to match.
+func TestIsInplaceUpdateCompleted_DigestTargetStillComparesDigests(t *testing.T) {
+	target := "registry.example.com/app@" + digestNew
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	pod := kubeletSwapPod(target, "containerd://old", corev1.ContainerStatus{
+		ContainerID: "containerd://new", Image: "registry.example.com/app:v1", State: running,
+		ImageID: imageID("registry.example.com/app", digestOld),
+	})
+	if IsInplaceUpdateCompleted(context.Background(), &agentsv1alpha1.SandboxPool{}, pod, newMockResolver()) {
+		t.Fatal("a digest target running different content must not complete")
+	}
+}
+
 func TestIsInplaceUpdateCompleted(t *testing.T) {
 	makeState := func(phase, targetPodPhase string, lastStatuses map[string]InplaceUpdateContainerStatus, targetImages map[string]string) string {
 		s := InplaceUpdateState{
