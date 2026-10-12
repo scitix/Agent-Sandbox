@@ -52,6 +52,10 @@ var ErrSandboxRouteBadGateway = errors.New("sandbox is not in a healthy state")
 type SandboxRoute struct {
 	PodIP string
 	Port  int
+	// TrafficSecured is true when the sandbox's user service ports require a
+	// traffic access token. Read from the same Pod object the route resolves
+	// from, so the gateway can enforce it without a second read.
+	TrafficSecured bool
 }
 
 // DestHost formats the route as "IP:Port" for the x-envoy-original-dst-host header.
@@ -147,7 +151,11 @@ func (r *K8sSandboxRouter) finalize(pod *corev1.Pod, sandboxID string, reqPort i
 		if pod.Status.PodIP == "" {
 			return nil, ErrSandboxRouteBadGateway
 		}
-		return &SandboxRoute{PodIP: pod.Status.PodIP, Port: reqPort}, nil
+		return &SandboxRoute{
+			PodIP:          pod.Status.PodIP,
+			Port:           reqPort,
+			TrafficSecured: pod.Annotations[agentsv1alpha1.SandboxTrafficSecuredAnnotationKey] == agentsv1alpha1.SandboxSecuredAnnotationTrue,
+		}, nil
 	default:
 		return nil, ErrSandboxRouteBadGateway
 	}

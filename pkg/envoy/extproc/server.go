@@ -39,6 +39,7 @@ import (
 	grpcStatus "google.golang.org/grpc/status"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/hostalias"
@@ -78,6 +79,10 @@ type Server struct {
 	clusterStore    *cluster.Store   // nil = cross-cluster disabled
 	localClusterID  string           // identifier of this cluster
 	dnsCache        *dnsCache        // resolves gateway hostnames for ORIGINAL_DST forwarding
+	// tokenGen recomputes the per-sandbox traffic access token to validate it on
+	// non-envd ports. Nil (no shared secret) disables that check; the envd port
+	// is still protected by envd's own token, which this gateway does not mint.
+	tokenGen *accesstoken.Generator
 }
 
 // New creates a new ExtProc gRPC Server.
@@ -89,7 +94,8 @@ type Server struct {
 //   - activityTracker – Records per-sandbox last-active timestamps (may be nil).
 //   - clusterStore    – Cross-cluster config store (nil to disable cross-cluster routing).
 //   - localClusterID  – Identifier of the local cluster (empty to disable cross-cluster routing).
-func New(cfg ServerConfig, adminKeyMgr *apikey.AdminKeyManager, keyStore apikey.KeyStore, router SandboxRouter, activityTracker *ActivityTracker, clusterStore *cluster.Store, localClusterID string) *Server {
+//   - tokenGen        – Recomputes the traffic access token (nil to disable traffic-token validation).
+func New(cfg ServerConfig, adminKeyMgr *apikey.AdminKeyManager, keyStore apikey.KeyStore, router SandboxRouter, activityTracker *ActivityTracker, clusterStore *cluster.Store, localClusterID string, tokenGen *accesstoken.Generator) *Server {
 	dns := newDNSCache(defaultDNSTTL)
 	// Attach an in-process host-alias resolver driven by the Manager's pushed
 	// ClusterConfig. This bypasses Pod-level hostAliases and lets operators
@@ -108,6 +114,7 @@ func New(cfg ServerConfig, adminKeyMgr *apikey.AdminKeyManager, keyStore apikey.
 		clusterStore:    clusterStore,
 		localClusterID:  localClusterID,
 		dnsCache:        dns,
+		tokenGen:        tokenGen,
 	}
 }
 
@@ -224,6 +231,17 @@ func (s *Server) handleRequestHeaders(ctx context.Context, httpHeaders *extProcP
 		}
 	}
 
+	// ── 2c. envd control-path guard ───────────────────────────────────────────
+	// envd's control routes (/init, the freeze/thaw hooks, the live self-upgrade)
+	// are reached by the operator directly at the Pod IP, never through this
+	// gateway. A request for one that arrived here has no legitimate sender — and
+	// /init in particular would let an unauthenticated caller SET the access token
+	// on a sandbox whose arming has not yet delivered one, claiming its envd.
+	// Refuse them regardless of the shared secret; this guard mints nothing.
+	if int32(target.Port) == accesstoken.EnvdPort && accesstoken.IsInternalEnvdPath(target.RewrittenPath) {
+		return immediateError(typev3.StatusCode_Forbidden, "envd control path is not reachable through the gateway")
+	}
+
 	// ── 3. Route resolution ──────────────────────────────────────────────────
 	route, routeErr := s.router.ResolveSandboxRoute(ctx, target.SandboxID, target.Port)
 	if routeErr != nil {
@@ -242,6 +260,21 @@ func (s *Server) handleRequestHeaders(ctx context.Context, httpHeaders *extProcP
 			return immediateError(typev3.StatusCode_BadGateway, "sandbox not found")
 		}
 		return immediateError(typev3.StatusCode_ServiceUnavailable, "failed to resolve sandbox route")
+	}
+
+	// ── 3b. Traffic access token ──────────────────────────────────────────────
+	// A sandbox created without public traffic requires a token on its user
+	// service ports. The envd port is exempt — envd authenticates itself with its
+	// own token, which this gateway does not hold. The expected token is
+	// recomputed from the shared secret over the raw sandbox UUID, matching what
+	// the E2B API returned to the SDK.
+	if route.TrafficSecured && int32(target.Port) != accesstoken.EnvdPort && s.tokenGen.Enabled() {
+		// hdrMap keys are lower-cased; TrafficHeader is already lower-case.
+		provided := hdrMap[accesstoken.TrafficHeader]
+		if !s.tokenGen.ValidateTraffic(target.SandboxID, provided) {
+			return immediateError(typev3.StatusCode_Unauthorized,
+				"missing or invalid "+accesstoken.TrafficHeader)
+		}
 	}
 
 	// ── 4. Record activity ───────────────────────────────────────────────────

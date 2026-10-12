@@ -106,12 +106,18 @@ describe("buildE2BCreateBody", () => {
     expect(body.envVars).toEqual({ TOKEN: "abc" })
   })
 
-  it("only sends the booleans when switched on", () => {
+  it("only sends autoPause when switched on", () => {
     expect(buildE2BCreateBody({ poolName: "e" }).autoPause).toBeUndefined()
-    expect(buildE2BCreateBody({ poolName: "e", autoPause: true, secure: true })).toMatchObject({
-      autoPause: true,
-      secure: true,
-    })
+    expect(buildE2BCreateBody({ poolName: "e", autoPause: true }).autoPause).toBe(true)
+  })
+
+  // The server defaults `secure` to true, so the wire carries only the opt-out.
+  // Sending nothing for "off" would silently leave the sandbox secured; sending
+  // nothing for "on" is what keeps the default.
+  it("sends secure only as an explicit opt-out", () => {
+    expect(buildE2BCreateBody({ poolName: "e" }).secure).toBeUndefined()
+    expect(buildE2BCreateBody({ poolName: "e", secure: true }).secure).toBeUndefined()
+    expect(buildE2BCreateBody({ poolName: "e", secure: false }).secure).toBe(false)
   })
 })
 

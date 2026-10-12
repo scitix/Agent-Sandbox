@@ -1278,7 +1278,7 @@
   "sandboxes.form.autoPause": "自動暫停",
   "sandboxes.form.autoPauseDesc": "閒置逾時到達後暫停沙箱，而不是銷毀它。",
   "sandboxes.form.secure": "安全通訊",
-  "sandboxes.form.secureDesc": "與沙箱之間的所有系統通訊都要求鑑權。",
+  "sandboxes.form.secureDesc": "存取沙箱的檔案與命令需要該沙箱的存取權杖。關閉後，任何知道沙箱 ID 的人都能讀取檔案、執行命令。",
   "sandboxes.form.usingApiKey": "使用 API Key {{keyId}} 建立",
   "sandboxes.apiKeyRequiredDescription": "建立沙箱走的是 E2B 相容介面，它用 API Key 鑑權而不是控制台工作階段。請先在 API Keys 頁面建立一把，建立後即可在這裡使用。",
   "envs.form.section.volumes": "儲存卷",

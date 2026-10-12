@@ -120,7 +120,10 @@ export function buildE2BCreateBody(values: E2BSandboxFormValues): E2BCreateBody 
   if (Object.keys(envVars).length > 0) body.envVars = envVars
 
   if (values.autoPause) body.autoPause = true
-  if (values.secure) body.secure = true
+  // Omitted means secured (the server defaults `secure` to true), so only an
+  // explicit opt-out goes on the wire. Turning it off leaves envd reachable to
+  // anyone who knows the sandbox ID.
+  if (values.secure === false) body.secure = false
 
   const rules = buildInjectionRules(values.injectionRuleRows)
 

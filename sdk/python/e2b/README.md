@@ -28,7 +28,7 @@ patch_e2b()  # zero-argument: uses default in-cluster addresses
 
 from e2b import Sandbox
 
-sandbox = Sandbox.create("POOL_NAME", timeout=3600, secure=False)
+sandbox = Sandbox.create("POOL_NAME", timeout=3600)
 sandbox.commands.run("echo hello")
 sandbox.kill()
 ```
@@ -40,7 +40,7 @@ sandbox.kill()
 Prefix the pool name with a cluster ID to route requests across clusters:
 
 ```python
-sandbox = Sandbox.create("CLUSTER_ID::POOL_NAME", timeout=3600, secure=False)
+sandbox = Sandbox.create("CLUSTER_ID::POOL_NAME", timeout=3600)
 ```
 
 ## Custom Image Override
@@ -52,7 +52,6 @@ Override the pool's default image at creation time:
 sandbox = Sandbox.create(
     "POOL_NAME",
     timeout=3600,
-    secure=False,
     metadata={"agentbox.scitix.ai/image": "registry.example.com/my-env:v2"},
 )
 
@@ -60,7 +59,6 @@ sandbox = Sandbox.create(
 sandbox = Sandbox.create(
     "CLUSTER_ID::POOL_NAME//registry.example.com/my-env:v2",
     timeout=3600,
-    secure=False,
 )
 ```
 

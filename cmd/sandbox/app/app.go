@@ -53,6 +53,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/lastcreate"
 	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 	"github.com/scitix/agent-sandbox/pkg/store"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/imageresolver"
@@ -162,8 +163,10 @@ func Run(opts Options) {
 	flag.StringVar(&e2bDomain, "e2b-domain", "",
 		"Domain name returned in E2B API responses for building sandbox connection URLs.")
 	flag.StringVar(&secret, "secret", os.Getenv("AGENTBOX_SECRET"),
-		"Shared secret used for IAM JWT verification (HS256) and ws-proxy /v1/ws/sync auth. "+
-			"When empty, JWT auth is disabled and cross-cluster sync is not advertised.")
+		"Shared secret used for IAM JWT verification (HS256), ws-proxy /v1/ws/sync auth, "+
+			"and minting the per-sandbox envd/traffic access tokens that secure the data plane. "+
+			"When empty, JWT auth is disabled, cross-cluster sync is not advertised, and the "+
+			"data plane is left unauthenticated.")
 	flag.StringVar(&localClusterID, "local-cluster-id", os.Getenv("LOCAL_CLUSTER_ID"),
 		"Identifier of the local cluster. When empty, cross-cluster features are disabled.")
 	flag.StringVar(&prometheusURL, "prometheus-url", os.Getenv("PROMETHEUS_URL"),
@@ -585,7 +588,14 @@ func Run(opts Options) {
 	// out to every Pod informer in the cluster, to carry a fact across a
 	// function-call boundary.
 	armRegistry := armnotify.New()
-	hooksRunner := poststarthooks.NewRunner(envoyGatewayBaseURL, clientset, restCfg, mgr.GetClient(), armRegistry)
+	// The same shared secret mints the per-sandbox envd/traffic access tokens.
+	// The runner delivers the envd token to envd on /init; the E2B API returns
+	// the identical token to the SDK, and the gateway recomputes the traffic
+	// token to validate it. All three derive it from this secret, so none of them
+	// has to store or exchange anything.
+	tokenGen := accesstoken.New(secret)
+	hooksRunner := poststarthooks.NewRunner(
+		envoyGatewayBaseURL, clientset, restCfg, mgr.GetClient(), armRegistry, tokenGen)
 	if r, ok := sandboxSvc.(interface {
 		SetArmWaiter(service.ArmWaiter)
 	}); ok {
@@ -776,7 +786,7 @@ func Run(opts Options) {
 			LocalClusterID:  localClusterID,
 			MetricsSelector: selectorFn,
 		}, mgr.GetClient(), keyStore, adminKeyMgr, iamSvc, sandboxSvc, ccForwarder, fedRegistry, metricsClient,
-			vaultSvc)
+			vaultSvc, tokenGen)
 		go func() { errCh <- e2bServer.Start(ctx) }()
 	}
 

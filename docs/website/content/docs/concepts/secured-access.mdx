@@ -1,0 +1,99 @@
+---
+title: Secured access
+description: Why a sandbox ID is not a credential — the envd access token, the traffic access token, and what the stock E2B SDK does with them.
+---
+
+A sandbox is reached through the gateway by its ID:
+
+```
+https://YOUR_GATEWAY/sandboxes/{sandboxId}/{port}/...
+```
+
+That ID is not a secret. It travels in URLs, logs and error messages, and it is
+returned to anyone a sandbox is shared with. So the ID alone must not be enough
+to read a sandbox's files or run commands in it — and by default it is not. Two
+tokens stand between a sandbox ID and the sandbox, one for each surface:
+
+```
+port 49983 (envd)     the control plane: file API + process/filesystem RPCs
+every other port      the user's own services
+```
+
+## The two tokens
+
+**The envd access token** guards port 49983 — the control plane every SDK uses
+to read and write files and to run commands. envd itself enforces it: once the
+token is set, every RPC must carry it, and the file API is signed with it too. A
+request that cannot present the token gets `401`.
+
+**The traffic access token** guards the user's *own* service ports — the HTTP
+server an agent starts on `:8080`, say. The gateway enforces this one: if the
+sandbox was created without public traffic, a request to a user port must carry
+the token or it gets `401`. The envd port is exempt, because envd already has
+its own token.
+
+Both tokens are per-sandbox. Neither is stored anywhere: each is an HMAC of the
+sandbox's ID under a cluster secret, so the parts of the platform that need to
+check a token recompute it rather than look it up.
+
+## It is on by default, and the SDK handles it
+
+Secured envd access follows the E2B SDK's own `secure` flag, which **defaults to
+`True`**. You do not pass anything, and you do not handle the token yourself —
+`create` and `connect` return it, and the SDK presents it on every call:
+
+```python
+from e2b import Sandbox
+
+sbx = Sandbox.create("YOUR_ENV")   # secure=True is the default
+sbx.files.write("/tmp/x", "hi")    # the SDK carries the envd token for you
+print(sbx.files.read("/tmp/x"))
+```
+
+The same holds on reconnect: `Sandbox.connect(id)` returns the tokens again, so
+a second process that connects to a running sandbox is also authenticated
+without doing anything special.
+
+A raw HTTP client that skips the SDK and hits the data plane with only a sandbox
+ID now gets `401` on the envd port — which is the point.
+
+## Securing the user's own ports
+
+A service a sandbox exposes is public by default: anyone with the URL reaches
+it. To require the traffic token instead, create the sandbox with public traffic
+turned off:
+
+```python
+sbx = Sandbox.create("YOUR_ENV", network={"allow_public_traffic": False})
+```
+
+Now a request to one of the sandbox's service ports must carry the traffic token
+the SDK received. This is E2B's native `allowPublicTraffic` field; there is no
+Agent Sandbox dialect for it.
+
+## Turning it off
+
+`secure=False` on create leaves envd unsecured — the ID alone reaches the file
+API and the RPCs again. Only do this when you have another layer in front, or
+for a throwaway sandbox with nothing worth reading:
+
+```python
+sbx = Sandbox.create("YOUR_ENV", secure=False)   # envd is open to anyone with the ID
+```
+
+<Callout title="Older examples that pass secure=False">
+Some examples pass `secure=False` to keep their focus on one feature. That was
+harmless when the flag did nothing; now it genuinely disables envd
+authentication. Drop it (or set `secure=True`) unless you specifically want an
+open sandbox.
+</Callout>
+
+## What this does not cover
+
+- **It is authentication, not authorization.** A valid token reaches the whole
+  sandbox; the tokens do not express "this caller may read but not write".
+- **It secures the data plane, not the control plane.** Creating, listing and
+  killing sandboxes go through the API with your API key, unchanged.
+- **A deployment without the cluster secret configured mints no tokens**, and
+  the data plane stays open. On such a cluster `secure=True` has no effect —
+  check with your operator if you are unsure which mode a cluster is in.

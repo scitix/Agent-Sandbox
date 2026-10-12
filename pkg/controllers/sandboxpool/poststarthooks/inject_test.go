@@ -168,7 +168,7 @@ func TestMergeInitHook_MergesIntoExistingInitCall(t *testing.T) {
 		Body: map[string]any{"envVars": map[string]string{"USER_VAR": "keep-me"}},
 	}}}
 
-	out := mergeInitHook(hooks, "CA-PEM", map[string]string{"SSL_CERT_FILE": "/etc/agbx/ca.pem"})
+	out := mergeInitHook(hooks, "CA-PEM", map[string]string{"SSL_CERT_FILE": "/etc/agbx/ca.pem"}, "")
 	if len(out) != 1 {
 		t.Fatalf("expected the existing hook to be reused, got %d hooks", len(out))
 	}
@@ -186,7 +186,7 @@ func TestMergeInitHook_MergesIntoExistingInitCall(t *testing.T) {
 }
 
 func TestMergeInitHook_CreatesHookWhenNoneExists(t *testing.T) {
-	out := mergeInitHook(nil, "CA-PEM", map[string]string{"A": "b"})
+	out := mergeInitHook(nil, "CA-PEM", map[string]string{"A": "b"}, "")
 	if len(out) != 1 || out[0].HTTPPost == nil {
 		t.Fatalf("expected a synthesised /init hook, got %+v", out)
 	}
@@ -200,7 +200,7 @@ func TestMergeInitHook_CreatesHookWhenNoneExists(t *testing.T) {
 // sandbox that had nothing to send would otherwise never lift that gate.
 func TestMergeInitHook_StillSendsInitWithNothingToDeliver(t *testing.T) {
 	hooks := []Action{{Exec: &ExecAction{Command: "true"}}}
-	out := mergeInitHook(hooks, "", nil)
+	out := mergeInitHook(hooks, "", nil, "")
 	if len(out) != 2 {
 		t.Fatalf("expected the caller's hook plus an /init, got %+v", out)
 	}
@@ -221,7 +221,7 @@ func TestMergeInitHook_DoesNotDuplicateAnExistingInit(t *testing.T) {
 	hooks := []Action{{HTTPPost: &HTTPPostAction{
 		Port: envdInitPort, Path: "/init", Body: map[string]any{"envVars": map[string]string{"A": "1"}},
 	}}}
-	out := mergeInitHook(hooks, "", nil)
+	out := mergeInitHook(hooks, "", nil, "")
 	if len(out) != 1 {
 		t.Fatalf("expected the existing /init to be reused, got %+v", out)
 	}
@@ -233,11 +233,54 @@ func TestMergeInitHook_DoesNotDuplicateAnExistingInit(t *testing.T) {
 // A non-/init hook must not be hijacked as the carrier.
 func TestMergeInitHook_IgnoresOtherHooks(t *testing.T) {
 	hooks := []Action{{HTTPPost: &HTTPPostAction{Port: 8080, Path: "/other"}}}
-	out := mergeInitHook(hooks, "CA-PEM", nil)
+	out := mergeInitHook(hooks, "CA-PEM", nil, "")
 	if len(out) != 2 {
 		t.Fatalf("expected a new /init hook alongside the existing one, got %d", len(out))
 	}
 	if out[0].HTTPPost.Path != "/other" {
 		t.Fatal("the unrelated hook was modified")
+	}
+}
+
+// The envd access token must ride the /init call so envd is sealed before the
+// sandbox is handed over. A secured sandbox with nothing else to deliver still
+// gets an /init carrying only the token.
+func TestMergeInitHook_DeliversAccessToken(t *testing.T) {
+	// Synthesised hook: no CA, no env vars, just the token.
+	out := mergeInitHook(nil, "", nil, "deadbeef")
+	if len(out) != 1 || out[0].HTTPPost == nil {
+		t.Fatalf("expected a synthesised /init hook, got %+v", out)
+	}
+	if out[0].HTTPPost.Body["accessToken"] != "deadbeef" {
+		t.Fatalf("accessToken not set on synthesised hook: %+v", out[0].HTTPPost.Body)
+	}
+
+	// Merged into an existing /init alongside env vars.
+	hooks := []Action{{HTTPPost: &HTTPPostAction{
+		Port: envdInitPort, Path: "/init",
+		Body: map[string]any{"envVars": map[string]string{"A": "1"}},
+	}}}
+	out = mergeInitHook(hooks, "CA-PEM", map[string]string{"B": "2"}, "cafef00d")
+	if len(out) != 1 {
+		t.Fatalf("expected the existing hook to be reused, got %d", len(out))
+	}
+	body := out[0].HTTPPost.Body
+	if body["accessToken"] != "cafef00d" {
+		t.Fatalf("accessToken not merged: %+v", body)
+	}
+	if body["caBundle"] != "CA-PEM" {
+		t.Fatal("caBundle must survive alongside the token")
+	}
+	if env, _ := body["envVars"].(map[string]string); env["A"] != "1" || env["B"] != "2" {
+		t.Fatalf("env vars must survive alongside the token: %+v", body["envVars"])
+	}
+}
+
+// An empty token must not add an accessToken field: a non-secured sandbox leaves
+// envd open exactly as before.
+func TestMergeInitHook_NoTokenNoField(t *testing.T) {
+	out := mergeInitHook(nil, "CA-PEM", nil, "")
+	if _, ok := out[0].HTTPPost.Body["accessToken"]; ok {
+		t.Fatal("an empty token must not add an accessToken field")
 	}
 }

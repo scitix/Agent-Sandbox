@@ -44,6 +44,7 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	extprocsvc "github.com/scitix/agent-sandbox/pkg/envoy/extproc"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/indexer"
@@ -73,6 +74,7 @@ func Run() {
 	var activityFlushWorkers int
 	var localClusterID string
 	var clustersConfigMapName string
+	var secret string
 
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&extprocBindAddress, "extproc-bind-address", ":9002",
@@ -84,6 +86,11 @@ func Run() {
 	defaultAdminKey := os.Getenv("AGENTBOX_ADMIN_KEY")
 	flag.StringVar(&adminKey, "admin-key", defaultAdminKey,
 		"Admin key for authentication. When empty, authentication is disabled.")
+	flag.StringVar(&secret, "secret", os.Getenv("AGENTBOX_SECRET"),
+		"Shared secret used to recompute the per-sandbox traffic access token that "+
+			"guards user service ports. Must match the operator's --secret. When empty, "+
+			"traffic-token validation is disabled (secured sandboxes still refuse the "+
+			"envd port via envd's own token).")
 	flag.StringVar(&apikeyNamespace, "apikey-namespace", "agentbox-system",
 		"Kubernetes namespace where API key Secrets are stored.")
 	flag.DurationVar(&apikeyCacheTTL, "apikey-cache-ttl", time.Minute,
@@ -172,10 +179,14 @@ func Run() {
 		}
 	}
 
+	// Recomputes the per-sandbox traffic access token to validate it on non-envd
+	// ports. Derived from the same shared secret the operator and E2B API use.
+	tokenGen := accesstoken.New(secret)
+
 	extprocServer := extprocsvc.New(extprocsvc.ServerConfig{
 		BindAddr:   extprocBindAddress,
 		EnableAuth: extprocEnableAuth,
-	}, adminKeyMgr, keyStore, sandboxRouter, tracker, clusterStore, localClusterID)
+	}, adminKeyMgr, keyStore, sandboxRouter, tracker, clusterStore, localClusterID, tokenGen)
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")

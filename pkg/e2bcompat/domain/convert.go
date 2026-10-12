@@ -30,6 +30,8 @@ import (
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
+	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	utilresource "github.com/scitix/agent-sandbox/pkg/utils/resource"
 )
 
@@ -175,21 +177,43 @@ func versionFromTag(tag string) string {
 
 // ToE2BSandbox converts a native gen.Sandbox + SandboxPool directly to an e2bgen.Sandbox.
 // gatewayDomain is the gateway domain name used to build connection URLs.
-func ToE2BSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool, gatewayDomain string) e2bgen.Sandbox {
+//
+// tokenGen mints the access tokens returned to the SDK. The envd token is
+// returned when the sandbox is envd-secured, the traffic token when it is
+// traffic-secured; the SDK presents each on the matching data-plane request. The
+// tokens are HMAC'd over the RAW sandbox UUID, so a cluster-prefixed ID is split
+// first — the operator and gateway both key off the raw UUID, and hashing the
+// prefixed form here would make the returned token fail to validate for
+// cross-cluster sandboxes.
+func ToE2BSandbox(sb *gen.Sandbox, pool *agentsv1alpha1.SandboxPool, gatewayDomain string, tokenGen *accesstoken.Generator) e2bgen.Sandbox {
 	var domainPtr *string
 	if gatewayDomain != "" {
 		d := gatewayDomain
 		domainPtr = &d
 	}
 
-	// TrafficAccessToken is required by E2B SDK (must be non-nil, but can be empty string pointer)
-	emptyToken := ""
+	_, rawID := cluster.SplitSandboxID(sb.SandboxId)
+
+	// TrafficAccessToken is required by the E2B SDK: the pointer must be non-nil
+	// even when the sandbox is not traffic-secured (then it is the empty string).
+	trafficToken := ""
+	var envdTokenPtr *string
+	if tokenGen.Enabled() {
+		if sb.EnvdSecured != nil && *sb.EnvdSecured {
+			t := tokenGen.EnvdToken(rawID)
+			envdTokenPtr = &t
+		}
+		if sb.TrafficSecured != nil && *sb.TrafficSecured {
+			trafficToken = tokenGen.TrafficToken(rawID)
+		}
+	}
 
 	return e2bgen.Sandbox{
 		TemplateID:         poolNameFromSandbox(sb, pool),
 		SandboxID:          sb.SandboxId,
 		ClientID:           sb.Namespace,
-		TrafficAccessToken: &emptyToken,
+		EnvdAccessToken:    envdTokenPtr,
+		TrafficAccessToken: &trafficToken,
 		Domain:             domainPtr,
 		EnvdVersion:        EnvdVersionForPool(pool),
 	}

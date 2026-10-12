@@ -95,6 +95,11 @@ class Sandbox:
             node_name (str | Unset): Kubernetes node the sandbox Pod was scheduled onto.
             container_id (str | Unset): Runtime container ID (e.g. "docker://abc123") of the primary container, captured
                 when the sandbox entered Running state.
+            envd_secured (bool | Unset): True when envd (the sandbox control port) requires an access token. Set from the
+                create request's secure flag; used to decide whether to return an envd access token to the caller.
+            traffic_secured (bool | Unset): True when the sandbox's user service ports require a traffic access token. Set
+                when the create request disabled public traffic; used to decide whether to return a traffic access token to the
+                caller.
      """
 
     sandbox_id: str
@@ -122,6 +127,8 @@ class Sandbox:
     user: str | Unset = UNSET
     node_name: str | Unset = UNSET
     container_id: str | Unset = UNSET
+    envd_secured: bool | Unset = UNSET
+    traffic_secured: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -197,6 +204,10 @@ class Sandbox:
 
         container_id = self.container_id
 
+        envd_secured = self.envd_secured
+
+        traffic_secured = self.traffic_secured
+
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -246,6 +257,10 @@ class Sandbox:
             field_dict["nodeName"] = node_name
         if container_id is not UNSET:
             field_dict["containerId"] = container_id
+        if envd_secured is not UNSET:
+            field_dict["envdSecured"] = envd_secured
+        if traffic_secured is not UNSET:
+            field_dict["trafficSecured"] = traffic_secured
 
         return field_dict
 
@@ -370,6 +385,10 @@ class Sandbox:
 
         container_id = d.pop("containerId", UNSET)
 
+        envd_secured = d.pop("envdSecured", UNSET)
+
+        traffic_secured = d.pop("trafficSecured", UNSET)
+
         sandbox = cls(
             sandbox_id=sandbox_id,
             namespace=namespace,
@@ -396,6 +415,8 @@ class Sandbox:
             user=user,
             node_name=node_name,
             container_id=container_id,
+            envd_secured=envd_secured,
+            traffic_secured=traffic_secured,
         )
 
 

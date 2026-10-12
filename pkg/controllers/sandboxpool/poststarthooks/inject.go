@@ -199,15 +199,20 @@ func toIntSlice(in []int32) []int {
 	return out
 }
 
-// mergeInitHook folds the CA certificate and the sandbox-visible env vars into
-// the pod's existing envd /init hook, creating one if the sandbox declared no
-// env vars of its own.
+// mergeInitHook folds the CA certificate, the sandbox-visible env vars, and the
+// envd access token into the pod's existing envd /init hook, creating one if the
+// sandbox declared no env vars of its own.
 //
 // Merging rather than issuing a second /init is required, not stylistic: envd
 // replaces the whole user env-var set on every call that carries envVars, so a
 // second request would wipe whatever the create request had set.
-func mergeInitHook(hooks []Action, caCertPEM string, envVars map[string]string) []Action {
-	if caCertPEM == "" && len(envVars) == 0 {
+//
+// accessToken, when set, is the envd access token envd will require on every
+// subsequent request. It rides the same /init that installs the CA, so a secured
+// sandbox is sealed before it is handed to its caller; the caller received the
+// identical token in the create/connect response.
+func mergeInitHook(hooks []Action, caCertPEM string, envVars map[string]string, accessToken string) []Action {
+	if caCertPEM == "" && len(envVars) == 0 && accessToken == "" {
 		return ensureInitHook(hooks)
 	}
 	for i := range hooks {
@@ -220,6 +225,9 @@ func mergeInitHook(hooks []Action, caCertPEM string, envVars map[string]string) 
 		}
 		if caCertPEM != "" {
 			h.Body["caBundle"] = caCertPEM
+		}
+		if accessToken != "" {
+			h.Body["accessToken"] = accessToken
 		}
 		if len(envVars) > 0 {
 			merged := map[string]string{}
@@ -243,6 +251,9 @@ func mergeInitHook(hooks []Action, caCertPEM string, envVars map[string]string) 
 	body := map[string]any{}
 	if caCertPEM != "" {
 		body["caBundle"] = caCertPEM
+	}
+	if accessToken != "" {
+		body["accessToken"] = accessToken
 	}
 	if len(envVars) > 0 {
 		body["envVars"] = envVars

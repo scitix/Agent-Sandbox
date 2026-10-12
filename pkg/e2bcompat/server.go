@@ -34,6 +34,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/router/middleware"
 	"github.com/scitix/agent-sandbox/pkg/metrics"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 	"github.com/scitix/agent-sandbox/pkg/utils/apikey"
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
 	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
@@ -75,7 +76,7 @@ func New(cfg Config, k8sClient client.Client,
 	keyStore apikey.KeyStore, adminKeyMgr *apikey.AdminKeyManager, iamSvc service.IAMService,
 	sandboxSvc service.SandboxService, forwarder *service.CrossClusterForwarder,
 	fedRegistry *federation.Registry, metricsClient *promclient.Client,
-	vaultSvc service.VaultService) *Server {
+	vaultSvc service.VaultService, tokenGen *accesstoken.Generator) *Server {
 
 	gin.SetMode(gin.ReleaseMode)
 	binding.EnableDecoderDisallowUnknownFields = false // E2B SDK may send extra fields
@@ -98,6 +99,7 @@ func New(cfg Config, k8sClient client.Client,
 		LocalClusterID:  cfg.LocalClusterID,
 		Metrics:         metricsClient,
 		MetricsSelector: cfg.MetricsSelector,
+		TokenGen:        tokenGen,
 	}
 
 	authMw := middleware.NewE2BAuthMiddleware(adminKeyMgr, keyStore, iamSvc)

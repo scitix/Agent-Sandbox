@@ -2,10 +2,12 @@
 
 This gRPC service implements the Envoy **ExternalProcessor** protocol. For every inbound HTTP request, it performs the following steps:
 
-1.  **Validates** the API Key (`SecretKeyStore`).
+1.  **Validates** the API Key (`SecretKeyStore`) — only with `--extproc-enable-auth`, off by default; the E2B SDK sends no API key on the data plane.
 2.  **Parses** the request target (Sandbox ID + Port).
-3.  **Queries** the corresponding Pod IP.
-4.  **Returns** Header mutations to route traffic to the correct Sandbox Pod.
+3.  **Refuses** envd control paths (`/init`, freeze/thaw, `/upgrade`) on port 49983 with 403.
+4.  **Queries** the corresponding Pod IP.
+5.  **Checks** the traffic access token on non-envd ports of a traffic-secured sandbox (401 without it).
+6.  **Returns** Header mutations to route traffic to the correct Sandbox Pod.
 
 ---
 
@@ -43,6 +45,27 @@ visible" are indistinguishable here and a 404 would assert a permanence it
 cannot know. The two error values stay distinct in log messages.
 
 ---
+
+## Data-plane authentication: who checks what
+
+A sandbox ID is not a credential, so neither the ID nor this gateway's API-key
+check is what protects a sandbox. Two per-sandbox tokens do, both
+`HMAC-SHA256(AGENTBOX_SECRET, rawSandboxUUID)` (`pkg/utils/accesstoken`):
+
+| Surface | Token | Enforced by | Turned on by |
+|---|---|---|---|
+| port 49983 (envd: files, process/filesystem RPCs) | envd access token, header `X-Access-Token` | **envd itself** — the operator delivers it on the arming `/init` | E2B `secure` (default `true`; v2 create is always secure) |
+| every other port | traffic access token, header `e2b-traffic-access-token` | **this gateway** (`route.TrafficSecured` from the same Pod read) | E2B `network.allowPublicTraffic=false` |
+
+This gateway also refuses envd control paths outright. Without that, an
+unauthenticated `/init` racing in before arming could *set* envd's token
+(envd under `-isnotfc` accepts a first tokenless `/init`). The legitimate
+`/init` is dialled straight to the Pod IP, so it never passes through here.
+
+The operator, the E2B API and this gateway each recompute the tokens from the
+shared secret — nothing is stored or exchanged. **All three must key off the raw
+UUID**, never a cluster-prefixed ID. Without `AGENTBOX_SECRET` this process skips
+the traffic-token check (the control-path guard still applies).
 
 ## File Structure
 

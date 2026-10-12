@@ -40,6 +40,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
 	e2bdomain "github.com/scitix/agent-sandbox/pkg/e2bcompat/domain"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 	"github.com/scitix/agent-sandbox/pkg/utils/cluster"
 	"github.com/scitix/agent-sandbox/pkg/utils/httpctx"
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
@@ -70,6 +71,9 @@ type Services struct {
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	// When Forwarder is nil, cross-cluster requests will be rejected.
 	Forwarder *service.CrossClusterForwarder
+	// TokenGen mints the per-sandbox access tokens returned to the SDK. Nil
+	// leaves the data plane unauthenticated.
+	TokenGen *accesstoken.Generator
 }
 
 // Server implements e2bgen.StrictServerInterface.
@@ -100,6 +104,11 @@ type Server struct {
 	k8sClient       client.Client
 	gatewayDomain   string
 	forwarder       *service.CrossClusterForwarder
+	// tokenGen mints the per-sandbox envd and traffic access tokens returned to
+	// the SDK on create/connect. The operator and gateway derive the identical
+	// values from the same shared secret. Nil leaves the data plane
+	// unauthenticated (no secret configured).
+	tokenGen *accesstoken.Generator
 }
 
 // NewServer creates a new E2B handler Server.
@@ -115,6 +124,7 @@ func NewServer(svcs Services, k8sClient client.Client, gatewayDomain string) *Se
 		k8sClient:       k8sClient,
 		gatewayDomain:   gatewayDomain,
 		forwarder:       svcs.Forwarder,
+		tokenGen:        svcs.TokenGen,
 	}
 }
 
@@ -233,7 +243,7 @@ func (s *Server) loadPoolMap(ctx context.Context, namespace string) map[string]*
 // domainSandboxToE2BSandbox converts a native gen.Sandbox to an E2B Sandbox response.
 func (s *Server) domainSandboxToE2BSandbox(ctx context.Context, sb *gen.Sandbox, namespace string) e2bgen.Sandbox {
 	pool := s.loadPool(ctx, namespace, sb.PoolName)
-	return e2bdomain.ToE2BSandbox(sb, pool, s.gatewayDomain)
+	return e2bdomain.ToE2BSandbox(sb, pool, s.gatewayDomain, s.tokenGen)
 }
 
 // domainSandboxToSandboxDetail converts a native gen.Sandbox to an E2B SandboxDetail.
@@ -315,6 +325,29 @@ func consumeReservedMetadata(input *service.CreateSandboxInput) bool {
 	return allowPrivate
 }
 
+// stampSecuredAnnotations records on the create input whether the sandbox's envd
+// and user service ports must require an access token, following E2B's native
+// model: `secure` defaults to true (and the v2 create body has no secure field —
+// v2 is always secured), so envd is secured unless the caller explicitly opts
+// out; the user ports are secured only when the caller disabled public traffic.
+// The annotations are consumed by the arming hook (which delivers the envd token)
+// and by the gateway (which validates the traffic token), and are stripped on
+// release so a recycled pod never inherits them.
+func stampSecuredAnnotations(input *service.CreateSandboxInput, body *e2bgen.NewSandbox) {
+	set := func(key string) {
+		if input.Annotations == nil {
+			input.Annotations = map[string]string{}
+		}
+		input.Annotations[key] = agentsv1alpha1.SandboxSecuredAnnotationTrue
+	}
+	if body.Secure == nil || *body.Secure {
+		set(agentsv1alpha1.SandboxEnvdSecuredAnnotationKey)
+	}
+	if body.Network != nil && body.Network.AllowPublicTraffic != nil && !*body.Network.AllowPublicTraffic {
+		set(agentsv1alpha1.SandboxTrafficSecuredAnnotationKey)
+	}
+}
+
 func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequestObject) (e2bgen.PostSandboxesResponseObject, error) {
 	if req.Body == nil || strings.TrimSpace(req.Body.TemplateID) == "" {
 		return e2bgen.PostSandboxes400JSONResponse{N400JSONResponse: e2bgen.N400JSONResponse(errRespCode(400, "templateID is required"))}, nil
@@ -375,6 +408,10 @@ func (s *Server) PostSandboxes(ctx context.Context, req e2bgen.PostSandboxesRequ
 	// rules only become an injection block after every ${e2b.secrets.<name>}
 	// reference has been resolved against the caller's own vault.
 	input.VaultRules = vaultRules
+
+	if s.tokenGen.Enabled() {
+		stampSecuredAnnotations(&input, req.Body)
+	}
 	// Inject team/user from auth into labels so they are recorded on the pod
 	// and metrics (agentbox_sandbox_create_total) carry the correct dimensions.
 	input.Labels = make(map[string]string)

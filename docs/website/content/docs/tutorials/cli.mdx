@@ -213,7 +213,7 @@ patch_e2b(
 # patch_e2b() must run BEFORE this import, or the SDK talks to e2b.dev.
 from e2b import Sandbox
 
-sbx = Sandbox.create("YOUR_ENV", timeout=3600, secure=False)
+sbx = Sandbox.create("YOUR_ENV", timeout=3600)
 print(sbx.commands.run("python -V").stdout)
 sbx.kill()
 ```

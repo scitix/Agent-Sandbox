@@ -40,6 +40,7 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	pkgmetrics "github.com/scitix/agent-sandbox/pkg/metrics"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 )
 
 // Action describes a single action to execute after a sandbox becomes Running.
@@ -96,19 +97,24 @@ type Runner struct {
 	crClient client.Client
 	// armNotifier hands the arming verdict to the create request waiting on it.
 	armNotifier ArmNotifier
+	// tokenGen mints the envd access token delivered to a secured sandbox on its
+	// /init call. Nil (no shared secret configured) means no token is delivered,
+	// leaving envd unauthenticated as before.
+	tokenGen *accesstoken.Generator
 }
 
 // NewRunner creates a Runner. gatewayBaseURL may be empty (it is only a
 // fallback for post-start HTTP hooks; the normal path dials the Pod directly).
 // clientset / restConfig may be nil (Exec hooks are skipped); crClient may be
 // nil (the runtime readiness pre-check is skipped); armNotifier may be nil
-// (nobody is waiting on the verdict).
+// (nobody is waiting on the verdict); tokenGen may be nil (envd is not secured).
 func NewRunner(
 	gatewayBaseURL string,
 	clientset kubernetes.Interface,
 	restConfig *rest.Config,
 	crClient client.Client,
 	armNotifier ArmNotifier,
+	tokenGen *accesstoken.Generator,
 ) *Runner {
 	if armNotifier == nil {
 		armNotifier = noopArmNotifier{}
@@ -120,6 +126,7 @@ func NewRunner(
 		restConfig:     restConfig,
 		crClient:       crClient,
 		armNotifier:    armNotifier,
+		tokenGen:       tokenGen,
 	}
 }
 
@@ -319,21 +326,33 @@ func (r *Runner) runPostStartHooks(ctx context.Context, pod *corev1.Pod, plan *i
 			return fmt.Errorf("decode post-start hooks annotation: %w", err)
 		}
 	}
-	// mergeInitHook is called even without an injection plan so the /init call
-	// always happens: envd may be gated on having received one, and a sandbox
-	// with nothing to deliver would otherwise never lift that gate.
-	if plan != nil {
-		hooks = mergeInitHook(hooks, plan.caCertPEM, plan.envVars)
-	} else {
-		hooks = mergeInitHook(hooks, "", nil)
-	}
-	if len(hooks) == 0 {
-		return nil
-	}
 
 	sandboxID := pod.Annotations[agentsv1alpha1.SandboxIDAnnotationKey]
 	if sandboxID == "" {
 		return fmt.Errorf("pod has no sandbox-id annotation")
+	}
+
+	// The envd access token that secures the sandbox's file API and RPCs. It is
+	// delivered on the same /init call as the CA and env vars; the E2B create
+	// response hands the identical token (both derive it from the shared secret +
+	// this sandbox ID) to the SDK, which then presents it on every data-plane
+	// request. The sandbox ID annotation is the raw UUID, which is the canonical
+	// input every minter must agree on.
+	var envdToken string
+	if r.tokenGen.Enabled() && pod.Annotations[agentsv1alpha1.SandboxEnvdSecuredAnnotationKey] == agentsv1alpha1.SandboxSecuredAnnotationTrue {
+		envdToken = r.tokenGen.EnvdToken(sandboxID)
+	}
+
+	// mergeInitHook is called even without an injection plan so the /init call
+	// always happens: envd may be gated on having received one, and a sandbox
+	// with nothing to deliver would otherwise never lift that gate.
+	if plan != nil {
+		hooks = mergeInitHook(hooks, plan.caCertPEM, plan.envVars, envdToken)
+	} else {
+		hooks = mergeInitHook(hooks, "", nil, envdToken)
+	}
+	if len(hooks) == 0 {
+		return nil
 	}
 
 	for i, hook := range hooks {

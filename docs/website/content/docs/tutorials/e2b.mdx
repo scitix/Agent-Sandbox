@@ -55,7 +55,7 @@ patch_e2b()
 
 from e2b import Sandbox
 
-sbx = Sandbox.create("YOUR_ENV", timeout=3000, secure=False)
+sbx = Sandbox.create("YOUR_ENV", timeout=3000)
 print(sbx.is_running())
 sbx.kill()
 ```
@@ -71,8 +71,10 @@ patch_e2b(
 )
 ```
 
-`secure=False` skips E2B's signed handshake: Agent Sandbox authenticates with an
-API key, so it stays `False`.
+Leave `secure` at its default (`True`). The API key authenticates the control
+plane — creating, listing, killing; the sandbox's own data plane is guarded by a
+per-sandbox token the SDK receives from `create` and presents for you. See
+[Secured access](/docs/concepts/secured-access).
 
 ## 3. Access paths
 
@@ -154,7 +156,7 @@ Other parameters:
 | Parameter | Meaning |
 |---|---|
 | `timeout=3000` | **idle** timeout in seconds. A sandbox with no activity for that long is reclaimed; extend a live one with `sandbox.set_timeout(1800)` |
-| `secure=False` | keep it `False` — authentication is the API key |
+| `secure` | leave at the default `True`: the data plane then requires the per-sandbox token the SDK handles for you. `False` lets anyone with the sandbox ID read its files — see [Secured access](/docs/concepts/secured-access) |
 | `metadata={...}` | your own labels, readable from the sandbox object. Three keys are reserved by the platform (below) |
 
 Reserved metadata keys:
@@ -169,7 +171,6 @@ Reserved metadata keys:
 sbx = Sandbox.create(
     "YOUR_ENV",
     timeout=3000,
-    secure=False,
     metadata={
         "agentbox.scitix.ai/scaling-group": "1c16gi",   # only 1c16gi pools
         "agentbox.scitix.ai/startup-timeout": "900",    # large image, give it time

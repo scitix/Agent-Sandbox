@@ -111,6 +111,27 @@ const (
 	// giving free reset-on-recycle.
 	SandboxEgressPolicyAnnotationKey = "agentbox.navix.sh/egress-policy"
 
+	// SandboxEnvdSecuredAnnotationKey marks a claimed sandbox whose envd (port
+	// 49983) must require an access token. The create path stamps "true" when the
+	// E2B request asked for secured access (the SDK default); the SandboxReady
+	// hook reads it and delivers the token to envd on the /init call, so envd
+	// refuses the file API and the process/filesystem RPCs to anyone who cannot
+	// present it. Registered as a managed annotation key so release strips it and
+	// a recycled pod never inherits the previous claim's secured state.
+	SandboxEnvdSecuredAnnotationKey = "agentbox.navix.sh/envd-secured"
+
+	// SandboxSecuredAnnotationTrue is the value both secured-access annotations
+	// carry when set; the flags are boolean, encoded as this string.
+	SandboxSecuredAnnotationTrue = "true"
+
+	// SandboxTrafficSecuredAnnotationKey marks a claimed sandbox whose user
+	// service ports (everything except envd) require a traffic access token. The
+	// create path stamps "true" when the request disabled public traffic; the
+	// gateway reads it off the pod and refuses a non-envd port to anyone who does
+	// not present a matching e2b-traffic-access-token. Registered as a managed
+	// annotation key so release strips it.
+	SandboxTrafficSecuredAnnotationKey = "agentbox.navix.sh/traffic-secured"
+
 	// SandboxEgressInjectAnnotationKey carries the JSON-encoded credential
 	// injection block (v1alpha1.SecretInjection) resolved for a claimed sandbox.
 	//

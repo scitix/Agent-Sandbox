@@ -452,6 +452,12 @@ components:
         containerId:
           type: string
           description: 'Runtime container ID (e.g. "docker://abc123") of the primary container, captured when the sandbox entered Running state.'
+        envdSecured:
+          type: boolean
+          description: "True when envd (the sandbox control port) requires an access token. Set from the create request's secure flag; used to decide whether to return an envd access token to the caller."
+        trafficSecured:
+          type: boolean
+          description: "True when the sandbox's user service ports require a traffic access token. Set when the create request disabled public traffic; used to decide whether to return a traffic access token to the caller."
       example:
         sandboxId: "5de15c92-8fb5-440f-a9ea-7f62f734f1b9"
         namespace: "t-team-user"

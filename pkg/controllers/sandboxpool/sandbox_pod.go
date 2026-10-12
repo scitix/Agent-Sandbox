@@ -97,6 +97,16 @@ func SandboxBaseFromPod(pod *corev1.Pod) gen.Sandbox {
 	if id := extractContainerID(pod); id != "" {
 		sb.ContainerId = ptr.To(id)
 	}
+	// Secured-access flags: the create path stamps these annotations, the arming
+	// hook acts on them, and the E2B projection reads them back to decide which
+	// access tokens to return to the caller. Projected only when true so the
+	// field is absent for an unsecured sandbox rather than an explicit false.
+	if pod.Annotations[agentsv1alpha1.SandboxEnvdSecuredAnnotationKey] == agentsv1alpha1.SandboxSecuredAnnotationTrue {
+		sb.EnvdSecured = ptr.To(true)
+	}
+	if pod.Annotations[agentsv1alpha1.SandboxTrafficSecuredAnnotationKey] == agentsv1alpha1.SandboxSecuredAnnotationTrue {
+		sb.TrafficSecured = ptr.To(true)
+	}
 	if md := parsePodMetadata(pod); len(md) > 0 {
 		sb.Metadata = &md
 	}

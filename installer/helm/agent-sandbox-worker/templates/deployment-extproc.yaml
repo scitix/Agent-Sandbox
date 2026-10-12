@@ -40,6 +40,15 @@ spec:
           env:
             - name: LOCAL_CLUSTER_ID
               value: {{ .Values.controller.localClusterId | quote }}
+            # The shared secret mints the per-sandbox traffic access token. The
+            # gateway recomputes it to validate e2b-traffic-access-token on
+            # non-envd ports; the operator and E2B API derive the identical value.
+            # Kept out of args so it never appears in the Pod spec or `ps` output.
+            - name: AGENTBOX_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-sandbox-worker.secretName" . }}
+                  key: AGENTBOX_SECRET
           ports:
             - containerPort: 9002
               name: extproc-grpc

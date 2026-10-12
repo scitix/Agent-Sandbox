@@ -84,7 +84,7 @@ export function buildPythonQuickstart(input: PythonQuickstartInput): PythonQuick
       `# patch_e2b() must run BEFORE this import, or the SDK talks to e2b.dev.`,
       `from e2b import Sandbox`,
       ``,
-      `sbx = Sandbox.create("${env}", timeout=3600, secure=False)`,
+      `sbx = Sandbox.create("${env}", timeout=3600)`,
       `print(sbx.commands.run("echo hello from AgentBox").stdout)`,
       `sbx.kill()`,
     ].join("\n"),

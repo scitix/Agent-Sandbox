@@ -210,7 +210,7 @@ patch_e2b(
 # patch_e2b() must run BEFORE this import, or the SDK talks to e2b.dev.
 from e2b import Sandbox
 
-sbx = Sandbox.create("${v.pool}", timeout=3600, secure=False)
+sbx = Sandbox.create("${v.pool}", timeout=3600)
 print(sbx.commands.run("python -V").stdout)
 sbx.kill()
 \`\`\`
@@ -330,7 +330,7 @@ patch_e2b(
 # patch_e2b() 必须在下一行 import 之前执行，否则 SDK 连接的是 e2b.dev。
 from e2b import Sandbox
 
-sbx = Sandbox.create("${v.pool}", timeout=3600, secure=False)
+sbx = Sandbox.create("${v.pool}", timeout=3600)
 print(sbx.commands.run("python -V").stdout)
 sbx.kill()
 \`\`\`

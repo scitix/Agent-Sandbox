@@ -23,6 +23,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/apiserver/service/federation"
 	e2bgen "github.com/scitix/agent-sandbox/pkg/e2bcompat/gen"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat/handlers"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 	"github.com/scitix/agent-sandbox/pkg/utils/promclient"
 )
 
@@ -43,6 +44,9 @@ type Services struct {
 	// Forwarder enables cross-cluster forwarding via E2B API.
 	// localClusterID is embedded in the forwarder itself; no separate field needed.
 	Forwarder *service.CrossClusterForwarder
+	// TokenGen mints the per-sandbox access tokens returned to the SDK. Nil
+	// leaves the data plane unauthenticated.
+	TokenGen *accesstoken.Generator
 }
 
 // Setup registers all E2B-compatible routes on the given Gin engine using the
@@ -58,6 +62,7 @@ func Setup(r *gin.Engine, svcs Services, k8sClient client.Client, authMw gin.Han
 		Metrics:         svcs.Metrics,
 		MetricsSelector: svcs.MetricsSelector,
 		Forwarder:       svcs.Forwarder,
+		TokenGen:        svcs.TokenGen,
 	}, k8sClient, gatewayDomain)
 
 	strictHandler := e2bgen.NewStrictHandler(srv, nil)

@@ -25,6 +25,7 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	gen "github.com/scitix/agent-sandbox/pkg/apiserver/gen"
+	"github.com/scitix/agent-sandbox/pkg/utils/accesstoken"
 )
 
 func makeTestPool(name, namespace string, cpuMillis, memoryMiB int64) *agentsv1alpha1.SandboxPool { //nolint:unparam
@@ -122,7 +123,7 @@ func TestToE2BSandbox_DomainField(t *testing.T) {
 	}
 
 	// With domain
-	result := ToE2BSandbox(sb, pool, "my.gateway.com")
+	result := ToE2BSandbox(sb, pool, "my.gateway.com", nil)
 	if result.Domain == nil {
 		t.Fatal("expected non-nil domain")
 	}
@@ -131,7 +132,7 @@ func TestToE2BSandbox_DomainField(t *testing.T) {
 	}
 
 	// Without domain
-	result2 := ToE2BSandbox(sb, pool, "")
+	result2 := ToE2BSandbox(sb, pool, "", nil)
 	if result2.Domain != nil {
 		t.Fatalf("expected nil domain when empty, got %q", *result2.Domain)
 	}
@@ -145,7 +146,7 @@ func TestToE2BSandbox_TrafficAccessTokenNotNil(t *testing.T) {
 		Status:    "Running",
 	}
 
-	result := ToE2BSandbox(sb, pool, "example.com")
+	result := ToE2BSandbox(sb, pool, "example.com", nil)
 	if result.TrafficAccessToken == nil {
 		t.Fatal("trafficAccessToken must be non-nil (required by E2B SDK)")
 	}
@@ -159,7 +160,7 @@ func TestToE2BSandbox_EnvdVersion(t *testing.T) {
 		Status:    "Running",
 	}
 
-	result := ToE2BSandbox(sb, pool, "example.com")
+	result := ToE2BSandbox(sb, pool, "example.com", nil)
 	if result.EnvdVersion != DefaultEnvdVersion {
 		t.Errorf("envdVersion = %q, want %q", result.EnvdVersion, DefaultEnvdVersion)
 	}
@@ -174,7 +175,7 @@ func TestToE2BSandbox_NilPool(t *testing.T) {
 	}
 
 	// Should not panic with nil pool
-	result := ToE2BSandbox(sb, nil, "example.com")
+	result := ToE2BSandbox(sb, nil, "example.com", nil)
 	if result.SandboxID != "sbx-001" {
 		t.Errorf("sandboxID = %q, want sbx-001", result.SandboxID)
 	}
@@ -497,5 +498,65 @@ func TestIsLive(t *testing.T) {
 	}
 	if IsLive(nil) {
 		t.Error("IsLive(nil) = true, want false")
+	}
+}
+
+// A secured sandbox must get the matching access tokens, and an unsecured one
+// must get none (the traffic token stays a non-nil empty string the SDK needs).
+func TestToE2BSandbox_MintsTokensWhenSecured(t *testing.T) {
+	pool := makeTestPool("pool-a", "test-ns", 1000, 2048)
+	gen2 := accesstoken.New("test-secret")
+
+	secured := &gen.Sandbox{
+		SandboxId:      "01a12e1a-13f1-7da3-9436-fc351d93ccc1",
+		PoolName:       "pool-a",
+		Status:         "Running",
+		EnvdSecured:    ptr.To(true),
+		TrafficSecured: ptr.To(true),
+	}
+	res := ToE2BSandbox(secured, pool, "example.com", gen2)
+	if res.EnvdAccessToken == nil || *res.EnvdAccessToken != gen2.EnvdToken(secured.SandboxId) {
+		t.Fatalf("envd token not returned for a secured sandbox: %+v", res.EnvdAccessToken)
+	}
+	if res.TrafficAccessToken == nil || *res.TrafficAccessToken != gen2.TrafficToken(secured.SandboxId) {
+		t.Fatalf("traffic token not returned for a traffic-secured sandbox")
+	}
+
+	// Not secured: no envd token, empty (non-nil) traffic token.
+	open := &gen.Sandbox{SandboxId: "sbx-open", PoolName: "pool-a", Status: "Running"}
+	res = ToE2BSandbox(open, pool, "example.com", gen2)
+	if res.EnvdAccessToken != nil {
+		t.Fatal("envd token must be absent for an unsecured sandbox")
+	}
+	if res.TrafficAccessToken == nil || *res.TrafficAccessToken != "" {
+		t.Fatal("traffic token must be a non-nil empty string when not traffic-secured")
+	}
+}
+
+// For a cross-cluster (prefixed) sandbox ID the token must be minted over the RAW
+// UUID, matching what the operator delivered to envd and what the gateway
+// recomputes — otherwise the SDK would present a token envd rejects.
+func TestToE2BSandbox_TokenUsesRawIDForPrefixedSandbox(t *testing.T) {
+	pool := makeTestPool("pool-a", "test-ns", 1000, 2048)
+	g := accesstoken.New("test-secret")
+
+	rawID := "01a12e1a-13f1-7da3-9436-fc351d93ccc1"
+	prefixed := "cluster-foo." + rawID
+	sb := &gen.Sandbox{
+		SandboxId:   prefixed,
+		PoolName:    "pool-a",
+		Status:      "Running",
+		EnvdSecured: ptr.To(true),
+	}
+	res := ToE2BSandbox(sb, pool, "example.com", g)
+	if res.EnvdAccessToken == nil {
+		t.Fatal("expected an envd token for the prefixed secured sandbox")
+	}
+	if *res.EnvdAccessToken != g.EnvdToken(rawID) {
+		t.Fatalf("token minted over prefixed id; want HMAC over raw uuid")
+	}
+	// The returned SandboxID stays the prefixed form the caller must address.
+	if res.SandboxID != prefixed {
+		t.Fatalf("SandboxID = %q, want the prefixed form %q", res.SandboxID, prefixed)
 	}
 }

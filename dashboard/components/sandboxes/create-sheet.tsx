@@ -129,7 +129,7 @@ const defaultValues: FormData = {
   envVarRows: [],
   metadataRows: [],
   autoPause: false,
-  secure: false,
+  secure: true,
   networkPolicyMode: "unrestricted",
   allowedDomains: undefined,
   allowedCIDRs: undefined,

@@ -352,7 +352,7 @@ func TestOnSandboxReady_ReportsFailureToTheWaiter(t *testing.T) {
 // A runner built without a notifier must not panic: that is every unit test and
 // any build without the API server half.
 func TestNewRunner_NilNotifierIsANoop(t *testing.T) {
-	r := NewRunner("", nil, nil, nil, nil)
+	r := NewRunner("", nil, nil, nil, nil, nil)
 	if r.armNotifier == nil {
 		t.Fatal("expected a no-op notifier rather than nil")
 	}
