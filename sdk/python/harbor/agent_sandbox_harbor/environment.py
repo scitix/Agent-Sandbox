@@ -221,7 +221,7 @@ class AgentSandboxEnvironment(E2BEnvironment):
     async def _create_template(self) -> None:  # type: ignore[override]
         return
 
-    # --- sandbox create: Agent Sandbox metadata + secure=False + ready poll ---
+    # --- sandbox create: Agent Sandbox metadata + ready poll ---
 
     async def _create_sandbox(self) -> None:  # type: ignore[override]
         startup_timeout = os.environ.get("AGBX_STARTUP_TIMEOUT", "300")
@@ -233,7 +233,6 @@ class AgentSandboxEnvironment(E2BEnvironment):
         self._sandbox = await AsyncSandbox.create(
             self._template_name,
             timeout=86_400,
-            secure=False,
             metadata=metadata,
             allow_internet_access=self.task_env_config.allow_internet,
         )

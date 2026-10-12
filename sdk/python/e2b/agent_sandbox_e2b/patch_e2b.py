@@ -27,7 +27,7 @@ Usage:
     patch_e2b()
 
     from e2b import Sandbox
-    sandbox = Sandbox.create("my-pool", timeout=3600, secure=False)
+    sandbox = Sandbox.create("my-pool", timeout=3600)
 """
 
 import os

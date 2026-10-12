@@ -272,7 +272,7 @@ AgentSandboxEnvironment(E2BEnvironment):
 ├── _does_template_exist → True           # skip alias_exists probe
 ├── _create_template     → no-op          # skip Template Build
 └── _create_sandbox:
-    ├── AsyncSandbox.create(secure=False, metadata={...})
+    ├── AsyncSandbox.create(metadata={...})
     └── cold-image readiness poll         # retry `true` exec until envd responds
 ```
 

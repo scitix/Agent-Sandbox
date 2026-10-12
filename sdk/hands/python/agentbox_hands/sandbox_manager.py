@@ -1091,7 +1091,6 @@ class SandboxManager:
                 template=self._template(),
                 envs=envs,
                 metadata=self._sandbox_metadata(sid, generation),
-                secure=False,
                 timeout=int(os.environ.get("SBX_TIMEOUT", "3600")),
                 # The identity the sandbox belongs to. It decides the namespace
                 # it lands in, the quota it counts against, and whose vault the

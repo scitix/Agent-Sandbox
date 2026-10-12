@@ -116,7 +116,7 @@ harbor run \
 
 - `_does_template_exist` → always returns `True`
 - `_create_template` → no-op
-- `_create_sandbox` → calls `AsyncSandbox.create(template="cluster::pool//image", secure=False, ...)`
+- `_create_sandbox` → calls `AsyncSandbox.create(template="cluster::pool//image", ...)`
 
 `__init__` calls `super().__init__()` first, so Harbor's stock Dockerfile parsing still runs
 (and sets `self._workdir` from the image's `WORKDIR`). The constructor then resolves the image
