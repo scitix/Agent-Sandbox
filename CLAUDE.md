@@ -328,3 +328,11 @@ Quota Providers may optionally implement `TemplateLabelPolicy`. The host applies
 its pure classification labels at Env create/reconcile and member Pod rendering,
 before revision hashing. Noop has no label policy. Frozen member snapshots retain
 their configuration; edition-specific one-shot migration is outside OSS.
+
+### Rewritten template image preflight
+
+`pkg/templateimages` owns daily background manifest availability checks and the
+48-hour successful-result window used before creating Envs. Worker-local results
+belong in SandboxTemplate.status, never globally replicated metadata. Keep digest
+resolution separate from availability checks: resolving a digest reference need
+not access a registry. See `pkg/templateimages/README.md` for retry/auth semantics.

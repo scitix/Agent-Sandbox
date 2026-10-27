@@ -38,6 +38,7 @@ import (
 	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	quotaplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/quota"
 	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
+	"github.com/scitix/agent-sandbox/pkg/utils/imageresolver"
 )
 
 // EnvShellService is the env-only CRUD slice of SandboxEnvService. Lives as
@@ -173,7 +174,9 @@ type k8sSandboxEnvService struct {
 	// quotaProv answers whether a template's Pools are billed, so the Env's
 	// billing label can be stamped at create. Never nil in production; the
 	// helper is nil-safe.
-	quotaProv quotaplugin.Provider
+	quotaProv     quotaplugin.Provider
+	imageRegistry *sandboxrender.RegistryRewrite
+	imageChecker  imageresolver.AvailabilityChecker
 
 	// Embedded sub-services — their methods promote to satisfy the
 	// composed SandboxEnvService interface.
@@ -205,6 +208,8 @@ func NewSandboxEnvService(
 		apiReader:         apiReader,
 		volumeCfg:         volumeCfg,
 		quotaProv:         quotaProv,
+		imageRegistry:     imageRegistry,
+		imageChecker:      imageresolver.NewResolver(c, 0),
 		MemberPoolService: envmember.New(c, pm, instProv, quotaProv, envmember.WithImageRegistry(imageRegistry)),
 		AutoscalerService: envautoscaler.New(c),
 	}
@@ -372,6 +377,9 @@ func (s *k8sSandboxEnvService) Create(ctx context.Context, input CreateSandboxEn
 	// that predate the label — but the reconciler runs asynchronously, and the
 	// caller is about to open the Pool form on the Env this call just returned.
 	s.stampEnvRequiresQuota(ctx, env)
+	if appErr := s.preflightTemplateImages(ctx, input); appErr != nil {
+		return nil, appErr
+	}
 
 	if err := s.client.Create(ctx, env); err != nil {
 		if k8serrors.IsAlreadyExists(err) {

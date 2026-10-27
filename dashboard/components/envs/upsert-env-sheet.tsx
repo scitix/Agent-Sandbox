@@ -1066,7 +1066,13 @@ function UpdateStrategySection({ control, register }: UpdateStrategySectionProps
 
 function extractError(err: unknown): string {
   if (err && typeof err === "object") {
-    const e = err as { error?: string; message?: string }
+    const e = err as {
+      error?: string; message?: string; errorCode?: string
+      detail?: { cluster?: string; template?: string; images?: { field: string; image: string; reason: string }[] }
+    }
+    if (e.errorCode?.startsWith("TEMPLATE_IMAGE_") && e.detail?.images?.length) {
+      return [e.error ?? e.message, ...e.detail.images.map((image) => `${image.field}: ${image.image} (${image.reason})`)].filter(Boolean).join("\n")
+    }
     return e.error ?? e.message ?? JSON.stringify(err)
   }
   return String(err)

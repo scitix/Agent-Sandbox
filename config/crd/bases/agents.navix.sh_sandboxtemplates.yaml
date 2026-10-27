@@ -364,6 +364,44 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              imageAvailability:
+                description: ImageAvailability is owned by the worker controller,
+                  not the global catalog.
+                properties:
+                  checkedAt:
+                    format: date-time
+                    type: string
+                  clusterID:
+                    type: string
+                  images:
+                    items:
+                      description: TemplateImageResult identifies a rendered image
+                        and a sanitized probe verdict.
+                      properties:
+                        field:
+                          type: string
+                        image:
+                          type: string
+                        reason:
+                          type: string
+                      required:
+                      - field
+                      - image
+                      - reason
+                      type: object
+                    type: array
+                  inputHash:
+                    type: string
+                  nextCheckAt:
+                    format: date-time
+                    type: string
+                required:
+                - checkedAt
+                - clusterID
+                - images
+                - inputHash
+                - nextCheckAt
+                type: object
             type: object
         required:
         - spec

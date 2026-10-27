@@ -136,7 +136,27 @@ type SandboxRuntimeSpec struct {
 }
 
 // SandboxTemplateStatus defines the observed state of SandboxTemplate.
+// TemplateImageCheck is cluster-local and never part of global template sync.
+type TemplateImageCheck struct {
+	ClusterID   string                `json:"clusterID"`
+	InputHash   string                `json:"inputHash"`
+	CheckedAt   metav1.Time           `json:"checkedAt"`
+	NextCheckAt metav1.Time           `json:"nextCheckAt"`
+	Images      []TemplateImageResult `json:"images"`
+}
+
+// TemplateImageResult identifies a rendered image and a sanitized probe verdict.
+type TemplateImageResult struct {
+	Field  string `json:"field"`
+	Image  string `json:"image"`
+	Reason string `json:"reason"`
+}
+
 type SandboxTemplateStatus struct {
+	// ImageAvailability is owned by the worker controller, not the global catalog.
+	// +optional
+	ImageAvailability *TemplateImageCheck `json:"imageAvailability,omitempty"`
+
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 

@@ -169,8 +169,8 @@ func evaluateScaleUp(snap *Snapshot, mut *Mutator) bool {
 	if scaleUpCooldownActive(snap, policy) {
 		klog.V(2).InfoS("autoscaler: scale-up gated by cooldown",
 			"pool", key,
-			"lastScaleUpTime", asStatus(snap).LastScaleUpTime,
-			"lastScaleUpAttemptTime", asStatus(snap).LastScaleUpAttemptTime,
+			"lastScaleUpTime", klog.SafePtr(asStatus(snap).LastScaleUpTime),
+			"lastScaleUpAttemptTime", klog.SafePtr(asStatus(snap).LastScaleUpAttemptTime),
 			"lastScaleUpAttemptResult", asStatus(snap).LastScaleUpAttemptResult,
 			"cooldownSeconds", policy.CooldownSeconds,
 			"saturationCooldownSeconds", policy.SaturationCooldownSeconds,
@@ -185,10 +185,10 @@ func evaluateScaleUp(snap *Snapshot, mut *Mutator) bool {
 			"queueLen", snap.QueueLen(),
 			"provisioning", snap.Provisioning(),
 			"unmet", snap.Unmet(),
-			"idleZeroSince", asStatus(snap).IdleZeroSince,
+			"idleZeroSince", klog.SafePtr(asStatus(snap).IdleZeroSince),
 			"idleThresholdSeconds", policy.IdleThresholdSeconds,
 			"idleZeroQuietWindowSeconds", policy.IdleZeroQuietWindowSeconds,
-			"lastCreateAt", snap.LastCreateAt,
+			"lastCreateAt", klog.SafePtr(snap.LastCreateAt),
 			"now", snap.Now,
 		)
 		return false
@@ -543,7 +543,7 @@ func evaluateScaleDown(snap *Snapshot, mut *Mutator) {
 		// emit Completed or Stuck.
 		klog.V(3).InfoS("autoscaler: scale-down gated by stabilization window",
 			"pool", key,
-			"lastScaleDownTime", asStatus(snap).LastScaleDownTime,
+			"lastScaleDownTime", klog.SafePtr(asStatus(snap).LastScaleDownTime),
 			"inProcessLastDecision", sess.LastDecisionAt,
 			"stabilizationSeconds", policy.StabilizationSeconds,
 		)

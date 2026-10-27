@@ -63,6 +63,7 @@ type DigestResolver interface {
 type ResolveOption func(*resolveOptions)
 
 type resolveOptions struct {
+	keychain    authn.Keychain
 	namespace   string
 	pullSecrets []corev1.LocalObjectReference
 }

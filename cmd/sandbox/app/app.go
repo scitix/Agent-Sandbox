@@ -42,6 +42,7 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/autoscalingstate"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool/poststarthooks"
+	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxtemplate"
 	"github.com/scitix/agent-sandbox/pkg/e2bcompat"
 	"github.com/scitix/agent-sandbox/pkg/framework"
 	"github.com/scitix/agent-sandbox/pkg/framework/plugins"
@@ -667,6 +668,14 @@ func Run(opts Options) {
 		EventThrottle:            eventThrottle,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SandboxPool")
+		os.Exit(1)
+	}
+
+	if err := (&sandboxtemplate.SandboxTemplateReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Registry: imageRegistry,
+		Checker: digestResolver, Namespace: apikeyNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create template image checker")
 		os.Exit(1)
 	}
 

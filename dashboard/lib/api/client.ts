@@ -208,7 +208,7 @@ export async function handleErrorResponse(
     }
   }
 
-  throw Object.assign(new Error(message), { errorCode })
+  throw Object.assign(new Error(message), { errorCode, detail })
 }
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
