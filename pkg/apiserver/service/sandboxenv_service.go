@@ -252,6 +252,13 @@ func (s *k8sSandboxEnvService) stampEnvRequiresQuota(ctx context.Context, env *a
 		return
 	}
 	agentsv1alpha1.SetEnvPoolSizing(env, string(quotaplugin.SizingFor(s.quotaProv, tmpl.Annotations)))
+	for key, value := range quotaplugin.LabelsFor(s.quotaProv, tmpl.Annotations) {
+		if env.Labels == nil {
+			env.Labels = map[string]string{}
+		}
+		env.Labels[key] = value
+	}
+
 }
 
 // Get fetches one Env by namespaced name.

@@ -92,3 +92,11 @@ func TestNoopHasNoTemplatePolicy(t *testing.T) {
 		t.Error("Noop must not implement TemplatePolicy: the open-source answer is the missing interface")
 	}
 }
+
+func TestNoopDoesNotInjectLabels(t *testing.T) {
+	for _, p := range []Provider{nil, NewNoop(), policyProvider{billed: true}} {
+		if len(LabelsFor(p, nil)) != 0 {
+			t.Fatal("provider without label policy injected labels")
+		}
+	}
+}

@@ -323,3 +323,8 @@ Idle → Starting → Running → Stopping → Idle
 **Plugin contract** (`pkg/framework/plugins/`): every hook returns `(updated bool, err *domain.AppError)`. Callers MUST snapshot the input before invoking, then apply the mutation only when `updated && !equality.Semantic.DeepEqual(before, after)`. See `pkg/controllers/sandboxpool/sandboxpool_controller.go:267-281` for the canonical pattern. `PreCreatePool` is the single side-effect ingress for new Pool admission — invoked once at API time inside `AddMember`, never re-run by the Reconciler.
 
 **API Key**: `agbx_` prefix + 32 random bytes; SHA-256 hash stored in K8s Secret; in-memory cache TTL 1min (`pkg/utils/apikey/`)
+
+Quota Providers may optionally implement `TemplateLabelPolicy`. The host applies
+its pure classification labels at Env create/reconcile and member Pod rendering,
+before revision hashing. Noop has no label policy. Frozen member snapshots retain
+their configuration; edition-specific one-shot migration is outside OSS.

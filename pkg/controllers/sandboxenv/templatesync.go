@@ -109,6 +109,7 @@ func (r *SandboxEnvReconciler) refreshAutoUpdateMembers(ctx context.Context, env
 			continue
 		}
 		candidate, rerr := poolrender.RenderSandboxPool(poolrender.Inputs{
+			PolicyLabels:          quotaplugin.LabelsFor(r.QuotaProvider, tmpl.Annotations),
 			Env:                   env,
 			Template:              tmpl,
 			Member:                m,
@@ -229,7 +230,19 @@ func (r *SandboxEnvReconciler) syncRequiresQuota(ctx context.Context, env *agent
 		return false, client.IgnoreNotFound(err)
 	}
 	want := string(quotaplugin.SizingFor(r.QuotaProvider, tmpl.Annotations))
-	if got, ok := env.Labels[agentsv1alpha1.LabelEnvPoolSizing]; ok && got == want {
+	policyLabels := quotaplugin.LabelsFor(r.QuotaProvider, tmpl.Annotations)
+	matches := func(labels map[string]string) bool {
+		if labels[agentsv1alpha1.LabelEnvPoolSizing] != want {
+			return false
+		}
+		for key, value := range policyLabels {
+			if labels[key] != value {
+				return false
+			}
+		}
+		return true
+	}
+	if matches(env.Labels) {
 		return false, nil
 	}
 
@@ -243,11 +256,14 @@ func (r *SandboxEnvReconciler) syncRequiresQuota(ctx context.Context, env *agent
 		// Re-read inside the retry: another writer (the API server stamping at
 		// create, or a concurrent pass) may have set it already, and a patch
 		// with no change is a write nobody asked for.
-		if got, ok := cur.Labels[agentsv1alpha1.LabelEnvPoolSizing]; ok && got == want {
+		if matches(cur.Labels) {
 			return nil
 		}
 		base := cur.DeepCopy()
 		agentsv1alpha1.SetEnvPoolSizing(cur, want)
+		for key, value := range policyLabels {
+			cur.Labels[key] = value
+		}
 		if err := r.Patch(ctx, cur, client.MergeFrom(base)); err != nil {
 			return err
 		}

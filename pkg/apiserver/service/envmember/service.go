@@ -857,6 +857,7 @@ func (s *k8sService) renderCandidate(ctx context.Context, env *agentsv1alpha1.Sa
 	ipsExists, _ := poolrender.ImagePullSecretExists(ctx, s.client, env.Namespace, agentsv1alpha1.EnvImagePullSecretName(env.Name))
 
 	pool, err := poolrender.RenderSandboxPool(poolrender.Inputs{
+		PolicyLabels:          quotaplugin.LabelsFor(s.quotaProv, tmpl.Annotations),
 		Env:                   env,
 		Template:              tmpl,
 		Member:                member,

@@ -44,6 +44,9 @@ import (
 // Inputs carries everything RenderSandboxPool needs to project an Env +
 // Member into a complete SandboxPool CR.
 type Inputs struct {
+	// PolicyLabels are edition-owned labels, applied before revision hashing.
+	PolicyLabels map[string]string
+
 	// Env is the owning SandboxEnv. Required. Contributes the namespace,
 	// owner reference, team/user identity labels, and Spec.Overrides.
 	Env *agentsv1alpha1.SandboxEnv
@@ -197,6 +200,10 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 	mu := agentsv1alpha1.ResolveMaxUnavailable(in.Env, in.Member)
 	pool.Spec.MaxUnavailable = &mu
 
+	if pool.Spec.Template.Labels == nil {
+		pool.Spec.Template.Labels = map[string]string{}
+	}
+	maps.Copy(pool.Spec.Template.Labels, in.PolicyLabels)
 	// Stamp the revision hash last, once the spec is fully assembled. It is
 	// written to both the pod-template labels (so it flows onto every Pod via
 	// createPod's SyncLabelsFromTemplate) and the Pool-level labels (so it

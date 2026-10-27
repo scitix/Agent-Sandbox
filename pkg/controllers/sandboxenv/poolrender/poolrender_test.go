@@ -485,3 +485,25 @@ func TestMaterializeFromMember_StampsScalingGroupLabel(t *testing.T) {
 		t.Errorf("expected no scaling-group label when ScalingGroup empty, got %+v", bare.Labels)
 	}
 }
+
+func TestPolicyLabelsChangeRevision(t *testing.T) {
+	in := poolrender.Inputs{Env: newTestEnv(), Template: newTestTemplate(), Member: agentsv1alpha1.EnvClusterMember{Name: "member"}}
+	old, err := poolrender.RenderSandboxPool(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.PolicyLabels = map[string]string{"example.org/workload-kind": "interactive"}
+	updated, err := poolrender.RenderSandboxPool(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Spec.Template.Labels["example.org/workload-kind"] != "interactive" {
+		t.Fatal("missing policy label")
+	}
+	if old.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey] == updated.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey] {
+		t.Fatal("policy change must roll pods")
+	}
+	if updated.Spec.Template.Labels[agentsv1alpha1.TemplateHashLabelKey] != agentsv1alpha1.ComputeRevisionHash(&updated.Spec) {
+		t.Fatal("unstable revision")
+	}
+}

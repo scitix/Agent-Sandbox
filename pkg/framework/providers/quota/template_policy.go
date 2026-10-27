@@ -102,3 +102,17 @@ func SizingFor(provider Provider, templateAnnotations map[string]string) PoolSiz
 	}
 	return PoolSizingFreeForm
 }
+
+// TemplateLabelPolicy optionally supplies edition-owned workload classification.
+// Implementations are pure; labels are applied to Envs and member Pod templates.
+// No policy means no injected labels. Callers must not mutate the returned map.
+type TemplateLabelPolicy interface {
+	TemplateLabels(templateAnnotations map[string]string) map[string]string
+}
+
+func LabelsFor(provider Provider, annotations map[string]string) map[string]string {
+	if policy, ok := provider.(TemplateLabelPolicy); ok {
+		return policy.TemplateLabels(annotations)
+	}
+	return nil
+}
