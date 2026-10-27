@@ -607,6 +607,10 @@ func (s *Server) CreateSandboxEnv(ctx context.Context, req gen.CreateSandboxEnvR
 			return gen.CreateSandboxEnv400JSONResponse(errResp(ctx, appErr)), nil
 		case domain.ErrCodeConflict:
 			return gen.CreateSandboxEnv409JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeUnprocessableEntity:
+			return gen.CreateSandboxEnv422JSONResponse(errResp(ctx, appErr)), nil
+		case domain.ErrCodeServiceUnavailable:
+			return gen.CreateSandboxEnv503JSONResponse(errResp(ctx, appErr)), nil
 		default:
 			return gen.CreateSandboxEnv500JSONResponse(errResp(ctx, appErr)), nil
 		}

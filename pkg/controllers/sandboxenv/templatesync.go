@@ -261,9 +261,7 @@ func (r *SandboxEnvReconciler) syncRequiresQuota(ctx context.Context, env *agent
 		}
 		base := cur.DeepCopy()
 		agentsv1alpha1.SetEnvPoolSizing(cur, want)
-		for key, value := range policyLabels {
-			cur.Labels[key] = value
-		}
+		maps.Copy(cur.Labels, policyLabels)
 		if err := r.Patch(ctx, cur, client.MergeFrom(base)); err != nil {
 			return err
 		}

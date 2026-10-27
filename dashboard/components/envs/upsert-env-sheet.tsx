@@ -1071,7 +1071,7 @@ function extractError(err: unknown): string {
       detail?: { cluster?: string; template?: string; images?: { field: string; image: string; reason: string }[] }
     }
     if (e.errorCode?.startsWith("TEMPLATE_IMAGE_") && e.detail?.images?.length) {
-      return [e.error ?? e.message, ...e.detail.images.map((image) => `${image.field}: ${image.image} (${image.reason})`)].filter(Boolean).join("\n")
+      return [e.detail.cluster && e.detail.template ? `${e.detail.cluster} / ${e.detail.template}` : e.error ?? e.message, ...e.detail.images.map((image) => `${image.field}: ${image.image} (${image.reason})`)].filter(Boolean).join("\n")
     }
     return e.error ?? e.message ?? JSON.stringify(err)
   }
