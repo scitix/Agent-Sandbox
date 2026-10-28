@@ -47,6 +47,13 @@ func (r *SandboxPoolReconciler) syncPodProtectionFinalizers(ctx context.Context,
 		patch := client.MergeFrom(pod.DeepCopy())
 		pod.Finalizers = append(pod.Finalizers, agentsv1alpha1.SandboxProtectionFinalizer)
 		if err := r.Patch(ctx, pod, patch); err != nil {
+			if errors.IsForbidden(err) {
+				// Pod started deleting after our cache snapshot; apiserver rejects new
+				// finalizers on terminating objects. syncDeletingPods finalizes it later.
+				klog.V(4).InfoS("Skipping finalizer backfill: pod is being deleted",
+					"namespace", pod.Namespace, "name", pod.Name)
+				continue
+			}
 			klog.ErrorS(err, "Failed to backfill sandbox-protection finalizer on existing pod",
 				"namespace", pod.Namespace, "name", pod.Name)
 			return pods, err

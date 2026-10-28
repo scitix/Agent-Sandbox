@@ -21,10 +21,12 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/lifecycle/inplaceupdate"
@@ -1285,6 +1287,56 @@ func TestSyncPodProtectionFinalizers_BackfillsExistingIdlePod(t *testing.T) {
 	}
 	if !containsString(stored.Finalizers, agentsv1alpha1.SandboxProtectionFinalizer) {
 		t.Fatalf("expected sandbox-protection finalizer to be backfilled on idle pod, got %#v", stored.Finalizers)
+	}
+}
+
+func TestSyncPodProtectionFinalizers_SkipsTerminatingPodWhenPatchForbidden(t *testing.T) {
+	scheme := setupScheme(t)
+	deletionTime := metav1.Now()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pod-terminating-no-finalizer",
+			Namespace:         "default",
+			DeletionTimestamp: &deletionTime,
+			Labels: map[string]string{
+				agentsv1alpha1.SandboxPoolLabelKey:  "pool-a",
+				agentsv1alpha1.SandboxPhaseLabelKey: agentsv1alpha1.SandboxPhaseRunning,
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	// Cache snapshot still shows the pod as not deleting (guard at the top of
+	// syncPodProtectionFinalizers passes), but the apiserver rejects the patch
+	// with Forbidden — same shape as the observed race with external delete.
+	// The pod carries an unrelated finalizer so the fake client accepts the
+	// terminating seed object; sandbox-protection is what we try to backfill.
+	pod.Finalizers = []string{"some-other-finalizer"}
+	base := newTestClientBuilder(t).WithObjects(pod).Build()
+	intercepted := interceptor.NewClient(base, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			return apierrors.NewForbidden(
+				corev1.SchemeGroupVersion.WithResource("pods").GroupResource(),
+				pod.Name,
+				fmt.Errorf("no new finalizers can be added if the object is being deleted"))
+		},
+	})
+	reconciler := &SandboxPoolReconciler{Client: intercepted, Scheme: scheme}
+
+	resultPods, err := reconciler.syncPodProtectionFinalizers(context.Background(), []corev1.Pod{*pod})
+	if err != nil {
+		t.Fatalf("expected Forbidden race to be tolerated, got error: %v", err)
+	}
+	if len(resultPods) == 0 || containsString(resultPods[0].Finalizers, agentsv1alpha1.SandboxProtectionFinalizer) {
+		t.Fatal("expected finalizer to remain absent after tolerated Forbidden patch")
+	}
+
+	stored := &corev1.Pod{}
+	if err := intercepted.Get(context.Background(), types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, stored); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	if containsString(stored.Finalizers, agentsv1alpha1.SandboxProtectionFinalizer) {
+		t.Fatalf("expected no finalizer write on the server object, got %#v", stored.Finalizers)
 	}
 }
 
