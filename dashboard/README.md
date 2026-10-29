@@ -190,3 +190,9 @@ Before submitting changes:
 1. `pnpm exec tsc --noEmit` — zero type errors
 2. `pnpm test` — all tests pass
 3. `pnpm i18n:validate` — all locale files in sync
+
+## Operational reports
+
+The admin page presents usage statistics and metrics. Scheduled reports and
+outbound chat notifications are configured in external automation; the dashboard
+does not store webhooks or expose a notification console.

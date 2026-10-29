@@ -29,7 +29,6 @@ import (
 	"github.com/scitix/agent-sandbox/pkg/utils/httplog"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/config"
 	wsproxygen "github.com/scitix/agent-sandbox/pkg/wsproxy/gen"
-	"github.com/scitix/agent-sandbox/pkg/wsproxy/notify"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/syncmgr"
 	"github.com/scitix/agent-sandbox/pkg/wsproxy/syncmgr/handlers"
 )
@@ -42,11 +41,6 @@ type RouterDeps struct {
 	JWTSecret    string
 	ManagerToken string
 	IAMService   service.IAMService
-
-	// Notify serves the daily-report / idle-alert admin API. Nil when the
-	// notification service is not configured (no Prometheus URL), in which
-	// case those routes answer 503 rather than being unregistered.
-	Notify *notify.Service
 }
 
 // NewInternalServer creates the :9004 management HTTP server.
@@ -77,7 +71,7 @@ func NewInternalServer(cfg *config.Config, deps RouterDeps) *http.Server {
 		deps.JWTSecret, deps.ManagerToken,
 		deps.IAMService,
 	)
-	srv := handlers.New(deps.SyncManager, deps.Notify)
+	srv := handlers.New(deps.SyncManager)
 	strictHandler := wsproxygen.NewStrictHandler(srv, nil)
 	wsproxygen.RegisterHandlersWithOptions(r, strictHandler, wsproxygen.GinServerOptions{
 		BaseURL:     "",

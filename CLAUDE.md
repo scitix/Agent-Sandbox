@@ -336,3 +336,9 @@ their configuration; edition-specific one-shot migration is outside OSS.
 belong in SandboxTemplate.status, never globally replicated metadata. Keep digest
 resolution separate from availability checks: resolving a digest reference need
 not access a registry. See `pkg/templateimages/README.md` for retry/auth semantics.
+
+## Operational reports
+
+Reports and outbound notifications are managed by external automation. The Hub
+serves administrative usage metrics but does not schedule reports, store chat
+webhooks, or expose notification configuration endpoints.
