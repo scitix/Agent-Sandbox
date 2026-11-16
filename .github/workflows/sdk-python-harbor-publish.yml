@@ -210,7 +210,9 @@ jobs:
 
       - name: Build wheel and sdist
         working-directory: sdk/python/harbor
-        run: uv run --with build python -m build
+        # Build in a tool-only environment: runtime dependencies may be
+        # published concurrently from this same release tag.
+        run: uv run --no-project --with build python -m build
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4

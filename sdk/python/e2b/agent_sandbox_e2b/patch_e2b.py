@@ -163,12 +163,15 @@ def patch_e2b(
         ConnectionConfig.get_host = _connection_config_get_host
 
         def _connection_config_get_sandbox_url(
-            self, sandbox_id: str, sandbox_domain: str
+            self, sandbox_id: str, sandbox_domain: str, port: int | None = None
         ) -> str:
             if self._sandbox_url:
                 return self._sandbox_url
             scheme = "https" if https else "http"
-            host = self.get_host(sandbox_id, sandbox_domain, self.envd_port)
+            host = self.get_host(
+                sandbox_id, sandbox_domain,
+                self.envd_port if port is None else port,
+            )
             return f"{scheme}://{host}"
 
         ConnectionConfig.get_sandbox_url = _connection_config_get_sandbox_url

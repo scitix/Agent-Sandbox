@@ -131,7 +131,7 @@ jobs:
           )
           assert_signature(
               ConnectionConfig.get_sandbox_url,
-              ["self", "sandbox_id", "sandbox_domain"],
+              ["self", "sandbox_id", "sandbox_domain", "port"],
           )
           assert_signature(SandboxBase.get_host, ["self", "port"])
 
@@ -157,6 +157,11 @@ jobs:
               raise AssertionError(
                   f"unexpected get_sandbox_url result: {sandbox_url!r}"
               )
+
+          for port in (None, 8080):
+              actual = config.get_sandbox_url("sbx_123", "ignored.e2b.dev", port=port)
+              expected_port = config.envd_port if port is None else port
+              assert actual == f"http://{data_domain}/sandboxes/sbx_123/{expected_port}"
 
           class DummySandbox:
               sandbox_id = "sbx_456"
@@ -229,7 +234,9 @@ jobs:
 
       - name: Build wheel and sdist
         working-directory: sdk/python/e2b
-        run: uv run --with build python -m build
+        # Build in a tool-only environment: runtime dependencies may be
+        # published concurrently from this same release tag.
+        run: uv run --no-project --with build python -m build
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4
