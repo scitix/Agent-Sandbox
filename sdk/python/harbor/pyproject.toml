@@ -10,15 +10,15 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
-    "agent-sandbox-e2b>=0.0.2",
+    "agent-sandbox-e2b>=0.0.4",
 ]
 # harbor is an optional peer dependency installed by users via `harbor[e2b]`;
 # we don't pin it as a hard dependency to avoid version conflicts with users
 # who pin a specific harbor version themselves.
 
 [project.optional-dependencies]
-harbor = ["harbor>=0.7.0", "e2b>=2.0.0"]
-dev = ["harbor>=0.7.0", "e2b>=2.0.0", "ruff>=0.4.0"]
+harbor = ["harbor>=0.25.0", "e2b>=2.0.0"]
+dev = ["harbor>=0.25.0", "e2b>=2.0.0", "ruff>=0.4.0"]
 
 [tool.setuptools.dynamic]
 version = { attr = "agent_sandbox_harbor.__version__" }

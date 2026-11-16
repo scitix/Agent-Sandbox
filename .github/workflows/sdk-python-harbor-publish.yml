@@ -95,7 +95,7 @@ jobs:
           uv venv .compat-venv
           # Install the plugin together with harbor[e2b] so that the e2b backend
           # (which we subclass) is available for inspection.
-          uv pip install --python .compat-venv/bin/python . "harbor[e2b]"
+          uv pip install --python .compat-venv/bin/python . ../e2b "harbor[e2b]" e2b
 
           HARBOR_VERSION=$(.compat-venv/bin/python - <<'PY'
           import importlib.metadata
@@ -105,6 +105,8 @@ jobs:
           )
           echo "harbor_version=${HARBOR_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved latest harbor: ${HARBOR_VERSION}"
+
+          .compat-venv/bin/python -m unittest discover -s tests
 
           .compat-venv/bin/python - <<'PY'
           import importlib.metadata
@@ -123,12 +125,10 @@ jobs:
           print(f"harbor={importlib.metadata.version('harbor')}")
           print(f"e2b={importlib.metadata.version('e2b')}")
 
-          # We subclass E2BEnvironment and override these three methods. If
-          # Harbor upstream renames or removes any of them, the plugin would
-          # silently lose the override — fail the publish instead.
+          # Check lifecycle interfaces shared by supported Harbor versions.
+          # The prebuilt startup test covers Harbor 0.26; its predecessor
+          # used template hooks that upstream has since removed.
           for method in (
-              "_does_template_exist",
-              "_create_template",
               "_create_sandbox",
               "__init__",
               "start",
@@ -185,14 +185,27 @@ jobs:
           harbor_version = os.environ["HARBOR_VERSION"]
           path = Path("sdk/python/harbor/pyproject.toml")
           text = path.read_text()
-          text = re.sub(
-              r'harbor = \["harbor>=0\.7\.0(?:,[^"]*)?"[^]]*\]',
-              f'harbor = ["harbor>=0.7.0,<={harbor_version}", "e2b>=2.0.0"]',
+          text, count = re.subn(
+              r'harbor = \["harbor>=0\.25\.0(?:,[^"]*)?"[^]]*\]',
+              f'harbor = ["harbor>=0.25.0,<={harbor_version}", "e2b>=2.0.0"]',
               text,
           )
+          if count != 1:
+              raise SystemExit("Expected exactly one Harbor extra to bound")
+          # Both packages ship from the same tag. Do not let pip silently
+          # fall back to an older shim whose E2B cap predates this validation.
+          release_version = os.environ["RELEASE_VERSION"]
+          text, count = re.subn(
+              r'"agent-sandbox-e2b>=[^"]+"',
+              f'"agent-sandbox-e2b>={release_version}"',
+              text,
+          )
+          if count != 1:
+              raise SystemExit("Expected exactly one shim dependency to stamp")
           path.write_text(text)
           PY
         env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
           HARBOR_VERSION: ${{ steps.compat.outputs.harbor_version }}
 
       - name: Build wheel and sdist

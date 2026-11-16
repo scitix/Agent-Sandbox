@@ -37,8 +37,8 @@ it which image to use, checked in order:
      to a fully-qualified image reference, one per line::
 
          # <task-name>  <image-ref>
-         astropy__astropy-7606  registry.internal/agentbox/swebench/sweb.eval.x86_64.astropy_1776_astropy-7606:260328-uv
-         django__django-11265   registry.internal/agentbox/swebench/sweb.eval.x86_64.django_1776_django-11265:260328-uv
+         astropy__astropy-7606  registry.example.com/benchmarks/astropy:task
+         django__django-11265   registry.example.com/benchmarks/django:task
 
      ``<task-name>`` is matched against Harbor's ``environment_name`` (the task
      directory name / instance id). ``=`` may be used instead of whitespace.
@@ -57,9 +57,14 @@ and listed in ``AGBX_IMAGE_MAP``.
 
 Required environment variables (typically via ``harbor run --env-file ...``):
     E2B_API_KEY            Agent Sandbox API key (``agbx_...``).
-    AGBX_POOL_NAME         Pre-warmed pool name (e.g. ``terminal2``).
+    AGBX_ENV_NAME          Existing SandboxEnv name (e.g. ``terminal2``); or
+                           use AGBX_POOL_PROFILES for capacity-based routing.
+                           AGBX_POOL_NAME remains a legacy alias.
 
 Optional environment variables:
+    AGBX_SCALING_GROUP    Exact existing scaling-group name; with profiles,
+                           restrict matching to that group.
+    AGBX_POOL_PROFILES    JSON profiles with env, scaling_group and capacity.
     AGBX_IMAGE_MAP         Path to a ``<task-name> <image>`` map file (see above).
     E2B_DOMAIN             Data-plane gateway host[:port][/path].
     E2B_API_URL            E2B-compatible control-plane URL (scheme://host).
@@ -83,6 +88,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from pathlib import Path
 
 from agent_sandbox_e2b import patch_e2b
 
@@ -98,8 +104,13 @@ patch_e2b(
 )
 
 from e2b import AsyncSandbox  # noqa: E402
+from harbor.environments.compose_service_ops import ComposeServiceOpsMixin  # noqa: E402
 from harbor.environments.e2b import E2BEnvironment  # noqa: E402
 from harbor.models.environment_type import EnvironmentType  # noqa: E402
+from harbor.models.task.config import NetworkMode  # noqa: E402
+
+from .compose import AgentBoxCompose  # noqa: E402
+from .pools import PoolRoute, select_route  # noqa: E402
 
 
 def _load_image_map(path: str | None) -> dict[str, str]:
@@ -159,7 +170,7 @@ def _rewrite_image(raw_image: str) -> str:
     return raw_image.lower()
 
 
-class AgentSandboxEnvironment(E2BEnvironment):
+class AgentSandboxEnvironment(ComposeServiceOpsMixin, E2BEnvironment):
     """E2B-compatible Harbor environment that targets Agent Sandbox pools.
 
     Runs pre-built images on a pre-warmed pool. Image selection: an
@@ -171,16 +182,34 @@ class AgentSandboxEnvironment(E2BEnvironment):
         return EnvironmentType.E2B
 
     @classmethod
-    def preflight(cls) -> None:
-        missing = [
-            v for v in ("E2B_API_KEY", "AGBX_POOL_NAME") if not os.environ.get(v)
-        ]
-        if missing:
-            raise SystemExit(
-                f"AgentSandboxEnvironment requires env vars: {', '.join(missing)}"
+    def preflight(cls, kwargs=None) -> None:
+        missing = [v for v in ("E2B_API_KEY",) if not os.environ.get(v)]
+        if not any(
+            os.environ.get(key, "").strip()
+            for key in (
+                "AGBX_ENV_NAME",
+                "AGBX_POOL_NAME",
+                "AGBX_POOL_PROFILES",
+                "AGBX_DIND_ENV_NAME",
+                "AGBX_DIND_POOL_NAME",
+                "AGBX_DIND_POOL_PROFILES",
             )
+        ):
+            missing.append("AGBX_ENV_NAME (legacy AGBX_POOL_NAME) or AGBX_POOL_PROFILES")
+        if missing:
+            raise SystemExit(f"AgentSandboxEnvironment requires env vars: {', '.join(missing)}")
 
     def __init__(self, *args, **kwargs):
+        directory = Path(kwargs.get("environment_dir", args[0] if args else "."))
+        self._compose_path = next(
+            (
+                directory / name
+                for name in ("docker-compose.yaml", "docker-compose.yml")
+                if (directory / name).exists()
+            ),
+            None,
+        )
+        self._compose = None
         # Let E2BEnvironment.__init__ parse environment/Dockerfile for WORKDIR
         # and run its own validation.
         super().__init__(*args, **kwargs)
@@ -188,11 +217,143 @@ class AgentSandboxEnvironment(E2BEnvironment):
         image = self._resolve_image()
 
         cluster = os.environ.get("AGBX_CLUSTER_ID", "").strip()
-        pool = os.environ["AGBX_POOL_NAME"]
+        setting_prefix = "AGBX_DIND_" if self._compose_path else "AGBX_"
+        env_name = os.environ.get(f"{setting_prefix}ENV_NAME", "").strip()
+        legacy_pool = os.environ.get(f"{setting_prefix}POOL_NAME", "").strip()
+        if env_name and legacy_pool and env_name != legacy_pool:
+            raise ValueError(
+                f"{setting_prefix}ENV_NAME and legacy {setting_prefix}POOL_NAME disagree"
+            )
+        env_name = env_name or legacy_pool or None
+        group = os.environ.get(f"{setting_prefix}SCALING_GROUP", "").strip() or None
+        profile_path = os.environ.get(f"{setting_prefix}POOL_PROFILES", "").strip()
+        if profile_path:
+            route = select_route(
+                profile_path,
+                default_env=env_name,
+                scaling_group=group,
+                cpus=self._effective_cpus or 0,
+                memory_mb=self._effective_memory_mb or 0,
+                storage_mb=self._effective_storage_mb or 0,
+                gpus=self._effective_gpus,
+                gpu_types=self.task_env_config.gpu_types or [],
+            )
+        else:
+            if self._effective_gpus:
+                raise ValueError(
+                    f"GPU tasks require {setting_prefix}POOL_PROFILES with GPU capacity and model"
+                )
+            if env_name is None:
+                raise ValueError(
+                    f"Tasks require {setting_prefix}ENV_NAME (legacy "
+                    f"{setting_prefix}POOL_NAME) or {setting_prefix}POOL_PROFILES"
+                )
+            route = PoolRoute(env=env_name, scaling_group=group)
+        self._scaling_group = route.scaling_group
+        target_env = route.env
         prefix = f"{cluster}::" if cluster else ""
-        # PostSandboxes on the compat layer parses "<cluster>::<pool>//<image>".
+        # The template identifies the Env; reserved metadata selects its group.
         # Replace the hash-based template name that the parent computed.
-        self._template_name = f"{prefix}{pool}//{image}"
+        self._template_name = f"{prefix}{target_env}//{image}"
+        if self._compose_path:
+            # A DinD pool must boot its own daemon image, not the task image.
+            self._template_name = f"{prefix}{target_env}"
+            self._compose = AgentBoxCompose(self, _rewrite_image)
+
+        # Harbor 0.26 uses the public prebuilt option instead of the old
+        # template-existence hooks. Keep its runtime setup and lease renewal.
+        if hasattr(getattr(self, "options", None), "prebuilt_template_id"):
+            self.options.prebuilt_template_id = self._template_name
+
+    def _warn_prebuilt_template_overrides(self, force_build):
+        # Images and resources are routed through AgentBox pool profiles.
+        if force_build:
+            raise ValueError("AgentBox requires pre-built images; force_build is unsupported")
+
+    @property
+    def capabilities(self):
+        return super().capabilities.model_copy(update={"gpus": True, "docker_compose": True})
+
+    def _startup_env(self):
+        env = super()._startup_env()
+        threads = os.environ.get("AGBX_CPU_THREADS", "").strip()
+        if threads:
+            if not threads.isdecimal() or int(threads) < 1:
+                raise ValueError("AGBX_CPU_THREADS must be a positive integer")
+            for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+                env.setdefault(name, threads)
+        return env
+
+    def _validate_definition(self):
+        if self._compose_path:
+            return
+        return super()._validate_definition()
+
+    def _compose_service_transport(self, service):
+        if self._compose is None:
+            return super()._compose_service_transport(service)
+        return self._compose
+
+    async def start(self, force_build=False):
+        if self._compose is None:
+            return await super().start(force_build)
+        try:
+            await self._create_sandbox()
+            if getattr(self, "_renew_interval_sec", 0) > 0:
+                self._renew_task = asyncio.create_task(self._renew_loop())
+            await self._compose.start(force_build)
+            await self.ensure_dirs(self._mount_targets(writable_only=True))
+        except BaseException:
+            await super().stop(delete=True)
+            raise
+
+    async def stop(self, delete=True):
+        try:
+            if self._compose is not None and self._sandbox is not None:
+                await self._compose.stop()
+        finally:
+            await super().stop(delete)
+
+    async def exec(self, command, cwd=None, env=None, timeout_sec=None, user=None):
+        if self._compose is None:
+            return await super().exec(command, cwd, env, timeout_sec, user)
+        return await self._compose.exec(
+            command,
+            cwd=cwd or self.task_env_config.workdir or self._workdir,
+            env=self._merge_env(env),
+            timeout_sec=timeout_sec,
+            user=self._resolve_user(user),
+        )
+
+    async def is_dir(self, path, user=None):
+        if self._compose is not None:
+            return await self._compose.is_dir(path, user=user)
+        return await super().is_dir(path, user=user)
+
+    async def is_file(self, path, user=None):
+        if self._compose is not None:
+            return await self._compose.is_file(path, user=user)
+        return await super().is_file(path, user=user)
+
+    async def upload_file(self, source_path, target_path):
+        if self._compose is not None:
+            return await self._compose.upload_file(source_path, target_path)
+        return await super().upload_file(source_path, target_path)
+
+    async def upload_dir(self, source_dir, target_dir):
+        if self._compose is not None:
+            return await self._compose.upload_dir(source_dir, target_dir)
+        return await super().upload_dir(source_dir, target_dir)
+
+    async def download_file(self, source_path, target_path):
+        if self._compose is not None:
+            return await self._compose.download_file(source_path, target_path)
+        return await super().download_file(source_path, target_path)
+
+    async def download_dir(self, source_dir, target_dir):
+        if self._compose is not None:
+            return await self._compose.download_dir(source_dir, target_dir)
+        return await super().download_dir(source_dir, target_dir)
 
     def _resolve_image(self) -> str:
         """Pick the image: override map first, then task.toml docker_image."""
@@ -230,11 +391,20 @@ class AgentSandboxEnvironment(E2BEnvironment):
             "session_id": self.session_id,
             "agentbox.scitix.ai/startup-timeout": startup_timeout,
         }
+        if self._scaling_group is not None:
+            metadata["agentbox.scitix.ai/scaling-group"] = self._scaling_group
         self._sandbox = await AsyncSandbox.create(
             self._template_name,
-            timeout=86_400,
+            timeout=(
+                self._sandbox_timeout_sec
+                if hasattr(self, "_sandbox_timeout_sec")
+                else self._sandbox_timeout
+            ),
+            request_timeout=float(startup_timeout) + 30,
+            envs=self._startup_env(),
             metadata=metadata,
-            allow_internet_access=self.task_env_config.allow_internet,
+            allow_internet_access=self.network_policy.network_mode != NetworkMode.NO_NETWORK,
+            network=self._sandbox_create_network_options(),
         )
         # Cold-image pulls can leave ``AsyncSandbox.create`` returning before
         # the envd daemon is reachable; the first ``commands.run()`` then fails

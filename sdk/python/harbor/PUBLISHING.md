@@ -81,13 +81,16 @@ version: there is no separate "harbor-only" release cadence.
    The `build` job:
    - Resolves version `0.0.4` from `v0.0.4`.
    - Stamps it into `__init__.py`.
-   - Installs `harbor[e2b]` plus the local source.
+   - Installs `harbor[e2b]`, E2B, and the local Harbor and E2B shim sources.
    - Runs the **compatibility check** — confirms that `harbor.environments.e2b.E2BEnvironment`
-     still has every method we subclass (`_does_template_exist`, `_create_template`,
-     `_create_sandbox`, `start`, `exec`, `upload_file`, …). **If Harbor refactored and
+     still has the lifecycle interfaces we use (`_create_sandbox`, `start`, `exec`,
+     `upload_file`, …), and runs the plugin unit tests. Harbor 0.26 prebuilt startup
+     is covered by a behavioral test; removed legacy template hooks are not required. **If Harbor refactored and
      broke a method we depend on, the publish fails here**, before any wheel ships.
    - Records the verified `harbor` version and stamps a `<=<version>` upper bound into the
      `[project.optional-dependencies] harbor = [...]` block.
+   - Sets the shim minimum version to this release tag, so dependency resolution cannot
+     silently select an older shim with an incompatible E2B upper bound.
    - Builds the wheel + sdist.
 
 5. The `publish` job runs only if `build` succeeded. It downloads the artifact and
@@ -171,13 +174,13 @@ too — the same install path is exercised.
 ├── jobs.build      [needs: precheck, if: should_publish == 'true']
 │   ├── (version comes from precheck output)
 │   ├── sed __version__ into agent_sandbox_harbor/__init__.py
-│   ├── uv pip install ".[harbor]" + harbor[e2b]
+│   ├── uv pip install . ../e2b "harbor[e2b]" e2b
 │   ├── Inline Python compat check:
 │   │     - import agent_sandbox_harbor (triggers patch_e2b)
 │   │     - assert hasattr(E2BEnvironment, method) for every method we depend on
 │   │     - assert issubclass(AgentSandboxEnvironment, E2BEnvironment)
 │   │     - assert AgentSandboxEnvironment.type() == EnvironmentType.E2B
-│   ├── Stamp `harbor>=0.7.0,<=<resolved>` upper bound into pyproject.toml
+│   ├── Stamp `harbor>=0.25.0,<=<resolved>` upper bound into pyproject.toml
 │   ├── python -m build (wheel + sdist)
 │   └── upload-artifact 'python-harbor-dist'
 └── jobs.publish    [needs: precheck + build, if: should_publish == 'true']
