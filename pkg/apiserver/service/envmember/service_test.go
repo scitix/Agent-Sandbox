@@ -34,10 +34,11 @@ import (
 )
 
 const (
-	envTestNamespace = "default"
-	envLocalCluster  = "local"
-	testEnvName      = "env-x"
-	testTemplateName = "envd-runtime"
+	envTestTwoCPUGroup = "2c8gi"
+	envTestNamespace   = "default"
+	envLocalCluster    = "local"
+	testEnvName        = "env-x"
+	testTemplateName   = "envd-runtime"
 
 	// memberName2c8Gi is the name derivePoolMember gives a 2c/8Gi member of
 	// testEnvName: env name + resource key. Half a dozen assertions depend on
@@ -528,9 +529,9 @@ func TestAdd_DefaultReplicasFromGroupMin(t *testing.T) {
 	min := int32(3)
 	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
 		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{
-			// memberWithResources(...) derives ScalingGroup "2c8gi"
+			// memberWithResources(...) derives ScalingGroup envTestTwoCPUGroup
 			// (lower-case) from its 2 CPU / 8 GiB request.
-			Name:        "2c8gi",
+			Name:        envTestTwoCPUGroup,
 			Enabled:     true,
 			MinReplicas: &min,
 		}},
@@ -554,12 +555,12 @@ func TestAdd_RejectsExceedingGroupMax(t *testing.T) {
 	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{{
 		Name:   "existing",
 		Spec:   agentsv1alpha1.SandboxPoolSpec{Replicas: 8},
-		Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: "2c8gi"},
+		Config: agentsv1alpha1.EnvClusterMemberConfig{ScalingGroup: envTestTwoCPUGroup},
 	}}
 	max := int32(10)
 	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
 		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{
-			Name:        "2c8gi",
+			Name:        envTestTwoCPUGroup,
 			Enabled:     true,
 			MaxReplicas: &max,
 		}},
@@ -591,8 +592,8 @@ func TestAdd_CreatesScalingGroup(t *testing.T) {
 		t.Fatalf("expected exactly one autoscaling group, got %+v", env.Spec.Autoscaling)
 	}
 	g := env.Spec.Autoscaling.Groups[0]
-	if g.Name != "2c8gi" {
-		t.Fatalf("expected group %q, got %q", "2c8gi", g.Name)
+	if g.Name != envTestTwoCPUGroup {
+		t.Fatalf("expected group %q, got %q", envTestTwoCPUGroup, g.Name)
 	}
 	if g.Enabled {
 		t.Fatalf("expected auto-created group to start disabled, got enabled")
@@ -607,7 +608,7 @@ func TestAdd_PreservesExistingScalingGroup(t *testing.T) {
 	min := int32(3)
 	env.Spec.Autoscaling = &agentsv1alpha1.EnvAutoscalingSpec{
 		Groups: []agentsv1alpha1.EnvAutoscalingGroup{{
-			Name:        "2c8gi",
+			Name:        envTestTwoCPUGroup,
 			Enabled:     true,
 			MinReplicas: &min,
 		}},

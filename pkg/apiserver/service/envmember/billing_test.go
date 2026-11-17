@@ -236,7 +236,7 @@ func TestUpdateMember_SkipsBillingCheck(t *testing.T) {
 	env := newEnvForPoolOps()
 	legacy := memberWithResources(1)
 	legacy.Name = memberName2c8Gi
-	legacy.Config.ScalingGroup = "2c8gi"
+	legacy.Config.ScalingGroup = envTestTwoCPUGroup
 	env.Spec.Clusters[0].Members = []agentsv1alpha1.EnvClusterMember{legacy}
 
 	svc := newBilledService(t, env)

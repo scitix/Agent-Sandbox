@@ -58,9 +58,9 @@ func TestNoop_DeriveScalingGroupName(t *testing.T) {
 			in: mkReq(corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("8"),
 				corev1.ResourceMemory: resource.MustParse("32Gi"),
-				"scitix.ai/tpu":       resource.MustParse("4"),
+				"example.com/tpu":     resource.MustParse("4"),
 			}),
-			want: "8c32Gi-4scitix.ai-tpu",
+			want: "8c32Gi-r07192c6973b5c647",
 		},
 		{
 			name: "zero gpu count is omitted",

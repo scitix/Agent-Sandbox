@@ -430,3 +430,17 @@ Three rules worth knowing:
 - **Import is create-only** (`canImport={!isEdit}`). Replacing a live resource's whole configuration from a file is a different, riskier operation than seeding a new one.
 
 Runtime-dependent behaviour goes in the spec factory rather than a module constant, via the `sanitize` hook — a spec that must drop values this deployment cannot resolve (cluster ids it does not know, for instance) needs the live list at construction time.
+
+## Accelerator instance metadata
+
+`lib/utils/instance-gpu.ts` reads the catalog's `extensions["gpu-resource-name"]`
+to locate the actual Kubernetes device count, defaulting to `nvidia.com/gpu`.
+The display model is `gpu-model`, with `gpu-type` retained as a compatibility
+fallback. Model names are labels, never resource keys. Do not detect GPU capacity
+by treating every extended resource as a GPU: RDMA/NIC resources are independent.
+
+The pool form preserves this device count when CPU/memory are rounded down from
+an instance envelope. Bounds-only updates carry the complete existing
+`inlineResources` unchanged, including device, storage and RDMA dimensions; the
+server treats this shape as immutable. New provider metadata must be reflected in
+the helper tests without hand-editing generated OpenAPI TypeScript definitions.

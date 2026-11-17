@@ -342,3 +342,14 @@ not access a registry. See `pkg/templateimages/README.md` for retry/auth semanti
 Reports and outbound notifications are managed by external automation. The Hub
 serves administrative usage metrics but does not schedule reports, store chat
 webhooks, or expose notification configuration endpoints.
+
+### Accelerator resource groups and immutable placement
+
+New Env member resource keys retain CPU/memory names and add `-Ngpu` only for
+exact `nvidia.com/gpu`; other qualified device resources use a stable full-name/
+quantity digest, including RDMA as a generic resource rather than GPU count.
+Existing member names/groups are not migrated automatically. Providers may supply
+`InstanceType.NodeSelector`; AddMember freezes it in server-owned metadata, and
+API/reconcile rendering AND-merges it with template placement. Same-group members
+with different device resources or frozen model selectors are rejected, including
+inside conflict retries. See [`instancetype/README.md`](pkg/framework/providers/instancetype/README.md).

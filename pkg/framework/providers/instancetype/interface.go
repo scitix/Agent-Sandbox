@@ -81,6 +81,12 @@ type InstanceType struct {
 	// "instance-quantity" field).
 	MaxMultiplier int32
 
+	// NodeSelector is an optional placement requirement for this named instance.
+	// Consumers must AND it with template constraints, never infer it from
+	// Extensions or a resource-only reverse lookup. It is frozen at member
+	// creation; changing the catalog does not retarget existing members.
+	NodeSelector map[string]string
+
 	// Cost is a free-form weight for Dashboard sorting / cost displays.
 	Cost string
 

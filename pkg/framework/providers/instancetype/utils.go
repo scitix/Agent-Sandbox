@@ -15,7 +15,10 @@
 package instancetype
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -35,7 +38,8 @@ import (
 // Rendering sub-unit shapes losslessly is what keeps them in distinct scaling
 // groups: collapsing them to whole cores/GiB would map every shape under 1Gi
 // onto the same key, and two differently-sized Pools would then collide on
-// PoolName.
+// PoolName. Exact nvidia.com/gpu quantities add -Ngpu; other nonzero plugin
+// resource names and quantities add a stable resource-identity digest.
 func DeriveResourceKey(observed corev1.ResourceRequirements) string {
 	reqs := observed.Requests
 	if len(reqs) == 0 {
@@ -45,11 +49,90 @@ func DeriveResourceKey(observed corev1.ResourceRequirements) string {
 	cpuMilli := reqs.Cpu().MilliValue()
 	memBytes := reqs.Memory().Value()
 
-	if cpuMilli == 0 && memBytes == 0 {
+	suffix := extendedResourceSuffix(observed)
+	if cpuMilli == 0 && memBytes == 0 && suffix == "" {
 		return "default"
 	}
 
-	return formatCPUKey(cpuMilli, "c", "mc") + formatMemoryKey(memBytes, "gi", "mi")
+	key := formatCPUKey(cpuMilli, "c", "mc") + formatMemoryKey(memBytes, "gi", "mi") + suffix
+	return CompactResourceName(key, 63)
+}
+
+// CompactResourceName keeps a DNS-label-safe generated name within maxLength.
+// The digest covers the entire name so truncation does not merge distinct shapes.
+func CompactResourceName(name string, maxLength int) string {
+	if len(name) <= maxLength {
+		return name
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))[:16]
+	return strings.TrimRight(name[:maxLength-len(digest)-1], "-") + "-" + digest
+}
+
+// extendedResourceSuffix distinguishes all device/plugin resource names without
+// classifying every extended resource as a GPU. Only the exact NVIDIA resource
+// has the familiar gpu suffix; custom accelerators and RDMA use opaque resource
+// identity. Native storage and hugepage dimensions retain existing naming.
+func extendedResourceSuffix(observed corev1.ResourceRequirements) string {
+	resources := extendedResources(observed)
+
+	suffix := ""
+	if quantity, ok := resources["nvidia.com/gpu"]; ok && quantity.Sign() > 0 {
+		suffix = fmt.Sprintf("-%dgpu", quantity.Value())
+	}
+	delete(resources, "nvidia.com/gpu")
+	var names []string
+	for name, quantity := range resources {
+		if quantity.Sign() > 0 {
+			names = append(names, string(name))
+		}
+	}
+	if len(names) == 0 {
+		return suffix
+	}
+	sort.Strings(names)
+	var shape strings.Builder
+	for _, name := range names {
+		quantity := resources[corev1.ResourceName(name)]
+		fmt.Fprintf(&shape, "%s=%s\n", name, quantity.String())
+	}
+	return suffix + fmt.Sprintf("-r%x", sha256.Sum256([]byte(shape.String())))[:18]
+}
+
+// ExtendedResourceIdentity is the lossless identity of nonzero plugin resource
+// names and quantities. It is used to reject legacy-group device mixing without
+// renaming an existing group or inferring a GPU model from resource counts.
+func ExtendedResourceIdentity(observed corev1.ResourceRequirements) string {
+	resources := extendedResources(observed)
+	var names []string
+	for name, quantity := range resources {
+		if quantity.Sign() > 0 {
+			names = append(names, string(name))
+		}
+	}
+	sort.Strings(names)
+	var identity strings.Builder
+	for _, name := range names {
+		quantity := resources[corev1.ResourceName(name)]
+		fmt.Fprintf(&identity, "%s=%s\n", name, quantity.String())
+	}
+	return identity.String()
+}
+
+func extendedResources(observed corev1.ResourceRequirements) corev1.ResourceList {
+	resources := corev1.ResourceList{}
+	for _, source := range []corev1.ResourceList{observed.Requests, observed.Limits} {
+		for name, quantity := range source {
+			if !strings.Contains(string(name), "/") || strings.HasPrefix(string(name), "kubernetes.io/") {
+				continue
+			}
+			// Extended resources specified only in limits receive matching requests
+			// from Kubernetes. Preserve that device identity before API defaulting.
+			if current, exists := resources[name]; !exists || quantity.Cmp(current) > 0 {
+				resources[name] = quantity.DeepCopy()
+			}
+		}
+	}
+	return resources
 }
 
 // formatCPUKey renders a milli-core count as "<cores>"+coreUnit for whole

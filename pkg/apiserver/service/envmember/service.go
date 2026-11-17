@@ -193,6 +193,11 @@ type k8sService struct {
 const QuotaURLLabel = "quota.scitix.ai/url"
 
 func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClusterID string, member agentsv1alpha1.EnvClusterMember) (*gen.SandboxPool, *domain.AppError) {
+	for _, annotations := range []map[string]string{member.Config.Annotations, member.Metadata.Annotations} {
+		if _, supplied := annotations[instancetypeplugin.NodeSelectorSnapshotAnnotation]; supplied {
+			return nil, domain.NewBadRequest("instance-type node selector snapshot is server-owned")
+		}
+	}
 	if localClusterID == "" {
 		return nil, domain.NewServiceUnavailable("server misconfigured: LOCAL_CLUSTER_ID not set")
 	}
@@ -221,6 +226,9 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 	}
 	member = derived
 	if err := validateMemberReplicaBounds(member.Config.MinReplicas, member.Config.MaxReplicas); err != nil {
+		return nil, err
+	}
+	if err := validateGroupPlacement(envcommon.LocalClusterMembers(&env.Spec, localClusterID), member); err != nil {
 		return nil, err
 	}
 	for _, m := range envcommon.LocalClusterMembers(&env.Spec, localClusterID) {
@@ -285,6 +293,11 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 		}
 		base := current.DeepCopy()
 		members := envcommon.LocalClusterMembers(&current.Spec, localClusterID)
+		// Recheck inside the optimistic write: simultaneous creates must not
+		// join one resource group with different device-model constraints.
+		if appErr := validateGroupPlacement(members, member); appErr != nil {
+			return appErr
+		}
 		for _, m := range members {
 			if m.Name == member.Name {
 				return &domain.AppError{Code: domain.ErrCodeConflict,
@@ -307,6 +320,47 @@ func (s *k8sService) AddMember(ctx context.Context, namespace, envName, localClu
 		return nil, domain.NewInternal(err.Error(), err)
 	}
 	return s.projectMemberPool(ctx, namespace, envName, member), nil
+}
+
+// validateGroupPlacement keeps a resource-only group from mixing different
+// named-instance placement constraints (for example two NVIDIA device models).
+// Unknown legacy placement is not assumed to match a new constrained member.
+func validateGroupPlacement(members []agentsv1alpha1.EnvClusterMember, incoming agentsv1alpha1.EnvClusterMember) *domain.AppError {
+	wanted, err := instancetypeplugin.FrozenNodeSelector(incoming.Metadata.Annotations)
+	if err != nil {
+		return domain.NewBadRequest(err.Error())
+	}
+	wantedDevices := instancetypeplugin.ExtendedResourceIdentity(memberResourceShape(incoming))
+	for _, member := range members {
+		if member.Config.ScalingGroup != incoming.Config.ScalingGroup {
+			continue
+		}
+		if instancetypeplugin.ExtendedResourceIdentity(memberResourceShape(member)) != wantedDevices {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"scaling group %q contains different device resources; keep legacy routing unchanged and use a separate SandboxEnv or explicitly rebuild the empty group",
+				incoming.Config.ScalingGroup))
+		}
+		existing, err := instancetypeplugin.FrozenNodeSelector(member.Metadata.Annotations)
+		if err != nil {
+			return domain.NewBadRequest(err.Error())
+		}
+		if !maps.Equal(existing, wanted) {
+			return domain.NewBadRequest(fmt.Sprintf(
+				"scaling group %q has different frozen instance placement; use a separate SandboxEnv or explicitly rebuild the empty group",
+				incoming.Config.ScalingGroup))
+		}
+	}
+	return nil
+}
+
+func memberResourceShape(member agentsv1alpha1.EnvClusterMember) corev1.ResourceRequirements {
+	if member.Config.InlineResources != nil {
+		return *member.Config.InlineResources
+	}
+	if len(member.Spec.Template.Spec.Containers) != 0 {
+		return member.Spec.Template.Spec.Containers[0].Resources
+	}
+	return corev1.ResourceRequirements{}
 }
 
 // validateMemberSizing refuses a member whose sizing shape does not match how

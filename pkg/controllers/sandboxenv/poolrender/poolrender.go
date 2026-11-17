@@ -37,6 +37,7 @@ import (
 
 	agentsv1alpha1 "github.com/scitix/agent-sandbox/api/v1alpha1"
 	"github.com/scitix/agent-sandbox/pkg/controllers/sandboxpool"
+	instancetypeplugin "github.com/scitix/agent-sandbox/pkg/framework/providers/instancetype"
 	"github.com/scitix/agent-sandbox/pkg/metrics"
 	"github.com/scitix/agent-sandbox/pkg/sandboxrender"
 )
@@ -108,6 +109,14 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 
 	envOv := in.Env.Spec.Overrides
 	opts := sandboxrender.Options{}
+	if _, supplied := in.Member.Config.Annotations[instancetypeplugin.NodeSelectorSnapshotAnnotation]; supplied {
+		return nil, errors.New("instance-type node selector snapshot cannot be a caller Config annotation")
+	}
+	selector, err := instancetypeplugin.FrozenNodeSelector(in.Member.Metadata.Annotations)
+	if err != nil {
+		return nil, err
+	}
+	opts.NodeSelector = selector
 	if envOv != nil {
 		opts.Image = envOv.Image
 		opts.Volumes = envOv.Volumes
@@ -170,6 +179,12 @@ func RenderSandboxPool(in Inputs) (*agentsv1alpha1.SandboxPool, error) {
 	annotations := map[string]string{}
 	sandboxpool.SyncAnnotationsFromTemplate(annotations, in.Template.Annotations)
 	maps.Copy(annotations, in.Member.Config.Annotations)
+	// Only frozen member metadata can supply this server-owned snapshot; a
+	// template annotation must not forge or replace instance placement.
+	delete(annotations, instancetypeplugin.NodeSelectorSnapshotAnnotation)
+	if raw, present := in.Member.Metadata.Annotations[instancetypeplugin.NodeSelectorSnapshotAnnotation]; present {
+		annotations[instancetypeplugin.NodeSelectorSnapshotAnnotation] = raw
+	}
 	// System-managed provenance keys are written last so a Template that
 	// carries them in its own annotations cannot stomp them.
 	annotations[agentsv1alpha1.SandboxPoolTemplateNameAnnotationKey] = in.Template.Name

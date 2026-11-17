@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
@@ -87,6 +88,27 @@ func derivePoolMember(
 		}
 		cfg.Multiplier = mult
 
+		// Placement is resolved only from the explicitly named catalog entry.
+		// Resource-only reverse lookup can be ambiguous across device models.
+		instance, found := instProv.Get(cfg.InstanceType)
+		if !found || instance == nil {
+			return in, domain.NewServiceUnavailable("instance type changed while creating member")
+		}
+		if len(instance.NodeSelector) != 0 {
+			if err := instancetypeplugin.ValidateNodeSelector(instance.NodeSelector); err != nil {
+				return in, domain.NewBadRequest(err.Error())
+			}
+			encoded, err := json.Marshal(instance.NodeSelector)
+			if err != nil {
+				return in, domain.NewInternal("encode instance node selector", err)
+			}
+			in.Metadata.Annotations = maps.Clone(in.Metadata.Annotations)
+			if in.Metadata.Annotations == nil {
+				in.Metadata.Annotations = map[string]string{}
+			}
+			in.Metadata.Annotations[instancetypeplugin.NodeSelectorSnapshotAnnotation] = string(encoded)
+		}
+
 		if cfg.InlineResources != nil {
 			// Rounded-down real request: every dimension must fit within the
 			// envelope (round down allowed, round up rejected).
@@ -141,7 +163,7 @@ func derivePoolMember(
 		}
 	}
 
-	in.Name = envName + "-" + resourceKey + suffix
+	in.Name = instancetypeplugin.CompactResourceName(envName+"-"+resourceKey+suffix, 63)
 	cfg.ScalingGroup = resourceKey
 	return in, nil
 }

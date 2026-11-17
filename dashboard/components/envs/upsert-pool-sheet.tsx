@@ -50,6 +50,11 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { FormCloneActions } from "@/components/custom/form-clone-actions"
 import { createFormClone } from "@/lib/utils/form-clone"
+import {
+  instanceGpuResources,
+  instanceGpuPreview,
+  preservePoolResources,
+} from "@/lib/utils/instance-gpu"
 import { getPoolMeta, PoolTypeBadge, poolDisplayName } from "@/components/quota/pool-meta"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -441,7 +446,7 @@ function UpsertPoolInner({
         toast.error(t("envs.poolForm.errors.overrideExceedsEnvelope"))
         return
       }
-      const body = formValuesToCreateBody(values)
+      const body = formValuesToCreateBody(values, selectedInstanceType)
       await new Promise<void>((resolve, reject) => {
         createMutation.mutate(
           { params: { path: { name: env.name } }, body },
@@ -667,7 +672,12 @@ function UpsertPoolInner({
                                 {t("envs.poolForm.actualRequest")}
                               </span>
                               <span className="text-foreground">
-                                {formatActualRequest(overrideCpuMilli, overrideMemMiB, envelope)}
+                                {[
+                                  formatActualRequest(overrideCpuMilli, overrideMemMiB, envelope),
+                                  instanceGpuPreview(selectedInstanceType, watchedMultiplier),
+                                ]
+                                  .filter(Boolean)
+                                  .join(" / ")}
                               </span>
                             </div>
                           )}
@@ -1063,7 +1073,9 @@ function InstanceTypeCombobox({
             const reqs = item.baseResources?.requests ?? item.baseResources?.limits
             const cpu = reqs?.["cpu"]
             const mem = reqs?.["memory"]
-            const meta = [cpu && `${cpu}c`, mem && `${mem}`].filter(Boolean).join(" / ")
+            const meta = [cpu && `${cpu}c`, mem && `${mem}`, instanceGpuPreview(item, 1)]
+              .filter(Boolean)
+              .join(" / ")
             return (
               <ComboboxItem key={item.name} value={item}>
                 <div className="flex flex-col">
@@ -1096,6 +1108,8 @@ function computeInstanceTypePreview(
   const parts: string[] = []
   if (cpu != null) parts.push(`${formatCores(cpu)}c`)
   if (mem != null) parts.push(formatMemPreview(mem))
+  const gpu = instanceGpuPreview(it, mult)
+  if (gpu) parts.push(gpu)
   if (parts.length === 0) return null
   return parts.join(" / ")
 }
@@ -1251,14 +1265,18 @@ function findMember(env: AgentSandboxEnv, name: string) {
  */
 function memberMetadata(env: AgentSandboxEnv, name: string) {
   const cfg = findMember(env, name)?.config
-  return { labels: cfg?.labels, annotations: cfg?.annotations }
+  return {
+    labels: cfg?.labels,
+    annotations: cfg?.annotations,
+    inlineResources: cfg?.inlineResources,
+  }
 }
 
 function findScalingGroupForPool(env: AgentSandboxEnv, name: string): string {
   return findMember(env, name)?.config?.scalingGroup ?? ""
 }
 
-function formValuesToCreateBody(v: FormValues) {
+function formValuesToCreateBody(v: FormValues, instanceType?: AgentInstanceTypeItem | null) {
   const body: Record<string, unknown> = {}
   if (v.resourceMode === "instanceType") {
     if (v.instanceType) body.instanceType = v.instanceType
@@ -1269,6 +1287,7 @@ function formValuesToCreateBody(v: FormValues) {
     // complete; the reservation still charges the full envelope.
     if (v.overrideCpuValue !== undefined && v.overrideMemoryValue !== undefined) {
       const requests = {
+        ...instanceGpuResources(instanceType, v.multiplier),
         cpu: cpuQuantity(v.overrideCpuValue, v.overrideCpuUnit),
         memory: memoryQuantity(v.overrideMemoryValue, v.overrideMemoryUnit),
       }
@@ -1307,9 +1326,15 @@ function formValuesToCreateBody(v: FormValues) {
  */
 function formValuesToUpdateBody(
   v: FormValues,
-  carried?: { labels?: Record<string, string>; annotations?: Record<string, string> },
+  carried?: {
+    labels?: Record<string, string>
+    annotations?: Record<string, string>
+    inlineResources?: { requests?: Record<string, string>; limits?: Record<string, string> }
+  },
 ) {
   const body = formValuesToCreateBody(v)
+  // Resource sizing is immutable: preserve every dimension from the live member.
+  preservePoolResources(body, carried?.inlineResources)
   // Labels merge the other way round from the rest: the quota URL in the form is
   // one label among possibly several, so the live set is the base and the form
   // supplies the one field it owns.

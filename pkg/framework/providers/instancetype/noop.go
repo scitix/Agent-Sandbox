@@ -16,9 +16,6 @@ package instancetype
 
 import (
 	"context"
-	"fmt"
-	"sort"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -62,12 +59,12 @@ func (Noop) DeriveScalingGroupName(observed corev1.ResourceRequirements) string 
 // for resource shapes outside their own catalog.
 //
 // Output shape: cpu + memory rendered in their largest lossless unit, plus
-// optional "-<count><resource-suffix>" segments for every non-zero extended
-// resource (e.g. GPUs). Examples:
+// an exact NVIDIA gpu suffix or a resource-identity digest for other extended
+// resources. Existing stored groups are not renamed. Examples:
 //
 //	{cpu:1, mem:4Gi}                                  → "1c4Gi"
 //	{cpu:22, mem:220Gi, nvidia.com/gpu:1}             → "22c220Gi-1gpu"
-//	{cpu:8, mem:32Gi, "scitix.ai/tpu":4}              → "8c32Gi-4scitix.ai-tpu"
+//	{cpu:8, mem:32Gi, "example.com/tpu":4}          → "8c32Gi-r<digest>"
 //	{cpu:20m, mem:128Mi}                              → "20mc128Mi"
 //	{}                                                → "default"
 //
@@ -84,37 +81,9 @@ func DeriveDefaultScalingGroupName(observed corev1.ResourceRequirements) string 
 			formatMemoryKey(reqs.Memory().Value(), "Gi", "Mi"),
 	}
 
-	// Extended resources (GPU, accelerators) — sort by name so output is stable.
-	type extra struct {
-		name string
-		qty  int64
-	}
-	var extras []extra
-	for k, v := range reqs {
-		if k == corev1.ResourceCPU || k == corev1.ResourceMemory {
-			continue
-		}
-		if v.IsZero() {
-			continue
-		}
-		extras = append(extras, extra{name: string(k), qty: v.Value()})
-	}
-	sort.Slice(extras, func(i, j int) bool { return extras[i].name < extras[j].name })
-	for _, e := range extras {
-		parts = append(parts, fmt.Sprintf("%d%s", e.qty, normalizeExtendedName(e.name)))
-	}
-	return strings.Join(parts, "-")
-}
-
-// normalizeExtendedName turns "nvidia.com/gpu" → "gpu" so the common GPU
-// case produces "1gpu" rather than the verbose "1nvidia.com-gpu". For any
-// other extended resource we fall back to replacing "/" with "-" to keep
-// the result DNS-label-ish.
-func normalizeExtendedName(name string) string {
-	if strings.HasSuffix(name, "/gpu") {
-		return "gpu"
-	}
-	return strings.ReplaceAll(name, "/", "-")
+	// Keep the historical CPU/memory spelling while using the same device
+	// identity rules as new member resource keys.
+	return CompactResourceName(parts[0]+extendedResourceSuffix(observed), 63)
 }
 
 func init() {

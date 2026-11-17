@@ -27,6 +27,7 @@ package sandboxrender
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 
 	"github.com/distribution/reference"
@@ -49,6 +50,9 @@ type Options struct {
 	// calling Apply, so this field stays the single resource-sizing knob
 	// the renderer consumes.
 	InlineResources *corev1.ResourceRequirements
+	// NodeSelector adds immutable instance placement constraints. Kubernetes
+	// ANDs these with existing node affinity; conflicting selector keys fail.
+	NodeSelector map[string]string
 	// Volumes are the Env-level PVC mounts. Grouped into corev1.Volume entries
 	// by volume source (claimName + readOnly) and appended to
 	// containers[0].volumeMounts only — never to init containers, and never to
@@ -84,6 +88,7 @@ type Options struct {
 func (o Options) Empty() bool {
 	return o.Image == "" &&
 		o.InlineResources == nil &&
+		len(o.NodeSelector) == 0 &&
 		len(o.Volumes) == 0 &&
 		o.EnvdVerbose == nil &&
 		o.ImageRegistry == nil
@@ -97,6 +102,16 @@ func (o Options) Empty() bool {
 func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 	if emb == nil || opts.Empty() {
 		return nil
+	}
+	selector := maps.Clone(emb.Template.Spec.NodeSelector)
+	for key, value := range opts.NodeSelector {
+		if existing, present := selector[key]; present && existing != value {
+			return fmt.Errorf("instance node selector %q=%q conflicts with template value %q", key, value, existing)
+		}
+		if selector == nil {
+			selector = map[string]string{}
+		}
+		selector[key] = value
 	}
 	if opts.Image != "" {
 		if err := ValidateContainerImage(opts.Image); err != nil {
@@ -131,6 +146,9 @@ func Apply(emb *agentsv1alpha1.EmbeddedSandboxTemplate, opts Options) error {
 		}
 		setContainerEnv(&emb.Template.Spec.Containers[0],
 			AgentEnvVerbose, strconv.FormatBool(*opts.EnvdVerbose))
+	}
+	if len(opts.NodeSelector) != 0 {
+		emb.Template.Spec.NodeSelector = selector
 	}
 	return nil
 }
