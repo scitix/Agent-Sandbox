@@ -308,6 +308,38 @@ Compose overlays are not accepted by this adapter. Preserve authored service
 networks, health checks, dependencies and bind mounts in the release bundle.
 Per-service exec/download/stop operations use Harbor's DinD operations layer.
 
+### Compose main-service resource policy
+
+The outer DinD pool reserves capacity for the Docker daemon and the whole service
+stack. It does not replace the task's resource limits for the inner `main`
+container. Under Harbor's default `AUTO` policy, this adapter writes the effective
+CPU and memory limits into a Compose resource overlay for `main`, using Harbor's
+native resource helpers. For example, 2 CPUs and `memory_mb=4096` produce
+`cpus: 2.0` and `mem_limit: 4096m` (4 GiB, or 4294967296 bytes).
+
+The resource overlay precedes the task-authored Compose file, so explicitly
+authored main-service settings retain their normal override precedence. Sidecar
+limits, dependencies, health checks and networks are unchanged. A task's load
+generator with `cpus: 1.0` therefore keeps that limit; increasing the outer pool
+does not increase its quota.
+
+The overlay honors Harbor's request/limit policy helpers: `REQUEST` produces
+reservations without hard limits and `IGNORE` omits that resource dimension.
+Unspecified resource values do not invent a limit. Existing E2B backend capability
+validation still applies; this change does not enable explicit `LIMIT` or
+`GUARANTEE` modes that the backend currently rejects. CPU and memory policies
+are independent. Inspect actual container quotas and memory limits when auditing
+a run; a CPU quota is not exclusive physical-core placement.
+
+The default-policy resource correction was exercised with Harbor 0.26.0 / E2B
+2.64.0 on the 65 runnable TB4 tasks. The final validation comprises 54 clean
+results plus 11 successful targeted retries after an infrastructure interruption,
+not one uninterrupted 65/65 run. All task instructions, reference solutions and
+verifier scoring predicates were retained. JAX's unmet 1000 GiB requirement remains
+excluded. The policy-general implementation has identical generated resource and
+authored Compose files to that tested default-policy implementation for all 11
+Compose tasks; unit tests additionally cover mixed and non-default policies.
+
 For release procedure and compatibility checks, see [PUBLISHING.md](PUBLISHING.md).
 
 ### CPU library thread budgets

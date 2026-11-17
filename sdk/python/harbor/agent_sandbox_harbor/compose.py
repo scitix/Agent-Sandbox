@@ -17,9 +17,11 @@ from harbor.environments.docker import (
     self_bind_mount,
     write_env_compose_file,
     write_mounts_compose_file,
+    write_resources_compose_file,
 )
 from harbor.environments.docker.compose_env import ComposeInfraEnvVars, legacy_log_mount_env_vars
 from harbor.environments.e2b import E2BEnvironment
+from harbor.models.trial.config import ResourceMode
 
 
 class AgentBoxCompose(DinDComposeOps):
@@ -134,12 +136,23 @@ class AgentBoxCompose(DinDComposeOps):
             root = Path(tmp)
             (root / "base.json").write_text(json.dumps({"services": {"main": main}}))
             (root / "authored.json").write_text(json.dumps(authored))
+            write_resources_compose_file(
+                root / "resources.json",
+                cpu_request=self._env._resource_request_value("cpu", auto_mode=ResourceMode.LIMIT),
+                cpu_limit=self._env._resource_limit_value("cpu", auto_mode=ResourceMode.LIMIT),
+                memory_request_mb=self._env._resource_request_value(
+                    "memory", auto_mode=ResourceMode.LIMIT
+                ),
+                memory_limit_mb=self._env._resource_limit_value(
+                    "memory", auto_mode=ResourceMode.LIMIT
+                ),
+            )
             write_mounts_compose_file(root / "mounts.json", mounts)
             write_env_compose_file(
                 root / "env.json",
                 {k: v.replace("$", "$$") for k, v in self._env._startup_env().items()},
             )
-            for name in ["base.json", "authored.json", "env.json", "mounts.json"]:
+            for name in ["base.json", "resources.json", "authored.json", "env.json", "mounts.json"]:
                 remote = f"{self.ROOT}/environment/{name}"
                 await self._stage_file_to_host(root / name, remote)
                 self._files.append(remote)

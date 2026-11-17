@@ -36,6 +36,11 @@ class ComposeTest(unittest.IsolatedAsyncioTestCase):
                 task_env_config=SimpleNamespace(build_timeout_sec=300),
                 _resolve_image=lambda: "registry.example/bench/main@sha256:def",
             )
+            # Model the inherited Harbor resource-policy interface in this fixture.
+            env._resource_request_value = lambda resource, **kwargs: None
+            env._resource_limit_value = lambda resource, **kwargs: (
+                env._effective_cpus if resource == "cpu" else env._effective_memory_mb
+            )
             ops = AgentBoxCompose(env, lambda image: "registry.example/bench/" + image)
             staged = {}
 
